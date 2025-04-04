@@ -20,6 +20,7 @@ import { NavUser } from "./nav-user";
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="offcanvas" {...props}>
+      {/**Side bar header*/}
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -29,13 +30,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <Link href="/">
                 <ArrowUpCircleIcon className="h-5 w-5" />
-                <span className="text-base font-semibold">CardScouts</span>
+                <span className="text-base font-semibold">Sharetopus</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
-      {/**Search form*/}
 
       {/* Section Create */}
       <NavCreate />
@@ -48,9 +48,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* Section Accounts */}
       <NavAccounts />
 
-      <SidebarSeparator />
-
-      <SidebarFooter>
+      <SidebarFooter className="mt-auto">
         <NavUser />
       </SidebarFooter>
     </Sidebar>

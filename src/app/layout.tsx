@@ -18,7 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "sharetopus | Post once, share everywhere",
+  title: "Sharetopus | Post once, share everywhere",
   description:
     "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
 
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   keywords:
     "social media management, multi-platform posting, content scheduling, social media analytics, share content, post to multiple platforms, social media tool, content distribution, social media automation, cross-platform posting, social media dashboard, social media marketing, sharetopus, post everywhere",
 
-  authors: [{ name: "sharetopus Team" }],
+  authors: [{ name: "Sharetopus Team" }],
   publisher: "Sharetopus Inc.",
 
   // Canonical URL - replace with your actual domain
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
 
   // Open Graph metadata for social sharing
   openGraph: {
-    title: "sharetopus | Post once, share everywhere",
+    title: "Sharetopus | Post once, share everywhere",
     description:
       "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
     url: "https://sharetopus.com",
@@ -56,7 +56,7 @@ export const metadata: Metadata = {
   //TO DO
   twitter: {
     card: "summary_large_image",
-    title: "sharetopus | Post once, share everywhere",
+    title: "Sharetopus | Post once, share everywhere",
     description:
       "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
     images: "@/../public/logo.png",
@@ -90,7 +90,7 @@ export const metadata: Metadata = {
   },
 
   // Additional useful metadata
-  applicationName: "sharetopus", // For homescreen icons on mobile
+  applicationName: "Sharetopus", // For homescreen icons on mobile
   icons: {
     icon: "@/../public/logo_16x16.ico", // Ensure this exists in public/
     shortcut: "@/../public/logo_16x16.ico",

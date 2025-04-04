@@ -19,7 +19,7 @@ export function NavCreate() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/post/new">
+              <Link href="/dashboard/create">
                 <PlusCircle className="h-4 w-4" />
                 <span>New Post</span>
               </Link>
@@ -28,7 +28,7 @@ export function NavCreate() {
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/studio">
+              <Link href="/dashboard/studio">
                 <LayoutDashboard className="h-4 w-4" />
                 <span>Studio</span>
               </Link>
