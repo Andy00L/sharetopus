@@ -1,10 +1,4 @@
-import {
-  Heart,
-  Twitter,
-  Instagram,
-  Youtube,
-  Facebook,
-} from "lucide-react";
+import { Facebook, Heart, Instagram, Twitter, Youtube } from "lucide-react";
 import Link from "next/link";
 
 export default function Footer() {
@@ -111,14 +105,6 @@ export default function Footer() {
             <ul className="space-y-2">
               <li>
                 <Link
-                  href="/blog"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Blog
-                </Link>
-              </li>
-              <li>
-                <Link
                   href="/guides"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
@@ -131,22 +117,6 @@ export default function Footer() {
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   FAQ
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/api-docs"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  API Documentation
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="/changelog"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Changelog
                 </Link>
               </li>
             </ul>
@@ -171,14 +141,7 @@ export default function Footer() {
                   Contact
                 </Link>
               </li>
-              <li>
-                <Link
-                  href="/careers"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Careers
-                </Link>
-              </li>
+
               <li>
                 <Link
                   href="/privacy"

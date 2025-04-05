@@ -43,7 +43,7 @@ export function NavigationItems() {
                   </Link>
                 </NavigationMenuLink>
               </li>
-              <ListItem href="/dashboard" title="ScoutCards ">
+              <ListItem href="/create" title="ScoutCards ">
                 Know at any insteant what is the best credit cad for you need.
               </ListItem>
             </ul>

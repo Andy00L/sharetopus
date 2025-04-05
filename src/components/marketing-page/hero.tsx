@@ -25,7 +25,7 @@ export default function Hero() {
 
           <div className="flex flex-wrap justify-center gap-4 mt-10">
             <Link
-              href="/dashboard"
+              href="/create"
               className="bg-primary text-primary-foreground px-6 py-3 rounded-md text-base font-medium hover:bg-primary/90"
             >
               Start posting smarter
