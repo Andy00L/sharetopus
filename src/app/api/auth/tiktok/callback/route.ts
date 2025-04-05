@@ -3,15 +3,15 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { exchangeTikTokCode, getTikTokUserInfo } from "@/lib/tiktok/auth";
 import { Provider } from "@/actions/types/provider";
-import { auth } from "@clerk/nextjs/server";
 import { upsertSocialAccount } from "@/actions/server/supabase/upsertSocialAccount";
+import { auth } from "@clerk/nextjs/server";
 
 export async function GET(request: Request) {
   try {
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/sign-in?error=unauthorized`
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?error=unauthorized`
       );
     }
 
@@ -25,14 +25,14 @@ export async function GET(request: Request) {
     if (error) {
       console.error("TikTok OAuth error:", error);
       return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/accounts?error=tiktok_auth_failed`
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?error=tiktok_auth_failed`
       );
     }
 
     // Validate required parameters
     if (!code || !state) {
       return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/accounts?error=missing_params`
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?error=missing_params`
       );
     }
 
@@ -40,15 +40,12 @@ export async function GET(request: Request) {
     const storedState = (await cookies()).get("tiktok_auth_state")?.value;
     if (state !== storedState) {
       return NextResponse.redirect(
-        `${process.env.NEXT_PUBLIC_APP_URL}/accounts?error=invalid_state`
+        `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?error=invalid_state`
       );
     }
 
     // Clear the state cookie
-    (
-      await // Clear the state cookie
-      cookies()
-    ).set({
+    (await cookies()).set({
       name: "tiktok_auth_state",
       value: "",
       httpOnly: true,
@@ -63,7 +60,6 @@ export async function GET(request: Request) {
     const userInfo = await getTikTokUserInfo(tokenData.access_token);
 
     // Save the TikTok account to database using your existing function
-
     await upsertSocialAccount(
       userId,
       "tiktok" as Provider,
@@ -82,14 +78,14 @@ export async function GET(request: Request) {
       }
     );
 
-    // Redirect to success page
+    // Redirect to success page - changement ici pour rediriger vers la page de fermeture
     return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/accounts?success=tiktok_connected`
+      `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?success=tiktok_connected`
     );
   } catch (error) {
     console.error("Error handling TikTok callback:", error);
     return NextResponse.redirect(
-      `${process.env.NEXT_PUBLIC_APP_URL}/accounts?error=callback_error`
+      `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/tiktok/callback/close?error=callback_error`
     );
   }
 }
