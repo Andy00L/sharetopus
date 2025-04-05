@@ -1,13 +1,31 @@
 // app/api/auth/tiktok/callback/close/page.tsx
 "use client";
 
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 
-export default function TikTokCallbackClose() {
+// Composant qui utilise useSearchParams, à envelopper dans Suspense
+function CallbackContent() {
   const searchParams = useSearchParams();
   const success = searchParams.get("success");
   const error = searchParams.get("error");
+
+  // Détermine le message de statut
+  let statusMessage = "Processing...";
+  if (success) {
+    statusMessage = "Connection Successful";
+  } else if (error) {
+    statusMessage = "Connection Failed";
+  }
+
+  // Détermine le message de description
+  let descriptionMessage = "Completing your TikTok account connection...";
+  if (success) {
+    descriptionMessage =
+      "Your TikTok account has been connected. This window will close automatically.";
+  } else if (error) {
+    descriptionMessage = `Error: ${error}. This window will close automatically.`;
+  }
 
   useEffect(() => {
     // Attendre un court instant pour s'assurer que la page est chargée
@@ -43,20 +61,30 @@ export default function TikTokCallbackClose() {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
       <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
-      <h1 className="text-xl font-semibold mb-2">
-        {success
-          ? "Connection Successful"
-          : error
-          ? "Connection Failed"
-          : "Processing..."}
-      </h1>
+      <h1 className="text-xl font-semibold mb-2">{statusMessage}</h1>
+      <p className="text-muted-foreground">{descriptionMessage}</p>
+    </div>
+  );
+}
+
+// Composant Fallback pour Suspense
+function CallbackFallback() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-4 text-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary mb-4"></div>
+      <h1 className="text-xl font-semibold mb-2">Loading...</h1>
       <p className="text-muted-foreground">
-        {success
-          ? "Your TikTok account has been connected. This window will close automatically."
-          : error
-          ? `Error: ${error}. This window will close automatically.`
-          : "Completing your TikTok account connection..."}
+        Please wait while we process your request...
       </p>
     </div>
+  );
+}
+
+// Composant principal qui utilise Suspense
+export default function TikTokCallbackClose() {
+  return (
+    <Suspense fallback={<CallbackFallback />}>
+      <CallbackContent />
+    </Suspense>
   );
 }
