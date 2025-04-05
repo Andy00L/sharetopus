@@ -87,6 +87,7 @@ interface ClerkUserData {
   full_name?: string | null;
   email_addresses?: ClerkEmailAddress[];
   primary_email_address_id?: string | null;
+  username?: string | null;
   object: string;
 }
 
@@ -94,15 +95,19 @@ async function handleUserCreated(data: ClerkUserData) {
   try {
     const userId = data.id;
     const email = data.email_addresses?.[0]?.email_address;
+    // Extra fields from Clerk
+    const username = data.username ?? null;
+    // Determine first and last names. Fall back on full_name if individual names aren’t available.
+    const firstName =
+      data.first_name ??
+      (data.full_name ? data.full_name.split(" ")[0] : username);
+    const lastName =
+      data.last_name ??
+      (data.full_name ? data.full_name.split(" ").slice(1).join(" ") : "");
 
-    const nameParts =
-      data.first_name && data.last_name
-        ? [data.first_name, data.last_name]
-        : (data.full_name ?? "").split(" ");
+    // Use profile_image_url if provided; otherwise optionally fall back to image_url.
 
-    const firstName = nameParts[0] || null;
-    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
-
+    // Insert the new user into your Supabase table.
     const { error } = await supabase.from("users").insert({
       id: userId,
       email,
