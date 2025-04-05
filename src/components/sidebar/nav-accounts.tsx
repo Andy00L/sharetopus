@@ -19,7 +19,7 @@ export function NavAccounts() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/dashboard/accounts">
+              <Link href="/accounts">
                 <Users className="h-4 w-4" />
                 <span>Manage Accounts</span>
               </Link>

@@ -17,7 +17,7 @@ export default function NavPost() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/dashboard/posts">
+              <Link href="/posts">
                 <FileText className="h-4 w-4" />
                 <span>All</span>
               </Link>
@@ -26,7 +26,7 @@ export default function NavPost() {
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/dashboard/scheduled">
+              <Link href="/scheduled">
                 <Clock className="h-4 w-4" />
                 <span>Scheduled</span>
               </Link>
@@ -35,7 +35,7 @@ export default function NavPost() {
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/dashboard/published">
+              <Link href="/published">
                 <CheckCircle className="h-4 w-4" />
                 <span>Posted</span>
               </Link>
@@ -44,7 +44,7 @@ export default function NavPost() {
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/dashboard/config">
+              <Link href="/config">
                 <Sliders className="h-4 w-4" />
                 <span>Configuration</span>
               </Link>

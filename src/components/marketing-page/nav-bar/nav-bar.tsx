@@ -15,7 +15,7 @@ export default function Navbar() {
 
         <div className="flex items-center space-x-4">
           <Link
-            href="/app"
+            href="/dashboard"
             className="text-sm bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-md hover:bg-[var(--primary)]/90"
           >
             Try for free

@@ -1,54 +1,106 @@
-import { CreditCard, Heart, Mail, MessageSquare } from "lucide-react";
+import {
+  Heart,
+  Twitter,
+  Instagram,
+  Youtube,
+  Facebook,
+} from "lucide-react";
 import Link from "next/link";
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
   return (
-    <footer className="bg-secondary py-16 ">
-      <div className="container mx-auhref px-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 ">
+    <footer className="bg-secondary py-16">
+      <div className="container mx-auto px-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
           <div>
             <div className="flex items-center mb-4">
               <span className="font-display text-2xl font-semibold tracking-tight">
-                CardScout
+                sharetopus
               </span>
             </div>
             <p className="text-muted-foreground mb-6">
-              Helping Canadians find the best credit cards for their lifestyle
-              and financial goals.
+              Post once, share everywhere. Streamline your social media workflow
+              across TikTok, Instagram, Facebook, Threads, and YouTube.
             </p>
             <div className="flex space-x-4">
               <Link
-                href="/app"
+                href="https://twitter.com"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
               >
-                <CreditCard size={18} />
+                <Twitter size={18} />
               </Link>
               <Link
-                href="/app"
+                href="https://instagram.com"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
               >
-                <Mail size={18} />
+                <Instagram size={18} />
               </Link>
               <Link
-                href="/app"
+                href="https://facebook.com"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
               >
-                <MessageSquare size={18} />
+                <Facebook size={18} />
+              </Link>
+              <Link
+                href="https://youtube.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              >
+                <Youtube size={18} />
               </Link>
             </div>
           </div>
 
-          {/*Credit Cards section */}
+          {/* Features section */}
           <div>
-            <h3 className="font-semibold text-lg mb-4">Credit Cards</h3>
+            <h3 className="font-semibold text-lg mb-4">Features</h3>
             <ul className="space-y-2">
               <li>
                 <Link
-                  href="/app"
+                  href="#features"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  app
+                  Multi-platform Posting
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="#features"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Content Scheduling
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="#features"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Social Analytics
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="#features"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Platform Integrations
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="#pricing"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Pricing Plans
                 </Link>
               </li>
             </ul>
@@ -59,7 +111,7 @@ export default function Footer() {
             <ul className="space-y-2">
               <li>
                 <Link
-                  href="#paid"
+                  href="/blog"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Blog
@@ -67,15 +119,15 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#paid"
+                  href="/guides"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Credit Guides
+                  Social Media Guides
                 </Link>
               </li>
               <li>
                 <Link
-                  href="paid"
+                  href="/faq"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   FAQ
@@ -83,10 +135,18 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#paid"
+                  href="/api-docs"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Credit Card Terms
+                  API Documentation
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/changelog"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Changelog
                 </Link>
               </li>
             </ul>
@@ -97,7 +157,7 @@ export default function Footer() {
             <ul className="space-y-2">
               <li>
                 <Link
-                  href="#paid"
+                  href="/about"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   About Us
@@ -105,7 +165,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#paid"
+                  href="/contact"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Contact
@@ -113,7 +173,15 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#paid"
+                  href="/careers"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Careers
+                </Link>
+              </li>
+              <li>
+                <Link
+                  href="/privacy"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Privacy Policy
@@ -121,7 +189,7 @@ export default function Footer() {
               </li>
               <li>
                 <Link
-                  href="#paid"
+                  href="/terms"
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Terms of Service
@@ -132,11 +200,13 @@ export default function Footer() {
         </div>
 
         <div className="border-t border-border mt-12 pt-8 flex flex-col md:flex-row justify-between items-center text-sm text-muted-foreground">
-          <p>© {currentYear} CardScouts. All rights reserved.</p>
-          <p className="mt-4 md:mt-0 flex items-center">
-            Made with <Heart size={14} className="mx-1 text-primary" /> in
-            Canada
-          </p>
+          <p>© {currentYear} Sharetopus. All rights reserved.</p>
+          <div className="flex items-center mt-4 md:mt-0">
+            <p className="flex items-center">
+              Made with <Heart size={14} className="mx-1 text-primary" /> by the
+              Sharetopus Team
+            </p>
+          </div>
         </div>
       </div>
     </footer>
