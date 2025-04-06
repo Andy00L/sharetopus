@@ -10,7 +10,7 @@ export async function exchangeTikTokCode(
   code: string
 ): Promise<TokenExchangeResponse> {
   // Récupération de la configuration depuis les variables d’environnement
-  const client_id = process.env.TIKTOK_CLIENT_ID;
+  const client_id = process.env.TIKTOK_CLIENT_KEY;
   const client_secret = process.env.TIKTOK_CLIENT_SECRET;
   const redirect_uri = process.env.TIKTOK_REDIRECT_URI;
   if (!client_id || !client_secret || !redirect_uri) {
