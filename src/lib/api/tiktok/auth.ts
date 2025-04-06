@@ -11,17 +11,17 @@ export async function exchangeTikTokCode(
 ): Promise<TokenExchangeResponse> {
   // Récupération de la configuration depuis les variables d’environnement
   const client_id = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
-  const client_secret = process.env.TIKTOK_CLIENT_SECRET;
+  // Note: We remove the client secret since it may be considered an unnecessary parameter for the web flow.
+  // const client_secret = process.env.TIKTOK_CLIENT_SECRET;
   const redirect_uri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL;
-  if (!client_id || !client_secret || !redirect_uri) {
+  if (!client_id || !redirect_uri) {
     throw new Error("Configuration TikTok manquante.");
   }
 
-  // URL de l'endpoint d'échange de code de TikTok
-  const url = "https://open-api.tiktok.com/oauth/access_token/";
+  // URL de l'endpoint d'échange de code de TikTok (note: no trailing slash)
+  const url = "https://open-api.tiktok.com/oauth/access_token";
   const params = new URLSearchParams();
   params.append("client_key", client_id);
-  params.append("client_secret", client_secret);
   params.append("code", code);
   params.append("grant_type", "authorization_code");
   params.append("redirect_uri", redirect_uri);
