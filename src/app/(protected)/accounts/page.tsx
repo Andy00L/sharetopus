@@ -1,10 +1,10 @@
-"use client";
-
-import ConnectedAccounts from "@/components/core/accounts/connectedAccounts";
+import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
 import { Button } from "@/components/ui/button";
+import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
 
-export default function ManageAccountsPage() {
+export default async function ManageAccountsPage() {
+  const accounts = await fetchSocialAccounts();
   return (
     <div className="container mx-auto px-4 py-6">
       <header className="mb-8">
@@ -21,7 +21,7 @@ export default function ManageAccountsPage() {
       </section>
 
       <section className="mt-12 border-t pt-6">
-        <ConnectedAccounts />
+        <ConnectedAccounts initialAccounts={accounts} />
       </section>
 
       <section className="mt-12 border-t pt-6">
