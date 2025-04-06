@@ -70,6 +70,7 @@ export async function GET(req: Request) {
           onConflict: "user_id,platform,account_identifier",
         }
       );
+      console.error("probleme supabase:", error);
     } catch (error) {
       console.error("Immediate Solution:", error);
     }
