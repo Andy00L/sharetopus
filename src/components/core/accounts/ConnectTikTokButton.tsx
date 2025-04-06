@@ -23,7 +23,7 @@ export default function ConnectTikTokButton() {
   const scopes = "user.info.basic,video.publish,video.upload";
 
   // Construct the proper redirect URI and OAuth URL using the v2 endpoint.
-  const redirectUri = process.env.NEXT_PUBLIC_APP_URL ?? ""; // Make sure this value exactly matches what you registered, e.g. "https://sharetopus.com/api/social/connect/tiktok/"
+  const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL ?? ""; // Make sure this value exactly matches what you registered, e.g. "https://sharetopus.com/api/social/connect/tiktok/"
 
   const TIKTOK_AUTH_URL = `https://www.tiktok.com/v2/auth/authorize/?client_key=${
     process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY
