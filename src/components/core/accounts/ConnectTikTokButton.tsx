@@ -3,17 +3,39 @@
 
 import { Button } from "@/components/ui/button";
 
+// Function to generate a random state (for CSRF prevention)
+function generateState(length = 16): string {
+  const charset =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * charset.length);
+    result += charset[randomIndex];
+  }
+  return result;
+}
+
 export default function ConnectTikTokButton() {
-  // Construction de l'URL OAuth en utilisant vos variables d'environnement.
-  // L'URL de redirection pointe ici vers votre endpoint d'échange.
-  const TIKTOK_AUTH_URL = `https://www.tiktok.com/auth/authorize?client_key=${process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY}&redirect_uri=${process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL}&response_type=code`;
+  // Generate a state token
+  const state = generateState();
+
+  // Define the required scopes
+  const scopes = "user.info.basic,video.publish,video.upload";
+
+  // Construct the proper redirect URI and OAuth URL using the v2 endpoint.
+  const redirectUri = process.env.NEXT_PUBLIC_APP_URL ?? ""; // Make sure this value exactly matches what you registered, e.g. "https://sharetopus.com/api/social/connect/tiktok/"
+
+  const TIKTOK_AUTH_URL = `https://www.tiktok.com/v2/auth/authorize/?client_key=${
+    process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY
+  }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
+    redirectUri
+  )}&state=${state}&response_type=code`;
 
   const openTikTokPopup = () => {
     const width = 600;
     const height = 600;
     const left = window.screen.width / 2 - width / 2;
     const top = window.screen.height / 2 - height / 2;
-    // Ouvrir la pop-up sans stocker la référence, puisqu'elle n'est pas utilisée par la suite.
     window.open(
       TIKTOK_AUTH_URL,
       "TikTokOAuth",
