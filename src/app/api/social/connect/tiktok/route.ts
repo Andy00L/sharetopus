@@ -1,9 +1,9 @@
 // app/api/social/connect/tiktok/route.ts
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { supabase } from "@/actions/api/supabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/auth";
 import { getTikTokProfile } from "@/lib/api/tiktok/client";
+import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 /**
  * GET handler for TikTok OAuth callback.
@@ -34,6 +34,8 @@ export async function GET(req: Request) {
 
     // Exchange the authorization code for tokens from TikTok
     const tokenResponse = await exchangeTikTokCode(code);
+    // Add after token exchange in your route.ts
+    console.log("Granted TikTok scopes:", tokenResponse.scope);
     const { access_token, refresh_token, expires_in } = tokenResponse;
 
     // Retrieve TikTok profile information using the obtained access token
