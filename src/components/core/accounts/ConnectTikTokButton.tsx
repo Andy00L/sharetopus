@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 export default function ConnectTikTokButton() {
   // Construction de l'URL OAuth en utilisant vos variables d'environnement.
   // L'URL de redirection pointe ici vers votre endpoint d'échange.
-  const TIKTOK_AUTH_URL = `https://www.tiktok.com/auth/authorize?client_key=${process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY}&redirect_uri=${process.env.NEXT_PUBLIC_APP_URL}/api/social/connect/tiktok/route&response_type=code`;
+  const TIKTOK_AUTH_URL = `https://www.tiktok.com/auth/authorize?client_key=${process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY}&redirect_uri=${process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL}&response_type=code`;
 
   const openTikTokPopup = () => {
     const width = 600;
