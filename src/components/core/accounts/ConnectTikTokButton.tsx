@@ -29,7 +29,8 @@ export default function ConnectTikTokButton() {
   const router = useRouter(); // Get router instance
 
   // --- FIX: Add user.info.profile scope ---
-  const scopes = "user.info.basic,user.info.profile,video.publish,video.upload"; // Added user.info.profile
+  const scopes =
+    "user.info.basic,user.info.profile,video.publish,video.upload,user.info.stats"; // Added user.info.profile
 
   // Generate a state token - unchanged
   const state = generateState();
