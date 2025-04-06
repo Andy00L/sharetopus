@@ -20,19 +20,31 @@ export async function getTikTokProfile(
   accessToken: string
 ): Promise<TikTokProfile> {
   try {
-    // TikTok V2 API requires a different endpoint with specific fields
-    // See: https://developers.tiktok.com/doc/tiktok-api-v2-get-user-info/
+    // TikTok V2 API requires a specific endpoint with fields parameter
     const url = "https://open.tiktokapis.com/v2/user/info/";
 
+    // Define the fields we want to retrieve
+    const fields = [
+      "open_id",
+      "union_id",
+      "avatar_url",
+      "display_name",
+      "bio_description",
+      "is_verified",
+    ];
+
     const response = await fetch(url, {
-      method: "GET",
+      method: "POST", // Must be POST for this endpoint
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        fields: fields.join(","), // Convert array to comma-separated string
+      }),
     });
 
-    // Log the raw response for debugging
+    // Process the response
     const responseText = await response.text();
     console.log("[TikTok] Profile Response:", responseText);
 
@@ -51,7 +63,7 @@ export async function getTikTokProfile(
       );
     }
 
-    // TikTok v2 API response structure
+    // Extract user data from the response
     if (responseData?.data?.user) {
       const user = responseData.data.user;
       return {
@@ -64,14 +76,14 @@ export async function getTikTokProfile(
       };
     }
 
-    // Fallback to minimal profile based on the token exchange data
+    // Fallback to minimal profile
     return {
       id: responseData?.data?.open_id || "unknown_id",
       username: "TikTok User",
     };
   } catch (error) {
     console.error("Error fetching TikTok profile:", error);
-    // Return minimal profile with the error information
+    // Return minimal profile with error information
     return {
       id: "error_fetching_profile",
       username: "TikTok User",
@@ -79,7 +91,6 @@ export async function getTikTokProfile(
     };
   }
 }
-
 /**
  * Makes a request to get the user's TikTok information using fields
  *
