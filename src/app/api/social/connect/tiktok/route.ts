@@ -68,8 +68,30 @@ export async function GET(req: Request) {
 
       // Store account in database
       console.log("[TikTok] Storing account in database...");
-      const { error } = await supabase.from("social_accounts").upsert(
-        [
+      const { data: existingAccount } = await supabase
+        .from("social_accounts")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("platform", "tiktok")
+        .eq("account_identifier", tiktokProfile.id)
+        .single();
+
+      if (existingAccount) {
+        // Update existing record
+        await supabase
+          .from("social_accounts")
+          .update({
+            access_token,
+            refresh_token,
+            token_expires_at: new Date(
+              Date.now() + expires_in * 1000
+            ).toISOString(),
+            extra: tiktokProfile,
+          })
+          .eq("id", existingAccount.id);
+      } else {
+        // Insert new record
+        await supabase.from("social_accounts").insert([
           {
             user_id: userId,
             platform: "tiktok",
@@ -81,16 +103,7 @@ export async function GET(req: Request) {
             ).toISOString(),
             extra: tiktokProfile,
           },
-        ],
-        {
-          onConflict: "user_id,platform,account_identifier",
-        }
-      );
-
-      if (error) {
-        console.error("[TikTok] Database error:", error);
-      } else {
-        console.log("[TikTok] Account successfully stored in database");
+        ]);
       }
     } catch (error) {
       console.error("[TikTok] Error during TikTok integration:", error);
