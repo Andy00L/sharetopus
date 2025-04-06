@@ -1,60 +1,68 @@
 "use client";
-import { useEffect, useState } from "react";
-import Image from "next/image";
+
+import { adminSupabase } from "@/actions/api/supabase";
+import { Provider } from "@/actions/types/provider";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
   CardFooter,
   CardHeader,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
+import { auth } from "@clerk/nextjs/server";
 import { AlertCircle, RefreshCw, Unlink, UserCheck, Users } from "lucide-react";
-import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import Image from "next/image";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-interface TikTokProfile {
+// Define types for the extra JSON field
+interface SocialProfile {
   id: string;
   username: string;
-  display_name: string;
-  avatar_url: string | null;
-  is_verified: boolean;
-  bio_description: string | null;
-  follower_count: number | null;
-  following_count: number | null;
+  avatar_url?: string;
+  is_verified?: boolean;
+  display_name?: string;
+  follower_count?: number;
+  following_count?: number;
+  bio_description?: string;
 }
 
-interface TikTokAccount {
+interface TokenInfo {
+  scope?: string;
+  token_type?: string;
+  refresh_expires_in?: number;
+}
+
+interface ConnectionStatus {
+  connected_at?: string;
+  profile_fetch_successful?: boolean;
+}
+
+interface ExtraData {
+  profile?: SocialProfile;
+  token_info?: TokenInfo;
+  connection_status?: ConnectionStatus;
+}
+
+// Extend the social_accounts table type from the database schema
+interface SocialAccount {
   id: string;
   user_id: string;
-  platform: string;
+  platform: Provider;
   account_identifier: string;
   access_token: string;
-  refresh_token?: string;
-  token_expires_at?: string;
-  extra: {
-    profile?: TikTokProfile;
-    token_info?: {
-      scope?: string;
-      token_type?: string;
-      refresh_expires_in?: string;
-    };
-    connection_status?: {
-      connected_at: string;
-      profile_fetch_successful: boolean;
-    };
-    profile_image_url?: string;
-    [key: string]: unknown;
-  };
-}
-
-interface AccountsResponse {
-  accounts: TikTokAccount[];
+  refresh_token?: string | null;
+  token_expires_at?: string | null;
+  extra?: ExtraData;
+  created_at: string;
+  updated_at: string;
 }
 
 export default function ConnectedAccounts() {
-  const [accounts, setAccounts] = useState<TikTokAccount[]>([]);
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,20 +71,29 @@ export default function ConnectedAccounts() {
     setError(null);
 
     try {
-      const res = await fetch("/api/social/accounts?tiktok=true");
-      if (res.ok) {
-        const data: AccountsResponse = await res.json();
-        setAccounts(data.accounts);
-      } else {
-        const errorData = await res.json();
-        setError(
-          errorData.message || "Erreur lors du chargement des comptes TikTok"
-        );
+      // Get the current user's ID from Clerk
+      const { userId } = await auth();
+
+      if (!userId) {
+        throw new Error("Utilisateur non authentifié");
       }
-    } catch (error) {
-      console.error("Erreur dans fetchAccounts", error);
+
+      // Fetch social accounts for the current user, filtered by platform
+      const { data, error } = await adminSupabase
+        .from("social_accounts")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("platform", "tiktok");
+
+      if (error) throw error;
+
+      setAccounts(data || []);
+    } catch (err) {
+      console.error("Erreur lors du chargement des comptes:", err);
       setError(
-        "Impossible de charger les comptes connectés. Veuillez réessayer plus tard."
+        err instanceof Error
+          ? err.message
+          : "Impossible de charger les comptes connectés. Veuillez réessayer plus tard."
       );
     } finally {
       setLoading(false);
@@ -89,24 +106,25 @@ export default function ConnectedAccounts() {
 
   const disconnectAccount = async (accountId: string) => {
     try {
-      const res = await fetch(`/api/social/disconnect?id=${accountId}`, {
-        method: "DELETE",
-      });
+      // Remove the account from the social_accounts table
+      const { error } = await adminSupabase
+        .from("social_accounts")
+        .delete()
+        .eq("id", accountId);
 
-      if (res.ok) {
-        // Remove account from local state
-        setAccounts(accounts.filter((account) => account.id !== accountId));
-        toast.success("Compte déconnecté avec succès");
-      } else {
-        const errorData = await res.json();
-        toast.error(
-          errorData.message || "Erreur lors de la déconnexion du compte"
-        );
-      }
+      if (error) throw error;
+
+      // Remove account from local state
+      setAccounts((prevAccounts) =>
+        prevAccounts.filter((account) => account.id !== accountId)
+      );
+      toast.success("Compte déconnecté avec succès");
     } catch (error) {
       console.error("Erreur lors de la déconnexion", error);
       toast.error(
-        "Impossible de déconnecter le compte. Veuillez réessayer plus tard."
+        error instanceof Error
+          ? error.message
+          : "Impossible de déconnecter le compte. Veuillez réessayer plus tard."
       );
     }
   };
@@ -174,14 +192,19 @@ export default function ConnectedAccounts() {
       <h2 className="text-xl font-bold mb-4">Comptes TikTok Connectés</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {accounts.map((account) => {
-          const profile = account.extra?.profile;
-          const hasLimitedPermissions = profile?.bio_description?.includes(
-            "limited permissions"
-          );
-          const connectedAt = account.extra?.connection_status?.connected_at
-            ? new Date(
-                account.extra.connection_status.connected_at
-              ).toLocaleDateString()
+          // Extract profile from extra if available
+          const profile: Partial<SocialProfile> = account.extra?.profile ?? {};
+          const connectionStatus: Partial<ConnectionStatus> =
+            account.extra?.connection_status ?? {};
+          const tokenInfo: Partial<TokenInfo> = account.extra?.token_info ?? {};
+
+          // Check for limited permissions
+          const hasLimitedPermissions =
+            profile.bio_description?.includes("limited permissions") ||
+            !tokenInfo.scope?.includes("user.info.basic");
+
+          const connectedAt = connectionStatus.connected_at
+            ? new Date(connectionStatus.connected_at).toLocaleDateString()
             : "Date inconnue";
 
           return (
@@ -192,7 +215,7 @@ export default function ConnectedAccounts() {
                     <Badge variant="outline" className="bg-primary/10">
                       TikTok
                     </Badge>
-                    {profile?.is_verified && (
+                    {profile.is_verified && (
                       <Badge className="bg-blue-500">Vérifié</Badge>
                     )}
                     {hasLimitedPermissions && (
@@ -210,10 +233,10 @@ export default function ConnectedAccounts() {
               <CardContent className="pt-4">
                 <div className="flex items-center gap-4">
                   <div className="h-16 w-16 rounded-full overflow-hidden bg-muted flex items-center justify-center">
-                    {profile?.avatar_url ? (
+                    {profile.avatar_url ? (
                       <Image
                         src={profile.avatar_url}
-                        alt={profile.display_name || "Utilisateur TikTok"}
+                        alt={profile.display_name ?? "Utilisateur TikTok"}
                         width={64}
                         height={64}
                         className="object-cover"
@@ -225,25 +248,25 @@ export default function ConnectedAccounts() {
 
                   <div className="flex-1">
                     <h3 className="font-semibold text-lg">
-                      {profile?.display_name ?? "Utilisateur TikTok"}
+                      {profile.display_name ?? "Utilisateur TikTok"}
                     </h3>
                     <p className="text-sm text-muted-foreground">
                       @
-                      {profile?.username ??
+                      {profile.username ??
                         account.account_identifier.substring(0, 8)}
                     </p>
 
-                    {(profile?.follower_count !== null ||
-                      profile?.following_count !== null) && (
+                    {(profile.follower_count !== undefined ||
+                      profile.following_count !== undefined) && (
                       <div className="flex gap-4 mt-2 text-sm">
-                        {profile?.follower_count !== null && (
+                        {profile.follower_count !== undefined && (
                           <span>
-                            {profile?.follower_count.toLocaleString()} abonnés
+                            {profile.follower_count.toLocaleString()} abonnés
                           </span>
                         )}
-                        {profile?.following_count !== null && (
+                        {profile.following_count !== undefined && (
                           <span>
-                            {profile?.following_count.toLocaleString()}{" "}
+                            {profile.following_count.toLocaleString()}{" "}
                             abonnements
                           </span>
                         )}
@@ -252,7 +275,7 @@ export default function ConnectedAccounts() {
                   </div>
                 </div>
 
-                {profile?.bio_description && !hasLimitedPermissions && (
+                {profile.bio_description && !hasLimitedPermissions && (
                   <div className="mt-3 text-sm">
                     <p className="line-clamp-2">{profile.bio_description}</p>
                   </div>
