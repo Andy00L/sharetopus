@@ -49,6 +49,7 @@ export async function initiateTikTokVideoUpload(
     const url = "https://open.tiktokapis.com/v2/post/publish/video/init/";
     const body = JSON.stringify({
       post_info: {
+        title: "Video Upload",
         // source can be VIDEO_SOURCE_FILE_UPLOAD or VIDEO_SOURCE_PULL_URL
         source: "VIDEO_SOURCE_FILE_UPLOAD",
       },
