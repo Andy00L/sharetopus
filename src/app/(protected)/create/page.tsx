@@ -1,19 +1,19 @@
-import { currentUser } from "@clerk/nextjs/server";
+// src/app/(protected)/create/page.tsx (Example)
 
-export default async function Page() {
-  const user = await currentUser();
-  const UserEmail = user?.primaryEmailAddress?.emailAddress;
-  const fullName = user?.fullName;
+import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
+import CreateTikTokPostForm from "@/components/core/create/CreateTikTokPostForm";
+
+export default async function CreatePostPage() {
+  // Fetch all social accounts on the server
+  const allAccounts = await fetchSocialAccounts();
+
+  // Filter for TikTok accounts to pass to the form
+  const tiktokAccounts = allAccounts.filter((acc) => acc.platform === "tiktok");
 
   return (
-    <div className="flex flex-1 flex-col">
-      <div className="@container/main flex flex-1 flex-col gap-2">
-        <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-          <div>Contenu</div>
-          <span>{UserEmail}</span>
-          <span>{fullName}</span>
-        </div>
-      </div>
+    <div className="container mx-auto py-8">
+      <h1 className="text-2xl font-bold mb-6">Créer une publication TikTok</h1>
+      <CreateTikTokPostForm connectedAccounts={tiktokAccounts} />
     </div>
   );
 }

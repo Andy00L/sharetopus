@@ -1,4 +1,4 @@
-import { TokenExchangeResponse } from "@/actions/types/TokenExchangeResponse";
+import { TokenExchangeResponse } from "@/lib/types/TokenExchangeResponse";
 
 // lib/api/tiktok/auth.ts
 export async function exchangeTikTokCode(

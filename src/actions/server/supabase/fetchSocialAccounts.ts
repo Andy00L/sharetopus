@@ -1,5 +1,5 @@
 import { adminSupabase } from "@/actions/api/supabase"; // Import your admin client
-import { SocialAccount } from "@/actions/types/socialAccount";
+import { SocialAccount } from "@/lib/types/socialAccount";
 import { auth } from "@clerk/nextjs/server";
 
 export async function fetchSocialAccounts(): Promise<SocialAccount[]> {

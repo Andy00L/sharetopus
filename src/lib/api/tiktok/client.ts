@@ -1,5 +1,5 @@
 // lib/api/tiktok/client.ts
-import { TikTokProfile } from "@/actions/types/TikTokProfile"; // Adjust path if needed
+import { TikTokProfile } from "@/lib/types/TikTokProfile"; // Adjust path if needed
 
 export async function getTikTokProfile(
   accessToken: string,

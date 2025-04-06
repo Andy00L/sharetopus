@@ -1,7 +1,6 @@
 // src/components/core/accounts/social/ConnectedAccountsClient.tsx
 "use client"; // Keep this component as a client component
 
-import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button"; // Keep for potential future actions
 import {
@@ -11,12 +10,13 @@ import {
   CardHeader,
 } from "@/components/ui/card";
 import {
+  ConnectionStatus,
   SocialAccount,
   SocialProfile,
-  ConnectionStatus,
   TokenInfo,
-} from "@/actions/types/socialAccount";
-import { Users, UserCheck } from "lucide-react";
+} from "@/lib/types/socialAccount";
+import { UserCheck, Users } from "lucide-react";
+import Image from "next/image";
 // Import shared types
 
 // Define props for the client component
