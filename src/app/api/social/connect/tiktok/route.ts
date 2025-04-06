@@ -35,12 +35,25 @@ export async function GET(req: Request) {
     // Exchange the authorization code for tokens from TikTok
     const tokenResponse = await exchangeTikTokCode(code);
     // Add after token exchange in your route.ts
-    console.log("Granted TikTok scopes:", tokenResponse.scope);
+    console.log(
+      "[TikTok] Token response:",
+      JSON.stringify(tokenResponse, null, 2)
+    );
     const { access_token, refresh_token, expires_in } = tokenResponse;
 
     // Retrieve TikTok profile information using the obtained access token
-    const tiktokProfile = await getTikTokProfile(access_token);
-
+    let tiktokProfile;
+    try {
+      tiktokProfile = await getTikTokProfile(access_token);
+    } catch (profileError) {
+      console.error("[TikTok] Profile fetch error:", profileError);
+      // Create a minimal profile when the API call fails
+      tiktokProfile = {
+        id: tokenResponse.open_id || "unknown_id",
+        username: "TikTok User",
+        display_name: "TikTok User",
+      };
+    }
     // Upsert the social account into the Supabase social_accounts table
     const { error } = await supabase.from("social_accounts").upsert(
       [
