@@ -1,38 +1,144 @@
 // lib/api/tiktok/client.ts
 export interface TikTokProfile {
-  id: string; // par exemple l’open_id de TikTok
+  id: string;
   username: string;
-  // Vous pouvez ajouter d’autres champs (nom affiché, image, etc.) selon les besoins
+  display_name?: string;
+  avatar_url?: string;
+  is_verified?: boolean;
+  follower_count?: number;
+  following_count?: number;
+  bio_description?: string;
 }
 
+/**
+ * Fetches TikTok user profile using the provided access token
+ *
+ * @param accessToken Valid TikTok access token
+ * @returns TikTok profile information
+ */
 export async function getTikTokProfile(
   accessToken: string
 ): Promise<TikTokProfile> {
-  // URL de récupération des informations utilisateur de TikTok.
-  // Vérifiez la documentation officielle de TikTok pour l’endpoint exact.
-  const url = "https://open-api.tiktok.com/user/info/";
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
+  try {
+    // TikTok V2 API requires a different endpoint with specific fields
+    // See: https://developers.tiktok.com/doc/tiktok-api-v2-get-user-info/
+    const url = "https://open.tiktokapis.com/v2/user/info/";
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error("Erreur lors de la récupération du profil TikTok: " + text);
-  }
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+    });
 
-  const data = await res.json();
-  // On suppose ici que la réponse est de la forme { data: { open_id, display_name, ... } }
-  if (data?.data) {
+    // Log the raw response for debugging
+    const responseText = await response.text();
+    console.log("[TikTok] Profile Response:", responseText);
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(
+        `Failed to parse TikTok profile response: ${responseText}+ ${e}`
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `TikTok profile fetch failed: ${JSON.stringify(responseData)}`
+      );
+    }
+
+    // TikTok v2 API response structure
+    if (responseData?.data?.user) {
+      const user = responseData.data.user;
+      return {
+        id: user.open_id || user.union_id,
+        username: user.display_name,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        is_verified: user.is_verified,
+        bio_description: user.bio_description,
+      };
+    }
+
+    // Fallback to minimal profile based on the token exchange data
     return {
-      id: data.data.open_id,
-      username: data.data.display_name,
+      id: responseData?.data?.open_id || "unknown_id",
+      username: "TikTok User",
     };
-  } else {
-    throw new Error(
-      "Réponse invalide lors de la récupération du profil TikTok."
-    );
+  } catch (error) {
+    console.error("Error fetching TikTok profile:", error);
+    // Return minimal profile with the error information
+    return {
+      id: "error_fetching_profile",
+      username: "TikTok User",
+      display_name: "Error fetching profile",
+    };
+  }
+}
+
+/**
+ * Makes a request to get the user's TikTok information using fields
+ *
+ * @param accessToken Valid TikTok access token
+ * @returns TikTok profile information with additional details
+ */
+export async function getTikTokProfileDetails(
+  accessToken: string
+): Promise<TikTokProfile> {
+  try {
+    // TikTok v2 API requires different request format with fields
+    const url = "https://open.tiktokapis.com/v2/user/info/";
+    const fields = [
+      "open_id",
+      "union_id",
+      "avatar_url",
+      "avatar_url_100",
+      "avatar_large_url",
+      "display_name",
+      "bio_description",
+      "profile_deep_link",
+      "is_verified",
+    ];
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: fields,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`TikTok profile details fetch failed: ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    if (data?.data?.user) {
+      const user = data.data.user;
+      return {
+        id: user.open_id || user.union_id,
+        username: user.display_name,
+        display_name: user.display_name,
+        avatar_url: user.avatar_url,
+        is_verified: user.is_verified,
+        bio_description: user.bio_description,
+      };
+    } else {
+      throw new Error(
+        `Invalid TikTok profile details response: ${JSON.stringify(data)}`
+      );
+    }
+  } catch (error) {
+    console.error("Error fetching TikTok profile details:", error);
+    throw error;
   }
 }
