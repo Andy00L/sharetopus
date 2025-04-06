@@ -91,7 +91,7 @@ export async function getTikTokProfileDetails(
 ): Promise<TikTokProfile> {
   try {
     // Utilisation de l'endpoint TikTok pour récupérer les infos d'utilisateur
-    const url = "https://open.tiktokapis.com/v2/user/info/";
+    const url = "https://open.tiktokapis.com/v2/user/info";
     // Liste des champs requis en tant que tableau
     const fields = [
       "open_id",
