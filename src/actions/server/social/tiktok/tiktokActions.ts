@@ -55,6 +55,9 @@ export async function initiateTikTokVideoUpload(
         // Keep optional fields minimal here if preferred, or add defaults
         title: "Video Upload Placeholder", // Optional placeholder
         privacy_level: "SELF_ONLY", // Optional default
+        disable_comment: false, // Default value
+        disable_duet: false, // Default value
+        disable_stitch: false, // Default value
       },
       source_info: {
         source: "VIDEO_SOURCE_FILE_UPLOAD",
