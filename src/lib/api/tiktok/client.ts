@@ -35,28 +35,28 @@ export async function getTikTokProfile(
         `Failed to parse TikTok profile response: ${responseText}`
       );
     }
-
-    if (data.error) {
-      console.warn("[TikTok] API returned an error:", data.error);
-
-      // Handle specific errors - scope_not_authorized is common
+    // --- FIX: Check for error object AND error code !== 'ok' ---
+    if (data.error && data.error.code !== "ok") {
+      console.warn(
+        `[TikTok] API returned an error code: ${data.error.code}`,
+        data.error
+      ); // Handle specific errors like scope_not_authorized
       if (data.error.code === "scope_not_authorized") {
         console.warn(
-          "[TikTok] User did not authorize 'user.info.profile' scope. Returning basic info."
+          "[TikTok] User did not authorize required scope(s). Returning basic info."
         );
-        // Return profile with available data and clear indication of limitation
         return {
-          id: openId, // Use the openId passed from token exchange
-          username: `tiktok_user_${openId?.substring(0, 6)}`, // Create a placeholder username
-          display_name: "TikTok User (Limited Access)", // Indicate limited access
-          avatar_url: "", // No avatar available without scope
+          id: openId,
+          username: `tiktok_user_${openId?.substring(0, 6)}`,
+          display_name: "TikTok User (Limited Access)",
+          avatar_url: "",
           is_verified: false,
-          bio_description: `Account connected with limited permissions. Scope 'user.info.profile' needed for full profile.`,
-          follower_count: null, // Use null for unknown counts
+          bio_description: `Account connected with limited permissions. Required scope(s) missing.`,
+          follower_count: null,
           following_count: null,
         };
       }
-      // Throw other API errors
+      // Throw other actual API errors
       throw new Error(
         `TikTok API error (${data.error.code}): ${data.error.message}`
       );
@@ -81,6 +81,7 @@ export async function getTikTokProfile(
     }
 
     // Build complete profile from response
+    console.log("[TikTok] Successfully parsed profile data:", userData); // Add log for success
     return {
       id: userData.open_id || openId, // Prefer open_id from profile data if available
       username:
