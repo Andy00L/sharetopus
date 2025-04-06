@@ -1,25 +1,9 @@
-// lib/api/tiktok/client.ts
-export interface TikTokProfile {
-  id: string;
-  username: string;
-  display_name?: string;
-  avatar_url?: string;
-  is_verified?: boolean;
-  follower_count?: number;
-  following_count?: number;
-  bio_description?: string;
-}
+import { TikTokProfile } from "@/actions/types/TikTokProfile";
 
-/**
- * Fetches TikTok user profile using TikTok V2 API
- *
- * @param accessToken Valid TikTok access token
- * @param openId TikTok user's unique identifier for fallback
- * @returns Complete TikTok profile information
- */
+// lib/api/tiktok/client.ts
 export async function getTikTokProfile(
   accessToken: string,
-  openId: string
+  openId?: string
 ): Promise<TikTokProfile> {
   // Define fields to request according to TikTok documentation
   const fields =
@@ -49,14 +33,17 @@ export async function getTikTokProfile(
     try {
       data = JSON.parse(responseText);
     } catch (parseError) {
+      console.error("[TikTok] Failed to parse API response:", parseError);
       throw new Error(
-        `Failed to parse TikTok profile response: ${responseText}+${parseError}`
+        `Failed to parse TikTok profile response: ${responseText}`
       );
     }
 
     // Check for API errors
-    if (data.error && data.error.code !== "ok") {
-      // Handle the scope_not_authorized error specially
+    if (data.error) {
+      console.warn("[TikTok] API returned an error:", data.error);
+
+      // Handle the scope_not_authorized error specifically
       if (data.error.code === "scope_not_authorized") {
         console.warn(
           "[TikTok] User did not authorize required scopes. Using available data."
@@ -70,16 +57,16 @@ export async function getTikTokProfile(
           avatar_url: "",
           is_verified: false,
           bio_description: `Account connected with limited permissions. Additional scopes needed for complete profile.`,
-          follower_count: 777,
-          following_count: 777,
+          follower_count: 0,
+          following_count: 0,
         };
       }
 
       throw new Error(`TikTok API error: ${JSON.stringify(data.error)}`);
     }
 
-    // Extract user data
-    const userData = data.data.user || {};
+    // Extract user data - handle the case where data.data could be empty
+    const userData = (data.data && data.data.user) || {};
 
     // Build complete profile from response
     return {
@@ -95,16 +82,18 @@ export async function getTikTokProfile(
   } catch (error) {
     console.error("[TikTok] Profile fetch error:", error);
 
-    // Create enriched profile with error information
+    // Create fallback profile with error information
     return {
       id: openId,
       username: "TikTok User",
       display_name: "TikTok User",
       avatar_url: "",
       is_verified: false,
-      bio_description: `Error fetching complete profile: `,
-      follower_count: 777,
-      following_count: 777,
+      bio_description: `Error fetching complete profile: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+      follower_count: 0,
+      following_count: 0,
     };
   }
 }

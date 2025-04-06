@@ -1,17 +1,6 @@
-// lib/api/tiktok/auth.ts
-export interface TokenExchangeResponse {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  refresh_expires_in: number;
-  open_id: string;
-  scope: string;
-  token_type: string;
-}
+import { TokenExchangeResponse } from "@/actions/types/TokenExchangeResponse";
 
-/**
- * Exchange TikTok authorization code for access token
- */
+// lib/api/tiktok/auth.ts
 export async function exchangeTikTokCode(
   code: string
 ): Promise<TokenExchangeResponse> {
@@ -38,6 +27,8 @@ export async function exchangeTikTokCode(
   params.append("redirect_uri", redirect_uri);
 
   try {
+    console.log("[TikTok] Exchanging code for tokens...");
+
     // Make token exchange request
     const response = await fetch(url, {
       method: "POST",
@@ -49,6 +40,7 @@ export async function exchangeTikTokCode(
 
     // Get raw response text for error handling
     const responseText = await response.text();
+    console.log("[TikTok] Token response:", responseText);
 
     if (!response.ok) {
       throw new Error(
