@@ -128,7 +128,7 @@ export async function getTikTokProfileDetails(
 
     // Log the raw response for debugging
     const responseText = await response.text();
-    console.log("[TikTok] Profile Response:", responseText);
+    console.error("[TikTok] Profile Response:", responseText);
 
     let data;
     try {
