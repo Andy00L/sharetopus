@@ -42,20 +42,21 @@ export async function initiateTikTokVideoUpload(
   if (!userId) {
     throw new Error("User not authenticated.");
   }
-
+  let accessToken = "";
   try {
-    const accessToken = await getValidTikTokToken(userId, accountId);
+    accessToken = await getValidTikTokToken(userId, accountId);
 
     const url = "https://open.tiktokapis.com/v2/post/publish/video/init/";
     const body = JSON.stringify({
       post_info: {
-        title: "Video Upload",
         // source can be VIDEO_SOURCE_FILE_UPLOAD or VIDEO_SOURCE_PULL_URL
         source: "VIDEO_SOURCE_FILE_UPLOAD",
       },
     });
 
-    console.log("[TikTok Init] Initiating video upload...");
+    console.log(
+      `[TikTok Init] Initiating video upload for account ${accountId} with body: ${body}`
+    );
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -64,16 +65,30 @@ export async function initiateTikTokVideoUpload(
       },
       body: body,
     });
-
+    // Check if response is ok before parsing JSON
+    if (!response.ok) {
+      // Attempt to read response body for more details if possible
+      const errorText = await response
+        .text()
+        .catch(() => "Could not read error response body");
+      console.error(
+        `[TikTok Init] API request failed with status ${response.status}. Body: ${errorText}`
+      );
+      throw new Error(`TikTok API request failed (${response.status})`);
+    }
     const data: TikTokVideoInitResponse = await response.json();
     console.log("[TikTok Init] Response:", JSON.stringify(data));
 
     if (data.error && data.error.code !== "ok") {
+      console.error(`[TikTok Init] Failed with body: ${body}`); // Log body on error
+
       throw new Error(
         `TikTok init failed (${data.error.code}): ${data.error.message}`
       );
     }
     if (!data.data?.upload_url || !data.data?.publish_id) {
+      console.error(`[TikTok Init] Missing data with body: ${body}`); // Log body if data missing
+
       throw new Error("TikTok init response missing upload_url or publish_id.");
     }
 
@@ -108,9 +123,9 @@ export async function publishTikTokVideo(
   if (!userId) {
     throw new Error("User not authenticated.");
   }
-
+  let accessToken = "";
   try {
-    const accessToken = await getValidTikTokToken(userId, accountId);
+    accessToken = await getValidTikTokToken(userId, accountId);
 
     const url = "https://open.tiktokapis.com/v2/post/publish/video/";
     const body = JSON.stringify({
@@ -125,7 +140,12 @@ export async function publishTikTokVideo(
       },
     });
 
-    console.log("[TikTok Publish] Publishing video with ID:", publishId);
+    console.log(
+      `[TikTok Publish] Publishing video ${publishId} for account ${accountId} with body: ${body}`
+    );
+    console.log(
+      `[TikTok Publish] Using Access Token: ${accessToken.substring(0, 10)}...`
+    ); // Log partial token
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -136,11 +156,22 @@ export async function publishTikTokVideo(
       },
       body: body,
     });
-
+    // Check if response is ok before parsing JSON
+    if (!response.ok) {
+      const errorText = await response
+        .text()
+        .catch(() => "Could not read error response body");
+      console.error(
+        `[TikTok Publish] API request failed with status ${response.status}. Body: ${errorText}`
+      );
+      throw new Error(`TikTok API request failed (${response.status})`);
+    }
     const data: TikTokVideoPublishResponse = await response.json();
     console.log("[TikTok Publish] Response:", JSON.stringify(data));
 
     if (data.error && data.error.code !== "ok") {
+      console.error(`[TikTok Publish] Failed with body: ${body}`); // Log body on error
+
       // Handle specific errors like "video_upload_inprogress" if needed
       throw new Error(
         `TikTok publish failed (${data.error.code}): ${data.error.message}`
@@ -155,6 +186,8 @@ export async function publishTikTokVideo(
         // Consider the publish successful even without immediate share_id
         return { share_id: `published-${publishId}` }; // Return a placeholder
       }
+      console.error(`[TikTok Publish] Missing data with body: ${body}`); // Log body if data missing
+
       throw new Error(
         "TikTok publish response missing share_id and no 'ok' error code."
       );
