@@ -36,72 +36,93 @@ type TikTokPrivacyLevel =
   | "SELF_ONLY";
 // Action to initiate video upload
 export async function initiateTikTokVideoUpload(
-  accountId: string, // The DB ID of the social account
-  videoSize: number
+  accountId: string,
+  videoSize: number // Video size in bytes
 ): Promise<{ upload_url: string; publish_id: string }> {
   const { userId } = await auth();
   if (!userId) {
     throw new Error("User not authenticated.");
   }
+
   let accessToken = "";
   try {
     accessToken = await getValidTikTokToken(userId, accountId);
 
+    // Still using the Direct Post endpoint
     const url = "https://open.tiktokapis.com/v2/post/publish/video/init/";
-    const chunkSize = 20 * 1024 * 1024; // 20 MB in bytes
-    const totalChunkCount = Math.ceil(videoSize / chunkSize);
+
+    // --- FIX: Send ONLY source_info as per Upload Draft example ---
+    // Calculate chunk size and count based on documentation rules
+    let chunkSize = videoSize; // Default for small files
+    let totalChunkCount = 1;
+    const minChunkSize = 5 * 1024 * 1024; // 5MB
+
+    if (videoSize > minChunkSize) {
+      // Use a larger chunk size for bigger files, e.g., 20MB
+      // Ensure chunk size doesn't exceed max (e.g., 64MB per docs, use slightly less)
+      chunkSize = Math.min(videoSize, 60 * 1024 * 1024); // e.g., 60MB chunks
+      totalChunkCount = Math.ceil(videoSize / chunkSize);
+    }
+    // Ensure chunk size is at least minChunkSize if video is larger than that
+    if (videoSize > minChunkSize && chunkSize < minChunkSize) {
+      chunkSize = minChunkSize;
+      totalChunkCount = Math.ceil(videoSize / chunkSize);
+    }
+    // If video is smaller than minChunkSize, chunk size must be video size
+    if (videoSize <= minChunkSize) {
+      chunkSize = videoSize;
+      totalChunkCount = 1;
+    }
+
     const body = JSON.stringify({
-      post_info: {
-        // Keep optional fields minimal here if preferred, or add defaults
-        title: "Video Upload Placeholder", // Optional placeholder
-        privacy_level: "SELF_ONLY", // Optional default
-        disable_comment: false, // Default value
-        disable_duet: false, // Default value
-        disable_stitch: false, // Default value
-      },
+      // Remove the outer "post_info" object for this request
       source_info: {
         source: "VIDEO_SOURCE_FILE_UPLOAD",
         video_size: videoSize,
-        chunk_size: chunkSize,
-        total_chunk_count: totalChunkCount,
+        chunk_size: chunkSize, // Use calculated chunk size
+        total_chunk_count: totalChunkCount, // Use calculated count
       },
     });
+    // --- End of FIX ---
 
     console.log(
       `[TikTok Init] Initiating video upload for account ${accountId} with body: ${body}`
     );
+    console.log(
+      `[TikTok Init] Using Access Token: ${accessToken.substring(0, 10)}...`
+    );
+
     const response = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json; charset=UTF-8",
+        "Content-Type": "application/json; charset=UTF-8", // Ensure correct Content-Type
       },
       body: body,
     });
-    // Check if response is ok before parsing JSON
+
     if (!response.ok) {
-      // Attempt to read response body for more details if possible
       const errorText = await response
         .text()
         .catch(() => "Could not read error response body");
       console.error(
         `[TikTok Init] API request failed with status ${response.status}. Body: ${errorText}`
       );
+      console.error(`[TikTok Init] Failing Request Body: ${body}`); // Log the body that failed
       throw new Error(`TikTok API request failed (${response.status})`);
     }
+
     const data: TikTokVideoInitResponse = await response.json();
     console.log("[TikTok Init] Response:", JSON.stringify(data));
 
     if (data.error && data.error.code !== "ok") {
-      console.error(`[TikTok Init] Failed with body: ${body}`); // Log body on error
-
+      console.error(`[TikTok Init] Failed with body: ${body}`);
       throw new Error(
         `TikTok init failed (${data.error.code}): ${data.error.message}`
       );
     }
     if (!data.data?.upload_url || !data.data?.publish_id) {
-      console.error(`[TikTok Init] Missing data with body: ${body}`); // Log body if data missing
-
+      console.error(`[TikTok Init] Missing data with body: ${body}`);
       throw new Error("TikTok init response missing upload_url or publish_id.");
     }
 
@@ -111,8 +132,10 @@ export async function initiateTikTokVideoUpload(
       publish_id: data.data.publish_id,
     };
   } catch (error) {
-    console.error("[TikTok Init] Error:", error);
-    // Re-throw a generic error or the specific error
+    console.error(
+      `[TikTok Init] Error during initiation for account ${accountId}:`,
+      error
+    );
     throw new Error(
       `Failed to initiate TikTok upload: ${
         error instanceof Error ? error.message : "Unknown error"
