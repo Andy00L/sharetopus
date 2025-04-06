@@ -50,6 +50,7 @@ export default function CreateTikTokPostForm({
 }: CreateTikTokPostFormProps) {
   // Removed router as it's not used
   // const router = useRouter();
+
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [title, setTitle] = useState<string>("");
@@ -99,6 +100,8 @@ export default function CreateTikTokPostForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // --- Ensure videoFile exists before accessing size ---
+
     if (!selectedAccountId || !videoFile) {
       setError("Veuillez sélectionner un compte et un fichier vidéo.");
       return;
@@ -114,7 +117,10 @@ export default function CreateTikTokPostForm({
 
     try {
       // 1. Initiate Upload
-      const initData = await initiateTikTokVideoUpload(selectedAccountId);
+      const initData = await initiateTikTokVideoUpload(
+        selectedAccountId,
+        videoFile.size
+      );
       uploadUrl = initData.upload_url;
       publishId = initData.publish_id;
       console.log("Upload URL:", uploadUrl);

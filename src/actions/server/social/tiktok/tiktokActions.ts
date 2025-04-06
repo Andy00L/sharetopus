@@ -36,7 +36,8 @@ type TikTokPrivacyLevel =
   | "SELF_ONLY";
 // Action to initiate video upload
 export async function initiateTikTokVideoUpload(
-  accountId: string // The DB ID of the social account
+  accountId: string, // The DB ID of the social account
+  videoSize: number
 ): Promise<{ upload_url: string; publish_id: string }> {
   const { userId } = await auth();
   if (!userId) {
@@ -47,10 +48,19 @@ export async function initiateTikTokVideoUpload(
     accessToken = await getValidTikTokToken(userId, accountId);
 
     const url = "https://open.tiktokapis.com/v2/post/publish/video/init/";
+    const chunkSize = 20 * 1024 * 1024; // 20 MB in bytes
+    const totalChunkCount = Math.ceil(videoSize / chunkSize);
     const body = JSON.stringify({
       post_info: {
-        // source can be VIDEO_SOURCE_FILE_UPLOAD or VIDEO_SOURCE_PULL_URL
+        // Keep optional fields minimal here if preferred, or add defaults
+        title: "Video Upload Placeholder", // Optional placeholder
+        privacy_level: "SELF_ONLY", // Optional default
+      },
+      source_info: {
         source: "VIDEO_SOURCE_FILE_UPLOAD",
+        video_size: videoSize,
+        chunk_size: chunkSize,
+        total_chunk_count: totalChunkCount,
       },
     });
 
