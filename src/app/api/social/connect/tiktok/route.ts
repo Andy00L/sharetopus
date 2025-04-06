@@ -40,7 +40,7 @@ export async function GET(req: Request) {
     const { access_token, refresh_token, expires_in } = tokenResponse;
 
     // Retrieve TikTok profile information using the obtained access token
-    const tiktokProfile = await getTikTokProfileDetails(access_token);
+    const tiktokProfile = await getTikTokProfile(access_token);
 
     // Upsert the social account into the Supabase social_accounts table
     const { error } = await supabase.from("social_accounts").upsert(
