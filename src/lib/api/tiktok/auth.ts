@@ -3,7 +3,6 @@ export interface TokenExchangeResponse {
   access_token: string;
   refresh_token: string;
   expires_in: number; // durée en secondes avant expiration
-  // Vous pouvez ajouter d'autres champs si TikTok renvoie plus de données.
 }
 
 export async function exchangeTikTokCode(
@@ -11,14 +10,13 @@ export async function exchangeTikTokCode(
 ): Promise<TokenExchangeResponse> {
   // Récupération de la configuration depuis les variables d’environnement
   const client_id = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
-  // Note: We remove the client secret since it may be considered an unnecessary parameter for the web flow.
-  // const client_secret = process.env.TIKTOK_CLIENT_SECRET;
+  // Nous ne transmettons pas le client_secret pour le flow web (cela peut causer des erreurs)
   const redirect_uri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL;
   if (!client_id || !redirect_uri) {
     throw new Error("Configuration TikTok manquante.");
   }
 
-  // URL de l'endpoint d'échange de code de TikTok (note: no trailing slash)
+  // URL de l'endpoint d'échange (sans trailing slash)
   const url = "https://open-api.tiktok.com/oauth/access_token";
   const params = new URLSearchParams();
   params.append("client_key", client_id);
@@ -28,9 +26,7 @@ export async function exchangeTikTokCode(
 
   const res = await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
   });
 
@@ -40,7 +36,6 @@ export async function exchangeTikTokCode(
   }
 
   const data = await res.json();
-  // Supposons que TikTok renvoie une structure { data: { access_token, refresh_token, expires_in } }
   if (data?.data) {
     return data.data as TokenExchangeResponse;
   } else {
