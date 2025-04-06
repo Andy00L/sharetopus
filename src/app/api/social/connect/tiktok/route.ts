@@ -1,9 +1,9 @@
 // app/api/social/connect/tiktok/route.ts
-import { NextResponse } from "next/server";
-import { auth } from "@clerk/nextjs/server";
 import { adminSupabase } from "@/actions/api/supabase"; // Import adminSupabase
 import { exchangeTikTokCode } from "@/lib/api/tiktok/auth";
 import { getTikTokProfile } from "@/lib/api/tiktok/client";
+import { auth } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
@@ -13,9 +13,9 @@ export async function GET(req: Request) {
 
     if (!code) {
       console.error("[TikTok] Missing 'code' parameter");
-      return NextResponse.json(
-        { error: "Le paramètre 'code' est manquant." },
-        { status: 400 }
+      return new NextResponse(
+        `<html><body><script>window.close();</script>Le paramètre 'code' est manquant.</body></html>`,
+        { status: 400, headers: { "Content-Type": "text/html" } }
       );
     }
 
@@ -24,9 +24,10 @@ export async function GET(req: Request) {
 
     if (!userId) {
       console.error("[TikTok] User not authenticated");
-      return NextResponse.json(
-        { error: "Utilisateur non authentifié." },
-        { status: 401 }
+      // --- FIX: Return HTML to close popup even on error ---
+      return new NextResponse(
+        `<html><body><script>window.close();</script>Utilisateur non authentifié.</body></html>`,
+        { status: 401, headers: { "Content-Type": "text/html" } }
       );
     }
 
@@ -57,8 +58,6 @@ export async function GET(req: Request) {
         );
       } catch (profileError) {
         console.error("[TikTok] Error fetching profile:", profileError);
-        // Re-throw to be caught by outer try/catch
-        throw profileError;
       }
 
       // Database operations with simplified approach - just insert
@@ -83,57 +82,95 @@ export async function GET(req: Request) {
             },
             connection_status: {
               connected_at: new Date().toISOString(),
-              profile_fetch_successful: true,
+              profile_fetch_successful:
+                !tiktokProfile?.bio_description?.includes(
+                  "Error fetching complete profile"
+                ) &&
+                !tiktokProfile?.bio_description?.includes(
+                  "limited permissions"
+                ),
             },
           },
         };
 
-        // First try to delete any existing records to avoid conflicts
-        try {
-          await adminSupabase
-            .from("social_accounts")
-            .delete()
-            .eq("user_id", userId)
-            .eq("platform", "tiktok")
-            .eq("account_identifier", open_id);
-
-          console.log("[TikTok] Deleted any existing account records");
-        } catch (deleteError) {
-          console.error("[TikTok] Error during delete operation:", deleteError);
-          // Continue anyway - the insert might still work
-        }
-
-        // Simple insert operation using adminSupabase
-        const { error: insertError } = await adminSupabase
+        // Upsert logic: Insert or update based on user_id, platform, account_identifier
+        const { error: upsertError } = await adminSupabase
           .from("social_accounts")
-          .insert([accountData]);
+          .upsert([accountData], {
+            onConflict: "user_id, platform, account_identifier", // Define your unique constraint columns
+            ignoreDuplicates: false, // Ensure it updates if conflict occurs
+          });
 
-        if (insertError) {
-          console.error("[TikTok] Error inserting account:", insertError);
+        if (upsertError) {
+          console.error("[TikTok] Error upserting account:", upsertError);
+          // Even if DB fails, try to close popup, maybe indicate error
         } else {
-          console.log("[TikTok] Account created successfully");
+          console.log("[TikTok] Account upserted successfully");
         }
       } catch (dbError) {
         console.error("[TikTok] Database operation error:", dbError);
-        // Don't rethrow - proceed to redirect
+        // Proceed to close popup
       }
 
-      // Redirect to accounts page regardless of database outcome
-      console.log("[TikTok] Redirecting to accounts page");
-      return NextResponse.redirect(new URL("/accounts", req.url));
+      // --- FIX: Return HTML to close popup and refresh opener ---
+      const htmlResponse = `
+        <!DOCTYPE html>
+        <html>
+        <head><title>Connexion...</title></head>
+        <body>
+          <p>Connexion réussie. Cette fenêtre va se fermer...</p>
+          <script>
+            try {
+              if (window.opener && window.opener.onTikTokConnectSuccess) {
+                console.log('Calling opener refresh function...');
+                window.opener.onTikTokConnectSuccess();
+              } else {
+                console.warn('Opener window or success function not found.');
+                // Optionally redirect parent if opener communication fails
+                // window.opener.location.href = '/accounts?status=success';
+              }
+            } catch (e) {
+              console.error('Error calling opener function:', e);
+            } finally {
+              console.log('Closing popup window...');
+              window.close();
+            }
+          </script>
+        </body>
+        </html>
+      `;
+      return new NextResponse(htmlResponse, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      });
+      // --- End of FIX ---
     } catch (integrationError) {
       console.error("[TikTok] Integration error:", integrationError);
-      // Redirect to accounts page with error indicator
-      return NextResponse.redirect(new URL("/accounts?status=error", req.url));
+      // Still try to close the popup, maybe show error message first
+      const errorHtml = `
+        <!DOCTYPE html><html><body>
+        <p>Erreur lors de la connexion: ${
+          integrationError instanceof Error
+            ? integrationError.message
+            : "Erreur inconnue"
+        }</p>
+        <script>window.close();</script>
+        </body></html>`;
+      return new NextResponse(errorHtml, {
+        status: 500,
+        headers: { "Content-Type": "text/html" },
+      });
     }
   } catch (error) {
-    console.error("[TikTok] Unhandled error:", error);
-    let errorMessage = "Erreur interne";
-
-    if (error instanceof Error) {
-      errorMessage = error.message;
-    }
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    console.error("[TikTok] Unhandled error in GET route:", error);
+    const errorHtml = `
+      <!DOCTYPE html><html><body>
+      <p>Erreur interne du serveur.</p>
+      <script>window.close();</script>
+      </body></html>`;
+    return new NextResponse(errorHtml, {
+      status: 500,
+      headers: { "Content-Type": "text/html" },
+    });
   }
 }
