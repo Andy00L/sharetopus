@@ -3,10 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { supabase } from "@/actions/api/supabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/auth";
-import {
-  getTikTokProfile,
-  getTikTokProfileDetails,
-} from "@/lib/api/tiktok/client";
+import { getTikTokProfile } from "@/lib/api/tiktok/client";
 
 /**
  * GET handler for TikTok OAuth callback.
