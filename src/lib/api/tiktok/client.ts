@@ -90,24 +90,47 @@ export async function getTikTokProfileDetails(
   accessToken: string
 ): Promise<TikTokProfile> {
   try {
-    // Add trailing slash to match TikTok's API convention
+    // Correct URL with trailing slash
     const url = "https://open.tiktokapis.com/v2/user/info/";
 
-    // Use GET request instead of POST
+    // Fields must be specified as a comma-separated string
+    const fields = [
+      "open_id",
+      "union_id",
+      "avatar_url",
+      "display_name",
+      "bio_description",
+      "is_verified",
+    ].join(","); // Convert to comma-separated string
+
+    // Use POST request as required by TikTok API v2
     const response = await fetch(url, {
-      method: "GET",
+      method: "POST", // Must be POST
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({
+        fields: fields, // Pass fields as a single string, not an array
+      }),
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`TikTok profile details fetch failed: ${errorText}`);
+    // Log the raw response for debugging
+    const responseText = await response.text();
+    console.log("[TikTok] Profile Response:", responseText);
+
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (e) {
+      throw new Error(
+        `Failed to parse TikTok profile response: ${responseText}+${e}`
+      );
     }
 
-    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`TikTok profile fetch failed: ${JSON.stringify(data)}`);
+    }
 
     if (data?.data?.user) {
       const user = data.data.user;
@@ -121,7 +144,7 @@ export async function getTikTokProfileDetails(
       };
     } else {
       throw new Error(
-        `Invalid TikTok profile details response: ${JSON.stringify(data)}`
+        `Invalid TikTok profile response structure: ${JSON.stringify(data)}`
       );
     }
   } catch (error) {
