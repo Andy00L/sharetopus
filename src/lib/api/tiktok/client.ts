@@ -90,31 +90,16 @@ export async function getTikTokProfileDetails(
   accessToken: string
 ): Promise<TikTokProfile> {
   try {
-    // Utilisation de l'endpoint TikTok pour récupérer les infos d'utilisateur
-    const url = "https://open.tiktokapis.com/v2/user/info";
-    // Liste des champs requis en tant que tableau
-    const fields = [
-      "open_id",
-      "union_id",
-      "avatar_url",
-      "avatar_url_100",
-      "avatar_large_url",
-      "display_name",
-      "bio_description",
-      "profile_deep_link",
-      "is_verified",
-    ];
+    // Add trailing slash to match TikTok's API convention
+    const url = "https://open.tiktokapis.com/v2/user/info/";
 
-    // IMPORTANT : TikTok attend que 'fields' soit une chaîne de caractères
+    // Use GET request instead of POST
     const response = await fetch(url, {
-      method: "POST",
+      method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        fields: fields.join(","), // On convertit le tableau en chaîne CSV
-      }),
     });
 
     if (!response.ok) {
