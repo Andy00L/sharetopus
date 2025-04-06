@@ -10,7 +10,7 @@ export default function page() {
     <div className="flex min-h-screen flex-col">
       <Navbar />
       <div className="flex-1">
-        <div className="bg-white ">
+        <div>
           <Hero />
           <Features />
           <Pricing />

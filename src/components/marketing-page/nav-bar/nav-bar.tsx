@@ -6,7 +6,7 @@ export default function Navbar() {
     <header className="w-full flex justify-center p-7 ">
       <div className="container z-50 flex items-center justify-between mx-auto gap-x-20 max-w-7xl ">
         <Link href="/create" className="flex items-center space-x-2">
-          <span className="text-xl font-medium">CardScout</span>
+          <span className="text-xl font-medium">Sharetopus</span>
         </Link>
 
         <nav className="hidden md:block">
