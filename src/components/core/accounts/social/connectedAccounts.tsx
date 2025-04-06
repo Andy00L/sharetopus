@@ -66,20 +66,21 @@ ConnectedAccountsClientProps) {
     // Removed the outer H2 as it's now in the parent server component
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {accounts.map((account) => {
-        // Use Partial to provide a fallback type for profile, connectionStatus, and tokenInfo
         const profile: Partial<SocialProfile> = account.extra?.profile ?? {};
         const connectionStatus: Partial<ConnectionStatus> =
           account.extra?.connection_status ?? {};
         const tokenInfo: Partial<TokenInfo> = account.extra?.token_info ?? {};
 
-        // Check for limited permissions
         const hasLimitedPermissions =
           profile.bio_description?.includes("limited permissions") ||
-          !tokenInfo.scope?.includes("user.info.basic");
+          profile.bio_description?.includes("Error fetching profile") || // Also check for fetch errors
+          !tokenInfo.scope?.includes("user.info.profile"); // Check for profile scope specifically
 
-        const connectedAt = connectionStatus.connected_at
-          ? new Date(connectionStatus.connected_at).toLocaleDateString()
-          : "Date inconnue";
+        const connectedAt =
+          connectionStatus.connected_at &&
+          typeof connectionStatus.connected_at === "string"
+            ? new Date(connectionStatus.connected_at).toLocaleDateString()
+            : "Date inconnue";
 
         return (
           <Card key={account.id} className="overflow-hidden">
@@ -133,15 +134,17 @@ ConnectedAccountsClientProps) {
                     {profile.username ??
                       account.account_identifier.substring(0, 8)}
                   </p>
-                  {(profile.follower_count !== undefined ||
-                    profile.following_count !== undefined) && (
+                  {(typeof profile.follower_count === "number" || // Check if either is a valid number
+                    typeof profile.following_count === "number") && (
                     <div className="flex gap-4 mt-2 text-sm">
-                      {profile.follower_count !== undefined && (
+                      {/* Check specifically for number before calling toLocaleString */}
+                      {typeof profile.follower_count === "number" && (
                         <span>
                           {profile.follower_count.toLocaleString()} abonnés
                         </span>
                       )}
-                      {profile.following_count !== undefined && (
+                      {/* Check specifically for number before calling toLocaleString */}
+                      {typeof profile.following_count === "number" && (
                         <span>
                           {profile.following_count.toLocaleString()} abonnements
                         </span>
