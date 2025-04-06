@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { supabase } from "@/actions/api/supabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/auth";
-import { getTikTokProfile } from "@/lib/api/tiktok/client";
+import {
+  getTikTokProfile,
+  getTikTokProfileDetails,
+} from "@/lib/api/tiktok/client";
 
 /**
  * GET handler for TikTok OAuth callback.
@@ -37,7 +40,7 @@ export async function GET(req: Request) {
     const { access_token, refresh_token, expires_in } = tokenResponse;
 
     // Retrieve TikTok profile information using the obtained access token
-    const tiktokProfile = await getTikTokProfile(access_token);
+    const tiktokProfile = await getTikTokProfileDetails(access_token);
 
     // Upsert the social account into the Supabase social_accounts table
     const { error } = await supabase.from("social_accounts").upsert(
