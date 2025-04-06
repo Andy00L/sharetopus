@@ -32,10 +32,12 @@ export async function GET(req: Request) {
       );
     }
     try {
+      // Exchange the authorization code for tokens
+      console.error("[TikTok] Exchanging code for tokens...");
       // Exchange the authorization code for tokens from TikTok
       const tokenResponse = await exchangeTikTokCode(code);
       // Add after token exchange in your route.ts
-      console.log(
+      console.error(
         "[TikTok] Token response:",
         JSON.stringify(tokenResponse, null, 2)
       );
@@ -43,15 +45,29 @@ export async function GET(req: Request) {
         tokenResponse;
 
       // Create a minimal profile using data from the token response
-      const tiktokProfile = {
-        id: open_id,
-        username: "TikTok User",
-        display_name: "TikTok User",
-        avatar_url: null,
-        is_verified: false,
-        bio_description: null,
-      };
-      // Store in database as usual
+      console.error("[TikTok] Fetching user profile...");
+      let tiktokProfile;
+      try {
+        tiktokProfile = await getTikTokProfile(access_token, open_id);
+        console.error(
+          "[TikTok] Profile:",
+          JSON.stringify(tiktokProfile, null, 2)
+        );
+      } catch (profileError) {
+        console.error("[TikTok] Profile fetch error:", profileError);
+
+        // Use minimal profile from token data as fallback
+        tiktokProfile = {
+          id: open_id,
+          username: "TikTok User",
+          display_name: "TikTok User",
+        };
+
+        console.log("[TikTok] Using minimal profile from token data");
+      }
+
+      // Store account in database
+      console.log("[TikTok] Storing account in database...");
       const { error } = await supabase.from("social_accounts").upsert(
         [
           {
@@ -70,25 +86,31 @@ export async function GET(req: Request) {
           onConflict: "user_id,platform,account_identifier",
         }
       );
-      console.error("probleme supabase:", error);
+
+      if (error) {
+        console.error("[TikTok] Database error:", error);
+      } else {
+        console.log("[TikTok] Account successfully stored in database");
+      }
     } catch (error) {
-      console.error("Immediate Solution:", error);
+      console.error("[TikTok] Error during TikTok integration:", error);
     }
-    // After successful processing, redirect the user to a success or accounts page
+
+    // Redirect user to accounts page regardless of possible errors
+    // This ensures user doesn't get stuck on error page
     return NextResponse.redirect(new URL("/accounts", req.url));
   } catch (error: unknown) {
     let errorMessage = "Erreur interne";
     if (error instanceof Error) {
       errorMessage = error.message;
     }
-    console.error("Erreur dans l'endpoint TikTok GET:", error);
+    console.error("[TikTok] Unhandled error:", error);
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
 
 /**
- * POST handler for TikTok connection (if needed).
- * Expects JSON body containing { code: string }.
+ * POST handler implementation similar to GET but returns JSON
  */
 export async function POST(req: Request) {
   try {
@@ -101,6 +123,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Authentication check
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json(
@@ -109,11 +132,26 @@ export async function POST(req: Request) {
       );
     }
 
+    // Exchange code for tokens
     const tokenResponse = await exchangeTikTokCode(code);
-    const { access_token, refresh_token, expires_in } = tokenResponse;
+    const { access_token, refresh_token, expires_in, open_id } = tokenResponse;
 
-    const tiktokProfile = await getTikTokProfile(access_token);
+    // Attempt to fetch profile with full implementation
+    let tiktokProfile;
+    try {
+      tiktokProfile = await getTikTokProfile(access_token, open_id);
+    } catch (profileError) {
+      console.error("[TikTok] POST: Error fetching profile:", profileError);
 
+      // Create minimal profile from token data as fallback
+      tiktokProfile = {
+        id: open_id,
+        username: "TikTok User",
+        display_name: "TikTok User",
+      };
+    }
+
+    // Store in database
     const { error } = await supabase.from("social_accounts").upsert(
       [
         {
@@ -132,6 +170,7 @@ export async function POST(req: Request) {
         onConflict: "user_id,platform,account_identifier",
       }
     );
+
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -145,7 +184,7 @@ export async function POST(req: Request) {
     if (error instanceof Error) {
       errorMessage = error.message;
     }
-    console.error("Erreur dans l'endpoint TikTok POST:", error);
+    console.error("[TikTok] POST error:", error);
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
