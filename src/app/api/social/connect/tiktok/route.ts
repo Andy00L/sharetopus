@@ -50,11 +50,16 @@ export async function GET(req: Request) {
       // Attempt to fetch full profile with proper error handling
       console.log("[TikTok] Fetching user profile with scopes:", scope);
       let tiktokProfile;
+      let profileFetchSuccessful = false;
       try {
         tiktokProfile = await getTikTokProfile(access_token, open_id);
+        profileFetchSuccessful =
+          !!tiktokProfile && // Ensure profile exists
+          !tiktokProfile.bio_description?.includes("Error fetching") &&
+          !tiktokProfile.bio_description?.includes("limited permissions");
+
         console.log(
-          "[TikTok] Profile successfully retrieved:",
-          tiktokProfile.id
+          `[TikTok] Profile retrieved. Success status: ${profileFetchSuccessful}. ID: ${tiktokProfile?.id}`
         );
       } catch (profileError) {
         console.error("[TikTok] Error fetching profile:", profileError);
@@ -73,6 +78,11 @@ export async function GET(req: Request) {
           token_expires_at: new Date(
             Date.now() + expires_in * 1000
           ).toISOString(),
+          username: tiktokProfile?.username ?? null, // Use null if profile/username missing
+          avatar_url: tiktokProfile?.avatar_url ?? null, // Use null if profile/avatar missing
+          is_verified: tiktokProfile?.is_verified ?? false, // Default to false if missing
+          display_name: tiktokProfile?.display_name ?? null, // Use null if profile/display_name missing
+          follower_count: tiktokProfile?.follower_count ?? null, // Use null if profile/count missing
           extra: {
             profile: tiktokProfile,
             token_info: {
@@ -82,13 +92,7 @@ export async function GET(req: Request) {
             },
             connection_status: {
               connected_at: new Date().toISOString(),
-              profile_fetch_successful:
-                !tiktokProfile?.bio_description?.includes(
-                  "Error fetching complete profile"
-                ) &&
-                !tiktokProfile?.bio_description?.includes(
-                  "limited permissions"
-                ),
+              profile_fetch_successful: profileFetchSuccessful,
             },
           },
         };
