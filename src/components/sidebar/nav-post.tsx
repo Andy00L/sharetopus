@@ -1,4 +1,4 @@
-import { CheckCircle, Clock, FileText, Sliders } from "lucide-react";
+import { CheckCircle, Clock } from "lucide-react";
 import Link from "next/link";
 import {
   SidebarGroup,
@@ -17,15 +17,6 @@ export default function NavPost() {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/posts">
-                <FileText className="h-4 w-4" />
-                <span>All</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
               <Link href="/scheduled">
                 <Clock className="h-4 w-4" />
                 <span>Scheduled</span>
@@ -38,15 +29,6 @@ export default function NavPost() {
               <Link href="/published">
                 <CheckCircle className="h-4 w-4" />
                 <span>Posted</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <Link href="/config">
-                <Sliders className="h-4 w-4" />
-                <span>Configuration</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
