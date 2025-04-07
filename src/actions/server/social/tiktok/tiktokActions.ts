@@ -97,6 +97,22 @@ export async function initiateTikTokVideoUpload(
     console.log(
       `[TikTok Init] Using Access Token: ${accessToken.substring(0, 10)}...`
     );
+    const requestOptions = {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: body,
+    };
+
+    console.log("-----------------------------------------");
+    console.log("[TikTok Init] FINAL FETCH DETAILS:");
+    console.log("URL:", url);
+    console.log("Method:", requestOptions.method);
+    console.log("Headers:", JSON.stringify(requestOptions.headers));
+    console.log("Body:", requestOptions.body);
+    console.log("-----------------------------------------");
 
     const response = await fetch(url, {
       method: "POST",
