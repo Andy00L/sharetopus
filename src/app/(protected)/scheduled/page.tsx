@@ -2,8 +2,9 @@
 import { getScheduledPosts } from "@/actions/server/supabase/scheduleActions";
 import ScheduledPostsList from "@/components/core/scheduled/ScheduledPostsList";
 import { Button } from "@/components/ui/button";
+import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
-import { PlusCircle, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import Link from "next/link";
 
 // Define the type for scheduled posts
@@ -45,42 +46,30 @@ export default async function ScheduledPostsPage() {
     error =
       err instanceof Error ? err.message : "Failed to load scheduled posts";
   }
-
-  return (
-    <div className="container mx-auto py-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Scheduled Posts</h1>
-          <p className="text-muted-foreground">
-            Manage your scheduled posts for all your social platforms
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/schedule">
-            <PlusCircle className="w-4 h-4 mr-2" />
-            Schedule New Post
-          </Link>
-        </Button>
-      </div>
-
-      {error ? (
-        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-destructive">
-          <div className="flex items-start gap-3">
-            <RefreshCw className="h-5 w-5 mt-0.5 animate-spin" />
-            <div>
-              <h3 className="font-medium mb-1">
-                Error loading scheduled posts
-              </h3>
-              <p className="text-sm">{error}</p>
-              <Button variant="outline" size="sm" className="mt-2" asChild>
-                <Link href="/scheduled">Try Again</Link>
-              </Button>
+  // If there's an error, render error state
+  if (error) {
+    return (
+      <SidebarContent>
+        <div className="container px-4 py-6">
+          <SidebarGroup>
+            <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4 text-destructive">
+              <div className="flex items-start gap-3">
+                <RefreshCw className="h-5 w-5 mt-0.5 animate-spin" />
+                <div>
+                  <h3 className="font-medium mb-1">
+                    Error loading scheduled posts
+                  </h3>
+                  <p className="text-sm">{error}</p>
+                  <Button variant="outline" size="sm" className="mt-2" asChild>
+                    <Link href="/scheduled">Try Again</Link>
+                  </Button>
+                </div>
+              </div>
             </div>
-          </div>
+          </SidebarGroup>
         </div>
-      ) : (
-        <ScheduledPostsList posts={posts} userId={userId} />
-      )}
-    </div>
-  );
+      </SidebarContent>
+    );
+  }
+  return <ScheduledPostsList posts={posts} userId={userId} />;
 }

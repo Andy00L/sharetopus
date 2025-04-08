@@ -43,6 +43,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import {
   AlertCircle,
   CalendarIcon,
@@ -50,6 +51,7 @@ import {
   Clock,
   MoreVertical,
   PlayCircle,
+  PlusCircle,
   RefreshCw,
   Trash2,
   X,
@@ -58,6 +60,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { format } from "date-fns";
+import Link from "next/link";
 
 // Type for scheduled post with joined account data
 interface ScheduledPost {
@@ -91,7 +94,7 @@ interface ScheduledPostsListProps {
   readonly userId: string | null;
 }
 
-// Separate RescheduleDialog component to better isolate the calendar functionality
+// Separate RescheduleDialog component
 function RescheduleDialog({
   post,
   isOpen,
@@ -248,6 +251,9 @@ export default function ScheduledPostsList({
   const [postToReschedule, setPostToReschedule] =
     useState<ScheduledPost | null>(null);
 
+  // Track which dropdown is open
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+
   // Handle post cancellation
   const handleCancelPost = async (postId: string) => {
     try {
@@ -267,6 +273,7 @@ export default function ScheduledPostsList({
     } finally {
       setLoadingPostId(null);
       setShowCancelDialog(null);
+      setOpenDropdownId(null); // Reset dropdown state
     }
   };
 
@@ -289,6 +296,7 @@ export default function ScheduledPostsList({
     } finally {
       setLoadingPostId(null);
       setShowDeleteDialog(null);
+      setOpenDropdownId(null); // Reset dropdown state
     }
   };
 
@@ -310,32 +318,50 @@ export default function ScheduledPostsList({
       toast.error(`Failed to resume post: ${errorMessage}`);
     } finally {
       setLoadingPostId(null);
+      setOpenDropdownId(null); // Reset dropdown state
     }
   };
 
-  // If no posts, show empty state
-  if (posts.length === 0) {
-    return (
-      <div className="text-center p-8">
-        <Clock className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-        <h3 className="text-lg font-medium mb-2">No scheduled posts</h3>
-        <p className="text-muted-foreground mb-4">
-          You haven&apos;t scheduled any posts yet. When you do, they&apos;ll
-          appear here.
-        </p>
-        <Button onClick={() => router.push("/schedule")}>
-          Schedule a Post
-        </Button>
-      </div>
-    );
-  }
+  // Content to show when no posts exist
+  const emptyContent = (
+    <div className="text-center p-8">
+      <Clock className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+      <h3 className="text-lg font-medium mb-2">No scheduled posts</h3>
+      <p className="text-muted-foreground mb-4">
+        You haven&apos;t scheduled any posts yet. When you do, they&apos;ll
+        appear here.
+      </p>
+      <Button onClick={() => router.push("/schedule")}>Schedule a Post</Button>
+    </div>
+  );
 
+  // All dialogs should close the dropdown when opened
+  const openCancelDialog = (postId: string) => {
+    setShowCancelDialog(postId);
+    setOpenDropdownId(null);
+  };
+
+  const openDeleteDialog = (postId: string) => {
+    setShowDeleteDialog(postId);
+    setOpenDropdownId(null);
+  };
+
+  const openRescheduleDialog = (post: ScheduledPost) => {
+    setPostToReschedule(post);
+    setOpenDropdownId(null);
+  };
+
+  // Properly structured posts content using Sidebar components
   return (
     <>
-      {/* Cancel Dialog */}
+      {/* Dialogs remain outside the sidebar structure */}
       <AlertDialog
         open={showCancelDialog !== null}
-        onOpenChange={(open) => !open && setShowCancelDialog(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowCancelDialog(null);
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -346,7 +372,9 @@ export default function ScheduledPostsList({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Post</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setShowCancelDialog(null)}>
+              Keep Post
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
                 showCancelDialog && handleCancelPost(showCancelDialog)
@@ -359,10 +387,13 @@ export default function ScheduledPostsList({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete Dialog */}
       <AlertDialog
         open={showDeleteDialog !== null}
-        onOpenChange={(open) => !open && setShowDeleteDialog(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowDeleteDialog(null);
+          }
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -373,7 +404,9 @@ export default function ScheduledPostsList({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Post</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setShowDeleteDialog(null)}>
+              Keep Post
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={() =>
                 showDeleteDialog && handleDeletePost(showDeleteDialog)
@@ -386,246 +419,291 @@ export default function ScheduledPostsList({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Reschedule Dialog - Completely isolated into its own component */}
       <RescheduleDialog
         post={postToReschedule}
         isOpen={postToReschedule !== null}
-        onClose={() => setPostToReschedule(null)}
+        onClose={() => {
+          setPostToReschedule(null);
+        }}
         userId={userId}
-        onSuccess={() => router.refresh()}
+        onSuccess={() => {
+          router.refresh();
+        }}
       />
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {posts.map((post) => {
-          // Format scheduled date
-          const scheduledDate = new Date(post.scheduled_at);
-          const formattedDate = new Intl.DateTimeFormat("en-US", {
-            dateStyle: "medium",
-            timeStyle: "short",
-          }).format(scheduledDate);
+      {/* Content structured for sidebar */}
+      <SidebarContent>
+        <div className="container px-4 py-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold">Scheduled Posts</h1>
+              <p className="text-muted-foreground">
+                Manage your scheduled posts for all your social platforms
+              </p>
+            </div>
+            <Button asChild>
+              <Link href="/schedule">
+                <PlusCircle className="w-4 h-4 mr-2" />
+                Schedule New Post
+              </Link>
+            </Button>
+          </div>
 
-          // Extract account info
-          const accountName =
-            post.social_accounts?.extra?.profile?.display_name ??
-            post.social_accounts?.extra?.profile?.username ??
-            post.social_accounts?.account_identifier.substring(0, 8) ??
-            "Unknown Account";
+          <SidebarGroup>
+            {posts.length === 0 ? (
+              emptyContent
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {posts.map((post) => {
+                  // Format scheduled date
+                  const scheduledDate = new Date(post.scheduled_at);
+                  const formattedDate = new Intl.DateTimeFormat("en-US", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  }).format(scheduledDate);
 
-          const avatarUrl =
-            post.social_accounts?.extra?.profile?.avatar_url ?? "";
+                  // Extract account info
+                  const accountName =
+                    post.social_accounts?.extra?.profile?.display_name ??
+                    post.social_accounts?.extra?.profile?.username ??
+                    post.social_accounts?.account_identifier.substring(0, 8) ??
+                    "Unknown Account";
 
-          // Get avatar fallback text (first letter of platform + account name)
-          const fallbackText = `${post.platform
-            .charAt(0)
-            .toUpperCase()}${accountName.charAt(0).toUpperCase()}`;
+                  const avatarUrl =
+                    post.social_accounts?.extra?.profile?.avatar_url ?? "";
 
-          // Determine status badge color
-          let statusBadge;
-          switch (post.status) {
-            case "scheduled":
-              statusBadge = (
-                <Badge
-                  variant="outline"
-                  className="gap-1 text-blue-500 border-blue-200"
-                >
-                  <Clock className="h-3 w-3" />
-                  Scheduled
-                </Badge>
-              );
-              break;
-            case "processing":
-              statusBadge = (
-                <Badge
-                  variant="outline"
-                  className="gap-1 text-yellow-500 border-yellow-200"
-                >
-                  <Clock className="h-3 w-3 animate-spin" />
-                  Processing
-                </Badge>
-              );
-              break;
-            case "posted":
-              statusBadge = (
-                <Badge
-                  variant="outline"
-                  className="gap-1 text-green-500 border-green-200"
-                >
-                  <Check className="h-3 w-3" />
-                  Posted
-                </Badge>
-              );
-              break;
-            case "failed":
-              statusBadge = (
-                <Badge
-                  variant="outline"
-                  className="gap-1 text-red-500 border-red-200"
-                >
-                  <X className="h-3 w-3" />
-                  Failed
-                </Badge>
-              );
-              break;
-            case "cancelled":
-              statusBadge = (
-                <Badge
-                  variant="outline"
-                  className="gap-1 text-gray-500 border-gray-200"
-                >
-                  <X className="h-3 w-3" />
-                  Cancelled
-                </Badge>
-              );
-              break;
-            default:
-              statusBadge = <Badge variant="outline">{post.status}</Badge>;
-          }
+                  // Get avatar fallback text (first letter of platform + account name)
+                  const fallbackText = `${post.platform
+                    .charAt(0)
+                    .toUpperCase()}${accountName.charAt(0).toUpperCase()}`;
 
-          // Platform badge
-          const platformBadge = (
-            <Badge variant="secondary" className="capitalize">
-              {post.platform}
-            </Badge>
-          );
-
-          // Determine which actions are available based on post status
-          const canCancel = post.status === "scheduled";
-          const canResume = post.status === "cancelled";
-          const canReschedule =
-            post.status === "scheduled" || post.status === "cancelled";
-          const canDelete = true; // All posts can be deleted
-
-          return (
-            <Card key={post.id} className="relative">
-              {/* Loading overlay */}
-              {loadingPostId === post.id && (
-                <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10 rounded-lg">
-                  <Skeleton className="h-12 w-12 rounded-full" />
-                </div>
-              )}
-
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start">
-                  <div className="flex items-center gap-2">
-                    {platformBadge}
-                    {statusBadge}
-                  </div>
-
-                  {/* Show actions menu for all posts */}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreVertical className="h-4 w-4" />
-                        <span className="sr-only">Actions</span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {/* Reschedule option for scheduled and cancelled posts */}
-                      {canReschedule && (
-                        <DropdownMenuItem
-                          className="text-blue-500 focus:text-blue-500"
-                          onClick={() => setPostToReschedule(post)}
+                  // Determine status badge color
+                  let statusBadge;
+                  switch (post.status) {
+                    case "scheduled":
+                      statusBadge = (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-blue-500 border-blue-200"
                         >
-                          <CalendarIcon className="h-4 w-4 mr-2" />
-                          Reschedule
-                        </DropdownMenuItem>
-                      )}
-
-                      {/* Resume option only for cancelled posts */}
-                      {canResume && (
-                        <DropdownMenuItem
-                          className="text-green-500 focus:text-green-500"
-                          onClick={() => handleResumePost(post.id)}
+                          <Clock className="h-3 w-3" />
+                          Scheduled
+                        </Badge>
+                      );
+                      break;
+                    case "processing":
+                      statusBadge = (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-yellow-500 border-yellow-200"
                         >
-                          <PlayCircle className="h-4 w-4 mr-2" />
-                          Resume Post
-                        </DropdownMenuItem>
-                      )}
-
-                      {/* Cancel option only for scheduled posts */}
-                      {canCancel && (
-                        <DropdownMenuItem
-                          className="text-yellow-500 focus:text-yellow-500"
-                          onClick={() => setShowCancelDialog(post.id)}
+                          <Clock className="h-3 w-3 animate-spin" />
+                          Processing
+                        </Badge>
+                      );
+                      break;
+                    case "posted":
+                      statusBadge = (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-green-500 border-green-200"
                         >
-                          <Clock className="h-4 w-4 mr-2" />
-                          Cancel Post
-                        </DropdownMenuItem>
-                      )}
-
-                      {/* Delete option for all posts */}
-                      {canDelete && (
-                        <DropdownMenuItem
-                          className="text-red-500 focus:text-red-500"
-                          onClick={() => setShowDeleteDialog(post.id)}
+                          <Check className="h-3 w-3" />
+                          Posted
+                        </Badge>
+                      );
+                      break;
+                    case "failed":
+                      statusBadge = (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-red-500 border-red-200"
                         >
-                          <Trash2 className="h-4 w-4 mr-2" />
-                          Delete Permanently
-                        </DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </CardHeader>
+                          <X className="h-3 w-3" />
+                          Failed
+                        </Badge>
+                      );
+                      break;
+                    case "cancelled":
+                      statusBadge = (
+                        <Badge
+                          variant="outline"
+                          className="gap-1 text-gray-500 border-gray-200"
+                        >
+                          <X className="h-3 w-3" />
+                          Cancelled
+                        </Badge>
+                      );
+                      break;
+                    default:
+                      statusBadge = (
+                        <Badge variant="outline">{post.status}</Badge>
+                      );
+                  }
 
-              <CardContent>
-                <div className="flex gap-3 mb-3">
-                  <Avatar className="h-10 w-10">
-                    {avatarUrl && <AvatarImage src={avatarUrl} />}
-                    <AvatarFallback>{fallbackText}</AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <div className="font-medium">{accountName}</div>
-                    <div className="text-xs text-muted-foreground capitalize">
-                      {post.platform} Account
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {post.post_title && (
-                    <div className="line-clamp-3 text-sm">
-                      {post.post_title}
-                    </div>
-                  )}
-
-                  <div className="flex items-center text-xs text-muted-foreground mt-2">
-                    <CalendarIcon className="h-3 w-3 mr-1.5" />
-                    {formattedDate}
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-xs mt-1">
-                    <Badge variant="outline" className="capitalize">
-                      {post.media_type}
+                  // Platform badge
+                  const platformBadge = (
+                    <Badge variant="secondary" className="capitalize">
+                      {post.platform}
                     </Badge>
-                  </div>
-                </div>
+                  );
 
-                {/* Show error message if post failed */}
-                {post.status === "failed" && post.error_message && (
-                  <div className="mt-4 text-xs text-red-500 flex items-start gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    <span>{post.error_message}</span>
-                  </div>
-                )}
-              </CardContent>
+                  // Determine which actions are available based on post status
+                  const canCancel = post.status === "scheduled";
+                  const canResume = post.status === "cancelled";
+                  const canReschedule =
+                    post.status === "scheduled" || post.status === "cancelled";
+                  const canDelete = true; // All posts can be deleted
 
-              <CardFooter className="pt-0">
-                {post.status === "scheduled" && (
-                  <div className="text-xs text-muted-foreground">
-                    Will be published automatically at the scheduled time.
-                  </div>
-                )}
-                {post.status === "cancelled" && (
-                  <div className="text-xs text-muted-foreground">
-                    This post was cancelled and will not be published.
-                  </div>
-                )}
-              </CardFooter>
-            </Card>
-          );
-        })}
-      </div>
+                  return (
+                    <Card key={post.id} className="relative">
+                      {/* Loading overlay */}
+                      {loadingPostId === post.id && (
+                        <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10 rounded-lg">
+                          <Skeleton className="h-12 w-12 rounded-full" />
+                        </div>
+                      )}
+
+                      <CardHeader className="pb-3">
+                        <div className="flex justify-between items-start">
+                          <div className="flex items-center gap-2">
+                            {platformBadge}
+                            {statusBadge}
+                          </div>
+
+                          {/* Show actions menu for all posts */}
+                          <DropdownMenu
+                            open={openDropdownId === post.id}
+                            onOpenChange={(open) => {
+                              if (open) {
+                                setOpenDropdownId(post.id);
+                              } else {
+                                setOpenDropdownId(null);
+                              }
+                            }}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                                <span className="sr-only">Actions</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {/* Reschedule option for scheduled and cancelled posts */}
+                              {canReschedule && (
+                                <DropdownMenuItem
+                                  className="text-blue-500 focus:text-blue-500"
+                                  onClick={() => openRescheduleDialog(post)}
+                                >
+                                  <CalendarIcon className="h-4 w-4 mr-2" />
+                                  Reschedule
+                                </DropdownMenuItem>
+                              )}
+
+                              {/* Resume option only for cancelled posts */}
+                              {canResume && (
+                                <DropdownMenuItem
+                                  className="text-green-500 focus:text-green-500"
+                                  onClick={() => handleResumePost(post.id)}
+                                >
+                                  <PlayCircle className="h-4 w-4 mr-2" />
+                                  Resume Post
+                                </DropdownMenuItem>
+                              )}
+
+                              {/* Cancel option only for scheduled posts */}
+                              {canCancel && (
+                                <DropdownMenuItem
+                                  className="text-yellow-500 focus:text-yellow-500"
+                                  onClick={() => openCancelDialog(post.id)}
+                                >
+                                  <Clock className="h-4 w-4 mr-2" />
+                                  Cancel Post
+                                </DropdownMenuItem>
+                              )}
+
+                              {/* Delete option for all posts */}
+                              {canDelete && (
+                                <DropdownMenuItem
+                                  className="text-red-500 focus:text-red-500"
+                                  onClick={() => openDeleteDialog(post.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete Permanently
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent>
+                        <div className="flex gap-3 mb-3">
+                          <Avatar className="h-10 w-10">
+                            {avatarUrl && <AvatarImage src={avatarUrl} />}
+                            <AvatarFallback>{fallbackText}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <div className="font-medium">{accountName}</div>
+                            <div className="text-xs text-muted-foreground capitalize">
+                              {post.platform} Account
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {post.post_title && (
+                            <div className="line-clamp-3 text-sm">
+                              {post.post_title}
+                            </div>
+                          )}
+
+                          <div className="flex items-center text-xs text-muted-foreground mt-2">
+                            <CalendarIcon className="h-3 w-3 mr-1.5" />
+                            {formattedDate}
+                          </div>
+
+                          <div className="flex items-center gap-1.5 text-xs mt-1">
+                            <Badge variant="outline" className="capitalize">
+                              {post.media_type}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {/* Show error message if post failed */}
+                        {post.status === "failed" && post.error_message && (
+                          <div className="mt-4 text-xs text-red-500 flex items-start gap-1.5">
+                            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span>{post.error_message}</span>
+                          </div>
+                        )}
+                      </CardContent>
+
+                      <CardFooter className="pt-0">
+                        {post.status === "scheduled" && (
+                          <div className="text-xs text-muted-foreground">
+                            Will be published automatically at the scheduled
+                            time.
+                          </div>
+                        )}
+                        {post.status === "cancelled" && (
+                          <div className="text-xs text-muted-foreground">
+                            This post was cancelled and will not be published.
+                          </div>
+                        )}
+                      </CardFooter>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </SidebarGroup>
+        </div>
+      </SidebarContent>
     </>
   );
 }
