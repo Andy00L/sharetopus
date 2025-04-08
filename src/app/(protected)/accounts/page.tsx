@@ -2,9 +2,11 @@ import ConnectedAccounts from "@/components/core/accounts/social/connectedAccoun
 import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
 import { Button } from "@/components/ui/button";
 import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function ManageAccountsPage() {
-  const accounts = await fetchSocialAccounts();
+  const { userId } = await auth();
+  const accounts = await fetchSocialAccounts(userId);
   return (
     <div className="container mx-auto px-4 py-6">
       <header className="mb-8">

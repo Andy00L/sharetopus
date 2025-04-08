@@ -1,10 +1,11 @@
-import { adminSupabase } from "@/actions/api/supabase"; // Import your admin client
+import { adminSupabase } from "@/actions/api/supabase-client";
 import { SocialAccount } from "@/lib/types/socialAccount";
-import { auth } from "@clerk/nextjs/server";
 
-export async function fetchSocialAccounts(): Promise<SocialAccount[]> {
+export async function fetchSocialAccounts(
+  userId: string | null
+): Promise<SocialAccount[]> {
   // Get user ID using server-side auth
-  const { userId } = await auth();
+
   if (!userId) {
     console.error("User not authenticated in fetchSocialAccounts.");
     // Return empty array or throw error based on how you want to handle this

@@ -1,13 +1,11 @@
 // src/components/create/CreateTikTokPostForm.tsx
 "use client";
 
-import { useState, ChangeEvent, FormEvent, useRef } from "react";
-// Removed useRouter as it's not currently used
-// import { useRouter } from "next/navigation";
-import { SocialAccount } from "@/lib/types/socialAccount"; // Adjusted path assumption
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress"; // Keep for potential Supabase progress
 import {
   Select,
   SelectContent,
@@ -16,49 +14,67 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Progress } from "@/components/ui/progress";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, Loader2, UploadCloud, CheckCircle } from "lucide-react";
+import { SocialAccount } from "@/lib/types/socialAccount"; // Adjust path
+import { ChangeEvent, FormEvent, useRef, useState } from "react";
+// Added CalendarIcon
 import { Switch } from "@/components/ui/switch";
-// Import the server actions - Adjust path as needed
-import {
-  initiateTikTokVideoUpload,
-  publishTikTokVideo,
-} from "@/actions/server/social/tiktok/tiktokActions"; // Adjusted path assumption
+import { toast } from "sonner"; // Import toast for notifications
 
-// Define the allowed privacy level strings
-type TikTokPrivacyLevel =
-  | "PUBLIC_TO_EVERYONE"
-  | "MUTUAL_FOLLOW_FRIENDS"
-  | "SELF_ONLY";
+// Shadcn Popover
+import {
+  deleteSupabaseFileAction,
+  schedulePost,
+} from "@/actions/server/supabase/scheduleActions";
+import { uploadFileToSupabase } from "@/actions/server/supabase/uploadFile";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { TikTokPrivacyLevel } from "@/lib/types/TikTokPrivacyLevel ";
+import { cn } from "@/lib/utils"; // For shadcn class merging
+import {
+  AlertCircle,
+  CalendarIcon,
+  CheckCircle,
+  Loader2,
+  UploadCloud,
+} from "lucide-react";
+import { format } from "util";
 
 interface CreateTikTokPostFormProps {
-  // Ensure SocialAccount type is correctly imported/defined
   readonly connectedAccounts: SocialAccount[];
+  readonly user: string | null;
 }
 
+// Updated Statuses for Scheduling Flow
 type PostStatus =
   | "idle"
-  | "initiating"
-  | "uploading"
-  | "publishing"
+  | "validating"
+  | "uploading_supabase"
+  | "scheduling" // Renamed from publishing
   | "success"
   | "error";
 
+// --- Constants for Validation ---
+const MAX_VIDEO_SIZE_MB = 1000; // Example: 1GB limit for Supabase upload (adjust as needed)
+const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"]; // Common types
+
 export default function CreateTikTokPostForm({
   connectedAccounts,
+  user,
 }: CreateTikTokPostFormProps) {
-  // Removed router as it's not used
-  // const router = useRouter();
-
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [title, setTitle] = useState<string>("");
   const [privacyLevel, setPrivacyLevel] =
-    useState<TikTokPrivacyLevel>("SELF_ONLY"); // Default to private
+    useState<TikTokPrivacyLevel>("SELF_ONLY");
   const [disableComment, setDisableComment] = useState<boolean>(false);
   const [disableDuet, setDisableDuet] = useState<boolean>(false);
   const [disableStitch, setDisableStitch] = useState<boolean>(false);
+  const [scheduledAt, setScheduledAt] = useState<Date | undefined>(undefined); // State for date picker
 
   const [status, setStatus] = useState<PostStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -68,15 +84,33 @@ export default function CreateTikTokPostForm({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setError(null); // Clear previous errors
     const file = event.target.files?.[0];
+
     if (file) {
-      if (!file.type.startsWith("video/")) {
-        setError("Veuillez sélectionner un fichier vidéo.");
+      // --- File Type Validation ---
+      if (!ALLOWED_VIDEO_TYPES.includes(file.type)) {
+        toast.error(
+          `Type de fichier invalide. Types acceptés: ${ALLOWED_VIDEO_TYPES.map(
+            (t) => t.split("/")[1]
+          ).join(", ")}`
+        );
         setVideoFile(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      setError(null);
+
+      // --- File Size Validation ---
+      if (file.size > MAX_VIDEO_SIZE_BYTES) {
+        toast.error(
+          `Fichier trop volumineux. Taille max: ${MAX_VIDEO_SIZE_MB} MB.`
+        );
+        setVideoFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      // File is valid
       setVideoFile(file);
     } else {
       setVideoFile(null);
@@ -91,6 +125,7 @@ export default function CreateTikTokPostForm({
     setDisableComment(false);
     setDisableDuet(false);
     setDisableStitch(false);
+    setScheduledAt(undefined); // Reset date
     setStatus("idle");
     setError(null);
     setUploadProgress(0);
@@ -100,132 +135,154 @@ export default function CreateTikTokPostForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    // --- Ensure videoFile exists before accessing size ---
+    setError(null); // Clear previous errors
+    setStatus("validating");
 
-    if (!selectedAccountId || !videoFile) {
-      setError("Veuillez sélectionner un compte et un fichier vidéo.");
+    if (!user) {
+      toast.error("Utilisateur non authentifié.");
+      setStatus("error");
+      setError("Utilisateur non authentifié. Veuillez vous reconnecter.");
+      return;
+    }
+    if (!selectedAccountId) {
+      toast.error("Veuillez sélectionner un compte TikTok.");
+      setStatus("error");
+      setError("Veuillez sélectionner un compte TikTok.");
+      return;
+    }
+    if (!videoFile) {
+      toast.error("Veuillez sélectionner un fichier vidéo.");
+      setStatus("error");
+      setError("Veuillez sélectionner un fichier vidéo.");
+      return;
+    }
+    if (!scheduledAt) {
+      toast.error("Veuillez sélectionner une date et heure de publication.");
+      setStatus("error");
+      setError("Veuillez sélectionner une date et heure de publication.");
+      return;
+    }
+    // Optional: Check if scheduledAt is in the past
+    if (scheduledAt < new Date()) {
+      toast.error("La date de publication ne peut pas être dans le passé.");
+      setStatus("error");
+      setError("La date de publication ne peut pas être dans le passé.");
       return;
     }
 
-    setStatus("initiating");
-    setError(null);
+    setStatus("uploading_supabase");
     setUploadProgress(0);
-    setStatusMessage("Initialisation du téléversement...");
+    setStatusMessage("Téléversement vers le stockage...");
 
-    let uploadUrl = "";
-    let publishId = "";
+    let supabaseFilePath = "";
 
     try {
-      // 1. Initiate Upload
-      const initData = await initiateTikTokVideoUpload(
-        selectedAccountId,
-        videoFile.size
+      // 1. Upload to Supabase Storage
+      supabaseFilePath = await uploadFileToSupabase(
+        user,
+        videoFile,
+        "scheduled-videos" // Use your bucket name
+        // Add progress callback here if implemented
       );
-      uploadUrl = initData.upload_url;
-      publishId = initData.publish_id;
-      console.log("Upload URL:", uploadUrl);
-      console.log("Publish ID:", publishId);
+      console.log("File uploaded to Supabase:", supabaseFilePath);
+      setStatusMessage("Téléversement terminé. Programmation...");
+      setUploadProgress(100); // Mark as complete
 
-      // 2. Upload Video File
-      setStatus("uploading");
-      setStatusMessage("Téléversement de la vidéo...");
+      // 2. Schedule Post (Server Action)
+      setStatus("scheduling");
+      const postOptions = {
+        privacyLevel: privacyLevel,
+        disableComment: disableComment,
+        disableDuet: disableDuet,
+        disableStitch: disableStitch,
+      };
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", uploadUrl, true);
-        xhr.setRequestHeader("Content-Type", "video/mp4"); // Adjust if needed
-
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const percentComplete = Math.round((e.loaded / e.total) * 100);
-            setUploadProgress(percentComplete);
-            setStatusMessage(`Téléversement: ${percentComplete}%`);
-          }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            console.log("Video uploaded successfully to TikTok URL.");
-            setUploadProgress(100);
-            resolve();
-          } else {
-            console.error("Upload failed:", xhr.status, xhr.responseText);
-            reject(
-              new Error(
-                `Échec du téléversement vers TikTok (${xhr.status}): ${
-                  xhr.responseText || "Erreur inconnue"
-                }`
-              )
-            );
-          }
-        };
-        xhr.onerror = () => {
-          console.error("Upload network error");
-          reject(new Error("Erreur réseau lors du téléversement."));
-        };
-        xhr.send(videoFile);
-      });
-
-      // 3. Publish Video
-      setStatus("publishing");
-      setStatusMessage("Publication de la vidéo sur TikTok...");
-      const publishData = await publishTikTokVideo(
-        selectedAccountId,
-        publishId,
-        title || videoFile.name, // Use filename as fallback title
-        privacyLevel, // Pass the correctly typed state variable
-        disableComment,
-        disableDuet,
-        disableStitch
+      const scheduleData = {
+        socialAccountId: selectedAccountId,
+        platform: "tiktok", // Hardcode for this form
+        scheduledAt: scheduledAt, // Pass the Date object or ISO string
+        title: title || null, // Pass null if empty
+        mediaType: "video" as const, // Hardcode for this form
+        mediaStoragePath: supabaseFilePath,
+        postOptions: postOptions,
+      };
+      console.log(
+        "DEBUG: Data sent to schedulePost:",
+        JSON.stringify(scheduleData)
       );
 
-      setStatus("success");
-      setStatusMessage(
-        `Vidéo publiée avec succès! Share ID: ${publishData.share_id}`
-      );
-      console.log("Publish successful:", publishData);
+      const result = await schedulePost(scheduleData);
 
-      setTimeout(() => {
-        resetForm();
-        // If navigation is needed later, uncomment and ensure router is imported/used
-        // router.push('/posts');
-      }, 3000);
+      if (result.success) {
+        setStatus("success");
+        setStatusMessage(result.message);
+        toast.success("Publication programmée avec succès!");
+        console.log("Schedule successful:", result);
+        setTimeout(resetForm, 3000); // Reset after success
+      } else {
+        throw new Error(result.message); // Throw error to be caught below
+      }
     } catch (err) {
-      console.error("Post creation failed:", err);
+      console.error("Scheduling process failed:", err);
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Une erreur est survenue.");
-      setStatusMessage("Échec de la publication.");
+      const errorMessage =
+        err instanceof Error ? err.message : "Une erreur est survenue.";
+      setError(errorMessage);
+      setStatusMessage("Échec de la programmation.");
+      toast.error(`Échec: ${errorMessage}`);
+
+      // Attempt to clean up Supabase file if upload succeeded but scheduling failed
+      if (supabaseFilePath) {
+        console.warn(
+          "Scheduling failed, attempting to clean up Supabase file:",
+          supabaseFilePath
+        );
+        try {
+          await deleteSupabaseFileAction(supabaseFilePath);
+          toast.info("Fichier temporaire nettoyé.");
+        } catch (deleteError) {
+          console.error(
+            "Failed to delete Supabase file after scheduling error:",
+            deleteError
+          );
+          toast.error("Échec du nettoyage du fichier temporaire.");
+        }
+      }
     }
   };
 
   const isLoading =
-    status === "initiating" ||
-    status === "uploading" ||
-    status === "publishing";
+    status === "validating" ||
+    status === "uploading_supabase" ||
+    status === "scheduling";
 
-  // --- Refactor Button Content Logic ---
+  // --- Button/Status Logic ---
   let buttonIcon = <UploadCloud className="mr-2 h-4 w-4" />;
-  let buttonText = "Publier sur TikTok";
+  let buttonText = "Programmer la publication"; // Changed text
 
-  if (status === "initiating") {
+  if (status === "validating") {
     buttonIcon = <Loader2 className="mr-2 h-4 w-4 animate-spin" />;
-    buttonText = "Initialisation...";
-  } else if (status === "uploading") {
+    buttonText = "Validation...";
+  } else if (status === "uploading_supabase") {
     buttonIcon = <Loader2 className="mr-2 h-4 w-4 animate-spin" />;
-    buttonText = `Téléversement (${uploadProgress}%)`;
-  } else if (status === "publishing") {
+    // Show progress if available, otherwise just "Uploading..."
+    buttonText = `Téléversement S... (${uploadProgress}%)`; // Example with progress
+  } else if (status === "scheduling") {
     buttonIcon = <Loader2 className="mr-2 h-4 w-4 animate-spin" />;
-    buttonText = "Publication...";
+    buttonText = "Programmation...";
   }
-  // --- End Refactor ---
 
-  // --- Refactor Status Icon Logic ---
   let statusIcon = null;
-  if (status === "initiating" || status === "publishing") {
+  if (
+    status === "validating" ||
+    status === "uploading_supabase" ||
+    status === "scheduling"
+  ) {
     statusIcon = <Loader2 className="h-4 w-4 animate-spin" />;
   } else if (status === "success") {
     statusIcon = <CheckCircle className="h-4 w-4 text-green-500" />;
   }
-  // --- End Refactor ---
+  // --- End Button/Status Logic ---
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -268,7 +325,7 @@ export default function CreateTikTokPostForm({
         <Input
           id="videoFile"
           type="file"
-          accept="video/*"
+          accept={ALLOWED_VIDEO_TYPES.join(",")} // Use defined types
           onChange={handleFileChange}
           ref={fileInputRef}
           required
@@ -300,12 +357,72 @@ export default function CreateTikTokPostForm({
         </p>
       </div>
 
+      {/* --- Date/Time Picker --- */}
+      <div>
+        <Label htmlFor="scheduledAt">Date et Heure de Publication</Label>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant={"outline"}
+              className={cn(
+                "w-full justify-start text-left font-normal",
+                !scheduledAt && "text-muted-foreground"
+              )}
+              disabled={isLoading}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4" />
+              {scheduledAt ? (
+                format(scheduledAt, "PPP HH:mm")
+              ) : (
+                <span>Choisissez une date et heure</span>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0">
+            <Calendar
+              mode="single"
+              selected={scheduledAt}
+              onSelect={setScheduledAt}
+              initialFocus
+              // Optional: Add time selection capabilities if needed
+              // You might need a combined date/time picker component for better UX
+            />
+            {/* Basic Time Input - Consider a dedicated library component */}
+            <div className="p-2 border-t">
+              <Label htmlFor="scheduleTime">Heure (HH:MM)</Label>
+              <Input
+                id="scheduleTime"
+                type="time"
+                defaultValue={scheduledAt ? format(scheduledAt, "HH:mm") : ""}
+                onChange={(e) => {
+                  const time = e.target.value;
+                  if (scheduledAt && time) {
+                    const [hours, minutes] = time.split(":").map(Number);
+                    const newDate = new Date(scheduledAt);
+                    newDate.setHours(hours, minutes, 0, 0); // Set hours/minutes, reset seconds/ms
+                    setScheduledAt(newDate);
+                  } else if (!scheduledAt && time) {
+                    // If no date selected yet, create a new date with today's date and selected time
+                    const [hours, minutes] = time.split(":").map(Number);
+                    const newDate = new Date();
+                    newDate.setHours(hours, minutes, 0, 0);
+                    setScheduledAt(newDate);
+                  }
+                }}
+                disabled={isLoading}
+                className="mt-1"
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
+      {/* --- End Date/Time Picker --- */}
+
       {/* Privacy Level */}
       <div>
         <Label htmlFor="privacyLevel">Visibilité</Label>
         <Select
           value={privacyLevel}
-          // --- FIX: Cast incoming string value ---
           onValueChange={(value) =>
             setPrivacyLevel(value as TikTokPrivacyLevel)
           }
@@ -354,20 +471,22 @@ export default function CreateTikTokPostForm({
       </div>
 
       {/* Progress and Status */}
-      {status === "uploading" && (
+      {/* Show progress bar only during Supabase upload for now */}
+      {status === "uploading_supabase" && (
         <div>
           <Label>{statusMessage}</Label>
           <Progress value={uploadProgress} className="w-full mt-1" />
         </div>
       )}
       {/* Display status message if not idle and not uploading */}
-      {status !== "idle" && status !== "uploading" && statusMessage && (
-        <div className="text-sm font-medium flex items-center gap-2">
-          {/* Use the refactored statusIcon */}
-          {statusIcon}
-          <span>{statusMessage}</span>
-        </div>
-      )}
+      {status !== "idle" &&
+        status !== "uploading_supabase" &&
+        statusMessage && (
+          <div className="text-sm font-medium flex items-center gap-2">
+            {statusIcon}
+            <span>{statusMessage}</span>
+          </div>
+        )}
 
       {/* Error Display */}
       {error && status === "error" && (
@@ -381,9 +500,8 @@ export default function CreateTikTokPostForm({
       {/* Submit Button */}
       <Button
         type="submit"
-        disabled={isLoading || !videoFile || !selectedAccountId}
+        disabled={isLoading || !videoFile || !selectedAccountId || !scheduledAt} // Add scheduledAt check
       >
-        {/* Use the refactored buttonIcon and buttonText */}
         {buttonIcon}
         {buttonText}
       </Button>
