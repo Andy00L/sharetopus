@@ -15,6 +15,17 @@ export interface TikTokPostCreationResponse {
     message: string;
   };
 }
+// After - create a proper interface:
+interface TikTokPostRequestBody {
+  video_id: string;
+  post_info: {
+    title: string;
+    privacy_level: string;
+    disable_comment: boolean;
+    disable_duet: boolean;
+    disable_stitch: boolean;
+  };
+}
 
 /**
  * Create a TikTok post with an uploaded video
@@ -43,11 +54,11 @@ export async function createTikTokPost(
     const url = "https://open.tiktokapis.com/v2/post/publish/content/";
 
     // Prepare the request body with all options
-    const requestBody: any = {
+    const requestBody: TikTokPostRequestBody = {
       video_id: videoId,
       post_info: {
         title: caption,
-        privacy_level: options.privacyLevel || "SELF_ONLY",
+        privacy_level: options.privacyLevel ?? "SELF_ONLY",
         disable_comment: options.disableComment || false,
         disable_duet: options.disableDuet || false,
         disable_stitch: options.disableStitch || false,

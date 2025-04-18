@@ -3,7 +3,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react"; // Add useCallback import
 
 declare global {
   interface Window {
@@ -39,20 +39,20 @@ export default function ConnectPinterestButton() {
     redirectUri
   )}&state=${state}&response_type=code`;
 
-  // Function to handle success from popup
-  const handlePinterestSuccess = () => {
+  // Use useCallback to memoize the function
+  const handlePinterestSuccess = useCallback(() => {
     console.log("Pinterest connection successful, refreshing page...");
     router.refresh();
-  };
+  }, [router]);
 
-  // Setup and cleanup for window event handlers
+  // Now include handlePinterestSuccess in the dependency array
   useEffect(() => {
     window.onPinterestConnectSuccess = handlePinterestSuccess;
 
     return () => {
       window.onPinterestConnectSuccess = undefined;
     };
-  }, [router]);
+  }, [handlePinterestSuccess]);
 
   // Open Pinterest popup
   const openPinterestPopup = () => {
