@@ -18,22 +18,27 @@ export async function exchangePinterestCode(
   // Pinterest API endpoint for token exchange
   const url = "https://api.pinterest.com/v5/oauth/token";
 
-  // Build form parameters
-  const params = new URLSearchParams();
-  params.append("client_id", client_id);
-  params.append("client_secret", client_secret);
-  params.append("code", code);
-  params.append("grant_type", "authorization_code");
-  params.append("redirect_uri", redirect_uri);
-
   try {
     console.log("[Pinterest] Exchanging code for tokens...");
+
+    // Build form parameters - IMPORTANT: Pinterest expects these parameters
+    // in a specific format and uses Basic Auth for client authentication
+    const params = new URLSearchParams();
+    params.append("grant_type", "authorization_code");
+    params.append("code", code);
+    params.append("redirect_uri", redirect_uri);
+
+    // Create Basic Auth token from client_id and client_secret
+    const basicAuth = Buffer.from(`${client_id}:${client_secret}`).toString(
+      "base64"
+    );
 
     // Make token exchange request
     const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${basicAuth}`,
       },
       body: params.toString(),
     });
