@@ -21,17 +21,18 @@ export async function exchangePinterestCode(
   try {
     console.log("[Pinterest] Exchanging code for tokens...");
 
-    // Build form parameters - IMPORTANT: Pinterest expects these parameters
-    // in a specific format and uses Basic Auth for client authentication
+    // Create Basic Auth token from client_id and client_secret
+    const basicAuth = Buffer.from(`${client_id}:${client_secret}`).toString(
+      "base64"
+    );
+
+    // Build form parameters exactly as Pinterest expects
     const params = new URLSearchParams();
     params.append("grant_type", "authorization_code");
     params.append("code", code);
     params.append("redirect_uri", redirect_uri);
 
-    // Create Basic Auth token from client_id and client_secret
-    const basicAuth = Buffer.from(`${client_id}:${client_secret}`).toString(
-      "base64"
-    );
+    console.log("[Pinterest] Request params:", params.toString());
 
     // Make token exchange request
     const response = await fetch(url, {
@@ -63,7 +64,7 @@ export async function exchangePinterestCode(
       );
     }
 
-    // Validate response contains required fields
+    // Check for valid response
     if (!data || data.error) {
       throw new Error(
         `Invalid Pinterest token response: ${JSON.stringify(data)}`
