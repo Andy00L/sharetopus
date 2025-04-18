@@ -1,11 +1,9 @@
 "use client";
 
-import {
-  cancelScheduledPost,
-  deleteScheduledPost,
-  resumeScheduledPost,
-  updateScheduledTime,
-} from "@/actions/server/supabase/scheduleActions";
+import { cancelScheduledPost } from "@/actions/scheduleActions/cancelScheduledPost";
+import { deleteScheduledPost } from "@/actions/scheduleActions/deleteScheduledPost";
+import { resumeScheduledPost } from "@/actions/scheduleActions/resumeScheduledPost";
+import { updateScheduledTime } from "@/actions/scheduleActions/updateScheduledTime";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,8 +40,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { format } from "date-fns";
 import {
   AlertCircle,
   CalendarIcon,
@@ -56,26 +55,30 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { format } from "date-fns";
-import Link from "next/link";
 
 // Type for scheduled post with joined account data
 interface ScheduledPost {
-  id: string;
-  platform: string;
-  status: "scheduled" | "processing" | "posted" | "failed" | "cancelled";
-  scheduled_at: string;
-  posted_at: string | null;
-  post_title: string | null;
-  post_options: Record<string, unknown> | null; // Replace 'any' with Record
-  media_type: string;
-  media_storage_path: string;
-  error_message: string | null;
-  created_at: string;
-  social_accounts: {
+  readonly id: string;
+  readonly platform: string;
+  readonly status:
+    | "scheduled"
+    | "processing"
+    | "posted"
+    | "failed"
+    | "cancelled";
+  readonly scheduled_at: string;
+  readonly posted_at: string | null;
+  readonly post_title: string | null;
+  readonly post_options: Record<string, unknown> | null; // Replace 'any' with Record
+  readonly media_type: string;
+  readonly media_storage_path: string;
+  readonly error_message: string | null;
+  readonly created_at: string;
+  readonly social_accounts: {
     id: string;
     platform: string;
     account_identifier: string;
@@ -94,6 +97,13 @@ interface ScheduledPostsListProps {
   readonly userId: string | null;
 }
 
+interface RescheduleDialogProps {
+  readonly post: ScheduledPost | null;
+  readonly isOpen: boolean;
+  readonly onClose: () => void;
+  readonly userId: string | null;
+  readonly onSuccess: () => void;
+}
 // Separate RescheduleDialog component
 function RescheduleDialog({
   post,
@@ -101,13 +111,7 @@ function RescheduleDialog({
   onClose,
   userId,
   onSuccess,
-}: {
-  post: ScheduledPost | null;
-  isOpen: boolean;
-  onClose: () => void;
-  userId: string | null;
-  onSuccess: () => void;
-}) {
+}: RescheduleDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [newDate, setNewDate] = useState<Date | null>(
     post ? new Date(post.scheduled_at) : null

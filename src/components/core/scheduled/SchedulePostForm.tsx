@@ -22,7 +22,9 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
-import { schedulePost } from "@/actions/server/supabase/scheduleActions";
+import { deleteSupabaseFileAction } from "@/actions/scheduleActions/deleteSupabaseFileAction";
+import { schedulePost } from "@/actions/scheduleActions/schedulePost";
+import { directUploadToSupabase } from "@/actions/server/supabase/uploadFileToSupabase";
 import { Textarea } from "@/components/ui/textarea";
 import { Provider } from "@/lib/types/provider";
 import { SocialAccount } from "@/lib/types/socialAccount";
@@ -40,7 +42,6 @@ import {
   TikTokOptions,
   TikTokPostOptions,
 } from "./platform-options/TikTokOptions";
-import { uploadFileToSupabase } from "@/actions/server/supabase/uploadFile";
 
 // Constants for media validation
 const MAX_VIDEO_SIZE_MB = 1000; // 1GB max upload size
@@ -78,9 +79,14 @@ export interface PlatformPostOptions {
     // Add Facebook-specific options here
     privacyLevel: string;
   };
-
-  // Add more platforms as needed
+  pinterest: {
+    privacyLevel: "PUBLIC";
+    board: "";
+    link: "";
+  };
 }
+
+// Add more platforms as needed
 
 interface SchedulePostFormProps {
   readonly connectedAccounts: SocialAccount[];
@@ -110,6 +116,11 @@ export default function SchedulePostForm({
       disableComment: false,
       disableDuet: false,
       disableStitch: false,
+    },
+    pinterest: {
+      privacyLevel: "PUBLIC",
+      board: "",
+      link: "",
     },
   });
 
@@ -218,7 +229,7 @@ export default function SchedulePostForm({
       setUploadProgress(0);
       setStatusMessage("Uploading to storage...");
 
-      mediaStoragePath = await uploadFileToSupabase(
+      mediaStoragePath = await directUploadToSupabase(
         userId,
         mediaFile,
         "scheduled-videos" // Bucket name
@@ -257,7 +268,7 @@ export default function SchedulePostForm({
           resetForm();
           // Optionally redirect to scheduled posts page
           router.push("/scheduled");
-        }, 2000);
+        }, 500);
       } else {
         throw new Error(result.message);
       }
@@ -277,13 +288,7 @@ export default function SchedulePostForm({
           mediaStoragePath
         );
         try {
-          const scheduleActions = await import(
-            "@/actions/server/supabase/scheduleActions"
-          );
-          await scheduleActions.deleteSupabaseFileAction(
-            mediaStoragePath,
-            userId
-          );
+          await deleteSupabaseFileAction(mediaStoragePath, userId);
           toast.info("Temporary file cleaned up.");
         } catch (deleteError) {
           console.error(
@@ -324,6 +329,11 @@ export default function SchedulePostForm({
         disableComment: false,
         disableDuet: false,
         disableStitch: false,
+      },
+      pinterest: {
+        privacyLevel: "PUBLIC",
+        board: "",
+        link: "",
       },
     });
     setStatus("idle");
@@ -381,6 +391,7 @@ export default function SchedulePostForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="tiktok">TikTok</SelectItem>
+                <SelectItem value="pinterest">Pinterest</SelectItem>
                 <SelectItem value="instagram" disabled>
                   Instagram (Coming Soon)
                 </SelectItem>

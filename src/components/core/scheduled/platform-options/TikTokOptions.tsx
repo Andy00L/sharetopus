@@ -8,7 +8,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import React from "react";
 
 // Define the TikTok options type
 export interface TikTokOptions {
@@ -20,7 +19,7 @@ export interface TikTokOptions {
 
 interface TikTokOptionsProps {
   readonly options: TikTokOptions;
-  onChange: (options: TikTokOptions) => void;
+  readonly onChange: (options: TikTokOptions) => void;
   readonly disabled?: boolean;
 }
 

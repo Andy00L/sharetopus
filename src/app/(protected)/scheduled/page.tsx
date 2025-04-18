@@ -1,5 +1,5 @@
 // app/(protected)/scheduled/page.tsx
-import { getScheduledPosts } from "@/actions/server/supabase/scheduleActions";
+import { getScheduledPosts } from "@/actions/scheduleActions/getScheduledPosts";
 import ScheduledPostsList from "@/components/core/scheduled/ScheduledPostsList";
 import { Button } from "@/components/ui/button";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";

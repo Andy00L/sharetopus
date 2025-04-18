@@ -1,7 +1,8 @@
-import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
-import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
-import { Button } from "@/components/ui/button";
 import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
+import ConnectPinterestButton from "@/components/core/accounts/ConnectPinterestButton";
+import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
+import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
+import { Button } from "@/components/ui/button";
 import { auth } from "@clerk/nextjs/server";
 
 export default async function ManageAccountsPage() {
@@ -20,6 +21,12 @@ export default async function ManageAccountsPage() {
       <section className="mb-8">
         <h2 className="text-xl font-bold mb-4">Connecter un compte TikTok</h2>
         <ConnectTikTokButton />
+      </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-bold mb-4">
+          Connecter un compte Pinterest
+        </h2>
+        <ConnectPinterestButton />
       </section>
 
       <section className="mt-12 border-t pt-6">

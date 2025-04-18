@@ -13,7 +13,12 @@ import { randomUUID } from "node:crypto";
  * @returns The full path of the uploaded file within the bucket.
  * @throws If the upload fails.
  */
-export async function uploadFileToSupabase(
+export type ProgressCallback = (progress: number) => void;
+/**
+ * Interface for the progress object provided by Supabase storage upload
+ */
+
+export async function directUploadToSupabase(
   userId: string,
   file: File,
   bucketName: string
@@ -36,31 +41,28 @@ export async function uploadFileToSupabase(
   const filePath = `${userId}/${uniqueFileName}`;
 
   console.log(
-    `[Supabase Upload] Uploading '${file.name}' to bucket '${bucketName}' at path '${filePath}'`
+    `[Client Upload] Uploading '${file.name}' to bucket '${bucketName}' at path '${filePath}'`
   );
 
   try {
-    // Convert File to ArrayBuffer for server-side upload
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
     // Use adminSupabase for this operation
     const { data, error } = await adminSupabase.storage
       .from(bucketName)
-      .upload(filePath, buffer, {
+      .upload(filePath, file, {
         contentType: file.type,
         cacheControl: "3600",
         upsert: false,
+        // Progress tracking
       });
 
     if (error) {
-      console.error("Upload error:", error);
+      console.error("[Client Upload] Error:", error);
       throw new Error(`Supabase upload failed: ${error.message}`);
     }
 
     return data.path;
   } catch (error) {
-    console.error("Upload exception:", error);
+    console.error("[Client Upload] Exception:", error);
     throw error;
   }
 }

@@ -3,4 +3,5 @@ export type Provider =
   | "instagram"
   | "facebook"
   | "threads"
-  | "youtube";
+  | "youtube"
+  | "pinterest";
