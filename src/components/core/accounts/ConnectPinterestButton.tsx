@@ -26,7 +26,8 @@ export default function ConnectPinterestButton() {
   const router = useRouter();
 
   // Define required scopes
-  const scopes = "boards:read,pins:read,pins:write,user_accounts:read";
+  const scopes =
+    "ads:read,boards:read,boards:read_secret,boards:write,boards:write_secret,pins:read,pins:read_secret,pins:write,pins:write_secret,user_accounts:read,catalogs:read,catalogs:write";
 
   // Generate a state token
   const state = generateState();
