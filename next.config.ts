@@ -16,14 +16,12 @@ const nextConfig: NextConfig = {
         port: "",
         pathname: "/tos-no1a-avt-0068c001-no/**", // Allow any path under this prefix
       },
-      // Add other potential TikTok CDN hostnames if needed
-      // Example:
-      // {
-      //   protocol: 'https',
-      //   hostname: 'p16-sign-va.tiktokcdn.com',
-      //   port: '',
-      //   pathname: '/**', // Allow any path
-      // },
+      {
+        protocol: "https",
+        hostname: "i.pinimg.com",
+        port: "",
+        pathname: "/**", // Allow all paths on i.pinimg.com
+      },
     ],
   },
 };
