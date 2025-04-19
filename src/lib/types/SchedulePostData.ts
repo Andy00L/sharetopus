@@ -1,3 +1,4 @@
+import { PinterestPrivacyLevel } from "./PinterestPrivacyLevel ";
 import { TikTokPrivacyLevel } from "./TikTokPrivacyLevel ";
 
 // Define the structure of the data expected by this action
@@ -6,14 +7,19 @@ export interface SchedulePostData {
   platform: string;
   scheduledAt: string | Date; // ISO string or Date object
   title: string | null;
-  mediaType: "video" | "image"; // Extend as needed
+  mediaType: "video" | "image"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage
   postOptions: {
-    // Platform-specific options
-    privacyLevel?: TikTokPrivacyLevel;
+    // TikTok-specific options
+    privacyLevel?: TikTokPrivacyLevel | PinterestPrivacyLevel;
     disableComment?: boolean;
     disableDuet?: boolean;
     disableStitch?: boolean;
+
+    // Pinterest-specific options
+    board?: string;
+    link?: string;
+
     // Add other platform options here as needed
   } | null;
 }

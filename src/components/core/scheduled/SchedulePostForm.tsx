@@ -1,4 +1,4 @@
-// components/core/schedule/SchedulePostForm.tsx
+// components/core/scheduled/SchedulePostForm.tsx
 "use client";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -22,8 +22,6 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
-import { deleteSupabaseFileAction } from "@/actions/scheduleActions/deleteSupabaseFileAction";
-import { schedulePost } from "@/actions/scheduleActions/schedulePost";
 import { directUploadToSupabase } from "@/actions/server/supabase/uploadFileToSupabase";
 import { Textarea } from "@/components/ui/textarea";
 import { Provider } from "@/lib/types/provider";
@@ -36,17 +34,23 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  TikTokOptions,
-  TikTokPostOptions,
-} from "./platform-options/TikTokOptions";
+import { TikTokPostOptions } from "./platform-options/TikTokOptions";
+
+import { SchedulePostData } from "@/lib/types/SchedulePostData";
+import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
+import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
+import { PinterestPrivacyLevel } from "@/lib/types/PinterestPrivacyLevel ";
+import { TikTokPrivacyLevel } from "@/lib/types/TikTokPrivacyLevel ";
+import { PinterestPostOptions } from "./platform-options/PinterestOptions";
+// Removed unused import
 
 // Constants for media validation
 const MAX_VIDEO_SIZE_MB = 1000; // 1GB max upload size
 const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif"];
 
 // Post status enum
 type PostStatus =
@@ -70,6 +74,12 @@ export interface PlatformPostOptions {
     disableStitch: boolean;
   };
 
+  pinterest?: {
+    privacyLevel: string;
+    board: string;
+    link: string;
+  };
+
   instagram?: {
     // Add Instagram-specific options here
     privacyLevel: string;
@@ -78,11 +88,6 @@ export interface PlatformPostOptions {
   facebook?: {
     // Add Facebook-specific options here
     privacyLevel: string;
-  };
-  pinterest: {
-    privacyLevel: "PUBLIC";
-    board: "";
-    link: "";
   };
 }
 
@@ -108,6 +113,9 @@ export default function SchedulePostForm({
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [caption, setCaption] = useState<string>("");
   const [scheduledAt, setScheduledAt] = useState<Date | undefined>(undefined);
+
+  // Pinterest-specific state
+  const [loadingBoards, setLoadingBoards] = useState(false);
 
   // Platform-specific options
   const [platformOptions, setPlatformOptions] = useState<PlatformPostOptions>({
@@ -144,18 +152,35 @@ export default function SchedulePostForm({
     setAvailableAccounts(filteredAccounts);
   };
 
+  // Update loading state when account selected
+  useEffect(() => {
+    if (selectedPlatform === "pinterest" && selectedAccountId) {
+      setLoadingBoards(true);
+      // We'll rely on the PinterestPostOptions component to fetch boards
+      // This just ensures the form shows loading state
+      setTimeout(() => setLoadingBoards(false), 500);
+    }
+  }, [selectedPlatform, selectedAccountId]);
+
   // Handle file selection and validation
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     setError(null);
     const file = event.target.files?.[0];
 
     if (file) {
+      const allowedTypes =
+        selectedPlatform === "pinterest"
+          ? ALLOWED_IMAGE_TYPES
+          : ALLOWED_VIDEO_TYPES;
+
       // File type validation
-      if (!ALLOWED_VIDEO_TYPES.includes(file.type)) {
+      if (!allowedTypes.includes(file.type)) {
         toast.error(
-          `Invalid file type. Accepted types: ${ALLOWED_VIDEO_TYPES.map(
-            (t) => t.split("/")[1]
-          ).join(", ")}`
+          `Invalid file type. ${
+            selectedPlatform === "pinterest"
+              ? "Pinterest requires image files"
+              : "Accepted video types: mp4, quicktime, webm"
+          }`
         );
         setMediaFile(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -220,6 +245,16 @@ export default function SchedulePostForm({
       return;
     }
 
+    // Platform-specific validation
+    if (selectedPlatform === "pinterest") {
+      if (!platformOptions.pinterest?.board) {
+        toast.error("Please select a Pinterest board.");
+        setStatus("error");
+        setError("Please select a Pinterest board for your post.");
+        return;
+      }
+    }
+
     // Upload and schedule process
     let mediaStoragePath = "";
 
@@ -242,15 +277,43 @@ export default function SchedulePostForm({
       // Step 2: Schedule Post
       setStatus("scheduling");
 
+      // Determine media type
+      const mediaType = ALLOWED_IMAGE_TYPES.includes(mediaFile.type)
+        ? "image"
+        : "video";
+
+      // Prepare platform-specific options based on selected platform
+      let postOptions: SchedulePostData["postOptions"] = null;
+
+      if (selectedPlatform === "tiktok" && platformOptions.tiktok) {
+        postOptions = {
+          privacyLevel: platformOptions.tiktok
+            .privacyLevel as TikTokPrivacyLevel,
+          disableComment: platformOptions.tiktok.disableComment,
+          disableDuet: platformOptions.tiktok.disableDuet,
+          disableStitch: platformOptions.tiktok.disableStitch,
+        };
+      } else if (
+        selectedPlatform === "pinterest" &&
+        platformOptions.pinterest
+      ) {
+        postOptions = {
+          privacyLevel: platformOptions.pinterest
+            .privacyLevel as PinterestPrivacyLevel,
+          board: platformOptions.pinterest.board,
+          link: platformOptions.pinterest.link || undefined,
+        };
+      }
+
       // Schedule data for the server action
       const scheduleData = {
         socialAccountId: selectedAccountId,
         platform: selectedPlatform,
         scheduledAt: scheduledAt,
         title: caption || null,
-        mediaType: "video" as const, // For now, only handling video
+        mediaType: (mediaType as "video") || "image",
         mediaStoragePath: mediaStoragePath,
-        postOptions: null,
+        postOptions: postOptions,
       };
 
       console.log("Scheduling data:", JSON.stringify(scheduleData));
@@ -301,13 +364,10 @@ export default function SchedulePostForm({
     }
   };
 
-  // Helper to get platform-specific options
-
   // Update platform-specific options
-  const updatePlatformOptions = (
-    platform: Provider,
-    // Use a type that accepts TikTokOptions
-    options: TikTokOptions
+  const updatePlatformOptions = <T extends keyof PlatformPostOptions>(
+    platform: T,
+    options: PlatformPostOptions[T]
   ) => {
     setPlatformOptions((prev) => ({
       ...prev,
@@ -369,6 +429,22 @@ export default function SchedulePostForm({
   } else if (status === "success") {
     statusIcon = <CheckCircle className="h-4 w-4 text-green-500" />;
   }
+
+  // Get allowed file types for the selected platform
+  const getAllowedFileTypes = () => {
+    if (selectedPlatform === "pinterest") {
+      return ALLOWED_IMAGE_TYPES.join(",");
+    }
+    return ALLOWED_VIDEO_TYPES.join(",");
+  };
+
+  // Get file type description for the selected platform
+  const getFileTypeDescription = () => {
+    if (selectedPlatform === "pinterest") {
+      return "Pinterest requires image files (JPEG, PNG, GIF)";
+    }
+    return "Accepted video types: MP4, QuickTime, WebM";
+  };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -459,34 +535,49 @@ export default function SchedulePostForm({
           )}
 
           {/* Media Upload */}
-          <div className="space-y-2">
-            <Label htmlFor="mediaFile">Media File</Label>
-            <Input
-              id="mediaFile"
-              type="file"
-              accept={ALLOWED_VIDEO_TYPES.join(",")}
-              onChange={handleFileChange}
-              ref={fileInputRef}
-              required
-              disabled={isLoading}
-              className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
-            />
-            {mediaFile && (
-              <p className="text-sm text-muted-foreground mt-1">
-                Selected: {mediaFile.name} (
-                {(mediaFile.size / 1024 / 1024).toFixed(2)} MB)
+          {selectedPlatform && (
+            <div className="space-y-2">
+              <Label htmlFor="mediaFile">
+                {selectedPlatform === "pinterest" ? "Image File" : "Media File"}
+              </Label>
+              <Input
+                id="mediaFile"
+                type="file"
+                accept={getAllowedFileTypes()}
+                onChange={handleFileChange}
+                ref={fileInputRef}
+                required
+                disabled={isLoading}
+                className="file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
+              />
+              <p className="text-xs text-muted-foreground">
+                {getFileTypeDescription()}
               </p>
-            )}
-          </div>
+              {mediaFile && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  Selected: {mediaFile.name} (
+                  {(mediaFile.size / 1024 / 1024).toFixed(2)} MB)
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Caption/Text */}
           <div className="space-y-2">
-            <Label htmlFor="caption">Caption</Label>
+            <Label htmlFor="caption">
+              {selectedPlatform === "pinterest"
+                ? "Title/Description"
+                : "Caption"}
+            </Label>
             <Textarea
               id="caption"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Write a caption for your post..."
+              placeholder={
+                selectedPlatform === "pinterest"
+                  ? "Write a title and description for your pin..."
+                  : "Write a caption for your post..."
+              }
               maxLength={2200}
               disabled={isLoading}
               rows={3}
@@ -565,6 +656,18 @@ export default function SchedulePostForm({
             />
           )}
 
+          {selectedPlatform === "pinterest" && selectedAccountId && (
+            <PinterestPostOptions
+              options={platformOptions.pinterest!}
+              onChange={(options) =>
+                updatePlatformOptions("pinterest", options)
+              }
+              disabled={isLoading || loadingBoards}
+              accountId={selectedAccountId}
+              accounts={connectedAccounts}
+            />
+          )}
+
           {/* Progress and Status */}
           {status === "uploading_media" && (
             <div>
@@ -601,7 +704,9 @@ export default function SchedulePostForm({
           !selectedPlatform ||
           !selectedAccountId ||
           !mediaFile ||
-          !scheduledAt
+          !scheduledAt ||
+          (selectedPlatform === "pinterest" &&
+            !platformOptions.pinterest?.board)
         }
         className="w-full"
       >

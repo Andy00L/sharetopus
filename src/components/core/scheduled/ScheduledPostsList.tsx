@@ -1,9 +1,9 @@
 "use client";
 
-import { cancelScheduledPost } from "@/actions/scheduleActions/cancelScheduledPost";
-import { deleteScheduledPost } from "@/actions/scheduleActions/deleteScheduledPost";
-import { resumeScheduledPost } from "@/actions/scheduleActions/resumeScheduledPost";
-import { updateScheduledTime } from "@/actions/scheduleActions/updateScheduledTime";
+import { cancelScheduledPost } from "@/actions/server/scheduleActions/cancelScheduledPost";
+import { deleteScheduledPost } from "@/actions/server/scheduleActions/deleteScheduledPost";
+import { resumeScheduledPost } from "@/actions/server/scheduleActions/resumeScheduledPost";
+import { updateScheduledTime } from "@/actions/server/scheduleActions/updateScheduledTime";
 import {
   AlertDialog,
   AlertDialogAction,

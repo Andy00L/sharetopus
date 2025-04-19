@@ -1,4 +1,7 @@
 // components/core/scheduled/platform-options/PinterestOptions.tsx
+"use client";
+
+import { useEffect, useState } from "react";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -8,6 +11,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  getPinterestBoards,
+  PinterestBoard,
+} from "@/lib/api/pinterest/getPinterestBoards";
+import { SocialAccount } from "@/lib/types/socialAccount";
 
 // Define the Pinterest options type
 export interface PinterestOptions {
@@ -20,15 +29,21 @@ interface PinterestOptionsProps {
   readonly options: PinterestOptions;
   readonly onChange: (options: PinterestOptions) => void;
   readonly disabled?: boolean;
-  readonly boards?: Array<{ id: string; name: string }>;
+  readonly accountId?: string;
+  readonly accounts?: SocialAccount[];
 }
 
 export function PinterestPostOptions({
   options,
   onChange,
   disabled = false,
-  boards = [],
+  accountId,
+  accounts = [],
 }: PinterestOptionsProps) {
+  const [boards, setBoards] = useState<PinterestBoard[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   // Handler for privacy level change
   const handlePrivacyChange = (value: string) => {
     onChange({
@@ -52,6 +67,40 @@ export function PinterestPostOptions({
       link: e.target.value,
     });
   };
+
+  // Fetch boards when account ID changes
+  useEffect(() => {
+    async function loadBoards() {
+      if (!accountId) return;
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        // Find the selected Pinterest account
+        const account = accounts.find((acc) => acc.id === accountId);
+
+        if (!account || account.platform !== "pinterest") {
+          setBoards([]);
+          setLoading(false);
+          return;
+        }
+
+        console.log("[Pinterest] Fetching boards for account:", accountId);
+        const fetchedBoards = await getPinterestBoards(account.access_token);
+        console.log("[Pinterest] Retrieved boards:", fetchedBoards.length);
+        setBoards(fetchedBoards);
+      } catch (err) {
+        console.error("Error fetching Pinterest boards:", err);
+        setError("Failed to load your Pinterest boards");
+        setBoards([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadBoards();
+  }, [accountId, accounts]);
 
   return (
     <div className="space-y-4">
@@ -78,28 +127,53 @@ export function PinterestPostOptions({
       {/* Board Selection */}
       <div className="space-y-2">
         <Label htmlFor="board">Board</Label>
-        <Select
-          value={options.board}
-          onValueChange={handleBoardChange}
-          disabled={disabled || boards.length === 0}
-        >
-          <SelectTrigger id="board">
-            <SelectValue placeholder="Select a board" />
-          </SelectTrigger>
-          <SelectContent>
-            {boards.length === 0 ? (
-              <SelectItem value="" disabled>
-                No boards available
-              </SelectItem>
-            ) : (
-              boards.map((board) => (
-                <SelectItem key={board.id} value={board.id}>
-                  {board.name}
-                </SelectItem>
-              ))
+        {loading ? (
+          <Skeleton className="h-10 w-full" />
+        ) : (
+          <>
+            <Select
+              value={options.board}
+              onValueChange={handleBoardChange}
+              disabled={disabled}
+            >
+              <SelectTrigger id="board">
+                <SelectValue placeholder="Select a board" />
+              </SelectTrigger>
+              <SelectContent>
+                {boards.length === 0 ? (
+                  <SelectItem value="no-boards-available" disabled>
+                    No boards available
+                  </SelectItem>
+                ) : (
+                  boards.map((board) => (
+                    <SelectItem key={board.id} value={board.id}>
+                      {board.name}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+
+            {boards.length === 0 && !loading && (
+              <div className="mt-2 text-sm text-amber-600">
+                <p>
+                  You need to create a board on Pinterest before you can
+                  schedule posts.
+                </p>
+                <a
+                  href="https://www.pinterest.com/settings/boards/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline mt-1 inline-block"
+                >
+                  Create a board on Pinterest
+                </a>
+              </div>
             )}
-          </SelectContent>
-        </Select>
+
+            {error && <div className="mt-2 text-sm text-red-500">{error}</div>}
+          </>
+        )}
       </div>
 
       {/* Link URL */}
