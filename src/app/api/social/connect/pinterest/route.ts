@@ -75,6 +75,12 @@ export async function GET(req: Request) {
           token_expires_at: new Date(
             Date.now() + expires_in * 1000
           ).toISOString(),
+          username: pinterestProfile?.username ?? null,
+          avatar_url: pinterestProfile?.profile_image_url ?? null,
+          is_verified: pinterestProfile?.is_verified ?? false,
+          display_name:
+            pinterestProfile?.full_name ?? pinterestProfile?.username ?? null,
+          follower_count: pinterestProfile?.follower_count ?? null,
           extra: {
             profile: pinterestProfile,
             token_info: {
@@ -87,6 +93,14 @@ export async function GET(req: Request) {
             },
           },
         };
+        // Log the account data for debugging
+        console.log(
+          "[Pinterest] Account data prepared:",
+          JSON.stringify({
+            ...accountData,
+            access_token: accountData.access_token.substring(0, 10) + "...", // Truncate for security
+          })
+        );
 
         const { error: upsertError } = await adminSupabase
           .from("social_accounts")

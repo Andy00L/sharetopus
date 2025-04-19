@@ -40,6 +40,8 @@ export interface SocialAccount {
   access_token: string;
   refresh_token?: string | null;
   token_expires_at?: string | null;
+  username: string;
+  display_name: string;
   extra?: ExtraData;
   created_at: string;
   updated_at: string;

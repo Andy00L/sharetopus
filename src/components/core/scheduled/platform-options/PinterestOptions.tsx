@@ -81,24 +81,60 @@ export function PinterestPostOptions({
         const account = accounts.find((acc) => acc.id === accountId);
 
         if (!account || account.platform !== "pinterest") {
+          console.log(
+            "[Pinterest] No valid Pinterest account found for ID:",
+            accountId
+          );
           setBoards([]);
           setLoading(false);
           return;
         }
 
-        console.log("[Pinterest] Fetching boards for account:", accountId);
+        // Log that we found the account and are about to fetch boards
+        console.log("[Pinterest] Found account:", {
+          id: account.id,
+          platform: account.platform,
+          hasToken: !!account.access_token,
+          tokenStart: account.access_token
+            ? account.access_token.substring(0, 10) + "..."
+            : "none",
+          username: account.username,
+          displayName: account.display_name,
+        });
+
+        // Use the fixed function
         const fetchedBoards = await getPinterestBoards(account.access_token);
-        console.log("[Pinterest] Retrieved boards:", fetchedBoards.length);
+        console.log(
+          "[Pinterest] Successfully fetched boards in component:",
+          fetchedBoards
+        );
+
+        if (fetchedBoards.length === 0) {
+          console.log("[Pinterest] No boards found for this account");
+          // Check if we should recommend creating boards
+          setError(
+            "No Pinterest boards found. Please create a board on Pinterest before scheduling."
+          );
+        }
+
         setBoards(fetchedBoards);
       } catch (err) {
-        console.error("Error fetching Pinterest boards:", err);
-        setError("Failed to load your Pinterest boards");
+        console.error("[Pinterest] Error fetching boards in component:", err);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load your Pinterest boards"
+        );
         setBoards([]);
       } finally {
         setLoading(false);
       }
     }
 
+    console.log(
+      "[Pinterest] Board loading effect triggered for account:",
+      accountId
+    );
     loadBoards();
   }, [accountId, accounts]);
 
