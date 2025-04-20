@@ -85,6 +85,7 @@ export async function GET(req: Request) {
             pinterestProfile?.username ??
             null,
           follower_count: pinterestProfile?.follower_count ?? null,
+          following_count: pinterestProfile?.following_count ?? null,
           extra: {
             profile: pinterestProfile,
             token_info: {
