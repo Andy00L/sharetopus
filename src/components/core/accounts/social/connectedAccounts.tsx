@@ -67,7 +67,7 @@ ConnectedAccountsClientProps) {
                   <Badge variant="outline" className="bg-primary/10 capitalize">
                     {account.platform}
                   </Badge>
-                  {account?.is_verified && (
+                  {account.is_verified && (
                     <Badge className="bg-blue-500">Vérifié</Badge>
                   )}
                   {hasLimitedPermissions && (

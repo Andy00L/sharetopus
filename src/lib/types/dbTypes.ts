@@ -116,7 +116,7 @@ export interface SocialAccount {
   updated_at: string | null;
   username: string | null;
   avatar_url: string | null;
-  is_verified: string | null; // Note: This is string in your schema, not boolean
+  is_verified: boolean | null; // Note: This is string in your schema, not boolean
   display_name: string | null;
   follower_count: string | null;
   following_count: string | null;
