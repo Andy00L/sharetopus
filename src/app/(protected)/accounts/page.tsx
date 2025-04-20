@@ -1,4 +1,4 @@
-import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
 import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";

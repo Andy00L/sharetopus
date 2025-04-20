@@ -1,8 +1,8 @@
 // app/(protected)/schedule/page.tsx
-import { fetchSocialAccounts } from "@/actions/server/supabase/fetchSocialAccounts";
-import SchedulePostForm from "@/components/core/scheduled/SchedulePostForm";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import SchedulePostForm from "@/components/core/schedule/SchedulePostForm";
 import { Button } from "@/components/ui/button";
-import { SocialAccount } from "@/lib/types/socialAccount";
+import { SocialAccount } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 

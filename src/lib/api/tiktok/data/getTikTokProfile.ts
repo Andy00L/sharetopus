@@ -83,13 +83,13 @@ export async function getTikTokProfile(
     // Build complete profile from response
     console.log("[TikTok] Successfully parsed profile data:", userData); // Add log for success
     return {
-      id: userData.open_id || openId, // Prefer open_id from profile data if available
+      id: userData.open_id ?? openId, // Prefer open_id from profile data if available
       username:
-        userData.display_name || `tiktok_user_${openId?.substring(0, 6)}`, // Use display_name or fallback
-      display_name: userData.display_name || "TikTok User",
-      avatar_url: userData.avatar_url || null, // Use null if empty
+        userData.display_name ?? `tiktok_user_${openId?.substring(0, 6)}`, // Use display_name or fallback
+      display_name: userData.display_name ?? "TikTok User",
+      avatar_url: userData.avatar_url ?? null, // Use null if empty
       is_verified: !!userData.is_verified,
-      bio_description: userData.bio_description || null,
+      bio_description: userData.bio_description ?? null,
       follower_count: userData.follower_count ?? null, // Use null coalescing for counts
       following_count: userData.following_count ?? null,
     };

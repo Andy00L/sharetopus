@@ -11,4 +11,3 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     return (await auth()).getToken();
   },
 });
-// Admin client that bypasses Row Level Security (RLS) policies

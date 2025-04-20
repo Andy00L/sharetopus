@@ -35,48 +35,48 @@ export async function getPinterestProfile(
 
       return {
         id: userId ?? "",
-        username: `pinterest_user_${userId?.substring(0, 6)}`,
+        username: "",
         first_name: "",
         last_name: "",
         full_name: "Pinterest User (Limited Access)",
         profile_image_url: "",
         is_verified: false,
         bio: `Account connected with limited permissions.`,
+        business_name: "",
         follower_count: null,
         following_count: null,
       };
     }
 
     // Extract user data
-    const userData = data;
+    const supabaseUserData = data;
 
     return {
-      id: userData.id,
-      username:
-        userData.username ?? `pinterest_user_${userId?.substring(0, 6)}`,
-      first_name: userData.first_name ?? "",
-      last_name: userData.last_name ?? "",
-      full_name: userData.full_name ?? "Pinterest User",
-      profile_image_url: userData.profile_image ?? null,
-      is_verified: !!userData.verified_user,
-      bio: userData.about ?? null,
-      follower_count: userData.follower_count ?? null,
-      following_count: userData.following_count ?? null,
+      id: supabaseUserData.id,
+      username: supabaseUserData.username ?? "",
+      first_name: supabaseUserData.first_name ?? "",
+      last_name: supabaseUserData.last_name ?? "",
+      full_name: supabaseUserData.full_name ?? "",
+      profile_image_url: supabaseUserData.profile_image ?? null,
+      is_verified: !!supabaseUserData.verified_user,
+      bio: supabaseUserData.about ?? null,
+      follower_count: supabaseUserData.follower_count ?? null,
+      following_count: supabaseUserData.following_count ?? null,
+      business_name: supabaseUserData.business_name ?? null,
     };
   } catch (error) {
     console.error("[Pinterest] Profile fetch error:", error);
 
     return {
       id: userId ?? "",
-      username: `pinterest_user_${userId?.substring(0, 6)}`,
+      username: "",
       first_name: "",
       last_name: "",
       full_name: "Pinterest User (Error)",
       profile_image_url: "",
       is_verified: false,
-      bio: `Error fetching profile: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`,
+      bio: "Error fetching profile",
+      business_name: "",
       follower_count: null,
       following_count: null,
     };

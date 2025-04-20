@@ -8,14 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-
-// Define the TikTok options type
-export interface TikTokOptions {
-  privacyLevel: string;
-  disableComment: boolean;
-  disableDuet: boolean;
-  disableStitch: boolean;
-}
+import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
 
 interface TikTokOptionsProps {
   readonly options: TikTokOptions;
@@ -29,7 +22,7 @@ export function TikTokPostOptions({
   disabled = false,
 }: TikTokOptionsProps) {
   // Handler for privacy level change
-  const handlePrivacyChange = (value: string) => {
+  const handlePrivacyChange = (value: PrivacyLevel) => {
     onChange({
       ...options,
       privacyLevel: value,

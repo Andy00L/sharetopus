@@ -32,12 +32,12 @@ interface PinterestBoardsResponse {
  * @returns Array of Pinterest boards
  */
 export async function getPinterestBoards(
-  accessToken: string
+  accessToken: string | null
 ): Promise<PinterestBoard[]> {
   try {
     console.log(
       "[Pinterest] Fetching user boards with token:",
-      accessToken.substring(0, 10) + "..."
+      accessToken?.substring(0, 10) + "..."
     );
 
     // Attempt to fetch user ID first
@@ -63,7 +63,7 @@ export async function getPinterestBoards(
     let userId = "";
     try {
       const userData = JSON.parse(userText);
-      userId = userData.id || "";
+      userId = userData.id ?? "";
       console.log("[Pinterest] User ID retrieved:", userId);
     } catch (e) {
       console.error("[Pinterest] Failed to parse user response:", e);

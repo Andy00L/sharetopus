@@ -13,17 +13,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  getPinterestBoards,
   PinterestBoard,
-} from "@/lib/api/pinterest/getPinterestBoards";
-import { SocialAccount } from "@/lib/types/socialAccount";
-
-// Define the Pinterest options type
-export interface PinterestOptions {
-  privacyLevel: string;
-  board: string;
-  link: string;
-}
+  getPinterestBoards,
+} from "@/lib/api/pinterest/data/getPinterestBoards";
+import {
+  PinterestOptions,
+  PrivacyLevel,
+  SocialAccount,
+} from "@/lib/types/dbTypes";
 
 interface PinterestOptionsProps {
   readonly options: PinterestOptions;
@@ -45,7 +42,7 @@ export function PinterestPostOptions({
   const [error, setError] = useState<string | null>(null);
 
   // Handler for privacy level change
-  const handlePrivacyChange = (value: string) => {
+  const handlePrivacyChange = (value: PrivacyLevel) => {
     onChange({
       ...options,
       privacyLevel: value,
@@ -202,6 +199,7 @@ export function PinterestPostOptions({
                   rel="noopener noreferrer"
                   className="underline mt-1 inline-block"
                 >
+                  {boards.length}
                   Create a board on Pinterest
                 </a>
               </div>

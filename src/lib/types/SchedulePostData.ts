@@ -1,5 +1,4 @@
-import { PinterestPrivacyLevel } from "./PinterestPrivacyLevel ";
-import { TikTokPrivacyLevel } from "./TikTokPrivacyLevel ";
+import { PrivacyLevel } from "./dbTypes";
 
 // Define the structure of the data expected by this action
 export interface SchedulePostData {
@@ -11,7 +10,7 @@ export interface SchedulePostData {
   mediaStoragePath: string; // Path from Supabase Storage
   postOptions: {
     // TikTok-specific options
-    privacyLevel?: TikTokPrivacyLevel | PinterestPrivacyLevel;
+    privacyLevel?: PrivacyLevel;
     disableComment?: boolean;
     disableDuet?: boolean;
     disableStitch?: boolean;

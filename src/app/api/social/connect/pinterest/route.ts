@@ -1,13 +1,12 @@
 // app/api/social/connect/pinterest/route.ts
 import { adminSupabase } from "@/actions/api/supabase-client";
-import { exchangePinterestCode } from "@/lib/api/pinterest/exchangePinterestCode";
-import { getPinterestProfile } from "@/lib/api/pinterest/getPinterestProfile";
+import { exchangePinterestCode } from "@/lib/api/pinterest/data/exchangePinterestCode";
+import { getPinterestProfile } from "@/lib/api/pinterest/data/getPinterestProfile";
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
-    console.log("dedane");
     // Parse URL parameters
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code");
@@ -34,7 +33,9 @@ export async function GET(req: Request) {
     try {
       // Exchange authorization code for tokens
       console.log("[Pinterest] Exchanging code for tokens...");
+
       const tokenResponse = await exchangePinterestCode(code);
+
       console.log(
         "[Pinterest] Token exchange successful:",
         tokenResponse.access_token.substring(0, 10) + "..."
@@ -79,7 +80,9 @@ export async function GET(req: Request) {
           avatar_url: pinterestProfile?.profile_image_url ?? null,
           is_verified: pinterestProfile?.is_verified ?? false,
           display_name:
-            pinterestProfile?.full_name ?? pinterestProfile?.username ?? null,
+            pinterestProfile?.business_name ??
+            pinterestProfile?.username ??
+            null,
           follower_count: pinterestProfile?.follower_count ?? null,
           extra: {
             profile: pinterestProfile,

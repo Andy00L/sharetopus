@@ -1,7 +1,7 @@
 // app/api/social/connect/tiktok/route.ts
 import { adminSupabase } from "@/actions/api/supabase-client";
-import { exchangeTikTokCode } from "@/lib/api/tiktok/exchangeTikTokCode";
-import { getTikTokProfile } from "@/lib/api/tiktok/getTikTokProfile";
+import { exchangeTikTokCode } from "@/lib/api/tiktok/data/exchangeTikTokCode";
+import { getTikTokProfile } from "@/lib/api/tiktok/data/getTikTokProfile";
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
@@ -83,6 +83,7 @@ export async function GET(req: Request) {
           is_verified: tiktokProfile?.is_verified ?? false, // Default to false if missing
           display_name: tiktokProfile?.display_name ?? null, // Use null if profile/display_name missing
           follower_count: tiktokProfile?.follower_count ?? null, // Use null if profile/count missing
+          bio_description: tiktokProfile?.bio_description ?? null,
           extra: {
             profile: tiktokProfile,
             token_info: {

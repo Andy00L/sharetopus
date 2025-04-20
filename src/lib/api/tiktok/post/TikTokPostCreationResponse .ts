@@ -1,6 +1,6 @@
 // lib/api/tiktok/createTikTokPost.ts
 
-import { TikTokPrivacyLevel } from "@/lib/types/TikTokPrivacyLevel ";
+import { PrivacyLevel } from "@/lib/types/dbTypes";
 
 /**
  * Interface for TikTok post creation response
@@ -41,7 +41,7 @@ export async function createTikTokPost(
   videoId: string,
   caption: string = "",
   options: {
-    privacyLevel?: TikTokPrivacyLevel;
+    privacyLevel?: PrivacyLevel;
     disableComment?: boolean;
     disableDuet?: boolean;
     disableStitch?: boolean;

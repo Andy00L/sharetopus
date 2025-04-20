@@ -10,4 +10,5 @@ export type PinterestProfile = {
   following_count: number | null;
   is_verified: boolean;
   bio: string | null;
+  business_name: string | null;
 };

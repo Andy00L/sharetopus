@@ -12,40 +12,21 @@ import {
 import {
   ConnectionStatus,
   SocialAccount,
-  SocialProfile,
   TokenInfo,
-} from "@/lib/types/socialAccount";
+} from "@/lib/types/dbTypes";
+
 import { UserCheck, Users } from "lucide-react";
 import Image from "next/image";
-// Import shared types
 
-// Define props for the client component
 interface ConnectedAccountsClientProps {
   readonly initialAccounts: SocialAccount[];
-  // You could potentially pass down error messages from the server fetch too
-  // fetchError?: string | null;
 }
 
 export default function ConnectedAccountsClient({
   initialAccounts,
 }: // fetchError
 ConnectedAccountsClientProps) {
-  // Directly use the prop. No local state needed for the list itself
-  // if updates rely solely on page refresh passing new props.
   const accounts = initialAccounts;
-
-  // Removed handleDisconnect and related state
-
-  // Optional: Display server-side fetch error if passed
-  // if (fetchError) {
-  //   return (
-  //     <Alert variant="destructive" className="mb-6">
-  //       <AlertCircle className="h-4 w-4" />
-  //       <AlertTitle>Erreur de chargement</AlertTitle>
-  //       <AlertDescription>{fetchError}</AlertDescription>
-  //     </Alert>
-  //   );
-  // }
 
   if (!accounts || accounts.length === 0) {
     return (
@@ -63,17 +44,13 @@ ConnectedAccountsClientProps) {
   }
 
   return (
-    // Removed the outer H2 as it's now in the parent server component
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {accounts.map((account) => {
-        const profile: Partial<SocialProfile> = account.extra?.profile ?? {};
         const connectionStatus: Partial<ConnectionStatus> =
           account.extra?.connection_status ?? {};
         const tokenInfo: Partial<TokenInfo> = account.extra?.token_info ?? {};
 
-        const hasLimitedPermissions =
-          profile.bio_description?.includes("limited permissions") ||
-          profile.bio_description?.includes("Error fetching profile") || // Also check for fetch errors
+        const hasLimitedPermissions = // Also check for fetch errors
           !tokenInfo.scope?.includes("user.info.profile"); // Check for profile scope specifically
 
         const connectedAt =
@@ -90,7 +67,7 @@ ConnectedAccountsClientProps) {
                   <Badge variant="outline" className="bg-primary/10 capitalize">
                     {account.platform}
                   </Badge>
-                  {profile.is_verified && (
+                  {account?.is_verified && (
                     <Badge className="bg-blue-500">Vérifié</Badge>
                   )}
                   {hasLimitedPermissions && (
@@ -107,10 +84,13 @@ ConnectedAccountsClientProps) {
             <CardContent className="pt-4">
               <div className="flex items-center gap-4">
                 <div className="h-16 w-16 rounded-full overflow-hidden bg-muted flex items-center justify-center">
-                  {profile.avatar_url ? (
+                  {account.avatar_url ? (
                     <Image
-                      src={profile.avatar_url}
-                      alt={profile.display_name ?? "Utilisateur TikTok"}
+                      src={account.avatar_url}
+                      alt={
+                        account.display_name ??
+                        `Utilisateur ${account.platform}`
+                      }
                       width={64}
                       height={64}
                       className="object-cover"
@@ -127,35 +107,22 @@ ConnectedAccountsClientProps) {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg">
-                    {profile.display_name ?? "Utilisateur TikTok"}
+                    {account.display_name ?? `Utilisateur ${account.platform}`}
                   </h3>
                   <p className="text-sm text-muted-foreground">
                     @
-                    {profile.username ??
+                    {account.username ??
                       account.account_identifier.substring(0, 8)}
                   </p>
-                  {(typeof profile.follower_count === "number" || // Check if either is a valid number
-                    typeof profile.following_count === "number") && (
-                    <div className="flex gap-4 mt-2 text-sm">
-                      {/* Check specifically for number before calling toLocaleString */}
-                      {typeof profile.follower_count === "number" && (
-                        <span>
-                          {profile.follower_count.toLocaleString()} abonnés
-                        </span>
-                      )}
-                      {/* Check specifically for number before calling toLocaleString */}
-                      {typeof profile.following_count === "number" && (
-                        <span>
-                          {profile.following_count.toLocaleString()} abonnements
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  <div className="flex gap-4 mt-2 text-sm">
+                    <span>{account.follower_count} abonnés</span>
+                    <span>{account.following_count} abonnements</span>
+                  </div>
                 </div>
               </div>
-              {profile.bio_description && !hasLimitedPermissions && (
+              {account.bio_description && (
                 <div className="mt-3 text-sm">
-                  <p className="line-clamp-2">{profile.bio_description}</p>
+                  <p className="line-clamp-2">{account.bio_description}</p>
                 </div>
               )}
               <div className="mt-3 text-xs text-muted-foreground">

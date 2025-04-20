@@ -22,10 +22,9 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
-import { directUploadToSupabase } from "@/actions/server/supabase/uploadFileToSupabase";
+import { directUploadToSupabase } from "@/actions/server/data/uploadFileToSupabase";
 import { Textarea } from "@/components/ui/textarea";
-import { Provider } from "@/lib/types/provider";
-import { SocialAccount } from "@/lib/types/socialAccount";
+
 import {
   AlertCircle,
   CalendarIcon,
@@ -36,13 +35,17 @@ import {
 import { useRouter } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { TikTokPostOptions } from "./platform-options/TikTokOptions";
 
-import { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
-import { PinterestPrivacyLevel } from "@/lib/types/PinterestPrivacyLevel ";
-import { TikTokPrivacyLevel } from "@/lib/types/TikTokPrivacyLevel ";
+import {
+  Platform,
+  PlatformOptions,
+  PostStatus,
+  SocialAccount,
+} from "@/lib/types/dbTypes";
+import { SchedulePostData } from "@/lib/types/SchedulePostData";
+import { TikTokPostOptions } from "./platform-options/TikTokOptions";
 import { PinterestPostOptions } from "./platform-options/PinterestOptions";
 // Removed unused import
 
@@ -51,47 +54,6 @@ const MAX_VIDEO_SIZE_MB = 1000; // 1GB max upload size
 const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif"];
-
-// Post status enum
-type PostStatus =
-  | "idle"
-  | "validating"
-  | "uploading_media"
-  | "scheduling"
-  | "success"
-  | "error";
-
-export interface PlatformPostOptions {
-  // Base options for all platforms
-  caption?: string;
-  scheduledAt?: Date;
-
-  // Platform-specific options
-  tiktok?: {
-    privacyLevel: string;
-    disableComment: boolean;
-    disableDuet: boolean;
-    disableStitch: boolean;
-  };
-
-  pinterest?: {
-    privacyLevel: string;
-    board: string;
-    link: string;
-  };
-
-  instagram?: {
-    // Add Instagram-specific options here
-    privacyLevel: string;
-  };
-
-  facebook?: {
-    // Add Facebook-specific options here
-    privacyLevel: string;
-  };
-}
-
-// Add more platforms as needed
 
 interface SchedulePostFormProps {
   readonly connectedAccounts: SocialAccount[];
@@ -105,7 +67,7 @@ export default function SchedulePostForm({
   const router = useRouter();
 
   // Core state
-  const [selectedPlatform, setSelectedPlatform] = useState<Provider | "">("");
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform | "">("");
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [availableAccounts, setAvailableAccounts] = useState<SocialAccount[]>(
     []
@@ -118,7 +80,7 @@ export default function SchedulePostForm({
   const [loadingBoards, setLoadingBoards] = useState(false);
 
   // Platform-specific options
-  const [platformOptions, setPlatformOptions] = useState<PlatformPostOptions>({
+  const [platformOptions, setPlatformOptions] = useState<PlatformOptions>({
     tiktok: {
       privacyLevel: "SELF_ONLY",
       disableComment: false,
@@ -142,7 +104,7 @@ export default function SchedulePostForm({
 
   // Update available accounts when platform changes
   const handlePlatformChange = (value: string) => {
-    setSelectedPlatform(value as Provider);
+    setSelectedPlatform(value as Platform);
     setSelectedAccountId(""); // Reset selected account
 
     // Filter accounts by the selected platform
@@ -287,8 +249,7 @@ export default function SchedulePostForm({
 
       if (selectedPlatform === "tiktok" && platformOptions.tiktok) {
         postOptions = {
-          privacyLevel: platformOptions.tiktok
-            .privacyLevel as TikTokPrivacyLevel,
+          privacyLevel: platformOptions.tiktok.privacyLevel,
           disableComment: platformOptions.tiktok.disableComment,
           disableDuet: platformOptions.tiktok.disableDuet,
           disableStitch: platformOptions.tiktok.disableStitch,
@@ -298,8 +259,7 @@ export default function SchedulePostForm({
         platformOptions.pinterest
       ) {
         postOptions = {
-          privacyLevel: platformOptions.pinterest
-            .privacyLevel as PinterestPrivacyLevel,
+          privacyLevel: platformOptions.pinterest.privacyLevel,
           board: platformOptions.pinterest.board,
           link: platformOptions.pinterest.link || undefined,
         };
@@ -365,9 +325,9 @@ export default function SchedulePostForm({
   };
 
   // Update platform-specific options
-  const updatePlatformOptions = <T extends keyof PlatformPostOptions>(
+  const updatePlatformOptions = <T extends keyof PlatformOptions>(
     platform: T,
-    options: PlatformPostOptions[T]
+    options: PlatformOptions[T]
   ) => {
     setPlatformOptions((prev) => ({
       ...prev,

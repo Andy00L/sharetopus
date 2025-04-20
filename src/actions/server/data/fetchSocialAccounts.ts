@@ -1,5 +1,5 @@
 import { adminSupabase } from "@/actions/api/supabase-client";
-import { SocialAccount } from "@/lib/types/socialAccount";
+import { SocialAccount } from "@/lib/types/dbTypes";
 
 export async function fetchSocialAccounts(
   userId: string | null
