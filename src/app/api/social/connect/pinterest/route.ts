@@ -79,6 +79,7 @@ export async function GET(req: Request) {
           username: pinterestProfile?.username ?? null,
           avatar_url: pinterestProfile?.profile_image_url ?? null,
           is_verified: pinterestProfile?.is_verified ?? false,
+          bio_description: pinterestProfile?.bio ?? null,
           display_name:
             pinterestProfile?.business_name ??
             pinterestProfile?.username ??
