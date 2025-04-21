@@ -42,6 +42,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ScheduledPost } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 import {
   AlertCircle,
@@ -59,38 +60,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-
-// Type for scheduled post with joined account data
-interface ScheduledPost {
-  readonly id: string;
-  readonly platform: string;
-  readonly status:
-    | "scheduled"
-    | "processing"
-    | "posted"
-    | "failed"
-    | "cancelled";
-  readonly scheduled_at: string;
-  readonly posted_at: string | null;
-  readonly post_title: string | null;
-  readonly post_options: Record<string, unknown> | null; // Replace 'any' with Record
-  readonly media_type: string;
-  readonly media_storage_path: string;
-  readonly error_message: string | null;
-  readonly created_at: string;
-  readonly social_accounts: {
-    id: string;
-    platform: string;
-    account_identifier: string;
-    extra: {
-      profile?: {
-        display_name?: string;
-        username?: string;
-        avatar_url?: string;
-      };
-    } | null;
-  };
-}
 
 interface ScheduledPostsListProps {
   readonly posts: ScheduledPost[];
@@ -467,19 +436,14 @@ export default function ScheduledPostsList({
                   }).format(scheduledDate);
 
                   // Extract account info
-                  const accountName =
-                    post.social_accounts?.extra?.profile?.display_name ??
-                    post.social_accounts?.extra?.profile?.username ??
-                    post.social_accounts?.account_identifier.substring(0, 8) ??
-                    "Unknown Account";
+                  const accountName = post.social_accounts?.display_name ?? "";
 
-                  const avatarUrl =
-                    post.social_accounts?.extra?.profile?.avatar_url ?? "";
+                  const avatarUrl = post.social_accounts?.avatar_url ?? "";
 
                   // Get avatar fallback text (first letter of platform + account name)
                   const fallbackText = `${post.platform
                     .charAt(0)
-                    .toUpperCase()}${accountName.charAt(0).toUpperCase()}`;
+                    .toUpperCase()}${accountName?.charAt(0).toUpperCase()}`;
 
                   // Determine status badge color
                   let statusBadge;

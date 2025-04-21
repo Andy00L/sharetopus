@@ -118,7 +118,15 @@ export function PinterestPostOptions({
   useEffect(() => {
     async function loadBoards() {
       if (!accountId) return;
-
+      console.log(
+        "[Debug] Available accounts:",
+        accounts.map((acc) => ({
+          id: acc.id,
+          platform: acc.platform,
+          hasToken: !!acc.access_token,
+          tokenPreview: acc.access_token?.slice(0, 10) + "...",
+        }))
+      );
       setLoading(true);
       setError(null);
       setDebugInfo("");
@@ -166,7 +174,10 @@ export function PinterestPostOptions({
         setDebugInfo((prev) => prev + "\nRécupération des tableaux...");
 
         // Fetch boards
-        const fetchedBoards = await getPinterestBoards(account.access_token);
+        const fetchedBoards = await getPinterestBoards(
+          account.access_token,
+          account.id
+        );
         console.log(fetchedBoards);
         setDebugInfo(
           (prev) => prev + `\nTableaux récupérés: ${fetchedBoards.length}`

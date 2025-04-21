@@ -18,12 +18,17 @@ export async function getScheduledPosts(userId: string | null) {
       .from("scheduled_posts")
       .select(
         `
-        *,
+        id,
+        scheduled_at,
+        status,
+        platform,
+        post_title,
+        error_message,
+        media_type,
         social_accounts:social_account_id (
-          id,
-          platform,
-          account_identifier,
-          extra
+          
+          display_name,
+          avatar_url
         )
       `
       )
@@ -34,7 +39,6 @@ export async function getScheduledPosts(userId: string | null) {
       console.error("[Get Scheduled Posts] Error:", error);
       throw new Error(`Failed to fetch scheduled posts: ${error.message}`);
     }
-
     return data || [];
   } catch (err) {
     console.error("[Get Scheduled Posts] Unexpected error:", err);

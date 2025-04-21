@@ -22,8 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
-import { directUploadToSupabase } from "@/actions/server/data/uploadFileToSupabase";
 import { Textarea } from "@/components/ui/textarea";
+import { uploadWithSignedUrl } from "@/lib/client/signedUrlUpload";
 
 import {
   AlertCircle,
@@ -226,11 +226,21 @@ export default function SchedulePostForm({
       setUploadProgress(0);
       setStatusMessage("Uploading to storage...");
 
-      mediaStoragePath = await directUploadToSupabase(
-        userId,
-        mediaFile,
-        "scheduled-videos" // Bucket name
-      );
+      // Use the signed URL upload function
+      mediaStoragePath = await uploadWithSignedUrl(mediaFile, {
+        onProgress: (progress) => {
+          setUploadProgress(progress);
+        },
+        onSuccess: (path) => {
+          console.log("File uploaded successfully:", path);
+          setStatusMessage("Upload complete. Scheduling...");
+          setUploadProgress(100);
+        },
+        onError: (error) => {
+          console.error("Upload error:", error);
+          throw error; // Re-throw to be caught by the outer catch block
+        },
+      });
 
       console.log("File uploaded to Supabase:", mediaStoragePath);
       setStatusMessage("Upload complete. Scheduling...");

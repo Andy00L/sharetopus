@@ -8,8 +8,9 @@ import { auth } from "@clerk/nextjs/server";
 export default async function ManageAccountsPage() {
   const { userId } = await auth();
   const accounts = await fetchSocialAccounts(userId);
+
   return (
-    <div className="container mx-auto px-4 py-6">
+    <div className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
       <header className="mb-8">
         <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
         <p className="text-muted-foreground mt-2">
@@ -22,6 +23,7 @@ export default async function ManageAccountsPage() {
         <h2 className="text-xl font-bold mb-4">Connecter un compte TikTok</h2>
         <ConnectTikTokButton />
       </section>
+
       <section className="mb-8">
         <h2 className="text-xl font-bold mb-4">
           Connecter un compte Pinterest
@@ -33,7 +35,7 @@ export default async function ManageAccountsPage() {
         <ConnectedAccounts initialAccounts={accounts} />
       </section>
 
-      <section className="mt-12 border-t pt-6">
+      <section className="border-t mt-auto pt-6 ">
         <h2 className="text-lg font-medium mb-4">
           Besoin d&apos;aide pour connecter vos comptes ?
         </h2>

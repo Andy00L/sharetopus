@@ -13,12 +13,14 @@ export interface PinterestBoard {
  * @returns Array of Pinterest boards
  */
 export async function getPinterestBoards(
-  accessToken: string | null
+  accessToken: string | null,
+  pinterest_user_id: string | null
 ): Promise<PinterestBoard[]> {
   if (!accessToken) {
     console.error("[Pinterest] No access token provided");
     return [];
   }
+  console.log(accessToken);
 
   try {
     console.log(
@@ -27,7 +29,7 @@ export async function getPinterestBoards(
     );
 
     // Pinterest API V5 endpoint for boards
-    const url = "https://api.pinterest.com/v5/boards";
+    const url = `https://api.pinterest.com/v5/users/${pinterest_user_id}/boards`;
 
     console.log("[Pinterest] Using API endpoint:", url);
 

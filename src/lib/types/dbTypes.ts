@@ -127,27 +127,41 @@ export interface SocialAccount {
   users?: User;
 }
 
+//=============================================
+//schedualing
+//=============================================
+export interface SocialAccountAccessible {
+  // Array-like properties
+  length?: number;
+  [index: number]: { avatar_url?: string; display_name?: string };
+
+  // Direct object properties your components are accessing
+  avatar_url?: string;
+  display_name?: string;
+}
 export interface ScheduledPost {
   id: string;
-  user_id: string;
-  social_account_id: string;
+  user_id?: string;
+  social_account_id?: string;
   platform: string;
-  status: string;
+  status: PostStatus;
   scheduled_at: string;
-  posted_at: string | null;
+  posted_at?: string | null;
   post_title: string | null;
-  post_options: PlatformOptions | null;
+  post_options?: PlatformOptions | null;
   media_type: string;
-  media_storage_path: string;
+  media_storage_path?: string;
   error_message: string | null;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 
   // Relations
-  social_accounts?: SocialAccount;
+  social_accounts?: SocialAccountAccessible;
+
   users?: User;
 }
 
+//=============================================
 export interface AnalyticsMetric {
   id: string;
   user_id: string;
