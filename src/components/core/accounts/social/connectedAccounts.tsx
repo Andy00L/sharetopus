@@ -17,7 +17,6 @@ export default function ConnectedAccountsClient({
   if (!accounts || accounts.length === 0) {
     return <NoAccountsMessage />;
   }
-
   /* ---------- list of cards ---------- */
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

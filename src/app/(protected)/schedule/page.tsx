@@ -12,7 +12,6 @@ export default async function SchedulePage() {
   // Fetch social accounts
   let socialAccounts: SocialAccount[] = [];
   let fetchError: string | null = null;
-
   try {
     // Fetch all connected social accounts
     console.log("[SchedulePage] Fetching social accounts...");
@@ -24,7 +23,6 @@ export default async function SchedulePage() {
       error instanceof Error ? error.message : "Failed to load accounts.";
     socialAccounts = [];
   }
-
   // If no accounts are connected, show onboarding message
   if (socialAccounts.length === 0 && !fetchError) {
     return (

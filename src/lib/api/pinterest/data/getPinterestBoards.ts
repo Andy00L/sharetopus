@@ -1,5 +1,5 @@
 // lib/api/pinterest/data/getPinterestBoards.ts
-
+"use server";
 export interface PinterestBoard {
   id: string;
   name: string;
@@ -10,17 +10,17 @@ export interface PinterestBoard {
  * Fetches all Pinterest boards for the user
  *
  * @param accessToken Pinterest API access token
+ * @param pinterest_user_id Optional user ID, will be fetched automatically if not provided
  * @returns Array of Pinterest boards
  */
 export async function getPinterestBoards(
-  accessToken: string | null,
-  pinterest_user_id: string | null
+  accessToken: string | null
 ): Promise<PinterestBoard[]> {
   if (!accessToken) {
     console.error("[Pinterest] No access token provided");
     return [];
   }
-  console.log(accessToken);
+  console.log("[Pinterest] Verifying token and user data");
 
   try {
     console.log(
@@ -28,53 +28,27 @@ export async function getPinterestBoards(
       accessToken.substring(0, 10) + "..."
     );
 
-    // Pinterest API V5 endpoint for boards
-    const url = `https://api.pinterest.com/v5/users/${pinterest_user_id}/boards`;
-
-    console.log("[Pinterest] Using API endpoint:", url);
+    // First try the main endpoint
+    const url = "https://api.pinterest.com/v5/boards";
+    console.log("[Pinterest] Using primary API endpoint");
 
     const response = await fetch(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
       },
     });
-
-    console.log("[Pinterest] API response status:", response.status);
-
-    const responseText = await response.text();
-    console.log("[Pinterest] API raw response:", responseText);
+    console.log(`[Pinterest] Primary API response status: ${response.status}`);
 
     if (!response.ok) {
-      console.error("[Pinterest] API error:", response.status, responseText);
+      console.error(
+        `[Pinterest] API error: ${response.status} ${response.statusText}`
+      );
       return [];
     }
+    const data = await response.json();
 
-    try {
-      const data = JSON.parse(responseText);
-
-      // Validate expected response format
-      if (!data.items || !Array.isArray(data.items)) {
-        console.warn(
-          "[Pinterest] Unexpected response format. Missing 'items' array."
-        );
-        return [];
-      }
-
-      // Convert API response to our format
-      const boards = data.items.map((board: PinterestBoard) => ({
-        id: board.id,
-        name: board.name,
-        description: board.description,
-      }));
-
-      console.log("[Pinterest] Successfully retrieved boards:", boards.length);
-      return boards;
-    } catch (parseError) {
-      console.error("[Pinterest] Failed to parse API response:", parseError);
-      return [];
-    }
+    return data.items ?? [];
   } catch (error) {
     console.error("[Pinterest] Unexpected error:", error);
     return [];

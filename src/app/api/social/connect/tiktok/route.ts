@@ -83,6 +83,7 @@ export async function GET(req: Request) {
           is_verified: tiktokProfile?.is_verified ?? false, // Default to false if missing
           display_name: tiktokProfile?.display_name ?? null, // Use null if profile/display_name missing
           follower_count: tiktokProfile?.follower_count ?? null, // Use null if profile/count missing
+          following_count: tiktokProfile?.follower_count ?? null,
           bio_description: tiktokProfile?.bio_description ?? null,
           extra: {
             profile: tiktokProfile,

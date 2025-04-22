@@ -174,10 +174,7 @@ export function PinterestPostOptions({
         setDebugInfo((prev) => prev + "\nRécupération des tableaux...");
 
         // Fetch boards
-        const fetchedBoards = await getPinterestBoards(
-          account.access_token,
-          account.id
-        );
+        const fetchedBoards = await getPinterestBoards(account.access_token);
         console.log(fetchedBoards);
         setDebugInfo(
           (prev) => prev + `\nTableaux récupérés: ${fetchedBoards.length}`

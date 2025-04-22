@@ -101,7 +101,6 @@ export default function SchedulePostForm({
   const [statusMessage, setStatusMessage] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   // Update available accounts when platform changes
   const handlePlatformChange = (value: string) => {
     setSelectedPlatform(value as Platform);
