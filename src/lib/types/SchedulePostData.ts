@@ -6,6 +6,7 @@ export interface SchedulePostData {
   platform: string;
   scheduledAt: string | Date; // ISO string or Date object
   title: string | null;
+  description: string | null;
   mediaType: "video" | "image"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage
   postOptions: {
@@ -16,7 +17,7 @@ export interface SchedulePostData {
     disableStitch?: boolean;
 
     // Pinterest-specific options
-    board?: string;
+    board_id?: string;
     link?: string;
 
     // Add other platform options here as needed

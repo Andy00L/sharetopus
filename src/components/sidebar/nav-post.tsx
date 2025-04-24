@@ -1,4 +1,4 @@
-import { CheckCircle, Clock, PlusCircle } from "lucide-react";
+import { CheckCircle, Clock } from "lucide-react";
 import Link from "next/link";
 import {
   SidebarGroup,
@@ -15,14 +15,7 @@ export default function NavPost() {
       <SidebarGroupLabel>Posts</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild>
-              <Link href="/schedule">
-                <PlusCircle className="h-4 w-4" />
-                <span>Schedule</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
+          <SidebarMenuItem></SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
               <Link href="/scheduled">

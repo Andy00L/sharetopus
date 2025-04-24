@@ -1,6 +1,6 @@
-import { auth } from "@clerk/nextjs/server";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import DirectPinPostForm from "@/components/core/create/DirectPinPostForm";
+import SocialPostForm from "@/components/core/create/SocialPostForm";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function CreatePostPage() {
   const { userId } = await auth();
@@ -10,7 +10,7 @@ export default async function CreatePostPage() {
     <div className="container mx-auto py-8">
       <h1 className="text-2xl font-bold mb-6">Create a Social Media Post</h1>
       <div className="max-w-3xl mx-auto">
-        <DirectPinPostForm accounts={accounts} userId={userId} />
+        <SocialPostForm accounts={accounts} userId={userId} />
       </div>
     </div>
   );

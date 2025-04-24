@@ -14,7 +14,7 @@ export default function EmptyContent() {
         appear here.
       </p>
       <Button asChild>
-        <Link href="/schedule">Schedule New Post</Link>
+        <Link href="/create">Schedule New Post</Link>
       </Button>
     </div>
   );

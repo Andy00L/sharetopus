@@ -1,0 +1,1174 @@
+"use client";
+
+import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
+import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
+import AvatarWithFallback from "@/components/AvatarWithFallback";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
+import { uploadWithSignedUrl } from "@/lib/client/signedUrlUpload";
+import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { format } from "date-fns";
+import {
+  AlertCircle,
+  CalendarIcon,
+  Clock,
+  Loader2,
+  Search,
+  SendHorizontal,
+  UploadCloud,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import FilePreview from "./renderFilePreview";
+import { StepProgress } from "./StepProgress";
+
+// File upload constraints
+export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
+export const ALLOWED_VIDEO_TYPES = [
+  "video/mp4",
+  "video/quicktime",
+  "video/mov",
+];
+const MAX_IMAGE_SIZE_MB = 20;
+const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
+const MAX_VIDEO_SIZE_MB = 100;
+const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
+
+// Platform icons and display names mapping
+const platformConfig: Record<
+  string,
+  { icon: React.ReactNode; displayName: string }
+> = {
+  pinterest: {
+    icon: <span className="text-red-600">📌</span>,
+    displayName: "Pinterest",
+  },
+  tiktok: {
+    icon: <span className="text-black">🎵</span>,
+    displayName: "TikTok",
+  },
+  // Add other platforms as needed
+  instagram: {
+    icon: <span className="text-pink-500">📸</span>,
+    displayName: "Instagram",
+  },
+  facebook: {
+    icon: <span className="text-blue-600">👤</span>,
+    displayName: "Facebook",
+  },
+};
+
+interface EnhancedSocialPostFormProps {
+  readonly accounts: SocialAccount[];
+  readonly userId: string | null;
+}
+
+type PlatformGroup = {
+  platform: string;
+  accounts: SocialAccount[];
+  icon: React.ReactNode;
+  displayName: string;
+};
+
+export default function SocialPostForm({
+  accounts,
+  userId,
+}: EnhancedSocialPostFormProps) {
+  // Step tracking
+  const [currentStep, setCurrentStep] = useState<number>(1);
+  const steps = ["Content", "Accounts", "Details"];
+
+  // Content step state
+  const [activeTab, setActiveTab] = useState("media");
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [mediaType, setMediaType] = useState<"image" | "video">("video");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [link, setLink] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [platformOptions, setPlatformOptions] = useState<PlatformOptions>({
+    tiktok: {
+      privacyLevel: "PUBLIC_TO_EVERYONE",
+      disableComment: false,
+      disableDuet: false,
+      disableStitch: false,
+    },
+    pinterest: {
+      privacyLevel: "PUBLIC",
+      board: "",
+      link: "",
+    },
+  });
+  // Accounts step state
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const [selectedAccounts, setSelectedAccounts] = useState<
+    Record<string, boolean>
+  >({});
+
+  const selectedPinterestAccount = accounts.filter(
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
+  );
+
+  const selectedTikTokAccount = accounts.filter(
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok"
+  );
+  // Platform-specific state
+  //========================================================================
+  // For each Pinterest account ID, keep its board list
+  const [boards, setBoards] = useState<
+    {
+      boardID: string;
+      boardName: string;
+      accountId: string;
+      isSelected: boolean;
+    }[]
+  >([]);
+
+  //========================================================================
+
+  const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
+
+  // Scheduling state
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState(
+    format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd") // Default to tomorrow
+  );
+  const [scheduledTime, setScheduledTime] = useState("12:00"); // Default noon
+
+  // Processing state
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Process accounts by platform with filtering
+  const filteredPlatformGroups = Array.from(
+    new Set(accounts.map((account) => account.platform))
+  )
+    .map((platform): PlatformGroup | null => {
+      // Filter accounts for current platform
+      const platformAccounts = accounts.filter(
+        (account) => account.platform === platform
+      );
+
+      // Apply search filter
+      const filtered = searchQuery.trim()
+        ? platformAccounts.filter((account) => {
+            const searchFields = [
+              account.username,
+              account.display_name,
+              account.platform,
+            ]
+              .filter(Boolean)
+              .map((field) => field?.toLowerCase());
+            return searchFields.some((field) =>
+              field?.includes(searchQuery.toLowerCase())
+            );
+          })
+        : platformAccounts;
+
+      // Only return platforms that have accounts after filtering
+      if (filtered.length === 0) return null;
+
+      const { icon, displayName } = platformConfig[platform] || {
+        icon: null,
+        displayName: platform.charAt(0).toUpperCase() + platform.slice(1),
+      };
+
+      return {
+        platform,
+        accounts: filtered,
+        icon,
+        displayName,
+      };
+    })
+    .filter((group): group is PlatformGroup => group !== null);
+
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Find the selected accounts with their full details
+
+  useEffect(() => {
+    if (!selectedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(selectedFile);
+    setPreviewUrl(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [selectedFile]);
+
+  // Handle file selection for upload
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Determine if image or video
+    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
+
+    // File validation
+    if (!isImage && !isVideo) {
+      setError(
+        "Please select a valid image (JPEG, PNG) or video (MP4, MOV) file."
+      );
+      return;
+    }
+
+    // Check file size
+    const sizeLimit = isImage ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
+    const sizeLimitMB = isImage ? MAX_IMAGE_SIZE_MB : MAX_VIDEO_SIZE_MB;
+
+    if (file.size > sizeLimit) {
+      setError(`File size exceeds the maximum limit of ${sizeLimitMB}MB.`);
+      return;
+    }
+
+    // Set file and media type
+    setSelectedFile(file);
+    setMediaType(isImage ? "image" : "video");
+    setError(null);
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    // File validation
+    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
+
+    if (!isImage && !isVideo) {
+      setError(
+        "Please select a valid image (JPEG, PNG) or video (MP4, MOV) file."
+      );
+      return;
+    }
+
+    // Size validation
+    const sizeLimit = isImage ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
+    const sizeLimitMB = isImage ? MAX_IMAGE_SIZE_MB : MAX_VIDEO_SIZE_MB;
+
+    if (file.size > sizeLimit) {
+      setError(`File size exceeds the maximum limit of ${sizeLimitMB}MB.`);
+      return;
+    }
+
+    setSelectedFile(file);
+    setMediaType(isImage ? "image" : "video");
+    setError(null);
+  };
+
+  // Click upload button handler
+  const handleClickUpload = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Remove selected file
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    setMediaType("video");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  // Tab change handler
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setError(null); // Clear errors when switching tabs
+  };
+
+  // Account toggle handler
+  const handleAccountToggle = (accountId: string) => {
+    setSelectedAccounts((prev) => ({
+      ...prev,
+      [accountId]: !prev[accountId],
+    }));
+  };
+
+  // Next step handler
+  const handleNextStep = () => {
+    if (currentStep === 1) {
+      // Validate Content step
+      if (activeTab === "media" && !selectedFile) {
+        setError("Please upload a file before continuing.");
+        return;
+      }
+
+      if (activeTab === "text" && !title.trim()) {
+        setError("Please enter a title before continuing.");
+        return;
+      }
+    }
+
+    if (currentStep === 2) {
+      // Validate Accounts step
+      const hasSelectedAccounts = Object.values(selectedAccounts).some(
+        (selected) => selected
+      );
+      if (!hasSelectedAccounts) {
+        toast.error("Please select at least one account.");
+        return;
+      }
+    }
+    loadPlatformSpecificData();
+    setCurrentStep((prev) => prev + 1);
+  };
+
+  // Previous step handler
+  const handlePrevStep = () => {
+    setCurrentStep((prev) => prev - 1);
+  };
+
+  // Load platform-specific data based on selected accounts
+  const loadPlatformSpecificData = () => {
+    setIsLoadingBoards(true);
+    const pinterestIds = accounts
+      .filter(
+        (acc) =>
+          // First, check if it's a Pinterest account
+          acc.platform === "pinterest" &&
+          // Then check if it's selected in our selectedAccounts object
+          selectedAccounts[acc.id] === true
+      )
+      .map((acc) => acc.id);
+
+    pinterestIds.forEach(async (accountId) => {
+      const account = accounts.find((acc) => acc.id === accountId);
+      if (!account?.access_token) return;
+
+      const fetchedBoards = await getPinterestBoards(account.access_token);
+
+      const formatedBoards = fetchedBoards.map((board) => ({
+        boardID: board.id, // Keep the original ID
+        boardName: board.name, // Keep the board name
+        accountId: accountId,
+        isSelected: false,
+      }));
+
+      setBoards((prevBoards) => {
+        // Filter out any existing boards for this account
+        const otherAccountBoards = prevBoards.filter(
+          (board) => board.accountId !== accountId
+        );
+
+        // Add the newly fetched boards
+        return [...otherAccountBoards, ...formatedBoards];
+      });
+      setIsLoadingBoards(false);
+    });
+  };
+  // Reset form state
+  const resetForm = () => {
+    setSelectedFile(null);
+    setMediaType("video");
+    setTitle("");
+    setDescription("");
+    setLink("");
+    setSelectedAccounts({});
+    setCurrentStep(1);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+  const checksBeforeSubmission = () => {
+    // Basic validation
+    if (!userId) {
+      toast.error("User not authenticated.");
+      resetForm();
+      setError("User not authenticated. Please log in again.");
+      return false;
+    }
+    if (!title.trim()) {
+      setError("Please enter a title");
+      return false;
+    }
+    /**Checks existing selected accounts */
+    if (Object.values(selectedAccounts).filter(Boolean).length === 0) {
+      setError("Please select at least one account");
+      return false;
+    }
+
+    // Validation spécifique aux médias si on est dans l'onglet média
+    if (activeTab === "media" && !selectedFile) {
+      setError("Please select a file to upload");
+      return false;
+    }
+    if (
+      isScheduled &&
+      new Date(`${scheduledDate}T${scheduledTime}`) < new Date()
+    ) {
+      setError("The scheduled date cannot be in the past");
+      return false;
+    }
+
+    // Pinterest-specific validation
+    if (selectedPinterestAccount.length > 0 && activeTab === "media") {
+      const selectedBoard = boards.find((board) => board.isSelected);
+      if (!selectedBoard) {
+        setError("Please select a Pinterest board");
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const uploadMedia = async (file: File) => {
+    console.log("Uploading media file...");
+    try {
+      const path = await uploadWithSignedUrl(file, {
+        onProgress: (progress) => console.log(`Upload progress: ${progress}%`),
+        onSuccess: (path) => console.log("File uploaded successfully:", path),
+        onError: (error) => {
+          throw error;
+        },
+      });
+      console.log("Media uploaded to:", path);
+      return path;
+    } catch (error) {
+      console.error("Upload error:", error);
+      throw new Error(`Media upload failed: ${error}",}`);
+    }
+  };
+
+  const scheduleForPinterestAccounts = async (
+    accounts: SocialAccount[],
+    mediaPath: string
+  ) => {
+    let successCount = 0;
+
+    for (const account of accounts) {
+      // Trouver le tableau sélectionné pour ce compte
+      const selectedBoard = boards.find(
+        (board) => board.isSelected && board.accountId === account.id
+      );
+
+      // Préparation des options
+      const postOptions = platformOptions.pinterest
+        ? {
+            ...platformOptions.pinterest,
+            board: selectedBoard?.boardID,
+            link: link,
+          }
+        : null;
+
+      // Préparation des données de planification
+      const scheduleData = {
+        socialAccountId: account.id,
+        platform: account.platform,
+        scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
+        title: title,
+        description: description,
+        mediaType: mediaType,
+        mediaStoragePath: mediaPath,
+        postOptions: postOptions,
+      };
+
+      try {
+        const result = await schedulePost(scheduleData, userId);
+
+        if (!result.success) {
+          toast.error(
+            `Failed to schedule for ${account.display_name}: ${result.message}`
+          );
+        } else {
+          successCount++;
+          console.log(
+            `Successfully scheduled post for ${account.platform}:`,
+            result
+          );
+        }
+      } catch (scheduleError) {
+        console.error(
+          `Schedule error for account ${account.id}:`,
+          scheduleError
+        );
+        toast.error(`Error scheduling for ${account.display_name}`);
+      }
+    }
+
+    return successCount;
+  };
+  const scheduleForTikTokAccounts = async (
+    accounts: SocialAccount[],
+    mediaPath: string
+  ) => {
+    let successCount = 0;
+
+    for (const account of accounts) {
+      // Préparation des données de planification
+      const scheduleData = {
+        socialAccountId: account.id,
+        platform: account.platform,
+        scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
+        title: title,
+        description: description,
+        mediaType: mediaType,
+        mediaStoragePath: mediaPath,
+        postOptions: platformOptions.tiktok || null,
+      };
+
+      try {
+        console.log(`Scheduling TikTok post for: ${account.display_name}`);
+        const result = await schedulePost(scheduleData, userId);
+
+        if (!result.success) {
+          toast.error(`Failed to schedule: ${result.message}`);
+        } else {
+          successCount++;
+          toast.success(`Post scheduled for: ${account.display_name}`);
+        }
+      } catch (error) {
+        console.error(`Schedule error for TikTok account:`, error);
+        toast.error(`Unexpected error scheduling for ${account.display_name}`);
+      }
+    }
+
+    return successCount;
+  };
+
+  const handleSchedueleSubmit = async () => {
+    if (!checksBeforeSubmission()) return;
+    setIsLoading(true);
+    setError(null);
+
+    let mediaStoragePath = "";
+
+    try {
+      // 2. Téléchargement du média (si nécessaire)
+      mediaStoragePath =
+        activeTab === "media" && selectedFile
+          ? await uploadMedia(selectedFile)
+          : "";
+
+      // 3. Traitement des comptes Pinterest
+      const pinterestSuccessCount = await scheduleForPinterestAccounts(
+        selectedPinterestAccount,
+        mediaStoragePath
+      );
+
+      const tiktokSuccessCount = await scheduleForTikTokAccounts(
+        selectedTikTokAccount,
+        mediaStoragePath
+      );
+      const totalSuccessCount = pinterestSuccessCount + tiktokSuccessCount;
+
+      // 4. Notification de succès
+      if (totalSuccessCount > 0) {
+        toast.success(`${totalSuccessCount} post(s) scheduled successfully!`);
+        resetForm();
+      } else {
+        toast.info("No posts were scheduled.");
+      }
+    } catch (error) {
+      console.error("Form submission error:", error);
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to publish/schedule post";
+
+      setError(errorMessage);
+      toast.error(errorMessage);
+
+      // Nettoyage des fichiers si nécessaire
+      if (mediaStoragePath && activeTab === "media") {
+        try {
+          await deleteSupabaseFileAction(mediaStoragePath, userId);
+        } catch (deleteError) {
+          console.error("Failed to clean up file:", deleteError);
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle form Directsubmission
+  const handleDirectPostSubmit = async () => {
+    // Validation initiale des champs de formulaire
+    if (!checksBeforeSubmission()) return;
+    setIsLoading(true);
+    setError(null);
+  };
+  return (
+    <div className="w-full">
+      {/* Progress bar */}
+      <StepProgress steps={steps} currentStep={currentStep} />
+
+      {/* Step 1: Content */}
+      {currentStep === 1 && (
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold">Create a post</h1>
+
+          <Tabs
+            defaultValue="media"
+            value={activeTab}
+            onValueChange={handleTabChange}
+            className="w-full"
+          >
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="media">Media Post</TabsTrigger>
+              <TabsTrigger value="text">Text Post</TabsTrigger>
+            </TabsList>
+
+            {/*media content*/}
+            <TabsContent value="media" className="space-y-4 mt-4">
+              {!selectedFile && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Upload file area"
+                  className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
+                    isDragging
+                      ? "border-primary bg-primary/5"
+                      : "border-muted-foreground/20 hover:border-primary/50 hover:bg-muted/30"
+                  }`}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                  onClick={handleClickUpload}
+                  onKeyDown={(e) => {
+                    // Trigger click on Enter or Space key
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleClickUpload();
+                    }
+                  }}
+                >
+                  <div className="w-full h-full flex flex-col items-center justify-center">
+                    <UploadCloud className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+                    <h3 className="font-medium text-lg mb-2">
+                      Click to upload or drag and drop
+                    </h3>
+                    <p className="text-sm text-muted-foreground mb-1">
+                      or paste from clipboard
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Images (JPEG, PNG) up to {MAX_IMAGE_SIZE_MB}MB or Videos
+                      (MP4, MOV) up to {MAX_VIDEO_SIZE_MB}MB
+                    </p>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept={[
+                      ...ALLOWED_IMAGE_TYPES,
+                      ...ALLOWED_VIDEO_TYPES,
+                    ].join(",")}
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </div>
+              )}
+
+              {/**Remove file button */}
+              {selectedFile && (
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium">Selected {mediaType}</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleRemoveFile}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+
+                  {/**render file preview */}
+                  <FilePreview
+                    selectedFile={selectedFile}
+                    mediaType={mediaType}
+                    previewUrl={previewUrl}
+                  />
+                  <div className="text-sm text-muted-foreground mt-2">
+                    {selectedFile.name} (
+                    {(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="media-title">Title *</Label>
+                  <Input
+                    id="media-title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Enter a title for your post"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="media-description">
+                    Description (Optional)
+                  </Label>
+                  <Textarea
+                    id="media-description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Add a detailed description"
+                    rows={3}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="media-link">
+                    Destination Link (Optional)
+                  </Label>
+                  <Input
+                    id="media-link"
+                    type="url"
+                    value={link}
+                    onChange={(e) => setLink(e.target.value)}
+                    placeholder="https://example.com"
+                  />
+                </div>
+              </div>
+            </TabsContent>
+
+            {/*text content*/}
+            <TabsContent value="text" className="space-y-4 mt-4">
+              <div className="border rounded-lg p-4 space-y-3">
+                <div>
+                  <Label htmlFor="text-title">Title *</Label>
+                  <Input
+                    id="text-title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Add a title to your post"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="text-content">Content</Label>
+                  <Textarea
+                    id="text-content"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Write your post content here"
+                    rows={6}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="text-link">Link (Optional)</Label>
+                  <Input
+                    id="text-link"
+                    type="url"
+                    value={link}
+                    onChange={(e) => setLink(e.target.value)}
+                    placeholder="https://example.com"
+                  />
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* Button to go to the next step*/}
+          <Button
+            className="w-full"
+            onClick={handleNextStep}
+            disabled={
+              (activeTab === "media" && !selectedFile) ||
+              (activeTab === "text" && !title.trim())
+            }
+          >
+            Continue to Select Accounts
+          </Button>
+        </div>
+      )}
+      {/* Step 2: Account Selection */}
+      {currentStep === 2 && (
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold">Select Accounts</h1>
+
+          <div className="flex gap-4">
+            <div className="flex-grow space-y-4">
+              {/* Search bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+                <Input
+                  placeholder="Search accounts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+
+              {/* Account grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {filteredPlatformGroups.map(
+                  ({
+                    platform,
+                    accounts: filteredAccounts,
+                    icon,
+                    displayName,
+                  }) => (
+                    <div
+                      key={platform}
+                      className="border rounded-lg overflow-hidden bg-card"
+                    >
+                      <div className="bg-muted p-3 flex items-center gap-2 font-medium">
+                        {icon}
+                        <span>{displayName}</span>
+                      </div>
+
+                      <div className="p-2 space-y-1">
+                        {filteredAccounts.map((account: SocialAccount) => (
+                          <div
+                            key={account.id}
+                            className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded"
+                          >
+                            <Checkbox
+                              id={`account-${account.id}`}
+                              checked={!!selectedAccounts[account.id]}
+                              onCheckedChange={() =>
+                                handleAccountToggle(account.id)
+                              }
+                            />
+
+                            {/**Account Avatar  */}
+                            <div className="w-6 h-6 rounded-full overflow-hidden">
+                              <AvatarWithFallback
+                                src={account.avatar_url}
+                                alt={account.username || "Account"}
+                                size={24}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+
+                            {/**Account name */}
+                            <span className="text-sm">
+                              {account.display_name || account.username}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {/**No accounts avaible */}
+              {accounts.length === 0 && (
+                <div className="text-center p-8 border rounded-lg">
+                  <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">
+                    No social accounts connected
+                  </h3>
+                  <p className="text-muted-foreground mb-4">
+                    You haven&apos;t connected any social media accounts yet.
+                  </p>
+                  <Button
+                    onClick={() => (window.location.href = "/accounts")}
+                    variant="outline"
+                  >
+                    Connect Accounts
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Preview panel */}
+            <div className="w-64 space-y-4 hidden lg:block">
+              {selectedFile && (
+                <>
+                  <FilePreview
+                    selectedFile={selectedFile}
+                    mediaType={mediaType}
+                    previewUrl={previewUrl}
+                  />
+                  <div className="text-sm font-medium">
+                    {title || "Untitled"}
+                  </div>
+                  {description && (
+                    <div className="text-sm text-muted-foreground line-clamp-3">
+                      {description}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/**Button to validate setp 2 */}
+          <div className="flex justify-between pt-4">
+            <Button variant="outline" onClick={handlePrevStep}>
+              Back
+            </Button>
+
+            <Button
+              onClick={handleNextStep}
+              disabled={
+                !Object.values(selectedAccounts).some((selected) => selected)
+              }
+            >
+              Continue to Details
+            </Button>
+          </div>
+        </div>
+      )}
+      {/* Step 3: Final Details & Scheduling */}
+      {currentStep === 3 && (
+        <div className="space-y-4">
+          <h1 className="text-2xl font-bold">Post Details</h1>
+
+          <div className="border rounded-lg p-4 space-y-4">
+            {/* Platform-specific options */}
+
+            {/* Pinterest-specific options */}
+            {selectedPinterestAccount.map((account) => (
+              <div key={account.id} className="space-y-3 border-b pb-4">
+                <h3 className="font-medium">Pinterest Options</h3>
+                <div className="space-y-2">
+                  <Label htmlFor="pinterest-board">Pinterest Board</Label>
+
+                  {isLoadingBoards && (
+                    <div className="p-2 border rounded-md text-gray-500">
+                      Loading boards...
+                    </div>
+                  )}
+
+                  {!isLoadingBoards && boards.length === 0 && (
+                    <div className="p-2 border rounded-md text-gray-500">
+                      No boards available
+                    </div>
+                  )}
+
+                  {/**The dropdown menu */}
+                  {!isLoadingBoards && boards.length > 0 && (
+                    <Select
+                      value={boards.find((b) => b.isSelected)?.boardID ?? ""}
+                      onValueChange={(boardId) => {
+                        setBoards((prevBoards) =>
+                          prevBoards.map((board) => ({
+                            ...board,
+                            // Simply set isSelected based on whether this is the selected board
+                            isSelected: board.boardID === boardId,
+                          }))
+                        );
+                      }}
+                      disabled={isLoadingBoards}
+                    >
+                      <SelectTrigger id="pinterest-board">
+                        <SelectValue placeholder="Select a board" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {boards.map((board) => (
+                          <SelectItem key={board.boardID} value={board.boardID}>
+                            {board.boardName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/** Add TikTok-specific options here*/}
+            {selectedTikTokAccount.map((account) => (
+              <div key={account.id} className="space-y-3 border-b pb-4">
+                <h3 className="font-medium">TikTok Options</h3>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="tiktok-comments">Enable Comments</Label>
+                  <Switch
+                    id="tiktok-comments"
+                    checked={!platformOptions.tiktok?.disableComment}
+                    onCheckedChange={(enabled) =>
+                      setPlatformOptions((prev) => ({
+                        ...prev,
+                        tiktok: {
+                          ...prev.tiktok!,
+                          disableComment: !enabled,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="tiktok-duet">Allow Duet</Label>
+                  <Switch
+                    id="tiktok-duet"
+                    checked={!platformOptions.tiktok?.disableDuet}
+                    onCheckedChange={(enabled) =>
+                      setPlatformOptions((prev) => ({
+                        ...prev,
+                        tiktok: {
+                          ...prev.tiktok!,
+                          disableDuet: !enabled,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="tiktok-stitch">Allow Stitch</Label>
+                  <Switch
+                    id="tiktok-stitch"
+                    checked={!platformOptions.tiktok?.disableStitch}
+                    onCheckedChange={(enabled) =>
+                      setPlatformOptions((prev) => ({
+                        ...prev,
+                        tiktok: {
+                          ...prev.tiktok!,
+                          disableStitch: !enabled,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            ))}
+
+            {/* Scheduling toggle */}
+            <div className="flex items-center space-x-2 py-2">
+              <Switch
+                id="schedule-toggle"
+                checked={isScheduled}
+                onCheckedChange={setIsScheduled}
+              />
+              <Label htmlFor="schedule-toggle">Schedule for later</Label>
+            </div>
+
+            {/* Scheduling options */}
+            {isScheduled && (
+              <div className="grid gap-4 py-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-date">Date</Label>
+                    <Input
+                      id="schedule-date"
+                      type="date"
+                      value={scheduledDate}
+                      min={format(new Date(), "yyyy-MM-dd")}
+                      onChange={(e) => setScheduledDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="schedule-time">Time</Label>
+                    <Input
+                      id="schedule-time"
+                      type="time"
+                      value={scheduledTime}
+                      onChange={(e) => setScheduledTime(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="text-sm text-muted-foreground flex items-center">
+                  <Clock className="mr-2 h-4 w-4" />
+                  Will be posted on{" "}
+                  {format(
+                    new Date(`${scheduledDate}T${scheduledTime}`),
+                    "PPP 'at' p"
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Error display */}
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="pt-4 flex justify-between">
+              <Button
+                variant="outline"
+                onClick={handlePrevStep}
+                disabled={isLoading}
+              >
+                Back
+              </Button>
+              <Button
+                onClick={() =>
+                  isScheduled
+                    ? handleSchedueleSubmit()
+                    : handleDirectPostSubmit()
+                }
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {isScheduled ? "Scheduling..." : "Publishing..."}
+                  </>
+                ) : (
+                  <>
+                    {isScheduled ? (
+                      <>
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        Schedule Post
+                      </>
+                    ) : (
+                      <>
+                        <SendHorizontal className="mr-2 h-4 w-4" />
+                        Publish Now
+                      </>
+                    )}
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

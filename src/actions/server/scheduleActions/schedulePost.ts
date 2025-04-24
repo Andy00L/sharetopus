@@ -32,7 +32,7 @@ export async function schedulePost(
   }
 
   try {
-    console.log(`[Schedule Action] Scheduling post for user ${userId}`, data);
+    console.log(`[schedulePost] Scheduling post for user ${userId}`, data);
 
     // Validate the social account belongs to this user
     const { data: accountData, error: accountError } = await adminSupabase
@@ -43,10 +43,7 @@ export async function schedulePost(
       .single();
 
     if (accountError || !accountData) {
-      console.error(
-        "[Schedule Action] Account validation error:",
-        accountError
-      );
+      console.error("[schedulePost] Account validation error:", accountError);
       return {
         success: false,
         message:
@@ -62,6 +59,7 @@ export async function schedulePost(
       status: "scheduled", // Default status
       scheduled_at: new Date(data.scheduledAt).toISOString(), // Ensure it's ISO string
       post_title: data.title,
+      post_description: data.description,
       post_options: data.postOptions, // Store the JSONB options
       media_type: data.mediaType,
       media_storage_path: data.mediaStoragePath,
@@ -75,12 +73,12 @@ export async function schedulePost(
       .single(); // Expect only one row back
 
     if (error) {
-      console.error("[Schedule Action] Supabase insert error:", error);
+      console.error("[schedulePost] Supabase insert error:", error);
       return { success: false, message: `Database error: ${error.message}` };
     }
 
     if (!newSchedule?.id) {
-      console.error("[Schedule Action] Insert succeeded but no ID returned.");
+      console.error("[schedulePost] Insert succeeded but no ID returned.");
       return {
         success: false,
         message: "Failed to confirm schedule creation.",
@@ -88,7 +86,7 @@ export async function schedulePost(
     }
 
     console.log(
-      `[Schedule Action] Post scheduled successfully with ID: ${newSchedule.id}`
+      `[schedulePost] Post scheduled successfully with ID: ${newSchedule.id}`
     );
 
     // Add platform-specific success messages
@@ -110,7 +108,7 @@ export async function schedulePost(
       scheduleId: newSchedule.id,
     };
   } catch (err) {
-    console.error("[Schedule Action] Unexpected error:", err);
+    console.error("[schedulePost] Unexpected error:", err);
     return {
       success: false,
       message:

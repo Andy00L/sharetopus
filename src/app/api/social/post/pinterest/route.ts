@@ -21,6 +21,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log("[Routes.ts file] accessToken: ", accessToken);
+    console.log("[Routes.ts file] boardId: ", boardId);
+    console.log("[Routes.ts file] title: ", title);
+    console.log("[Routes.ts file] description: ", description);
+    console.log("[Routes.ts file] link: ", link);
+    console.log("[Routes.ts file] mediaType: ", mediaType);
+
     // Appel à l'API Pinterest
     const pinterestResponse = await fetch("https://api.pinterest.com/v5/pins", {
       method: "POST",
@@ -40,10 +47,16 @@ export async function POST(request: NextRequest) {
         },
       }),
     });
-    console.log(pinterestResponse);
+
+    console.log("[Routes.ts file] pinterestResponse: ", pinterestResponse);
+
     if (!pinterestResponse.ok) {
-      const error = await pinterestResponse.json();
-      return NextResponse.json({ error }, { status: pinterestResponse.status });
+      const err = await pinterestResponse.json();
+      console.error("[Routes.ts] Pinterest error body:", err);
+      return NextResponse.json(
+        { error: err },
+        { status: pinterestResponse.status }
+      );
     }
 
     const data = await pinterestResponse.json();

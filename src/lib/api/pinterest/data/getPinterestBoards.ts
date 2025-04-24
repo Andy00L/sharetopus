@@ -47,7 +47,7 @@ export async function getPinterestBoards(
       return [];
     }
     const data = await response.json();
-
+    console.log(data.items);
     return data.items ?? [];
   } catch (error) {
     console.error("[Pinterest] Unexpected error:", error);
