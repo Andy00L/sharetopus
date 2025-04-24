@@ -3,7 +3,7 @@ import Image from "next/image";
 
 interface FilePreviewProps {
   readonly selectedFile: File | null;
-  readonly mediaType: "image" | "video" | null;
+  readonly mediaType: "image" | "video" | "text" | null;
   readonly previewUrl: string | null;
 }
 

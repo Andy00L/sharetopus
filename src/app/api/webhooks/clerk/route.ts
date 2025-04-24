@@ -1,5 +1,6 @@
 // app/api/webhooks/clerk/route.ts
 import { supabase } from "@/actions/api/supabase";
+import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
 import { WebhookEvent } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { Webhook } from "svix";
@@ -165,13 +166,22 @@ async function handleUserUpdated(data: ClerkUserData) {
 async function handleUserDeleted(data: { id: string }) {
   try {
     const userId = data.id;
-
+    // Delete user from the database
     const { error } = await supabase.from("users").delete().eq("id", userId);
     if (error) {
       console.error(
         "Erreur lors de la suppression de l'utilisateur dans Supabase:",
         error
       );
+    } // Delete user folder from storage
+    const { success, message } = await deleteSupabaseFileAction(null, userId);
+    if (!success) {
+      console.error(
+        "Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
+        message
+      );
+    } else {
+      console.log(`Dossier de l'utilisateur ${userId} supprimé avec succès`);
     }
   } catch (error) {
     console.error("Erreur dans handleUserDeleted:", error);

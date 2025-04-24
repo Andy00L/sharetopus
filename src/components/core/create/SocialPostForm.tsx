@@ -1,7 +1,6 @@
 "use client";
 
 import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
-import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -19,7 +18,6 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
-import { uploadWithSignedUrl } from "@/lib/client/signedUrlUpload";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 import {
@@ -33,6 +31,9 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { scheduleForPinterestAccounts } from "./action/scheduleForPinterestAccounts";
+import { scheduleForTikTokAccounts } from "./action/scheduleForTikTokAccounts";
+import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
 
@@ -95,12 +96,19 @@ export default function SocialPostForm({
   // Content step state
   const [activeTab, setActiveTab] = useState("media");
   const [isDragging, setIsDragging] = useState(false);
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
+
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [mediaType, setMediaType] = useState<"image" | "video">("video");
+  const [mediaType, setMediaType] = useState<"image" | "video" | "text">(
+    "video"
+  );
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [link, setLink] = useState("");
   const [error, setError] = useState<string | null>(null);
+
   const [platformOptions, setPlatformOptions] = useState<PlatformOptions>({
     tiktok: {
       privacyLevel: "PUBLIC_TO_EVERYONE",
@@ -114,22 +122,72 @@ export default function SocialPostForm({
       link: "",
     },
   });
+
+  // Scheduling state
+  const [scheduledDate, setScheduledDate] = useState(
+    format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd") // Default to tomorrow
+  );
+  const [scheduledTime, setScheduledTime] = useState("12:00"); // Default noon
+  // Processing state
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Accounts step state
   const [searchQuery, setSearchQuery] = useState("");
+  // Reset form state
+  const resetForm = () => {
+    setSelectedFile(null);
+    setMediaType("video");
+    setTitle("");
+    setDescription("");
+    setLink("");
+    setSelectedAccounts({});
+    setCurrentStep(1);
+
+    // Missing resets
+    setActiveTab("media");
+    setIsDragging(false);
+    setIsScheduled(false);
+    setIsLoading(false);
+    setIsLoadingBoards(false);
+    setError(null);
+    setPlatformOptions({
+      tiktok: {
+        privacyLevel: "PUBLIC_TO_EVERYONE",
+        disableComment: false,
+        disableDuet: false,
+        disableStitch: false,
+      },
+      pinterest: {
+        privacyLevel: "PUBLIC",
+        board: "",
+        link: "",
+      },
+    });
+    setScheduledDate(
+      format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd")
+    );
+    setScheduledTime("12:00");
+    setSearchQuery("");
+    setBoards([]);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
 
   const [selectedAccounts, setSelectedAccounts] = useState<
     Record<string, boolean>
   >({});
 
-  const selectedPinterestAccount = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
-  );
-
   const selectedTikTokAccount = accounts.filter(
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok"
   );
-  // Platform-specific state
+
   //========================================================================
+  //pinterest account selected
+  const selectedPinterestAccount = accounts.filter(
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
+  );
   // For each Pinterest account ID, keep its board list
   const [boards, setBoards] = useState<
     {
@@ -142,25 +200,21 @@ export default function SocialPostForm({
 
   //========================================================================
 
-  const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
-
-  // Scheduling state
-  const [isScheduled, setIsScheduled] = useState(false);
-  const [scheduledDate, setScheduledDate] = useState(
-    format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd") // Default to tomorrow
-  );
-  const [scheduledTime, setScheduledTime] = useState("12:00"); // Default noon
-
-  // Processing state
-  const [isLoading, setIsLoading] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   // Process accounts by platform with filtering
   const filteredPlatformGroups = Array.from(
     new Set(accounts.map((account) => account.platform))
   )
     .map((platform): PlatformGroup | null => {
+      // Skip platforms that don't support text posts when in text mode
+      if (
+        activeTab === "text" &&
+        (platform === "pinterest" ||
+          platform === "tiktok" ||
+          platform === "instagram")
+      ) {
+        return null;
+      }
+
       // Filter accounts for current platform
       const platformAccounts = accounts.filter(
         (account) => account.platform === platform
@@ -319,6 +373,34 @@ export default function SocialPostForm({
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setError(null); // Clear errors when switching tabs
+
+    // Set the appropriate media type based on tab
+    if (value === "text") {
+      setMediaType("text");
+
+      // Clear selections for platforms that don't support text posts
+      setSelectedAccounts((prev) => {
+        const newSelections = { ...prev };
+        accounts.forEach((account) => {
+          if (
+            account.platform === "pinterest" ||
+            account.platform === "tiktok" ||
+            account.platform === "instagram"
+          ) {
+            newSelections[account.id] = false;
+          }
+        });
+        return newSelections;
+      });
+    } else if (selectedFile) {
+      // Keep existing media type if there's a file already
+      setMediaType(
+        ALLOWED_IMAGE_TYPES.includes(selectedFile.type) ? "image" : "video"
+      );
+    } else {
+      // Default for media tab with no selection
+      setMediaType("video");
+    }
   };
 
   // Account toggle handler
@@ -401,19 +483,7 @@ export default function SocialPostForm({
       setIsLoadingBoards(false);
     });
   };
-  // Reset form state
-  const resetForm = () => {
-    setSelectedFile(null);
-    setMediaType("video");
-    setTitle("");
-    setDescription("");
-    setLink("");
-    setSelectedAccounts({});
-    setCurrentStep(1);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
+
   const checksBeforeSubmission = () => {
     // Basic validation
     if (!userId) {
@@ -446,128 +516,25 @@ export default function SocialPostForm({
     }
 
     // Pinterest-specific validation
+    // Pinterest-specific validation
     if (selectedPinterestAccount.length > 0 && activeTab === "media") {
-      const selectedBoard = boards.find((board) => board.isSelected);
-      if (!selectedBoard) {
-        setError("Please select a Pinterest board");
+      const unselectedAccount = selectedPinterestAccount.find(
+        (account) =>
+          !boards.some(
+            (board) => board.accountId === account.id && board.isSelected
+          )
+      );
+
+      if (unselectedAccount) {
+        setError(
+          `Please select a Pinterest board for ${
+            unselectedAccount.display_name ?? unselectedAccount.username
+          }`
+        );
         return false;
       }
     }
     return true;
-  };
-
-  const uploadMedia = async (file: File) => {
-    console.log("Uploading media file...");
-    try {
-      const path = await uploadWithSignedUrl(file, {
-        onProgress: (progress) => console.log(`Upload progress: ${progress}%`),
-        onSuccess: (path) => console.log("File uploaded successfully:", path),
-        onError: (error) => {
-          throw error;
-        },
-      });
-      console.log("Media uploaded to:", path);
-      return path;
-    } catch (error) {
-      console.error("Upload error:", error);
-      throw new Error(`Media upload failed: ${error}",}`);
-    }
-  };
-
-  const scheduleForPinterestAccounts = async (
-    accounts: SocialAccount[],
-    mediaPath: string
-  ) => {
-    let successCount = 0;
-
-    for (const account of accounts) {
-      // Trouver le tableau sélectionné pour ce compte
-      const selectedBoard = boards.find(
-        (board) => board.isSelected && board.accountId === account.id
-      );
-
-      // Préparation des options
-      const postOptions = platformOptions.pinterest
-        ? {
-            ...platformOptions.pinterest,
-            board: selectedBoard?.boardID,
-            link: link,
-          }
-        : null;
-
-      // Préparation des données de planification
-      const scheduleData = {
-        socialAccountId: account.id,
-        platform: account.platform,
-        scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-        title: title,
-        description: description,
-        mediaType: mediaType,
-        mediaStoragePath: mediaPath,
-        postOptions: postOptions,
-      };
-
-      try {
-        const result = await schedulePost(scheduleData, userId);
-
-        if (!result.success) {
-          toast.error(
-            `Failed to schedule for ${account.display_name}: ${result.message}`
-          );
-        } else {
-          successCount++;
-          console.log(
-            `Successfully scheduled post for ${account.platform}:`,
-            result
-          );
-        }
-      } catch (scheduleError) {
-        console.error(
-          `Schedule error for account ${account.id}:`,
-          scheduleError
-        );
-        toast.error(`Error scheduling for ${account.display_name}`);
-      }
-    }
-
-    return successCount;
-  };
-  const scheduleForTikTokAccounts = async (
-    accounts: SocialAccount[],
-    mediaPath: string
-  ) => {
-    let successCount = 0;
-
-    for (const account of accounts) {
-      // Préparation des données de planification
-      const scheduleData = {
-        socialAccountId: account.id,
-        platform: account.platform,
-        scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-        title: title,
-        description: description,
-        mediaType: mediaType,
-        mediaStoragePath: mediaPath,
-        postOptions: platformOptions.tiktok || null,
-      };
-
-      try {
-        console.log(`Scheduling TikTok post for: ${account.display_name}`);
-        const result = await schedulePost(scheduleData, userId);
-
-        if (!result.success) {
-          toast.error(`Failed to schedule: ${result.message}`);
-        } else {
-          successCount++;
-          toast.success(`Post scheduled for: ${account.display_name}`);
-        }
-      } catch (error) {
-        console.error(`Schedule error for TikTok account:`, error);
-        toast.error(`Unexpected error scheduling for ${account.display_name}`);
-      }
-    }
-
-    return successCount;
   };
 
   const handleSchedueleSubmit = async () => {
@@ -585,15 +552,32 @@ export default function SocialPostForm({
           : "";
 
       // 3. Traitement des comptes Pinterest
-      const pinterestSuccessCount = await scheduleForPinterestAccounts(
-        selectedPinterestAccount,
-        mediaStoragePath
-      );
+      const pinterestSuccessCount = await scheduleForPinterestAccounts({
+        accounts: selectedPinterestAccount,
+        mediaPath: mediaStoragePath,
+        boards,
+        platformOptions,
+        link,
+        scheduledDate,
+        scheduledTime,
+        title,
+        description,
+        mediaType,
+        userId,
+      });
 
-      const tiktokSuccessCount = await scheduleForTikTokAccounts(
-        selectedTikTokAccount,
-        mediaStoragePath
-      );
+      const tiktokSuccessCount = await scheduleForTikTokAccounts({
+        accounts: selectedTikTokAccount,
+        mediaPath: mediaStoragePath,
+        platformOptions,
+        scheduledDate,
+        scheduledTime,
+        title,
+        description,
+        mediaType,
+        userId,
+      });
+
       const totalSuccessCount = pinterestSuccessCount + tiktokSuccessCount;
 
       // 4. Notification de succès
@@ -633,6 +617,7 @@ export default function SocialPostForm({
     setIsLoading(true);
     setError(null);
   };
+
   return (
     <div className="w-full">
       {/* Progress bar */}
@@ -775,6 +760,14 @@ export default function SocialPostForm({
             {/*text content*/}
             <TabsContent value="text" className="space-y-4 mt-4">
               <div className="border rounded-lg p-4 space-y-3">
+                <Alert className="mb-4">
+                  <AlertCircle className="h-4 w-4 mr-2" />
+                  <AlertDescription>
+                    Text posts are only supported on Facebook and Twitter. Other
+                    platforms require media content.
+                  </AlertDescription>
+                </Alert>
+
                 <div>
                   <Label htmlFor="text-title">Title *</Label>
                   <Input
@@ -884,7 +877,7 @@ export default function SocialPostForm({
                             <div className="w-6 h-6 rounded-full overflow-hidden">
                               <AvatarWithFallback
                                 src={account.avatar_url}
-                                alt={account.username || "Account"}
+                                alt={account.username ?? "Account"}
                                 size={24}
                                 className="w-full h-full object-cover"
                               />
@@ -892,7 +885,7 @@ export default function SocialPostForm({
 
                             {/**Account name */}
                             <span className="text-sm">
-                              {account.display_name || account.username}
+                              {account.display_name ?? account.username}
                             </span>
                           </div>
                         ))}
@@ -972,9 +965,14 @@ export default function SocialPostForm({
             {/* Pinterest-specific options */}
             {selectedPinterestAccount.map((account) => (
               <div key={account.id} className="space-y-3 border-b pb-4">
-                <h3 className="font-medium">Pinterest Options</h3>
+                <h3 className="font-medium">
+                  Pinterest Options for{" "}
+                  {account.display_name ?? account.username}
+                </h3>
                 <div className="space-y-2">
-                  <Label htmlFor="pinterest-board">Pinterest Board</Label>
+                  <Label htmlFor={`pinterest-board-${account.id}`}>
+                    Pinterest Board
+                  </Label>
 
                   {isLoadingBoards && (
                     <div className="p-2 border rounded-md text-gray-500">
@@ -982,39 +980,54 @@ export default function SocialPostForm({
                     </div>
                   )}
 
-                  {!isLoadingBoards && boards.length === 0 && (
-                    <div className="p-2 border rounded-md text-gray-500">
-                      No boards available
-                    </div>
-                  )}
+                  {!isLoadingBoards &&
+                    boards.filter((board) => board.accountId === account.id)
+                      .length === 0 && (
+                      <div className="p-2 border rounded-md text-gray-500">
+                        No boards available for this account
+                      </div>
+                    )}
 
                   {/**The dropdown menu */}
-                  {!isLoadingBoards && boards.length > 0 && (
-                    <Select
-                      value={boards.find((b) => b.isSelected)?.boardID ?? ""}
-                      onValueChange={(boardId) => {
-                        setBoards((prevBoards) =>
-                          prevBoards.map((board) => ({
-                            ...board,
-                            // Simply set isSelected based on whether this is the selected board
-                            isSelected: board.boardID === boardId,
-                          }))
-                        );
-                      }}
-                      disabled={isLoadingBoards}
-                    >
-                      <SelectTrigger id="pinterest-board">
-                        <SelectValue placeholder="Select a board" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {boards.map((board) => (
-                          <SelectItem key={board.boardID} value={board.boardID}>
-                            {board.boardName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
+                  {!isLoadingBoards &&
+                    boards.filter((board) => board.accountId === account.id)
+                      .length > 0 && (
+                      <Select
+                        value={
+                          boards.find(
+                            (b) => b.accountId === account.id && b.isSelected
+                          )?.boardID ?? ""
+                        }
+                        onValueChange={(boardId) => {
+                          setBoards((prevBoards) =>
+                            prevBoards.map((board) => ({
+                              ...board,
+                              isSelected:
+                                board.accountId === account.id
+                                  ? board.boardID === boardId
+                                  : board.isSelected,
+                            }))
+                          );
+                        }}
+                        disabled={isLoadingBoards}
+                      >
+                        <SelectTrigger id={`pinterest-board-${account.id}`}>
+                          <SelectValue placeholder="Select a board" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {boards
+                            .filter((board) => board.accountId === account.id)
+                            .map((board) => (
+                              <SelectItem
+                                key={board.boardID}
+                                value={board.boardID}
+                              >
+                                {board.boardName}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                 </div>
               </div>
             ))}

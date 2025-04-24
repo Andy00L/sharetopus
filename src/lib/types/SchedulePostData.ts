@@ -7,7 +7,7 @@ export interface SchedulePostData {
   scheduledAt: string | Date; // ISO string or Date object
   title: string | null;
   description: string | null;
-  mediaType: "video" | "image"; // Extended to support images
+  mediaType: "video" | "image" | "text"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage
   postOptions: {
     // TikTok-specific options
