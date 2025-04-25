@@ -25,7 +25,7 @@ export async function cancelScheduledPost(
       .single();
 
     if (fetchError || !post) {
-      console.error("[Cancel Post] Fetch error:", fetchError);
+      console.error("[Cancel Scheduled Post] Fetch error:", fetchError);
       return {
         success: false,
         message: "Failed to find the scheduled post.",
@@ -35,7 +35,7 @@ export async function cancelScheduledPost(
     // Security check: ensure the post belongs to this user
     if (post.user_id !== userId) {
       console.warn(
-        `[Cancel Post] User ${userId} attempted to cancel post ${postId} owned by ${post.user_id}`
+        `[Cancel Scheduled Post] User ${userId} attempted to cancel post ${postId} owned by ${post.user_id}`
       );
       return {
         success: false,
@@ -58,10 +58,10 @@ export async function cancelScheduledPost(
       .eq("id", postId);
 
     if (updateError) {
-      console.error("[Cancel Post] Update error:", updateError);
+      console.error("[Cancel Scheduled Post] Update error:", updateError);
       return {
         success: false,
-        message: `Failed to cancel the post: ${updateError.message}`,
+        message: `Failed to cancel the post.`,
       };
     }
 
@@ -72,11 +72,10 @@ export async function cancelScheduledPost(
       message: "Post cancelled successfully.",
     };
   } catch (err) {
-    console.error("[Cancel Post] Unexpected error:", err);
+    console.error("[Cancel Scheduled Post] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred.",
+      message: "An unexpected error occurred.",
     };
   }
 }

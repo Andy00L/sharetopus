@@ -37,7 +37,6 @@ export default function ConnectTikTokButton() {
 
   // Function to handle success from popup
   const handleTikTokSuccess = () => {
-    console.log("TikTok connection successful, refreshing page...");
     toast.success("Compte TikTok connecté avec succès!");
     setIsConnecting(false);
     router.refresh();

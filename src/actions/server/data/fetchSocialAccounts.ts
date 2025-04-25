@@ -1,3 +1,4 @@
+"server only";
 import { adminSupabase } from "@/actions/api/supabase-client";
 import { SocialAccount } from "@/lib/types/dbTypes";
 
@@ -7,7 +8,9 @@ export async function fetchSocialAccounts(
   // Get user ID using server-side auth
 
   if (!userId) {
-    console.error("User not authenticated in fetchSocialAccounts.");
+    console.error(
+      "[FetchScocialAccounts] User not authenticated in fetchSocialAccounts."
+    );
     // Return empty array or throw error based on how you want to handle this
     return [];
   }
@@ -20,7 +23,10 @@ export async function fetchSocialAccounts(
       .eq("user_id", userId);
 
     if (error) {
-      console.error("Supabase error fetching TikTok accounts:", error);
+      console.error(
+        "[FetchScocialAccounts]: Supabase error fetching TikTok accounts:",
+        error
+      );
       // Depending on your error handling strategy, you might throw the error
       // or return an empty array. Returning empty allows the page to render.
       return [];
@@ -29,7 +35,10 @@ export async function fetchSocialAccounts(
     // Ensure data is returned as an array
     return (data as SocialAccount[]) || [];
   } catch (err) {
-    console.error("Failed to fetch TikTok accounts:", err);
+    console.error(
+      "[FetchScocialAccounts]: Failed to fetch TikTok accounts:",
+      err
+    );
     return []; // Return empty array on unexpected errors
   }
 }

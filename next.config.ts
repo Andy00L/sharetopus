@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: "5mb", // Increase to 10MB or adjust as needed
+      bodySizeLimit: "5mb",
     },
   },
 
@@ -20,7 +20,7 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "i.pinimg.com",
         port: "",
-        pathname: "/**", // Allow all paths on i.pinimg.com
+        pathname: "/**",
       },
     ],
   },

@@ -44,7 +44,6 @@ export default function ConnectPinterestButton() {
 
   // Function to handle success from popup
   const handlePinterestSuccess = () => {
-    console.log("Pinterest connection successful, refreshing page...");
     toast.success("Compte Pinterest connecté avec succès!");
     setIsConnecting(false);
     router.refresh();

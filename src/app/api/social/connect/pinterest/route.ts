@@ -12,7 +12,7 @@ export async function GET(req: Request) {
     const code = searchParams.get("code");
 
     if (!code) {
-      console.error("[Pinterest] Missing 'code' parameter");
+      console.error("[Pinterest Connect route]  Missing 'code' parameter");
       return new NextResponse(
         `<html><body><script>window.close();</script>Le paramètre 'code' est manquant.</body></html>`,
         { status: 400, headers: { "Content-Type": "text/html" } }
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
     const { userId } = await auth();
 
     if (!userId) {
-      console.error("[Pinterest] User not authenticated");
+      console.error("[Pinterest Connect route]  User not authenticated");
       return new NextResponse(
         `<html><body><script>window.close();</script>Utilisateur non authentifié.</body></html>`,
         { status: 401, headers: { "Content-Type": "text/html" } }
@@ -32,12 +32,12 @@ export async function GET(req: Request) {
 
     try {
       // Exchange authorization code for tokens
-      console.log("[Pinterest] Exchanging code for tokens...");
+      console.log("[Pinterest Connect route] Exchanging code for tokens...");
 
       const tokenResponse = await exchangePinterestCode(code);
 
       console.log(
-        "[Pinterest] Token exchange successful:",
+        "[Pinterest Connect route]  Token exchange successful:",
         tokenResponse.access_token.substring(0, 10) + "..."
       );
 
@@ -45,7 +45,10 @@ export async function GET(req: Request) {
       const { access_token, refresh_token, expires_in, scope } = tokenResponse;
 
       // Fetch user profile
-      console.log("[Pinterest] Fetching user profile with scopes:", scope);
+      console.log(
+        "[Pinterest Connect route]  Fetching user profile with scopes:",
+        scope
+      );
       let pinterestProfile;
       let profileFetchSuccessful = false;
 
@@ -57,14 +60,17 @@ export async function GET(req: Request) {
           !pinterestProfile.bio?.includes("limited permissions");
 
         console.log(
-          `[Pinterest] Profile retrieved. Success status: ${profileFetchSuccessful}. ID: ${pinterestProfile?.id}`
+          `[Pinterest Connect route]  Profile retrieved. Success status: ${profileFetchSuccessful}. ID: ${pinterestProfile?.id}`
         );
       } catch (profileError) {
-        console.error("[Pinterest] Error fetching profile:", profileError);
+        console.error(
+          "[Pinterest Connect route]  Error fetching profile:",
+          profileError
+        );
       }
 
       // Store in database
-      console.log("[Pinterest] Storing account in database...");
+      console.log("[Pinterest Connect route]  Storing account in database...");
       try {
         // Prepare account data
         const accountData = {
@@ -100,7 +106,7 @@ export async function GET(req: Request) {
         };
         // Log the account data for debugging
         console.log(
-          "[Pinterest] Account data prepared:",
+          "[Pinterest Connect route]  Account data prepared:",
           JSON.stringify({
             ...accountData,
             access_token: accountData.access_token.substring(0, 10) + "...", // Truncate for security
@@ -115,12 +121,20 @@ export async function GET(req: Request) {
           });
 
         if (upsertError) {
-          console.error("[Pinterest] Error upserting account:", upsertError);
+          console.error(
+            "[Pinterest Connect route]  Error upserting account:",
+            upsertError
+          );
         } else {
-          console.log("[Pinterest] Account upserted successfully");
+          console.log(
+            "[Pinterest Connect route]  Account upserted successfully"
+          );
         }
       } catch (dbError) {
-        console.error("[Pinterest] Database operation error:", dbError);
+        console.error(
+          "[Pinterest Connect route]  Database operation error:",
+          dbError
+        );
       }
 
       // Return HTML to close popup and refresh opener
@@ -128,23 +142,19 @@ export async function GET(req: Request) {
       const htmlResponse = `
 <!DOCTYPE html>
 <html>
-<head><title>Connexion...</title></head>
+<head><title>Connexion...</title><meta charset="UTF-8"></head>
 <body>
   <p>Connexion réussie. Cette fenêtre va se fermer...</p>
   <script>
     window.onload = function() {
       try {
-        console.log('Pinterest callback page loaded');
         if (window.opener && window.opener.onPinterestConnectSuccess) {
-          console.log('Calling opener refresh function...');
           window.opener.onPinterestConnectSuccess();
           // Wait before closing to ensure the function completes
-          console.log('Waiting before closing...');
           setTimeout(function() { 
             window.close(); 
           }, 1000);
         } else {
-          console.warn('Opener window or success function not found.');
           window.close();
         }
       } catch (e) {
@@ -162,7 +172,10 @@ export async function GET(req: Request) {
         headers: { "Content-Type": "text/html" },
       });
     } catch (integrationError) {
-      console.error("[Pinterest] Integration error:", integrationError);
+      console.error(
+        "[Pinterest Connect route]  Integration error:",
+        integrationError
+      );
       const errorHtml = `
         <!DOCTYPE html><html><body>
         <p>Erreur lors de la connexion: ${
@@ -178,7 +191,10 @@ export async function GET(req: Request) {
       });
     }
   } catch (error) {
-    console.error("[Pinterest] Unhandled error in GET route:", error);
+    console.error(
+      "[Pinterest Connect route]  Unhandled error in GET route:",
+      error
+    );
     const errorHtml = `
       <!DOCTYPE html><html><body>
       <p>Erreur interne du serveur.</p>

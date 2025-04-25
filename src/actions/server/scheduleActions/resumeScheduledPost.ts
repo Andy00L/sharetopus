@@ -26,7 +26,7 @@ export async function resumeScheduledPost(
       .single();
 
     if (fetchError || !post) {
-      console.error("[Resume Post] Fetch error:", fetchError);
+      console.error("[Resume Scheduled Post] Fetch error:", fetchError);
       return {
         success: false,
         message: "Failed to find the scheduled post.",
@@ -36,7 +36,7 @@ export async function resumeScheduledPost(
     // Security check: ensure the post belongs to this user
     if (post.user_id !== userId) {
       console.warn(
-        `[Resume Post] User ${userId} attempted to resume post ${postId} owned by ${post.user_id}`
+        `[Resume Scheduled Post] User ${userId} attempted to resume post ${postId} owned by ${post.user_id}`
       );
       return {
         success: false,
@@ -72,10 +72,10 @@ export async function resumeScheduledPost(
       .eq("id", postId);
 
     if (updateError) {
-      console.error("[Resume Post] Update error:", updateError);
+      console.error("[Resume Scheduled Post] Update error:", updateError);
       return {
         success: false,
-        message: `Failed to resume the post: ${updateError.message}`,
+        message: `Failed to resume the post.`,
       };
     }
 
@@ -85,11 +85,10 @@ export async function resumeScheduledPost(
         "Post resumed successfully. It will be published at the scheduled time.",
     };
   } catch (err) {
-    console.error("[Resume Post] Unexpected error:", err);
+    console.error("[Resume Scheduled Post] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred.",
+      message: "An unexpected error occurred.",
     };
   }
 }

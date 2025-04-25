@@ -8,6 +8,7 @@ import { auth } from "@clerk/nextjs/server";
 export default async function ManageAccountsPage() {
   const { userId } = await auth();
   const accounts = await fetchSocialAccounts(userId);
+
   // Filter accounts by platform
   const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");
   const pinterestAccounts = accounts.filter(
@@ -31,10 +32,7 @@ export default async function ManageAccountsPage() {
             <ConnectTikTokButton />
           </div>
           <div className="flex flex-wrap gap-2">
-            <ConnectedAccounts
-              initialAccounts={tiktokAccounts}
-              userId={userId}
-            />
+            <ConnectedAccounts accounts={tiktokAccounts} userId={userId} />
           </div>
         </div>
 
@@ -44,10 +42,7 @@ export default async function ManageAccountsPage() {
             <ConnectPinterestButton />
           </div>
           <div className="flex flex-wrap gap-2">
-            <ConnectedAccounts
-              initialAccounts={pinterestAccounts}
-              userId={userId}
-            />
+            <ConnectedAccounts accounts={pinterestAccounts} userId={userId} />
           </div>
         </div>
       </section>

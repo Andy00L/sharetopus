@@ -19,7 +19,9 @@ export async function deleteSupabaseFileAction(
   try {
     // Case 1: Only userId is provided - delete the entire user folder
     if (!filePath) {
-      console.log(`[Delete Action] Deleting entire folder for user ${userId}`);
+      console.log(
+        `[Delete Supabase File Action] Deleting entire folder for user ${userId}`
+      );
 
       // First, list all files with the user ID prefix
       const { data: fileList, error: listError } = await adminSupabase.storage
@@ -28,18 +30,20 @@ export async function deleteSupabaseFileAction(
 
       if (listError) {
         console.error(
-          `[Delete Action] Error listing files for user ${userId}:`,
+          `[Delete Supabase File Action] Error listing files for user ${userId}:`,
           listError
         );
         return {
           success: false,
-          message: `Failed to list user files: ${listError.message}`,
+          message: `Failed to list user files.`,
         };
       }
 
       // If there are no files, we're done
       if (!fileList || fileList.length === 0) {
-        console.log(`[Delete Action] No files found for user ${userId}`);
+        console.log(
+          `[Delete Supabase File Action] No files found for user ${userId}`
+        );
         return { success: true, message: "No files to delete." };
       }
 
@@ -47,7 +51,7 @@ export async function deleteSupabaseFileAction(
       const filesToDelete = fileList.map((file) => `${userId}/${file.name}`);
 
       console.log(
-        `[Delete Action] Deleting ${filesToDelete.length} files for user ${userId}`
+        `[Delete Supabase File Action] Deleting ${filesToDelete.length} files for user ${userId}`
       );
 
       // Delete all files in a batch operation
@@ -57,17 +61,17 @@ export async function deleteSupabaseFileAction(
 
       if (deleteError) {
         console.error(
-          `[Delete Action] Error batch deleting files for user ${userId}:`,
+          `[Delete Supabase File Action] Error batch deleting files for user ${userId}:`,
           deleteError
         );
         return {
           success: false,
-          message: `Failed to delete user files: ${deleteError.message}`,
+          message: `Failed to delete user files.`,
         };
       }
 
       console.log(
-        `[Delete Action] All user files deleted successfully: ${userId}`
+        `[Delete Supabase File Action] All user files deleted successfully: ${userId}`
       );
       return { success: true, message: "All user files deleted successfully." };
     }
@@ -76,13 +80,13 @@ export async function deleteSupabaseFileAction(
     // Security Check: Ensure the file path starts with the user's ID
     if (!filePath.startsWith(`${userId}/`)) {
       console.warn(
-        `[Delete Action] Attempt to delete invalid/unauthorized path by user ${userId}: ${filePath}`
+        `[Delete Supabase File Action] Attempt to delete invalid/unauthorized path by user ${userId}: ${filePath}`
       );
       return { success: false, message: "Invalid file path or unauthorized." };
     }
 
     console.log(
-      `[Delete Action] Deleting file for user ${userId}: ${filePath}`
+      `[Delete Supabase File Action] Deleting file for user ${userId}: ${filePath}`
     );
 
     const { error } = await adminSupabase.storage
@@ -91,19 +95,21 @@ export async function deleteSupabaseFileAction(
 
     if (error) {
       console.error(
-        `[Delete Action] Supabase delete error for path ${filePath}:`,
+        `[Delete Supabase File Action] Supabase delete error for path ${filePath}:`,
         error
       );
       return {
         success: false,
-        message: `Failed to delete file: ${error.message}`,
+        message: `Failed to delete file.`,
       };
     }
 
-    console.log(`[Delete Action] File deleted successfully: ${filePath}`);
+    console.log(
+      `[Delete Supabase File Action] File deleted successfully: ${filePath}`
+    );
     return { success: true, message: "File deleted." };
   } catch (err) {
-    console.error(`[Delete Action] Unexpected error:`, err);
+    console.error(`[Delete Supabase File Action] Unexpected error:`, err);
     return {
       success: false,
       message: "An unexpected error occurred during file deletion.",

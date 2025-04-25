@@ -73,7 +73,7 @@ const platformConfig: Record<
   },
 };
 
-interface EnhancedSocialPostFormProps {
+interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
   readonly userId: string | null;
 }
@@ -88,7 +88,7 @@ type PlatformGroup = {
 export default function SocialPostForm({
   accounts,
   userId,
-}: EnhancedSocialPostFormProps) {
+}: SocialPostFormProps) {
   // Step tracking
   const [currentStep, setCurrentStep] = useState<number>(1);
   const steps = ["Content", "Accounts", "Details"];

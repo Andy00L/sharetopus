@@ -27,7 +27,7 @@ export async function deleteScheduledPost(
       .single();
 
     if (fetchError || !post) {
-      console.error("[Delete Post] Fetch error:", fetchError);
+      console.error("[Delete Scheduled Post] Fetch error:", fetchError);
       return {
         success: false,
         message: "Failed to find the scheduled post.",
@@ -37,7 +37,7 @@ export async function deleteScheduledPost(
     // Security check: ensure the post belongs to this user
     if (post.user_id !== userId) {
       console.warn(
-        `[Delete Post] User ${userId} attempted to delete post ${postId} owned by ${post.user_id}`
+        `[Delete Scheduled Post] User ${userId} attempted to delete post ${postId} owned by ${post.user_id}`
       );
       return {
         success: false,
@@ -54,13 +54,16 @@ export async function deleteScheduledPost(
         );
         if (!deleteFileResult.success) {
           console.error(
-            "[Delete Post] File deletion error:",
+            "[Delete Scheduled Post] File deletion error:",
             deleteFileResult.message
           );
           // Continue with post deletion even if file deletion fails
         }
       } catch (deleteError) {
-        console.error("[Delete Post] File deletion error:", deleteError);
+        console.error(
+          "[Delete Scheduled Post] File deletion error:",
+          deleteError
+        );
         // Continue with post deletion even if file deletion fails
       }
     }
@@ -72,10 +75,10 @@ export async function deleteScheduledPost(
       .eq("id", postId);
 
     if (deleteError) {
-      console.error("[Delete Post] Delete error:", deleteError);
+      console.error("[Delete Scheduled Post] Delete error:", deleteError);
       return {
         success: false,
-        message: `Failed to delete the post: ${deleteError.message}`,
+        message: `Failed to delete the post.`,
       };
     }
 
@@ -84,11 +87,10 @@ export async function deleteScheduledPost(
       message: "Post deleted successfully.",
     };
   } catch (err) {
-    console.error("[Delete Post] Unexpected error:", err);
+    console.error("[Delete Scheduled Post] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred.",
+      message: "An unexpected error occurred.",
     };
   }
 }

@@ -9,7 +9,7 @@ import { adminSupabase } from "@/actions/api/supabase-client";
  */
 export async function getScheduledPosts(userId: string | null) {
   if (!userId) {
-    console.log("User not authenticated.");
+    console.log("[GetScheduledPosts]: User not authenticated.");
   }
 
   try {

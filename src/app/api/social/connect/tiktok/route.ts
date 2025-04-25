@@ -12,7 +12,7 @@ export async function GET(req: Request) {
     const code = searchParams.get("code");
 
     if (!code) {
-      console.error("[TikTok] Missing 'code' parameter");
+      console.error("[TikTok Connect Route]  Missing 'code' parameter");
       return new NextResponse(
         `<html><body><script>window.close();</script>Le paramètre 'code' est manquant.</body></html>`,
         { status: 400, headers: { "Content-Type": "text/html" } }
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
     const { userId } = await auth();
 
     if (!userId) {
-      console.error("[TikTok] User not authenticated");
+      console.error("[TikTok Connect Route]  User not authenticated");
       // --- FIX: Return HTML to close popup even on error ---
       return new NextResponse(
         `<html><body><script>window.close();</script>Utilisateur non authentifié.</body></html>`,
@@ -33,10 +33,10 @@ export async function GET(req: Request) {
 
     try {
       // Exchange authorization code for tokens
-      console.log("[TikTok] Exchanging code for tokens...");
+      console.log("[TikTok Connect Route] Exchanging code for tokens...");
       const tokenResponse = await exchangeTikTokCode(code);
       console.log(
-        "[TikTok] Token exchange successful:",
+        "[TikTok Connect Route]  Token exchange successful:",
         tokenResponse.access_token.substring(0, 10) + "..."
       );
 
@@ -45,10 +45,13 @@ export async function GET(req: Request) {
         tokenResponse;
 
       // Log the scopes granted by the user
-      console.log("[TikTok] Granted scopes:", scope);
+      console.log("[TikTok Connect Route]  Granted scopes:", scope);
 
       // Attempt to fetch full profile with proper error handling
-      console.log("[TikTok] Fetching user profile with scopes:", scope);
+      console.log(
+        "[TikTok Connect Route]  Fetching user profile with scopes:",
+        scope
+      );
       let tiktokProfile;
       let profileFetchSuccessful = false;
       try {
@@ -59,14 +62,17 @@ export async function GET(req: Request) {
           !tiktokProfile.bio_description?.includes("limited permissions");
 
         console.log(
-          `[TikTok] Profile retrieved. Success status: ${profileFetchSuccessful}. ID: ${tiktokProfile?.id}`
+          `[TikTok Connect Route]  Profile retrieved. Success status: ${profileFetchSuccessful}. ID: ${tiktokProfile?.id}`
         );
       } catch (profileError) {
-        console.error("[TikTok] Error fetching profile:", profileError);
+        console.error(
+          "[TikTok Connect Route]  Error fetching profile:",
+          profileError
+        );
       }
 
       // Database operations with simplified approach - just insert
-      console.log("[TikTok] Storing account in database...");
+      console.log("[TikTok Connect Route]  Storing account in database...");
       try {
         // Prepare account data with rich profile information
         const accountData = {
@@ -108,13 +114,19 @@ export async function GET(req: Request) {
           });
 
         if (upsertError) {
-          console.error("[TikTok] Error upserting account:", upsertError);
+          console.error(
+            "[TikTok Connect Route]  Error upserting account:",
+            upsertError
+          );
           // Even if DB fails, try to close popup, maybe indicate error
         } else {
-          console.log("[TikTok] Account upserted successfully");
+          console.log("[TikTok Connect Route]  Account upserted successfully");
         }
       } catch (dbError) {
-        console.error("[TikTok] Database operation error:", dbError);
+        console.error(
+          "[TikTok Connect Route]  Database operation error:",
+          dbError
+        );
         // Proceed to close popup
       }
 
@@ -122,20 +134,16 @@ export async function GET(req: Request) {
       const htmlResponse = `
       <!DOCTYPE html>
       <html>
-      <head><title>Connexion...</title></head>
+      <head><title>Connexion...</title><meta charset="UTF-8"></head>
       <body>
         <p>Connexion réussie. Cette fenêtre va se fermer...</p>
         <script>
           window.onload = function() {
             try {
-              console.log('TikTok callback page loaded successfully');
               if (window.opener && window.opener.onTikTokConnectSuccess) {
-                console.log('Calling opener refresh function...');
                 window.opener.onTikTokConnectSuccess();
                 // Wait before closing to ensure the function completes
-                console.log('Waiting 1 second before closing...');
                 setTimeout(function() { 
-                  console.log('Now closing window...');
                   window.close(); 
                 }, 1000);
               } else {
@@ -157,7 +165,10 @@ export async function GET(req: Request) {
       });
       // --- End of FIX ---
     } catch (integrationError) {
-      console.error("[TikTok] Integration error:", integrationError);
+      console.error(
+        "[TikTok Connect Route]  Integration error:",
+        integrationError
+      );
       // Still try to close the popup, maybe show error message first
       const errorHtml = `
         <!DOCTYPE html><html><body>
@@ -174,7 +185,10 @@ export async function GET(req: Request) {
       });
     }
   } catch (error) {
-    console.error("[TikTok] Unhandled error in GET route:", error);
+    console.error(
+      "[TikTok Connect Route]  Unhandled error in GET route:",
+      error
+    );
     const errorHtml = `
       <!DOCTYPE html><html><body>
       <p>Erreur interne du serveur.</p>

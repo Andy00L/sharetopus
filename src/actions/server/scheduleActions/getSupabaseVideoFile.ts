@@ -20,14 +20,14 @@ export async function getSupabaseVideoFile(
   // Security Check: Ensure the file path starts with the user's ID
   if (!filePath?.startsWith(`${userId}/`)) {
     console.warn(
-      `[Get Supabase File] Attempt to access invalid/unauthorized path by user ${userId}: ${filePath}`
+      `[Get Supabase video File]  Attempt to access invalid/unauthorized path by user ${userId}: ${filePath}`
     );
     throw new Error("Invalid file path or unauthorized access.");
   }
 
   try {
     console.log(
-      `[Get Supabase File] Fetching file for user ${userId}: ${filePath}`
+      `[Get Supabase video File]  Fetching file for user ${userId}: ${filePath}`
     );
 
     // Get the file from Supabase Storage
@@ -37,7 +37,7 @@ export async function getSupabaseVideoFile(
 
     if (error) {
       console.error(
-        `[Get Supabase File] Supabase download error for path ${filePath}:`,
+        `[Get Supabase video File] Supabase download error for path ${filePath}:`,
         error
       );
       throw new Error(`Failed to download file: ${error.message}`);
@@ -51,12 +51,12 @@ export async function getSupabaseVideoFile(
     const buffer = Buffer.from(await data.arrayBuffer());
 
     console.log(
-      `[Get Supabase File] Successfully retrieved file: ${filePath} (${buffer.length} bytes)`
+      `[Get Supabase video File]  Successfully retrieved file: ${filePath} (${buffer.length} bytes)`
     );
     return buffer;
   } catch (err) {
     console.error(
-      `[Get Supabase File] Unexpected error retrieving ${filePath}:`,
+      `[Get Supabase video File]  Unexpected error retrieving ${filePath}:`,
       err
     );
     throw err;

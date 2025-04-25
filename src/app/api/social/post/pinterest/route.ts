@@ -14,19 +14,19 @@ export async function POST(request: NextRequest) {
 
     // Vérification des paramètres requis
     if (!accessToken || !boardId || !title || !base64Image) {
-      console.log("big erreur");
+      console.log(" [Pinterest Post route] big erreur");
       return NextResponse.json(
         { error: "Missing required parameters" },
         { status: 400 }
       );
     }
 
-    console.log("[Routes.ts file] accessToken: ", accessToken);
-    console.log("[Routes.ts file] boardId: ", boardId);
-    console.log("[Routes.ts file] title: ", title);
-    console.log("[Routes.ts file] description: ", description);
-    console.log("[Routes.ts file] link: ", link);
-    console.log("[Routes.ts file] mediaType: ", mediaType);
+    console.log("[Pinterest Post route] accessToken: ", accessToken);
+    console.log("[Pinterest Post route] boardId: ", boardId);
+    console.log("[Pinterest Post route] title: ", title);
+    console.log("[Pinterest Post route] description: ", description);
+    console.log("[Pinterest Post route] link: ", link);
+    console.log("[Pinterest Post route] mediaType: ", mediaType);
 
     // Appel à l'API Pinterest
     const pinterestResponse = await fetch("https://api.pinterest.com/v5/pins", {
@@ -48,7 +48,10 @@ export async function POST(request: NextRequest) {
       }),
     });
 
-    console.log("[Routes.ts file] pinterestResponse: ", pinterestResponse);
+    console.log(
+      "[Pinterest Post route] pinterestResponse: ",
+      pinterestResponse
+    );
 
     if (!pinterestResponse.ok) {
       const err = await pinterestResponse.json();

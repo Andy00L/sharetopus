@@ -38,7 +38,7 @@ export async function updateScheduledTime(
       .single();
 
     if (fetchError || !post) {
-      console.error("[Update Schedule] Fetch error:", fetchError);
+      console.error("[Update Schedule Time] Fetch error:", fetchError);
       return {
         success: false,
         message: "Failed to find the scheduled post.",
@@ -48,7 +48,7 @@ export async function updateScheduledTime(
     // Security check: ensure the post belongs to this user
     if (post.user_id !== userId) {
       console.warn(
-        `[Update Schedule] User ${userId} attempted to update post ${postId} owned by ${post.user_id}`
+        `[Update Schedule Time] User ${userId} attempted to update post ${postId} owned by ${post.user_id}`
       );
       return {
         success: false,
@@ -75,7 +75,7 @@ export async function updateScheduledTime(
       .eq("id", postId);
 
     if (updateError) {
-      console.error("[Update Schedule] Update error:", updateError);
+      console.error("[Update Schedule Time] Update error:", updateError);
       return {
         success: false,
         message: `Failed to update schedule: ${updateError.message}`,
@@ -90,7 +90,7 @@ export async function updateScheduledTime(
           : "Post rescheduled successfully.",
     };
   } catch (err) {
-    console.error("[Update Schedule] Unexpected error:", err);
+    console.error("[Update Schedule Time] Unexpected error:", err);
     return {
       success: false,
       message:

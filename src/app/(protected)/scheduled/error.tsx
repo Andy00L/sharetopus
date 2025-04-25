@@ -1,20 +1,14 @@
 // app/(protected)/scheduled/error.tsx
 "use client";
-
 import { Button } from "@/components/ui/button";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 export default function ScheduledError({
   error,
   reset,
 }: Readonly<{ error: Error; reset: () => void }>) {
-  /* — log pour le débug — */
-  useEffect(() => {
-    console.error("Scheduled posts page crashed:", error);
-  }, [error]);
-
   const [isPending, startTransition] = useTransition();
   const [minDelayActive, setMinDelayActive] = useState(false);
 

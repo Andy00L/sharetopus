@@ -9,7 +9,9 @@ export async function POST(req: Request) {
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
 
   if (!WEBHOOK_SECRET) {
-    console.error("Le secret du webhook Clerk n'est pas défini");
+    console.error(
+      " [Clerk Routes] Le secret du webhook Clerk n'est pas défini"
+    );
     return new Response("Configuration webhook manquante", { status: 500 });
   }
 
@@ -37,7 +39,7 @@ export async function POST(req: Request) {
       "svix-signature": svix_signature,
     }) as WebhookEvent;
   } catch (err) {
-    console.error("Erreur de vérification du webhook:", err);
+    console.error("[Clerk Routes]: Erreur de vérification du webhook:", err);
     return new Response("Échec de la vérification de la signature", {
       status: 400,
     });
@@ -58,13 +60,16 @@ export async function POST(req: Request) {
         await handleUserDeleted(data as { id: string });
         break;
       default:
-        console.log("Événement non géré:", eventType);
+        console.log("[Clerk Routes]:Événement non géré:", eventType);
         break;
     }
 
     return new Response("Webhook traité avec succès", { status: 200 });
   } catch (error) {
-    console.error("Erreur lors du traitement du webhook:", error);
+    console.error(
+      "[Clerk Routes]: Erreur lors du traitement du webhook:",
+      error
+    );
     return new Response("Erreur lors du traitement du webhook", {
       status: 500,
     });
@@ -118,12 +123,12 @@ async function handleUserCreated(data: ClerkUserData) {
 
     if (error) {
       console.error(
-        "Erreur lors de la création de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Erreur lors de la création de l'utilisateur dans Supabase:",
         error
       );
     }
   } catch (error) {
-    console.error("Erreur dans handleUserCreated:", error);
+    console.error("[Clerk Routes]: Erreur dans handleUserCreated:", error);
     throw error;
   }
 }
@@ -153,12 +158,12 @@ async function handleUserUpdated(data: ClerkUserData) {
 
     if (error) {
       console.error(
-        "Erreur lors de la mise à jour de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Erreur lors de la mise à jour de l'utilisateur dans Supabase:",
         error
       );
     }
   } catch (error) {
-    console.error("Erreur dans handleUserUpdated:", error);
+    console.error("[Clerk Routes]: Erreur dans handleUserUpdated:", error);
     throw error;
   }
 }
@@ -170,21 +175,23 @@ async function handleUserDeleted(data: { id: string }) {
     const { error } = await supabase.from("users").delete().eq("id", userId);
     if (error) {
       console.error(
-        "Erreur lors de la suppression de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Erreur lors de la suppression de l'utilisateur dans Supabase:",
         error
       );
     } // Delete user folder from storage
     const { success, message } = await deleteSupabaseFileAction(null, userId);
     if (!success) {
       console.error(
-        "Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
+        "[Clerk Routes]: Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
         message
       );
     } else {
-      console.log(`Dossier de l'utilisateur ${userId} supprimé avec succès`);
+      console.log(
+        `[Clerk Routes]: Dossier de l'utilisateur ${userId} supprimé avec succès`
+      );
     }
   } catch (error) {
-    console.error("Erreur dans handleUserDeleted:", error);
+    console.error("[Clerk Routes]: Erreur dans handleUserDeleted:", error);
     throw error;
   }
 }
