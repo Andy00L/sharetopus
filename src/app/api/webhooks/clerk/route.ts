@@ -179,7 +179,11 @@ async function handleUserDeleted(data: { id: string }) {
         error
       );
     } // Delete user folder from storage
-    const { success, message } = await deleteSupabaseFileAction(userId);
+    const { success, message } = await deleteSupabaseFileAction(
+      userId,
+      null,
+      true
+    );
     if (!success) {
       console.error(
         "[Clerk Routes]: Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",

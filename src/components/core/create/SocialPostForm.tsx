@@ -32,11 +32,12 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { scheduleForPinterestAccounts } from "./action/scheduleForPinterestAccounts";
-import { scheduleForTikTokAccounts } from "./action/scheduleForTikTokAccounts";
+import { scheduleForPinterestAccounts } from "./action/Scheduled/scheduleForPinterestAccounts";
+import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
+import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 
 // File upload constraints
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -489,6 +490,7 @@ export default function SocialPostForm({
   // Previous step handler
   const handlePrevStep = () => {
     setCurrentStep((prev) => prev - 1);
+    setError(null);
   };
 
   // Load platform-specific data based on selected accounts
@@ -688,12 +690,75 @@ export default function SocialPostForm({
     }
   };
 
-  // Handle form Directsubmission
+  // Updated handleDirectPostSubmit function for SocialPostForm.tsx
+  // Import the new direct post function at the top of your file:
+  // import { directPostForPinterestAccounts } from "./action/directPostForPinterestAccounts";
+
+  // Replace your existing handleDirectPostSubmit function with this:
   const handleDirectPostSubmit = async () => {
-    // Validation initiale des champs de formulaire
+    // Initial validation of form fields
     if (!checksBeforeSubmission()) return;
     setIsLoading(true);
     setError(null);
+    setUploadProgress(0);
+
+    try {
+      // Handle media posts
+      if (activeTab === "media" && selectedFile) {
+        // Check if Pinterest accounts are selected
+        if (selectedPinterestAccount.length > 0) {
+          console.log("Directly posting to Pinterest...");
+
+          // Call our direct posting function
+          const pinterestResult = await directPostForPinterestAccounts({
+            accounts: selectedPinterestAccount,
+            file: selectedFile,
+            boards,
+            platformOptions,
+            accountContent: accountContent.filter((item) =>
+              selectedPinterestAccount.some((acc) => acc.id === item.accountId)
+            ),
+            onProgress: (progress) => {
+              setUploadProgress(progress);
+            },
+          });
+
+          if (!pinterestResult.success) {
+            throw new Error(pinterestResult.message);
+          }
+
+          const successCount = pinterestResult.count;
+
+          if (successCount > 0) {
+            toast.success(
+              `${successCount} post(s) published successfully to Pinterest!`
+            );
+            resetForm();
+          } else {
+            toast.info("No posts were published to Pinterest.");
+          }
+        } else {
+          toast.info("No Pinterest accounts selected for direct posting.");
+        }
+
+        // Note: You could add direct posting for other platforms here as needed
+        // For example: if (selectedTikTokAccount.length > 0) { ... }
+      }
+      // Handle text posts
+      else if (activeTab === "text") {
+        toast.info("Direct posting for text content is not yet implemented.");
+        // Future implementation would go here
+      }
+    } catch (error) {
+      console.error("Direct post submission error:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to publish post";
+
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

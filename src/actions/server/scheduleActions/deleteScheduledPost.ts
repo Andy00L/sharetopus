@@ -4,7 +4,7 @@ import { adminSupabase } from "@/actions/api/supabase-client";
 import { deleteSupabaseFileAction } from "./deleteSupabaseFileAction";
 
 /**
- * Completely delete a scheduled post and its associated media
+ * Completely delete a scheduled post and its associated media (if no longer used)
  *
  * @param postId ID of the scheduled post to delete
  * @param userId ID of the authenticated user
@@ -19,6 +19,8 @@ export async function deleteScheduledPost(
   }
 
   try {
+    console.log(`[Delete Scheduled Post] Processing post: ${postId}`);
+
     // First, get the post to check ownership and get the media path
     const { data: post, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
@@ -45,30 +47,8 @@ export async function deleteScheduledPost(
       };
     }
 
-    // Delete the media file from storage if it exists
-    if (post.media_storage_path) {
-      try {
-        const deleteFileResult = await deleteSupabaseFileAction(
-          post.media_storage_path,
-          userId
-        );
-        if (!deleteFileResult.success) {
-          console.error(
-            "[Delete Scheduled Post] File deletion error:",
-            deleteFileResult.message
-          );
-          // Continue with post deletion even if file deletion fails
-        }
-      } catch (deleteError) {
-        console.error(
-          "[Delete Scheduled Post] File deletion error:",
-          deleteError
-        );
-        // Continue with post deletion even if file deletion fails
-      }
-    }
-
-    // Delete the post record from the database
+    // First delete the post record from the database
+    // This ensures that our reference check won't count this post
     const { error: deleteError } = await adminSupabase
       .from("scheduled_posts")
       .delete()
@@ -80,6 +60,33 @@ export async function deleteScheduledPost(
         success: false,
         message: `Failed to delete the post.`,
       };
+    }
+
+    console.log(`[Delete Scheduled Post] Post record deleted: ${postId}`);
+
+    // Now try to delete the media file if it exists
+    // The deleteSupabaseFileAction function will automatically check for references
+    if (post.media_storage_path) {
+      try {
+        console.log(
+          `[Delete Scheduled Post] Checking if media can be deleted: ${post.media_storage_path}`
+        );
+        const deleteFileResult = await deleteSupabaseFileAction(
+          userId,
+          post.media_storage_path
+        );
+
+        console.log(
+          `[Delete Scheduled Post] File deletion result:`,
+          deleteFileResult
+        );
+      } catch (deleteError) {
+        console.error(
+          "[Delete Scheduled Post] File deletion error:",
+          deleteError
+        );
+        // We continue regardless of file deletion success
+      }
     }
 
     return {
