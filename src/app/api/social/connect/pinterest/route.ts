@@ -124,30 +124,38 @@ export async function GET(req: Request) {
       }
 
       // Return HTML to close popup and refresh opener
+      // In your Pinterest callback route.ts, change this:
       const htmlResponse = `
-        <!DOCTYPE html>
-        <html>
-        <head><title>Connexion...</title></head>
-        <body>
-          <p>Connexion réussie. Cette fenêtre va se fermer...</p>
-          <script>
-            try {
-              if (window.opener && window.opener.onPinterestConnectSuccess) {
-                console.log('Calling opener refresh function...');
-                window.opener.onPinterestConnectSuccess();
-              } else {
-                console.warn('Opener window or success function not found.');
-              }
-            } catch (e) {
-              console.error('Error calling opener function:', e);
-            } finally {
-              console.log('Closing popup window...');
-              window.close();
-            }
-          </script>
-        </body>
-        </html>
-      `;
+<!DOCTYPE html>
+<html>
+<head><title>Connexion...</title></head>
+<body>
+  <p>Connexion réussie. Cette fenêtre va se fermer...</p>
+  <script>
+    window.onload = function() {
+      try {
+        console.log('Pinterest callback page loaded');
+        if (window.opener && window.opener.onPinterestConnectSuccess) {
+          console.log('Calling opener refresh function...');
+          window.opener.onPinterestConnectSuccess();
+          // Wait before closing to ensure the function completes
+          console.log('Waiting before closing...');
+          setTimeout(function() { 
+            window.close(); 
+          }, 1000);
+        } else {
+          console.warn('Opener window or success function not found.');
+          window.close();
+        }
+      } catch (e) {
+        console.error('Error calling opener function:', e);
+        window.close();
+      }
+    };
+  </script>
+</body>
+</html>
+`;
 
       return new NextResponse(htmlResponse, {
         status: 200,

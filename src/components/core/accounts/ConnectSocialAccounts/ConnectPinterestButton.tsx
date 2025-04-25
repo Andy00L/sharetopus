@@ -2,12 +2,15 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 declare global {
   interface Window {
     onPinterestConnectSuccess?: () => void;
+    onPinterestConnectFailure?: (error?: string) => void;
   }
 }
 
@@ -24,6 +27,7 @@ function generateState(length = 16): string {
 
 export default function ConnectPinterestButton() {
   const router = useRouter();
+  const [isConnecting, setIsConnecting] = useState(false);
 
   // Define required scopes
   const scopes = [
@@ -41,21 +45,32 @@ export default function ConnectPinterestButton() {
   // Function to handle success from popup
   const handlePinterestSuccess = () => {
     console.log("Pinterest connection successful, refreshing page...");
+    toast.success("Compte Pinterest connecté avec succès!");
+    setIsConnecting(false);
     router.refresh();
   };
-
+  // Add failure handler
+  const handlePinterestFailure = (error?: string) => {
+    console.error("Pinterest connection failed:", error);
+    toast.error("Échec de la connexion au compte Pinterest");
+    setIsConnecting(false);
+  };
   // Setup and cleanup for window event handlers
   useEffect(() => {
     window.onPinterestConnectSuccess = handlePinterestSuccess;
+    window.onPinterestConnectFailure = handlePinterestFailure;
 
     return () => {
       window.onPinterestConnectSuccess = undefined;
+      window.onPinterestConnectFailure = undefined;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // Open Pinterest popup with unique window name
   const openPinterestPopup = () => {
+    setIsConnecting(true);
+
     const width = 600;
     const height = 700;
     const left = window.screen.width / 2 - width / 2;
@@ -74,14 +89,28 @@ export default function ConnectPinterestButton() {
       redirectUri
     )}&state=${state}&response_type=code&prompt=login`;
 
-    window.open(
+    const popup = window.open(
       PINTEREST_AUTH_URL,
       uniqueWindowName,
       `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
     );
+    // Check if popup was blocked
+    if (!popup || popup.closed || typeof popup.closed === "undefined") {
+      toast.error("La fenêtre de connexion a été bloquée par le navigateur");
+      setIsConnecting(false);
+    }
   };
 
   return (
-    <Button onClick={openPinterestPopup}>Connecter un compte Pinterest</Button>
+    <Button onClick={openPinterestPopup} disabled={isConnecting}>
+      {isConnecting ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Connexion en cours...
+        </>
+      ) : (
+        "Connecter un compte Pinterest"
+      )}
+    </Button>
   );
 }

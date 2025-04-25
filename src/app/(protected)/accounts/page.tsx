@@ -1,13 +1,18 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import ConnectPinterestButton from "@/components/core/accounts/ConnectPinterestButton";
-import ConnectTikTokButton from "@/components/core/accounts/ConnectTikTokButton";
+import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
+import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
 import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
-import { Button } from "@/components/ui/button";
+import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import { auth } from "@clerk/nextjs/server";
 
 export default async function ManageAccountsPage() {
   const { userId } = await auth();
   const accounts = await fetchSocialAccounts(userId);
+  // Filter accounts by platform
+  const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");
+  const pinterestAccounts = accounts.filter(
+    (acc) => acc.platform === "pinterest"
+  );
 
   return (
     <div className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
@@ -19,35 +24,39 @@ export default async function ManageAccountsPage() {
         </p>
       </header>
 
-      <section className="mb-8">
-        <h2 className="text-xl font-bold mb-4">Connecter un compte TikTok</h2>
-        <ConnectTikTokButton />
-      </section>
+      <section className="mb-8 space-y-6">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">TikTok</h2>
+            <ConnectTikTokButton />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccounts
+              initialAccounts={tiktokAccounts}
+              userId={userId}
+            />
+          </div>
+        </div>
 
-      <section className="mb-8">
-        <h2 className="text-xl font-bold mb-4">
-          Connecter un compte Pinterest
-        </h2>
-        <ConnectPinterestButton />
-      </section>
-
-      <section className="mt-12 border-t pt-6">
-        <ConnectedAccounts initialAccounts={accounts} />
-      </section>
-
-      <section className="border-t mt-auto pt-6 ">
-        <h2 className="text-lg font-medium mb-4">
-          Besoin d&apos;aide pour connecter vos comptes ?
-        </h2>
-        <p className="text-muted-foreground mb-6">
-          Si vous rencontrez des problèmes en connectant vos comptes, consultez
-          notre guide de dépannage ou contactez le support.
-        </p>
-        <div className="flex gap-4">
-          <Button variant="outline">Voir le guide de dépannage</Button>
-          <Button variant="secondary">Contacter le support</Button>
+        <div className="space-y-3 pt-4 border-t">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Pinterest</h2>
+            <ConnectPinterestButton />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccounts
+              initialAccounts={pinterestAccounts}
+              userId={userId}
+            />
+          </div>
         </div>
       </section>
+
+      {accounts.length === 0 && (
+        <section className="mt-8 mb-16">
+          <NoAccountsMessage />
+        </section>
+      )}
     </div>
   );
 }

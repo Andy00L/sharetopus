@@ -146,6 +146,8 @@ export default function SocialPostForm({
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Accounts step state
   const [searchQuery, setSearchQuery] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   // Reset form state
   const resetForm = () => {
     setSelectedFile(null);
@@ -270,7 +272,6 @@ export default function SocialPostForm({
     })
     .filter((group): group is PlatformGroup => group !== null);
 
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   // Find the selected accounts with their full details
 
   useEffect(() => {
@@ -449,7 +450,7 @@ export default function SocialPostForm({
         return;
       }
 
-      if (activeTab === "text" && !!textInputs.title.trim()) {
+      if (activeTab === "text" && !textInputs.title.trim()) {
         setError("Please enter a title before continuing.");
         return;
       }
@@ -548,13 +549,15 @@ export default function SocialPostForm({
         return false;
       }
 
-      // Check if captions are provided for media posts
-      const missingDescription = accountContent.some(
-        (item) => !item.description.trim()
-      );
-      if (missingDescription) {
-        setError("Please provide a caption for your post");
-        return false;
+      // Check if captions are provided (required for images only)
+      if (mediaType === "image") {
+        const missingDescription = accountContent.some(
+          (item) => !item.description.trim()
+        );
+        if (missingDescription) {
+          setError("Please provide a caption for your image");
+          return false;
+        }
       }
     } else {
       // Text post validation - we already have content from step 1
@@ -564,6 +567,7 @@ export default function SocialPostForm({
         return false;
       }
     }
+
     if (
       isScheduled &&
       new Date(`${scheduledDate}T${scheduledTime}`) < new Date()
@@ -631,7 +635,7 @@ export default function SocialPostForm({
         scheduledTime,
         // Just filter accountContent to only include Pinterest accounts
         accountContent: accountContent.filter((item) =>
-          selectedPinterestAccount.some((acc) => acc.id === item.accountId)
+          selectedTikTokAccount.some((acc) => acc.id === item.accountId)
         ),
         mediaType,
         userId,
@@ -1179,6 +1183,38 @@ export default function SocialPostForm({
                     )}
                   </div>
                 )}
+                {/* Text post preview - only shown for text posts */}
+                {activeTab === "text" && (
+                  <div className="border rounded-lg p-4 space-y-4 mb-4">
+                    <h3 className="font-medium">Text Post Preview</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-medium mb-1">Title</h4>
+                        <p className="p-2 bg-muted/30 rounded-md">
+                          {textInputs.title}
+                        </p>
+                      </div>
+
+                      {textInputs.description && (
+                        <div>
+                          <h4 className="text-sm font-medium mb-1">Content</h4>
+                          <p className="p-2 bg-muted/30 rounded-md whitespace-pre-wrap">
+                            {textInputs.description}
+                          </p>
+                        </div>
+                      )}
+
+                      {textInputs.link && (
+                        <div>
+                          <h4 className="text-sm font-medium mb-1">Link</h4>
+                          <p className="p-2 bg-muted/30 rounded-md text-blue-600 underline">
+                            {textInputs.link}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Pinterest-specific options */}
                 {selectedPinterestAccount.map((account) => (
@@ -1249,64 +1285,6 @@ export default function SocialPostForm({
                             </SelectContent>
                           </Select>
                         )}
-                    </div>
-                  </div>
-                ))}
-
-                {/** Add TikTok-specific options here*/}
-                {selectedTikTokAccount.map((account) => (
-                  <div key={account.id} className="space-y-3 border-b pb-4">
-                    <h3 className="font-medium">TikTok Options</h3>
-
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="tiktok-comments">Enable Comments</Label>
-                      <Switch
-                        id="tiktok-comments"
-                        checked={!platformOptions.tiktok?.disableComment}
-                        onCheckedChange={(enabled) =>
-                          setPlatformOptions((prev) => ({
-                            ...prev,
-                            tiktok: {
-                              ...prev.tiktok!,
-                              disableComment: !enabled,
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="tiktok-duet">Allow Duet</Label>
-                      <Switch
-                        id="tiktok-duet"
-                        checked={!platformOptions.tiktok?.disableDuet}
-                        onCheckedChange={(enabled) =>
-                          setPlatformOptions((prev) => ({
-                            ...prev,
-                            tiktok: {
-                              ...prev.tiktok!,
-                              disableDuet: !enabled,
-                            },
-                          }))
-                        }
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="tiktok-stitch">Allow Stitch</Label>
-                      <Switch
-                        id="tiktok-stitch"
-                        checked={!platformOptions.tiktok?.disableStitch}
-                        onCheckedChange={(enabled) =>
-                          setPlatformOptions((prev) => ({
-                            ...prev,
-                            tiktok: {
-                              ...prev.tiktok!,
-                              disableStitch: !enabled,
-                            },
-                          }))
-                        }
-                      />
                     </div>
                   </div>
                 ))}

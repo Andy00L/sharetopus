@@ -2,26 +2,33 @@
 
 import { SocialAccount } from "@/lib/types/dbTypes";
 
-import NoAccountsMessage from "./NoAccountsMessage";
-import SocialAccountCard from "./SocialAccountCard";
+import SocialAccountBadge from "./SocialAccountBadge";
 
 interface ConnectedAccountsClientProps {
   readonly initialAccounts: SocialAccount[];
+  readonly userId: string | null;
 }
 
 export default function ConnectedAccountsClient({
   initialAccounts,
+  userId,
 }: ConnectedAccountsClientProps) {
   const accounts = initialAccounts;
-
+  if (!userId) {
+    return null;
+  }
   if (!accounts || accounts.length === 0) {
-    return <NoAccountsMessage />;
+    return null; // No message needed as we're showing badges inline
   }
   /* ---------- list of cards ---------- */
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="flex flex-wrap gap-2 items-center">
       {accounts.map((account) => (
-        <SocialAccountCard key={account.id} account={account} />
+        <SocialAccountBadge
+          key={account.id}
+          account={account}
+          userId={userId}
+        />
       ))}
     </div>
   );

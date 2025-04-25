@@ -91,6 +91,7 @@ export async function scheduleForPinterestAccounts(config: {
     } catch (scheduleError) {
       console.error(`Schedule error for account ${account.id}:`, scheduleError);
       toast.error(`Error scheduling for ${account.display_name}`);
+      throw scheduleError;
     }
   }
 

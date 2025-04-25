@@ -68,6 +68,7 @@ export async function scheduleForTikTokAccounts(config: {
     } catch (error) {
       console.error(`Schedule error for TikTok account:`, error);
       toast.error(`Unexpected error scheduling for ${account.display_name}`);
+      throw error;
     }
   }
 

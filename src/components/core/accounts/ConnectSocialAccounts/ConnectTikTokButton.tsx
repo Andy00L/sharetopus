@@ -2,12 +2,15 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 declare global {
   interface Window {
     onTikTokConnectSuccess?: () => void;
+    onTikTokConnectFailure?: (error?: string) => void;
   }
 }
 
@@ -24,6 +27,7 @@ function generateState(length = 16): string {
 
 export default function ConnectTikTokButton() {
   const router = useRouter();
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const scopes =
     "user.info.basic,user.info.profile,video.publish,video.upload,user.info.stats";
@@ -34,21 +38,33 @@ export default function ConnectTikTokButton() {
   // Function to handle success from popup
   const handleTikTokSuccess = () => {
     console.log("TikTok connection successful, refreshing page...");
+    toast.success("Compte TikTok connecté avec succès!");
+    setIsConnecting(false);
     router.refresh();
+  };
+  // Add failure handler
+  const handleTikTokFailure = (error?: string) => {
+    console.error("TikTok connection failed:", error);
+    toast.error("Échec de la connexion au compte TikTok");
+    setIsConnecting(false);
   };
 
   // Setup and cleanup for window event handlers
   useEffect(() => {
     window.onTikTokConnectSuccess = handleTikTokSuccess;
+    window.onTikTokConnectFailure = handleTikTokFailure;
 
     return () => {
       window.onTikTokConnectSuccess = undefined;
+      window.onTikTokConnectFailure = undefined;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   // Open TikTok popup with unique window name and force_login parameter
   const openTikTokPopup = () => {
+    setIsConnecting(true);
+
     const width = 600;
     const height = 700;
     const left = window.screen.width / 2 - width / 2;
@@ -67,12 +83,29 @@ export default function ConnectTikTokButton() {
       redirectUri
     )}&state=${state}&response_type=code&force_login=true`;
 
-    window.open(
+    const popup = window.open(
       TIKTOK_AUTH_URL,
       uniqueWindowName,
       `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
     );
+
+    // Check if popup was blocked
+    if (!popup || popup.closed || typeof popup.closed === "undefined") {
+      toast.error("La fenêtre de connexion a été bloquée par le navigateur");
+      setIsConnecting(false);
+    }
   };
 
-  return <Button onClick={openTikTokPopup}>Connecter un compte TikTok</Button>;
+  return (
+    <Button onClick={openTikTokPopup} disabled={isConnecting}>
+      {isConnecting ? (
+        <>
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          Connexion en cours...
+        </>
+      ) : (
+        "Connecter un compte TikTok"
+      )}
+    </Button>
+  );
 }

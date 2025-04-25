@@ -120,31 +120,37 @@ export async function GET(req: Request) {
 
       // --- FIX: Return HTML to close popup and refresh opener ---
       const htmlResponse = `
-        <!DOCTYPE html>
-        <html>
-        <head><title>Connexion...</title></head>
-        <body>
-          <p>Connexion réussie. Cette fenêtre va se fermer...</p>
-          <script>
+      <!DOCTYPE html>
+      <html>
+      <head><title>Connexion...</title></head>
+      <body>
+        <p>Connexion réussie. Cette fenêtre va se fermer...</p>
+        <script>
+          window.onload = function() {
             try {
+              console.log('TikTok callback page loaded successfully');
               if (window.opener && window.opener.onTikTokConnectSuccess) {
                 console.log('Calling opener refresh function...');
                 window.opener.onTikTokConnectSuccess();
+                // Wait before closing to ensure the function completes
+                console.log('Waiting 1 second before closing...');
+                setTimeout(function() { 
+                  console.log('Now closing window...');
+                  window.close(); 
+                }, 1000);
               } else {
                 console.warn('Opener window or success function not found.');
-                // Optionally redirect parent if opener communication fails
-                // window.opener.location.href = '/accounts?status=success';
+                window.close();
               }
             } catch (e) {
               console.error('Error calling opener function:', e);
-            } finally {
-              console.log('Closing popup window...');
               window.close();
             }
-          </script>
-        </body>
-        </html>
-      `;
+          };
+        </script>
+      </body>
+      </html>
+    `;
       return new NextResponse(htmlResponse, {
         status: 200,
         headers: { "Content-Type": "text/html" },
