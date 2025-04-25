@@ -12,11 +12,16 @@ export async function scheduleForPinterestAccounts(config: {
     isSelected: boolean;
   }>;
   platformOptions: PlatformOptions;
-  link: string;
+  accountContent: Array<{
+    accountId: string;
+    title: string;
+    description: string;
+    link: string;
+    isCustomized: boolean;
+  }>;
+
   scheduledDate: string;
   scheduledTime: string;
-  title: string;
-  description: string;
   mediaType: "image" | "video" | "text";
   userId: string | null;
 }): Promise<number> {
@@ -25,11 +30,9 @@ export async function scheduleForPinterestAccounts(config: {
     mediaPath,
     boards,
     platformOptions,
-    link,
     scheduledDate,
     scheduledTime,
-    title,
-    description,
+    accountContent,
     mediaType,
     userId,
   } = config;
@@ -37,6 +40,17 @@ export async function scheduleForPinterestAccounts(config: {
   let successCount = 0;
 
   for (const account of accounts) {
+    // Find the content specific to this account
+    const content = accountContent.find(
+      (item) => item.accountId === account.id
+    );
+
+    // Skip if no content found for this account (shouldn't happen)
+    if (!content) {
+      console.error(`No content found for account ${account.id}`);
+      continue;
+    }
+
     const selectedBoard = boards.find(
       (board) => board.isSelected && board.accountId === account.id
     );
@@ -45,7 +59,7 @@ export async function scheduleForPinterestAccounts(config: {
       ? {
           ...platformOptions.pinterest,
           board: selectedBoard?.boardID,
-          link: link,
+          link: content.link,
         }
       : null;
 
@@ -53,8 +67,8 @@ export async function scheduleForPinterestAccounts(config: {
       socialAccountId: account.id,
       platform: account.platform,
       scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-      title: title,
-      description: description,
+      title: content.title, // Use account-specific title
+      description: content.description, // Use account-specific description
       mediaType: mediaType,
       mediaStoragePath: mediaPath,
       postOptions: postOptions,

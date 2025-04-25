@@ -6,10 +6,16 @@ export async function scheduleForTikTokAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
   platformOptions: PlatformOptions;
+  accountContent: Array<{
+    accountId: string;
+    title: string;
+    description: string;
+    link: string;
+    isCustomized: boolean;
+  }>;
   scheduledDate: string;
   scheduledTime: string;
-  title: string;
-  description: string;
+
   mediaType: "image" | "video" | "text";
   userId: string | null;
 }): Promise<number> {
@@ -19,8 +25,7 @@ export async function scheduleForTikTokAccounts(config: {
     platformOptions,
     scheduledDate,
     scheduledTime,
-    title,
-    description,
+    accountContent,
     mediaType,
     userId,
   } = config;
@@ -28,12 +33,23 @@ export async function scheduleForTikTokAccounts(config: {
   let successCount = 0;
 
   for (const account of accounts) {
+    // Find the content specific to this account
+    const content = accountContent.find(
+      (item) => item.accountId === account.id
+    );
+
+    // Skip if no content found for this account (shouldn't happen)
+    if (!content) {
+      console.error(`No content found for account ${account.id}`);
+      continue;
+    }
+
     const scheduleData = {
       socialAccountId: account.id,
       platform: account.platform,
       scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-      title: title,
-      description: description,
+      title: content.title, // Use account-specific title
+      description: content.description,
       mediaType: mediaType,
       mediaStoragePath: mediaPath,
       postOptions: platformOptions.tiktok || null,

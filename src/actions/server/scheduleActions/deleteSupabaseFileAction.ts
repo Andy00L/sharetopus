@@ -21,26 +21,55 @@ export async function deleteSupabaseFileAction(
     if (!filePath) {
       console.log(`[Delete Action] Deleting entire folder for user ${userId}`);
 
-      // Delete the user folder directly
-      const { error } = await adminSupabase.storage
+      // First, list all files with the user ID prefix
+      const { data: fileList, error: listError } = await adminSupabase.storage
         .from("scheduled-videos")
-        .remove([userId + "/"]);
+        .list(userId);
 
-      if (error) {
+      if (listError) {
         console.error(
-          `[Delete Action] Error deleting user folder ${userId}:`,
-          error
+          `[Delete Action] Error listing files for user ${userId}:`,
+          listError
         );
         return {
           success: false,
-          message: `Failed to delete user folder: ${error.message}`,
+          message: `Failed to list user files: ${listError.message}`,
+        };
+      }
+
+      // If there are no files, we're done
+      if (!fileList || fileList.length === 0) {
+        console.log(`[Delete Action] No files found for user ${userId}`);
+        return { success: true, message: "No files to delete." };
+      }
+
+      // Prepare paths for batch deletion (prepend user ID to each file name)
+      const filesToDelete = fileList.map((file) => `${userId}/${file.name}`);
+
+      console.log(
+        `[Delete Action] Deleting ${filesToDelete.length} files for user ${userId}`
+      );
+
+      // Delete all files in a batch operation
+      const { error: deleteError } = await adminSupabase.storage
+        .from("scheduled-videos")
+        .remove(filesToDelete);
+
+      if (deleteError) {
+        console.error(
+          `[Delete Action] Error batch deleting files for user ${userId}:`,
+          deleteError
+        );
+        return {
+          success: false,
+          message: `Failed to delete user files: ${deleteError.message}`,
         };
       }
 
       console.log(
-        `[Delete Action] User folder deleted successfully: ${userId}`
+        `[Delete Action] All user files deleted successfully: ${userId}`
       );
-      return { success: true, message: "User folder deleted successfully." };
+      return { success: true, message: "All user files deleted successfully." };
     }
 
     // Case 2: Both userId and filePath are provided - delete specific file
