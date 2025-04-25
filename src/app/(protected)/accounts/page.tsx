@@ -4,6 +4,7 @@ import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccount
 import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import { auth } from "@clerk/nextjs/server";
+import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 
 export default async function ManageAccountsPage() {
   const { userId } = await auth();
@@ -16,16 +17,16 @@ export default async function ManageAccountsPage() {
   );
 
   return (
-    <div className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
-      <header className="mb-8">
+    <SidebarContent className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
+      <SidebarGroup className="mb-8">
         <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
         <p className="text-muted-foreground mt-2">
           Connectez vos comptes sociaux pour publier du contenu sur plusieurs
           plateformes.
         </p>
-      </header>
+      </SidebarGroup>
 
-      <section className="mb-8 space-y-6">
+      <SidebarGroup className="mb-8 space-y-6">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">TikTok</h2>
@@ -45,13 +46,13 @@ export default async function ManageAccountsPage() {
             <ConnectedAccounts accounts={pinterestAccounts} userId={userId} />
           </div>
         </div>
-      </section>
+      </SidebarGroup>
 
       {accounts.length === 0 && (
-        <section className="mt-8 mb-16">
+        <SidebarGroup className="mt-8 mb-16">
           <NoAccountsMessage />
-        </section>
+        </SidebarGroup>
       )}
-    </div>
+    </SidebarContent>
   );
 }

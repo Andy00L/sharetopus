@@ -1,5 +1,4 @@
 // lib/client/signedUrlUpload.ts
-
 /**
  * Type for the response from the generate-upload-url API
  */

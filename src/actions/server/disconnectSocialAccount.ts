@@ -1,6 +1,7 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
+import { deleteSupabaseFileAction } from "./scheduleActions/deleteSupabaseFileAction";
 
 /**
  * Disconnect a social media account from the user's profile
@@ -18,6 +19,8 @@ export async function disconnectSocialAccount(
   }
 
   try {
+    console.log(`[Disconnect Account] Processing account: ${accountId}`);
+
     // First, get the account to check ownership
     const { data: account, error: fetchError } = await adminSupabase
       .from("social_accounts")
@@ -43,8 +46,33 @@ export async function disconnectSocialAccount(
         message: "You are not authorized to disconnect this account.",
       };
     }
+    // 1. Find all media paths for scheduled posts for this account
+    // Only request the media_storage_path field we need
+    const { data: mediaPaths, error: postsError } = await adminSupabase
+      .from("scheduled_posts")
+      .select("media_storage_path")
+      .eq("social_account_id", accountId)
+      .in("status", ["scheduled", "pending"])
+      .filter("media_storage_path", "neq", null);
 
-    // Delete the account record from the database
+    if (postsError) {
+      console.error(
+        "[Disconnect Account] Error fetching media paths:",
+        postsError
+      );
+      // Continue anyway - we'll just not be able to clean up files
+    }
+
+    // 2. Extract unique file paths to check
+    const filesToCheck = mediaPaths
+      ? [...new Set(mediaPaths.map((post) => post.media_storage_path))]
+      : [];
+
+    console.log(
+      `[Disconnect Account] Found ${filesToCheck.length} unique files to check`
+    );
+
+    // 3 Delete the account record from the database
     const { error: deleteError } = await adminSupabase
       .from("social_accounts")
       .delete()
@@ -58,6 +86,47 @@ export async function disconnectSocialAccount(
       };
     }
 
+    // 4. Check if each file is still being used by other scheduled posts
+    const filesForDeletion = [];
+    for (const filePath of filesToCheck) {
+      if (!filePath) continue;
+
+      // Only request count, not actual data - optimized query
+      const { count, error: checkError } = await adminSupabase
+        .from("scheduled_posts")
+        .select("media_storage_path", { count: "exact", head: true })
+        .eq("media_storage_path", filePath)
+        .in("status", ["scheduled", "pending"]);
+
+      if (checkError) {
+        console.error(
+          `[Disconnect Account] Error checking references for file ${filePath}:`,
+          checkError
+        );
+        continue;
+      }
+
+      // If count is 0, no posts reference this file
+      if (count === 0) {
+        console.log(
+          `[Disconnect Account] File no longer in use, will delete: ${filePath}`
+        );
+        filesForDeletion.push(filePath);
+      } else {
+        console.log(
+          `[Disconnect Account] File still in use by ${count} posts, keeping: ${filePath}`
+        );
+      }
+    }
+
+    // 5. Delete each file that's no longer needed
+    for (const filePath of filesForDeletion) {
+      const result = await deleteSupabaseFileAction(userId, filePath);
+      console.log(
+        `[Disconnect Account] File deletion result for ${filePath}:`,
+        result
+      );
+    }
     return {
       success: true,
       message: `${

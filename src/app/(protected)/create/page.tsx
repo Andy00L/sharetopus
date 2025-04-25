@@ -1,5 +1,6 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import SocialPostForm from "@/components/core/create/SocialPostForm";
+import { SidebarContent } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
 
 export default async function CreatePostPage() {
@@ -7,11 +8,9 @@ export default async function CreatePostPage() {
   const accounts = await fetchSocialAccounts(userId);
 
   return (
-    <div className="container mx-auto py-8">
+    <SidebarContent className="px-4 py-6 ">
       <h1 className="text-2xl font-bold mb-6">Create a Social Media Post</h1>
-      <div className="max-w-3xl mx-auto">
-        <SocialPostForm accounts={accounts} userId={userId} />
-      </div>
-    </div>
+      <SocialPostForm accounts={accounts} userId={userId} />
+    </SidebarContent>
   );
 }

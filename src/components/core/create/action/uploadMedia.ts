@@ -1,19 +1,29 @@
 import { uploadWithSignedUrl } from "@/lib/client/signedUrlUpload";
 
-export async function uploadMedia(file: File): Promise<string> {
+export async function uploadMedia(
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<{ success: boolean; path?: string; message?: string }> {
   console.log("Uploading media file...");
   try {
     const path = await uploadWithSignedUrl(file, {
-      onProgress: (progress) => console.log(`Upload progress: ${progress}%`),
+      onProgress: (progress) => {
+        onProgress?.(progress);
+      },
       onSuccess: (path) => console.log("File uploaded successfully:", path),
       onError: (error) => {
         throw error;
       },
     });
-    console.log("Media uploaded to:", path);
-    return path;
+
+    console.log("Media uploaded to:");
+    return { success: true, path };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error("Upload error:", error);
-    throw new Error(`Media upload failed: ${error}`);
+    return {
+      success: false,
+      message: `Media upload failed: ${errorMessage}`,
+    };
   }
 }

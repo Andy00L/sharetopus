@@ -9,8 +9,8 @@ import { adminSupabase } from "@/actions/api/supabase-client";
  * @returns Object with success status and message
  */
 export async function deleteSupabaseFileAction(
-  filePath: string | null,
-  userId: string | null
+  userId: string | null,
+  filePath?: string | null
 ): Promise<{ success: boolean; message: string }> {
   if (!userId) {
     return { success: false, message: "User not authenticated." };

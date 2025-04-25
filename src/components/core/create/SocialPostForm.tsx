@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SidebarGroup } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,7 +47,7 @@ export const ALLOWED_VIDEO_TYPES = [
 ];
 const MAX_IMAGE_SIZE_MB = 20;
 const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
-const MAX_VIDEO_SIZE_MB = 100;
+const MAX_VIDEO_SIZE_MB = 50;
 const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 
 // Platform icons and display names mapping
@@ -99,6 +100,7 @@ export default function SocialPostForm({
   const [isScheduled, setIsScheduled] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [mediaType, setMediaType] = useState<"image" | "video" | "text">(
@@ -601,18 +603,26 @@ export default function SocialPostForm({
     if (!checksBeforeSubmission()) return;
     setIsLoading(true);
     setError(null);
+    setUploadProgress(0);
 
     let mediaStoragePath = "";
 
     try {
       // 2. Téléchargement du média (si nécessaire)
-      mediaStoragePath =
-        activeTab === "media" && selectedFile
-          ? await uploadMedia(selectedFile)
-          : "";
+      if (activeTab === "media" && selectedFile) {
+        const uploadResult = await uploadMedia(selectedFile, (progress) => {
+          setUploadProgress(progress); // Update progress state
+        });
+
+        if (!uploadResult.success) {
+          throw new Error(uploadResult.message);
+        }
+
+        mediaStoragePath = uploadResult.path ?? "";
+      }
 
       // 3. Traitement des comptes Pinterest
-      const pinterestSuccessCount = await scheduleForPinterestAccounts({
+      const pinterestResult = await scheduleForPinterestAccounts({
         accounts: selectedPinterestAccount,
         mediaPath: mediaStoragePath,
         boards,
@@ -626,8 +636,10 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
-
-      const tiktokSuccessCount = await scheduleForTikTokAccounts({
+      if (!pinterestResult.success) {
+        throw new Error(pinterestResult.message);
+      }
+      const tiktokResult = await scheduleForTikTokAccounts({
         accounts: selectedTikTokAccount,
         mediaPath: mediaStoragePath,
         platformOptions,
@@ -640,8 +652,11 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
+      if (!tiktokResult.success) {
+        throw new Error(tiktokResult.message);
+      }
 
-      const totalSuccessCount = pinterestSuccessCount + tiktokSuccessCount;
+      const totalSuccessCount = pinterestResult.count + tiktokResult.count;
 
       // 4. Notification de succès
       if (totalSuccessCount > 0) {
@@ -682,7 +697,7 @@ export default function SocialPostForm({
   };
 
   return (
-    <div className="w-full">
+    <SidebarGroup className="w-full max-w-3xl mx-auto">
       {/**No accounts avaible */}
       {accounts.length === 0 && (
         <div className="text-center p-8 border rounded-lg">
@@ -724,7 +739,7 @@ export default function SocialPostForm({
                 </TabsList>
 
                 {/*media content*/}
-                <TabsContent value="media" className="space-y-4 mt-4">
+                <TabsContent value="media" className="space-y-4 mt-4 ">
                   {!selectedFile && (
                     <div
                       role="button"
@@ -1340,49 +1355,64 @@ export default function SocialPostForm({
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 )}
+                {selectedFile && isLoading && (
+                  <div className="mt-2">
+                    <p className="text-sm text-muted-foreground mb-1">
+                      Uploading: {uploadProgress}%
+                    </p>
+                    <div className="w-full bg-muted rounded-full h-2.5">
+                      <div
+                        className="bg-primary h-2.5 rounded-full"
+                        style={{ width: `${uploadProgress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+                {!isLoading && (
+                  <div className="pt-4 flex justify-between">
+                    <Button
+                      variant="outline"
+                      onClick={handlePrevStep}
+                      disabled={isLoading}
+                    >
+                      Back
+                    </Button>
 
-                <div className="pt-4 flex justify-between">
-                  <Button
-                    variant="outline"
-                    onClick={handlePrevStep}
-                    disabled={isLoading}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    onClick={() =>
-                      isScheduled
-                        ? handleSchedueleSubmit()
-                        : handleDirectPostSubmit()
-                    }
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        {isScheduled ? "Scheduling..." : "Publishing..."}
-                      </>
-                    ) : (
-                      <>
-                        {isScheduled ? (
-                          <>
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            Schedule Post
-                          </>
-                        ) : (
-                          <>
-                            <SendHorizontal className="mr-2 h-4 w-4" />
-                            Publish Now
-                          </>
-                        )}
-                      </>
-                    )}
-                  </Button>
-                </div>
+                    <Button
+                      onClick={() =>
+                        isScheduled
+                          ? handleSchedueleSubmit()
+                          : handleDirectPostSubmit()
+                      }
+                    >
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {isScheduled ? "Scheduling..." : "Publishing..."}
+                        </>
+                      ) : (
+                        <>
+                          {isScheduled ? (
+                            <>
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              Schedule Post
+                            </>
+                          ) : (
+                            <>
+                              <SendHorizontal className="mr-2 h-4 w-4" />
+                              Publish Now
+                            </>
+                          )}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
         </>
       )}
-    </div>
+    </SidebarGroup>
   );
 }
