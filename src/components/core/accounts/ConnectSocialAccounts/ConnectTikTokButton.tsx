@@ -181,11 +181,7 @@ export default function ConnectTikTokButton() {
   };
 
   return (
-    <Button
-      onClick={openTikTokPopup}
-      disabled={isConnecting}
-      className="w-full sm:w-auto"
-    >
+    <Button onClick={openTikTokPopup} disabled={isConnecting}>
       {isConnecting ? (
         <>
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
