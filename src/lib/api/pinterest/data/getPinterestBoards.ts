@@ -17,20 +17,20 @@ export async function getPinterestBoards(
   accessToken: string | null
 ): Promise<PinterestBoard[]> {
   if (!accessToken) {
-    console.error("[Pinterest] No access token provided");
+    console.error("[GetPinterestBoards] No access token provided");
     return [];
   }
-  console.log("[Pinterest] Verifying token and user data");
+  console.log("[GetPinterestBoards] Verifying token and user data");
 
   try {
     console.log(
-      "[Pinterest] Fetching boards with token:",
+      "[GetPinterestBoards] Fetching boards with token:",
       accessToken.substring(0, 10) + "..."
     );
 
     // First try the main endpoint
     const url = "https://api.pinterest.com/v5/boards";
-    console.log("[Pinterest] Using primary API endpoint");
+    console.log("[GetPinterestBoards] Using primary API endpoint");
 
     const response = await fetch(url, {
       method: "GET",
@@ -38,11 +38,13 @@ export async function getPinterestBoards(
         Authorization: `Bearer ${accessToken}`,
       },
     });
-    console.log(`[Pinterest] Primary API response status: ${response.status}`);
+    console.log(
+      `[GetPinterestBoards] Primary API response status: ${response.status}`
+    );
 
     if (!response.ok) {
       console.error(
-        `[Pinterest] API error: ${response.status} ${response.statusText}`
+        `[GetPinterestBoards] API error: ${response.status} ${response.statusText}`
       );
       return [];
     }
@@ -50,7 +52,7 @@ export async function getPinterestBoards(
     console.log(data.items);
     return data.items ?? [];
   } catch (error) {
-    console.error("[Pinterest] Unexpected error:", error);
+    console.error("[GetPinterestBoards] Unexpected error:", error);
     return [];
   }
 }

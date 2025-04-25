@@ -12,23 +12,24 @@ export async function POST(request: NextRequest) {
       mediaType,
     } = await request.json();
     // Log the received parameters (truncating sensitive data)
-    console.log("[Pinterest Post] Received parameters:");
-    console.log("[Pinterest Post] boardId:", boardId);
-    console.log("[Pinterest Post] title:", title);
+    console.log("[Pinterest Post Routes] Received parameters:");
+    console.log("[Pinterest Post Routes] boardId:", boardId);
+    console.log("[Pinterest Post Routes] title:", title);
     console.log(
-      "[Pinterest Post] description length:",
-      description?.length || 0
+      "[Pinterest Post Routes] description length:",
+      description?.length ?? 0
     );
-    console.log("[Pinterest Post] link:", link);
-    console.log("[Pinterest Post] mediaType:", mediaType);
+    console.log("[Pinterest Post Routes] link:", link);
+    console.log("[Pinterest Post Routes] mediaType:", mediaType);
     console.log(
-      "[Pinterest Post] accessToken:",
+      "[Pinterest Post Routes] accessToken:",
       accessToken ? `${accessToken.substring(0, 6)}...` : "missing"
     );
     console.log(
-      "[Pinterest Post] base64Media length:",
+      "[Pinterest Post Routes] base64Media length:",
       base64Media ? base64Media.length : 0
     );
+
     // Vérification des paramètres requis
     if (!accessToken || !boardId || !base64Media) {
       console.log(" [Pinterest Post route] Missing required parameters");
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     const isVideo = mediaType.startsWith("video/");
 
     if (!isVideo && !isImage) {
-      console.log("[Pinterest Post] Unsupported media type:", mediaType);
+      console.log("[Pinterest Post Routes] Unsupported media type:", mediaType);
       return NextResponse.json(
         {
           success: false,
@@ -57,7 +58,9 @@ export async function POST(request: NextRequest) {
     const sourceType = isImage ? "image_base64" : "video_base64";
 
     console.log(
-      `[Pinterest Post] Creating ${isImage ? "image" : "video"} pin on board:`,
+      `[Pinterest Post Routes] Creating ${
+        isImage ? "image" : "video"
+      } pin on board:`,
       boardId
     );
 

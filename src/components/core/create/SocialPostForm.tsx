@@ -32,12 +32,12 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { scheduleForPinterestAccounts } from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
-import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 
 // File upload constraints
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -1082,6 +1082,42 @@ export default function SocialPostForm({
 
                     {/* Global caption - always shown for media posts */}
                     <div className="space-y-2">
+                      {/* Add global Pinterest title field when Pinterest accounts are selected */}
+                      {selectedPinterestAccount.length > 0 && (
+                        <div className="space-y-2 pb-2 border-b">
+                          <Label htmlFor="global-pin-title">
+                            {Object.values(selectedAccounts).filter(Boolean)
+                              .length > 1
+                              ? "Default Pinterest Title"
+                              : "Pinterest Title"}
+                          </Label>
+                          <Input
+                            id="global-pin-title"
+                            value={
+                              accountContent.find((item) => !item.isCustomized)
+                                ?.title ?? ""
+                            }
+                            onChange={(e) => {
+                              const newValue = e.target.value;
+                              setAccountContent((prev) =>
+                                prev.map((item) =>
+                                  item.isCustomized
+                                    ? item
+                                    : {
+                                        ...item,
+                                        title: newValue,
+                                      }
+                                )
+                              );
+                            }}
+                            placeholder="Add a title for your Pinterest pin"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            A good title helps your pin get discovered on
+                            Pinterest
+                          </p>
+                        </div>
+                      )}
                       <Label htmlFor="global-caption">
                         {Object.values(selectedAccounts).filter(Boolean)
                           .length > 1
@@ -1208,11 +1244,37 @@ export default function SocialPostForm({
                                 (item) => item.accountId === account.id
                               )?.isCustomized ? (
                                 <div className="space-y-2 pt-2">
+                                  {/* Add Pinterest title field for Pinterest accounts only */}
+                                  {account.platform === "pinterest" && (
+                                    <div className="mb-2">
+                                      <Input
+                                        value={
+                                          accountContent.find(
+                                            (item) =>
+                                              item.accountId === account.id
+                                          )?.title ?? ""
+                                        }
+                                        onChange={(e) => {
+                                          setAccountContent((prev) =>
+                                            prev.map((item) =>
+                                              item.accountId === account.id
+                                                ? {
+                                                    ...item,
+                                                    title: e.target.value,
+                                                  }
+                                                : item
+                                            )
+                                          );
+                                        }}
+                                        placeholder="Custom Pinterest title"
+                                      />
+                                    </div>
+                                  )}
                                   <Textarea
                                     value={
                                       accountContent.find(
                                         (item) => item.accountId === account.id
-                                      )?.description || ""
+                                      )?.description ?? ""
                                     }
                                     onChange={(e) => {
                                       setAccountContent((prev) =>
@@ -1235,7 +1297,7 @@ export default function SocialPostForm({
                                     value={
                                       accountContent.find(
                                         (item) => item.accountId === account.id
-                                      )?.link || ""
+                                      )?.link ?? ""
                                     }
                                     onChange={(e) => {
                                       setAccountContent((prev) =>

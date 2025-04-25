@@ -28,11 +28,11 @@ export async function getSignedUploadUrl(
   bucketName: string = "scheduled-videos"
 ): Promise<SignedUrlResponse> {
   try {
-    console.log("[Signed URL] Requesting URL for:", {
+    /*console.log("[Signed URL] Requesting URL for:", {
       filename,
       contentType,
       bucketName,
-    });
+    });*/
 
     const response = await fetch("/api/storage/generate-upload-url", {
       method: "POST",
@@ -47,7 +47,7 @@ export async function getSignedUploadUrl(
     });
 
     const data = await response.json();
-    console.log("[Signed URL] API response:", data);
+    //console.log("[Signed URL] API response:", data);
 
     if (!response.ok) {
       throw new Error(data.error ?? "Failed to generate upload URL");
@@ -78,7 +78,7 @@ export async function uploadWithSignedUrl(
 
     // Step 2: Upload the file directly to Supabase Storage using the signed URL
     console.log(`[Signed URL] Uploading file using signed URL`);
-    console.log(`[Signed URL] Starting upload to path: ${path}`);
+    //console.log(`[Signed URL] Starting upload to path: ${path}`);
     // Use XMLHttpRequest for progress tracking
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -96,9 +96,9 @@ export async function uploadWithSignedUrl(
 
       // Handle success
       xhr.addEventListener("load", () => {
-        console.log(
+        /* console.log(
           `[Signed URL] Upload response: Status ${xhr.status}, Response: ${xhr.responseText}`
-        );
+        );*/
 
         if (xhr.status >= 200 && xhr.status < 300) {
           console.log(`[Signed URL] Upload complete: ${path}`);
@@ -130,7 +130,7 @@ export async function uploadWithSignedUrl(
       xhr.send(file);
     });
   } catch (error) {
-    console.error("[Signed URL] Upload error:", error);
+    // console.error("[Signed URL] Upload error:", error);
     onError?.(error instanceof Error ? error : new Error(String(error)));
     throw error;
   }
