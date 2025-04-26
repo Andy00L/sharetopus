@@ -99,7 +99,7 @@ export default function ConnectLinkedInButton() {
   // Add failure handler
   const handleLinkedInFailure = (error?: string) => {
     console.error("LinkedIn connection failed:", error);
-    toast.error(`Échec de la connexion au compte LinkedIn}`);
+    toast.error(`Échec de la connexion au compte LinkedIn`);
     cleanupAuthFlow();
   };
 
@@ -173,11 +173,7 @@ export default function ConnectLinkedInButton() {
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to start LinkedIn connection"
-      );
+      toast.error("Failed to start LinkedIn connection");
       setIsConnecting(false);
     }
   };

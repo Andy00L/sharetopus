@@ -82,7 +82,7 @@ export const metadata: Metadata = {
 
   // Combined alternates property
   alternates: {
-    canonical: "https://sharetopus.com/app",
+    canonical: "https://sharetopus.com",
     languages: {
       "en-CA": "https://sharetopus.com",
       "fr-CA": "https://sharetopus.com/fr",

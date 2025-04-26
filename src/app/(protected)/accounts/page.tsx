@@ -17,7 +17,7 @@ export default async function ManageAccountsPage() {
     (acc) => acc.platform === "pinterest"
   );
   const LinkedinAccounts = accounts.filter(
-    (acc) => acc.platform === "Linkedin"
+    (acc) => acc.platform === "linkedin"
   );
 
   return (

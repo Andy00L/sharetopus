@@ -121,12 +121,20 @@ export async function GET(request: NextRequest) {
       tokenResponse.access_token
     );
 
+    // Préparer les données supplémentaires à stocker
+    const extraData = {
+      email: linkedInProfile.email,
+      scope: "w_member_social openid profile email",
+      locale: linkedInProfile.locale,
+      email_verified: linkedInProfile.email_verified,
+    };
+
     // Enregistrer le compte LinkedIn dans la base de données
     const { data: existingAccount, error: fetchError } = await adminSupabase
       .from("social_accounts")
       .select("id")
       .eq("user_id", userId)
-      .eq("platform_id", linkedInProfile.id)
+      .eq("account_identifier", linkedInProfile.id)
       .eq("platform", "linkedin")
       .single();
 
@@ -176,12 +184,11 @@ export async function GET(request: NextRequest) {
           username: linkedInProfile.name,
           display_name: linkedInProfile.name,
           avatar_url: linkedInProfile.picture,
-          email: linkedInProfile.email,
           access_token: tokenResponse.access_token,
           refresh_token: tokenResponse.refresh_token ?? null,
-          expires_at: expiresAt,
-          last_used_at: new Date().toISOString(),
-          scope: "w_member_social openid profile email",
+          token_expires_at: expiresAt,
+          updated_at: new Date().toISOString(),
+          extra: extraData,
         })
         .eq("id", existingAccount.id);
 
@@ -219,19 +226,17 @@ export async function GET(request: NextRequest) {
         .insert({
           user_id: userId,
           platform: "linkedin",
-          platform_id: linkedInProfile.id,
+          account_identifier: linkedInProfile.id,
           username: linkedInProfile.name,
           display_name: linkedInProfile.name,
           avatar_url: linkedInProfile.picture,
-          email: linkedInProfile.email,
           access_token: tokenResponse.access_token,
           refresh_token: tokenResponse.refresh_token ?? null,
-          expires_at: expiresAt,
-          last_used_at: new Date().toISOString(),
-          is_active: true,
-          scope: "w_member_social openid profile email",
+          token_expires_at: expiresAt,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          extra: extraData,
         });
-
       if (insertError) {
         console.error("Error inserting LinkedIn account:", insertError);
         return new Response(
