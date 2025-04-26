@@ -5,6 +5,7 @@ import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedA
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import { auth } from "@clerk/nextjs/server";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
+import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 
 export default async function ManageAccountsPage() {
   const { userId } = await auth();
@@ -14,6 +15,9 @@ export default async function ManageAccountsPage() {
   const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");
   const pinterestAccounts = accounts.filter(
     (acc) => acc.platform === "pinterest"
+  );
+  const LinkedinAccounts = accounts.filter(
+    (acc) => acc.platform === "Linkedin"
   );
 
   return (
@@ -45,6 +49,18 @@ export default async function ManageAccountsPage() {
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
               accounts={pinterestAccounts}
+              userId={userId}
+            />
+          </div>
+        </div>
+        <div className="space-y-3 pt-4 border-t">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Pinterest</h2>
+            <ConnectLinkedInButton />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccountsBadge
+              accounts={LinkedinAccounts}
               userId={userId}
             />
           </div>

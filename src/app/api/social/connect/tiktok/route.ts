@@ -7,6 +7,14 @@ import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
   try {
+    const { userId } = await auth();
+
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Unauthorized - Authentication required" },
+        { status: 401 }
+      );
+    }
     // Parse URL parameters
     const { searchParams } = new URL(req.url);
     const code = searchParams.get("code");
@@ -16,18 +24,6 @@ export async function GET(req: Request) {
       return new NextResponse(
         `<html><body><script>window.close();</script>Le paramètre 'code' est manquant.</body></html>`,
         { status: 400, headers: { "Content-Type": "text/html" } }
-      );
-    }
-
-    // Get authenticated user
-    const { userId } = await auth();
-
-    if (!userId) {
-      console.error("[TikTok Connect Route]  User not authenticated");
-      // --- FIX: Return HTML to close popup even on error ---
-      return new NextResponse(
-        `<html><body><script>window.close();</script>Utilisateur non authentifié.</body></html>`,
-        { status: 401, headers: { "Content-Type": "text/html" } }
       );
     }
 
