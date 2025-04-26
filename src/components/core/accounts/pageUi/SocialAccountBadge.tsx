@@ -100,9 +100,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
         </div>
 
         <span className="text-sm font-medium truncate max-w-[100px]">
-          {account.display_name ??
-            account.username ??
-            account.account_identifier.substring(0, 8)}
+          {account.display_name ?? account.username}
         </span>
 
         <button

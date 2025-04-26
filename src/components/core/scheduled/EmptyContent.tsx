@@ -1,4 +1,4 @@
-// components/core/scheduled/EmptyContent.server.tsx
+// components/core/scheduled/EmptyContent.tsx
 
 import { Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";

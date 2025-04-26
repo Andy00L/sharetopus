@@ -205,11 +205,10 @@ export default function SocialPostForm({
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok"
   );
 
-  //========================================================================
-  //pinterest account selected
   const selectedPinterestAccount = accounts.filter(
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
   );
+
   // For each Pinterest account ID, keep its board list
   const [boards, setBoards] = useState<
     {
@@ -274,8 +273,6 @@ export default function SocialPostForm({
       };
     })
     .filter((group): group is PlatformGroup => group !== null);
-
-  // Find the selected accounts with their full details
 
   useEffect(() => {
     if (!selectedFile) {
@@ -453,8 +450,8 @@ export default function SocialPostForm({
         return;
       }
 
-      if (activeTab === "text" && !textInputs.title.trim()) {
-        setError("Please enter a title before continuing.");
+      if (activeTab === "text" && !textInputs.description.trim()) {
+        setError("Please enter a caption before continuing.");
         return;
       }
     }
@@ -464,10 +461,12 @@ export default function SocialPostForm({
       const hasSelectedAccounts = Object.values(selectedAccounts).some(
         (selected) => selected
       );
+
       if (!hasSelectedAccounts) {
         toast.error("Please select at least one account.");
         return;
       }
+
       // Initialize account content for all selected accounts
       const selectedAccountsList = accounts.filter(
         (acc) => selectedAccounts[acc.id]
@@ -480,6 +479,7 @@ export default function SocialPostForm({
         link: activeTab === "text" ? textInputs.link : "",
         isCustomized: false,
       }));
+
       setAccountContent(initialContent);
       loadPlatformSpecificData();
     }
@@ -540,6 +540,7 @@ export default function SocialPostForm({
       setError("User not authenticated. Please log in again.");
       return false;
     }
+
     // Check if there's at least one account selected
     if (Object.values(selectedAccounts).filter(Boolean).length === 0) {
       setError("Please select at least one account");
@@ -565,9 +566,11 @@ export default function SocialPostForm({
       }
     } else {
       // Text post validation - we already have content from step 1
-      const missingTitle = accountContent.some((item) => !item.title.trim());
+      const missingTitle = accountContent.some(
+        (item) => !item.description.trim()
+      );
       if (missingTitle) {
-        setError("Please enter a title");
+        setError("Please enter a caption");
         return false;
       }
     }
@@ -598,6 +601,7 @@ export default function SocialPostForm({
         return false;
       }
     }
+
     return true;
   };
 
@@ -638,9 +642,11 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
+
       if (!pinterestResult.success) {
         throw new Error(pinterestResult.message);
       }
+
       const tiktokResult = await scheduleForTikTokAccounts({
         accounts: selectedTikTokAccount,
         mediaPath: mediaStoragePath,
@@ -654,6 +660,7 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
+
       if (!tiktokResult.success) {
         throw new Error(tiktokResult.message);
       }
@@ -669,13 +676,7 @@ export default function SocialPostForm({
       }
     } catch (error) {
       console.error("Form submission error:", error);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "Failed to publish/schedule post";
-
-      setError(errorMessage);
-      toast.error(errorMessage);
+      setError("Failed to publish post");
 
       // Nettoyage des fichiers si nécessaire
       if (mediaStoragePath && activeTab === "media") {
@@ -685,16 +686,11 @@ export default function SocialPostForm({
           console.error("Failed to clean up file:", deleteError);
         }
       }
-    } finally {
-      setIsLoading(false);
     }
+
+    setIsLoading(false);
   };
 
-  // Updated handleDirectPostSubmit function for SocialPostForm.tsx
-  // Import the new direct post function at the top of your file:
-  // import { directPostForPinterestAccounts } from "./action/directPostForPinterestAccounts";
-
-  // Replace your existing handleDirectPostSubmit function with this:
   const handleDirectPostSubmit = async () => {
     // Initial validation of form fields
     if (!checksBeforeSubmission()) return;
@@ -705,60 +701,48 @@ export default function SocialPostForm({
     try {
       // Handle media posts
       if (activeTab === "media" && selectedFile) {
-        // Check if Pinterest accounts are selected
-        if (selectedPinterestAccount.length > 0) {
-          console.log("Directly posting to Pinterest...");
+        console.log("Directly posting to Pinterest...");
 
-          // Call our direct posting function
-          const pinterestResult = await directPostForPinterestAccounts({
-            accounts: selectedPinterestAccount,
-            file: selectedFile,
-            boards,
-            platformOptions,
-            accountContent: accountContent.filter((item) =>
-              selectedPinterestAccount.some((acc) => acc.id === item.accountId)
-            ),
-            onProgress: (progress) => {
-              setUploadProgress(progress);
-            },
-          });
+        // Call our direct posting function
+        const pinterestResult = await directPostForPinterestAccounts({
+          accounts: selectedPinterestAccount,
+          file: selectedFile,
+          boards,
+          platformOptions,
+          accountContent: accountContent.filter((item) =>
+            selectedPinterestAccount.some((acc) => acc.id === item.accountId)
+          ),
+          onProgress: (progress) => {
+            setUploadProgress(progress);
+          },
+        });
 
-          if (!pinterestResult.success) {
-            throw new Error(pinterestResult.message);
-          }
-
-          const successCount = pinterestResult.count;
-
-          if (successCount > 0) {
-            toast.success(
-              `${successCount} post(s) published successfully to Pinterest!`
-            );
-            resetForm();
-          } else {
-            toast.info("No posts were published to Pinterest.");
-          }
-        } else {
-          toast.info("No Pinterest accounts selected for direct posting.");
+        if (!pinterestResult.success) {
+          throw new Error(pinterestResult.message);
         }
 
-        // Note: You could add direct posting for other platforms here as needed
-        // For example: if (selectedTikTokAccount.length > 0) { ... }
+        const successCount = pinterestResult.count;
+
+        if (successCount > 0) {
+          toast.success(
+            `${successCount} post(s) published successfully to Pinterest!`
+          );
+          resetForm();
+        } else {
+          toast.info("No posts were published to Pinterest.");
+        }
       }
+
       // Handle text posts
-      else if (activeTab === "text") {
+      if (activeTab === "text") {
         toast.info("Direct posting for text content is not yet implemented.");
-        // Future implementation would go here
       }
     } catch (error) {
       console.error("Direct post submission error:", error);
-      const errorMessage =
-        error instanceof Error ? error.message : "Failed to publish post";
-
-      setError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setIsLoading(false);
+      setError("Failed to publish post");
     }
+
+    setIsLoading(false);
   };
 
   return (
@@ -885,14 +869,17 @@ export default function SocialPostForm({
                 {/*text content*/}
                 <TabsContent value="text" className="space-y-4 mt-4">
                   <div className="border rounded-lg p-4 space-y-3">
+                    {/**Small alert */}
                     <Alert className="mb-4">
                       <AlertCircle className="h-4 w-4 mr-2" />
                       <AlertDescription>
-                        Text posts are only supported on Facebook and Twitter.
-                        Other platforms require media content.
+                        Text posts are only supported on Facebook, Twitter,
+                        Threads, Linkedin. Other platforms require media
+                        content.
                       </AlertDescription>
                     </Alert>
 
+                    {/**Title */}
                     <div>
                       <Label htmlFor="text-title">Title *</Label>
                       <Input
@@ -909,6 +896,7 @@ export default function SocialPostForm({
                       />
                     </div>
 
+                    {/**Caption */}
                     <div>
                       <Label htmlFor="text-content">Content</Label>
                       <Textarea
@@ -922,9 +910,11 @@ export default function SocialPostForm({
                         }
                         placeholder="Write your post content here"
                         rows={6}
+                        required
                       />
                     </div>
 
+                    {/**Link */}
                     <div>
                       <Label htmlFor="text-link">Link (Optional)</Label>
                       <Input
@@ -963,6 +953,7 @@ export default function SocialPostForm({
               </Button>
             </div>
           )}
+
           {/* Step 2: Account Selection */}
           {currentStep === 2 && (
             <div className="space-y-4">
@@ -1050,12 +1041,14 @@ export default function SocialPostForm({
                 </div>
               </div>
 
-              {/**Button to validate setp 2 */}
+              {/**Navigation Buttons*/}
               <div className="flex justify-between pt-4">
+                {/**Back button */}
                 <Button variant="outline" onClick={handlePrevStep}>
                   Back
                 </Button>
 
+                {/**Button to step 3 */}
                 <Button
                   onClick={handleNextStep}
                   disabled={
@@ -1069,6 +1062,7 @@ export default function SocialPostForm({
               </div>
             </div>
           )}
+
           {/* Step 3: Final Details & Scheduling */}
           {currentStep === 3 && (
             <div className="space-y-4">
@@ -1091,6 +1085,7 @@ export default function SocialPostForm({
                               ? "Default Pinterest Title"
                               : "Pinterest Title"}
                           </Label>
+
                           <Input
                             id="global-pin-title"
                             value={
@@ -1112,12 +1107,9 @@ export default function SocialPostForm({
                             }}
                             placeholder="Add a title for your Pinterest pin"
                           />
-                          <p className="text-xs text-muted-foreground">
-                            A good title helps your pin get discovered on
-                            Pinterest
-                          </p>
                         </div>
                       )}
+
                       <Label htmlFor="global-caption">
                         {Object.values(selectedAccounts).filter(Boolean)
                           .length > 1
@@ -1128,7 +1120,7 @@ export default function SocialPostForm({
                         id="global-caption"
                         value={
                           accountContent.find((item) => !item.isCustomized)
-                            ?.description || ""
+                            ?.description ?? ""
                         }
                         onChange={(e) => {
                           const newValue = e.target.value;
@@ -1325,26 +1317,27 @@ export default function SocialPostForm({
                     )}
                   </div>
                 )}
+
                 {/* Text post preview - only shown for text posts */}
                 {activeTab === "text" && (
                   <div className="border rounded-lg p-4 space-y-4 mb-4">
                     <h3 className="font-medium">Text Post Preview</h3>
                     <div className="space-y-3">
-                      <div>
-                        <h4 className="text-sm font-medium mb-1">Title</h4>
-                        <p className="p-2 bg-muted/30 rounded-md">
-                          {textInputs.title}
-                        </p>
-                      </div>
-
-                      {textInputs.description && (
+                      {textInputs.title && (
                         <div>
-                          <h4 className="text-sm font-medium mb-1">Content</h4>
-                          <p className="p-2 bg-muted/30 rounded-md whitespace-pre-wrap">
-                            {textInputs.description}
+                          <h4 className="text-sm font-medium mb-1">Title</h4>
+                          <p className="p-2 bg-muted/30 rounded-md">
+                            {textInputs.title}
                           </p>
                         </div>
                       )}
+
+                      <div>
+                        <h4 className="text-sm font-medium mb-1">Content</h4>
+                        <p className="p-2 bg-muted/30 rounded-md whitespace-pre-wrap">
+                          {textInputs.description}
+                        </p>
+                      </div>
 
                       {textInputs.link && (
                         <div>
@@ -1482,6 +1475,7 @@ export default function SocialPostForm({
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
                 )}
+
                 {selectedFile && isLoading && (
                   <div className="mt-2">
                     <p className="text-sm text-muted-foreground mb-1">
@@ -1495,6 +1489,7 @@ export default function SocialPostForm({
                     </div>
                   </div>
                 )}
+
                 {!isLoading && (
                   <div className="pt-4 flex justify-between">
                     <Button

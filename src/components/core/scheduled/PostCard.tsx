@@ -45,8 +45,8 @@ import {
 } from "lucide-react";
 
 import AvatarWithFallback from "@/components/AvatarWithFallback";
-import type { ScheduledPost } from "@/lib/types/dbTypes";
 import RescheduleDialog from "./RescheduleDialog";
+import { ScheduledPost } from "@/lib/types/dbTypes";
 
 interface Props {
   readonly post: ScheduledPost;

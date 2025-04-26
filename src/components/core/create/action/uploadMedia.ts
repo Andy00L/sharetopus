@@ -1,4 +1,4 @@
-import { uploadWithSignedUrl } from "@/lib/client/signedUrlUpload";
+import { uploadWithSignedUrl } from "@/actions/client/signedUrlUpload";
 
 export async function uploadMedia(
   file: File,

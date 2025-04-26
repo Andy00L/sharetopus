@@ -1,7 +1,7 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
-import ConnectedAccounts from "@/components/core/accounts/social/connectedAccounts";
+import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import { auth } from "@clerk/nextjs/server";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
@@ -33,7 +33,7 @@ export default async function ManageAccountsPage() {
             <ConnectTikTokButton />
           </div>
           <div className="flex flex-wrap gap-2">
-            <ConnectedAccounts accounts={tiktokAccounts} userId={userId} />
+            <ConnectedAccountsBadge accounts={tiktokAccounts} userId={userId} />
           </div>
         </div>
 
@@ -43,7 +43,10 @@ export default async function ManageAccountsPage() {
             <ConnectPinterestButton />
           </div>
           <div className="flex flex-wrap gap-2">
-            <ConnectedAccounts accounts={pinterestAccounts} userId={userId} />
+            <ConnectedAccountsBadge
+              accounts={pinterestAccounts}
+              userId={userId}
+            />
           </div>
         </div>
       </SidebarGroup>

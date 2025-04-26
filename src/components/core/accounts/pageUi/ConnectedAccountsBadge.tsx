@@ -1,18 +1,18 @@
-// src/components/core/accounts/social/ConnectedAccountsClient.tsx
+// src/components/core/accounts/social/ConnectedAccounts.tsx
 
 import { SocialAccount } from "@/lib/types/dbTypes";
 
 import SocialAccountBadge from "./SocialAccountBadge";
 
-interface ConnectedAccountsClientProps {
+interface ConnectedAccountsProps {
   readonly accounts: SocialAccount[];
   readonly userId: string | null;
 }
 
-export default function ConnectedAccountsClient({
+export default function ConnectedAccountsBadge({
   accounts,
   userId,
-}: ConnectedAccountsClientProps) {
+}: ConnectedAccountsProps) {
   if (!userId) {
     return null;
   }

@@ -27,7 +27,7 @@ export default function NavPost() {
 
           <SidebarMenuItem>
             <SidebarMenuButton asChild>
-              <Link href="/published">
+              <Link href="/posted">
                 <CheckCircle className="h-4 w-4" />
                 <span>Posted</span>
               </Link>

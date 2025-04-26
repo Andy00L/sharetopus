@@ -53,6 +53,19 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    // Validate required fields for video uploads
+    if (isVideo && !title) {
+      console.log(
+        "[Pinterest Post Routes] Missing required title for video pin"
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Title is required for video pins",
+        },
+        { status: 400 }
+      );
+    }
 
     // Set the source type based on media type
     const sourceType = isImage ? "image_base64" : "video_base64";
@@ -63,6 +76,30 @@ export async function POST(request: NextRequest) {
       } pin on board:`,
       boardId
     );
+    // Construct request body based on media type
+    const requestBody = {
+      link,
+      title,
+      description,
+      board_id: boardId,
+      media_source: {
+        source_type: sourceType,
+        content_type: mediaType,
+        data: base64Media,
+        is_standard: false,
+      },
+    };
+
+    // If video, we need to add additional fields that Pinterest expects
+    if (isVideo) {
+      // If we have a thumbnail/cover image, we'd add it here
+      // For now, we'll let Pinterest auto-generate a thumbnail
+      requestBody.media_source = {
+        ...requestBody.media_source,
+        // Set is_standard to true to use Pinterest's standard encoding
+        is_standard: true,
+      };
+    }
 
     // Appel à l'API Pinterest
     const pinterestResponse = await fetch("https://api.pinterest.com/v5/pins", {
@@ -71,17 +108,7 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        link,
-        title,
-        description,
-        board_id: boardId,
-        media_source: {
-          source_type: sourceType,
-          content_type: mediaType,
-          data: base64Media,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     console.log(

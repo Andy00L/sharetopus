@@ -16,7 +16,7 @@ export default function PostsGrid({
 }) {
   return (
     <SidebarContent className=" px-4 py-6">
-      <SidebarGroup className=" flex justify-between  mb-6">
+      <SidebarGroup className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold">Scheduled Posts</h1>
           <p className="text-muted-foreground">
