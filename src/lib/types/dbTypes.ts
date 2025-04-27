@@ -46,7 +46,9 @@ export interface PinterestOptions {
   board: string;
   link: string;
 }
-
+export interface LinkedinOptions {
+  visibility: string;
+}
 export interface PlatformOptions {
   caption?: string;
   scheduledAt?: Date;
@@ -54,6 +56,7 @@ export interface PlatformOptions {
   pinterest?: PinterestOptions;
   instagram?: { privacyLevel: string };
   facebook?: { privacyLevel: string };
+  linkedin?: LinkedinOptions;
 }
 
 // Social account extra data structure

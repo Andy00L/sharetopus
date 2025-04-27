@@ -37,7 +37,13 @@ export default function ConnectLinkedInButton() {
   // Define required scopes for LinkedIn
   // openid, profile, email pour les infos de profil
   // w_member_social pour pouvoir publier sur LinkedIn
-  const scopes = ["openid", "profile", "email", "w_member_social"].join(" ");
+  const scopes = [
+    "openid",
+    "profile",
+    "email",
+    "w_member_social",
+    "offline_access",
+  ].join(" ");
 
   // Clear inactivity timeout
   const clearInactivityTimeout = () => {

@@ -123,7 +123,6 @@ export async function GET(request: NextRequest) {
 
     // Préparer les données supplémentaires à stocker
     const extraData = {
-      email: linkedInProfile.email,
       scope: "w_member_social openid profile email",
       locale: linkedInProfile.locale,
       email_verified: linkedInProfile.email_verified,
@@ -187,6 +186,7 @@ export async function GET(request: NextRequest) {
           access_token: tokenResponse.access_token,
           refresh_token: tokenResponse.refresh_token ?? null,
           token_expires_at: expiresAt,
+          email_address: linkedInProfile.email,
           updated_at: new Date().toISOString(),
           extra: extraData,
         })
@@ -233,6 +233,7 @@ export async function GET(request: NextRequest) {
           access_token: tokenResponse.access_token,
           refresh_token: tokenResponse.refresh_token ?? null,
           token_expires_at: expiresAt,
+          email_address: linkedInProfile.email,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           extra: extraData,

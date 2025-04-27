@@ -32,12 +32,14 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { scheduleForPinterestAccounts } from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
+import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
 
 // File upload constraints
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -138,6 +140,10 @@ export default function SocialPostForm({
       board: "",
       link: "",
     },
+    linkedin: {
+      visibility: "PUBLIC",
+      // Pas besoin d'autres options spécifiques pour LinkedIn
+    },
   });
 
   // Scheduling state
@@ -208,7 +214,9 @@ export default function SocialPostForm({
   const selectedPinterestAccount = accounts.filter(
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
   );
-
+  const selectedLinkedinAccount = accounts.filter(
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "linkedin"
+  );
   // For each Pinterest account ID, keep its board list
   const [boards, setBoards] = useState<
     {
@@ -454,6 +462,7 @@ export default function SocialPostForm({
         setError("Please enter a caption before continuing.");
         return;
       }
+      setError(null);
     }
 
     if (currentStep === 2) {
@@ -664,8 +673,25 @@ export default function SocialPostForm({
       if (!tiktokResult.success) {
         throw new Error(tiktokResult.message);
       }
+      const LinkedinResult = await scheduleForLinkedInAccounts({
+        accounts: selectedLinkedinAccount,
+        mediaPath: mediaStoragePath,
+        platformOptions,
+        scheduledDate,
+        scheduledTime,
+        // Just filter accountContent to only include Pinterest accounts
+        accountContent: accountContent.filter((item) =>
+          selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
+        ),
+        mediaType,
+        userId,
+      });
 
-      const totalSuccessCount = pinterestResult.count + tiktokResult.count;
+      if (!LinkedinResult.success) {
+        throw new Error(LinkedinResult.message);
+      }
+      const totalSuccessCount =
+        pinterestResult.count + tiktokResult.count + LinkedinResult.count;
 
       // 4. Notification de succès
       if (totalSuccessCount > 0) {
@@ -699,43 +725,99 @@ export default function SocialPostForm({
     setUploadProgress(0);
 
     try {
-      // Handle media posts
+      let pinterestResult = { success: false, count: 0 };
+      let linkedinResult = { success: false, count: 0 };
+
+      // Publication pour les posts média
       if (activeTab === "media" && selectedFile) {
-        console.log("Directly posting to Pinterest...");
+        // Pinterest (supporte média uniquement)
+        if (selectedPinterestAccount.length > 0) {
+          pinterestResult = await directPostForPinterestAccounts({
+            accounts: selectedPinterestAccount,
+            file: selectedFile,
+            boards,
+            platformOptions,
+            accountContent: accountContent.filter((item) =>
+              selectedPinterestAccount.some((acc) => acc.id === item.accountId)
+            ),
+            onProgress: (progress) => {
+              setUploadProgress(progress);
+            },
+          });
 
-        // Call our direct posting function
-        const pinterestResult = await directPostForPinterestAccounts({
-          accounts: selectedPinterestAccount,
-          file: selectedFile,
-          boards,
-          platformOptions,
-          accountContent: accountContent.filter((item) =>
-            selectedPinterestAccount.some((acc) => acc.id === item.accountId)
-          ),
-          onProgress: (progress) => {
-            setUploadProgress(progress);
-          },
-        });
-
-        if (!pinterestResult.success) {
-          throw new Error(pinterestResult.message);
+          if (!pinterestResult.success) {
+            console.error("Pinterest posting error:");
+          }
         }
 
-        const successCount = pinterestResult.count;
+        // LinkedIn (supporte média)
+        if (selectedLinkedinAccount.length > 0) {
+          linkedinResult = await directPostForLinkedInAccounts({
+            accounts: selectedLinkedinAccount,
+            file: selectedFile,
+            platformOptions,
+            accountContent: accountContent.filter((item) =>
+              selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
+            ),
+            onProgress: (progress) => {
+              setUploadProgress(progress);
+            },
+          });
 
-        if (successCount > 0) {
-          toast.success(
-            `${successCount} post(s) published successfully to Pinterest!`
-          );
-          resetForm();
+          if (!linkedinResult.success) {
+            console.error("LinkedIn posting error:");
+          }
+        }
+      }
+      // Publication pour les posts texte
+      else if (activeTab === "text") {
+        // LinkedIn supporte le texte
+        if (selectedLinkedinAccount.length > 0) {
+          linkedinResult = await directPostForLinkedInAccounts({
+            accounts: selectedLinkedinAccount,
+            // Pas de fichier pour un post textuel
+            platformOptions,
+            accountContent: accountContent.filter((item) =>
+              selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
+            ),
+            onProgress: (progress) => {
+              setUploadProgress(progress);
+            },
+          });
+
+          if (!linkedinResult.success) {
+            console.error("LinkedIn text posting error:");
+          }
         } else {
-          toast.info("No posts were published to Pinterest.");
+          toast.info("Text posts are only supported for LinkedIn.");
         }
       }
 
-      // Handle text posts
-      if (activeTab === "text") {
-        toast.info("Direct posting for text content is not yet implemented.");
+      // Calculer le total des succès
+      const totalSuccessCount =
+        (pinterestResult.success ? pinterestResult.count : 0) +
+        (linkedinResult.success ? linkedinResult.count : 0);
+
+      // Notification du résultat
+      if (totalSuccessCount > 0) {
+        const pinterestMsg =
+          pinterestResult.success && pinterestResult.count > 0
+            ? `${pinterestResult.count} post(s) on Pinterest`
+            : "";
+
+        const linkedinMsg =
+          linkedinResult.success && linkedinResult.count > 0
+            ? `${linkedinResult.count} post(s) on LinkedIn`
+            : "";
+
+        const separator = pinterestMsg && linkedinMsg ? " and " : "";
+
+        toast.success(
+          `${pinterestMsg}${separator}${linkedinMsg} published successfully!`
+        );
+        resetForm();
+      } else {
+        toast.info("No posts were published.");
       }
     } catch (error) {
       console.error("Direct post submission error:", error);

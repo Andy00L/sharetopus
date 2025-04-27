@@ -55,7 +55,7 @@ export default async function ManageAccountsPage() {
         </div>
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Pinterest</h2>
+            <h2 className="text-xl font-semibold">Linkedin</h2>
             <ConnectLinkedInButton />
           </div>
           <div className="flex flex-wrap gap-2">
