@@ -9,7 +9,7 @@ export async function scheduleForTikTokAccounts(config: {
   platformOptions: PlatformOptions;
   accountContent: Array<{
     accountId: string;
-    title: string;
+    title?: string;
     description: string;
     link: string;
     isCustomized: boolean;
@@ -49,7 +49,6 @@ export async function scheduleForTikTokAccounts(config: {
         socialAccountId: account.id,
         platform: account.platform,
         scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-        title: content.title, // Use account-specific title
         description: content.description,
         mediaType: mediaType,
         mediaStoragePath: mediaPath,

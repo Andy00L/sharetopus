@@ -34,12 +34,12 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
+import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
 import { scheduleForPinterestAccounts } from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
-import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
 
 // File upload constraints
 export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
@@ -730,7 +730,6 @@ export default function SocialPostForm({
 
       // Publication pour les posts média
       if (activeTab === "media" && selectedFile) {
-        // Pinterest (supporte média uniquement)
         if (selectedPinterestAccount.length > 0) {
           pinterestResult = await directPostForPinterestAccounts({
             accounts: selectedPinterestAccount,
@@ -775,7 +774,6 @@ export default function SocialPostForm({
         if (selectedLinkedinAccount.length > 0) {
           linkedinResult = await directPostForLinkedInAccounts({
             accounts: selectedLinkedinAccount,
-            // Pas de fichier pour un post textuel
             platformOptions,
             accountContent: accountContent.filter((item) =>
               selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
@@ -786,10 +784,8 @@ export default function SocialPostForm({
           });
 
           if (!linkedinResult.success) {
-            console.error("LinkedIn text posting error:");
+            console.error("LinkedIn text posting error");
           }
-        } else {
-          toast.info("Text posts are only supported for LinkedIn.");
         }
       }
 
@@ -961,23 +957,6 @@ export default function SocialPostForm({
                       </AlertDescription>
                     </Alert>
 
-                    {/**Title */}
-                    <div>
-                      <Label htmlFor="text-title">Title *</Label>
-                      <Input
-                        id="text-title"
-                        value={textInputs.title}
-                        onChange={(e) =>
-                          setTextInputs({
-                            ...textInputs,
-                            title: e.target.value,
-                          })
-                        }
-                        placeholder="Add a title to your post"
-                        required
-                      />
-                    </div>
-
                     {/**Caption */}
                     <div>
                       <Label htmlFor="text-content">Content</Label>
@@ -993,23 +972,6 @@ export default function SocialPostForm({
                         placeholder="Write your post content here"
                         rows={6}
                         required
-                      />
-                    </div>
-
-                    {/**Link */}
-                    <div>
-                      <Label htmlFor="text-link">Link (Optional)</Label>
-                      <Input
-                        id="text-link"
-                        type="url"
-                        value={textInputs.link}
-                        onChange={(e) =>
-                          setTextInputs({
-                            ...textInputs,
-                            link: e.target.value,
-                          })
-                        }
-                        placeholder="https://example.com"
                       />
                     </div>
                   </div>
@@ -1028,7 +990,7 @@ export default function SocialPostForm({
                 onClick={handleNextStep}
                 disabled={
                   (activeTab === "media" && !selectedFile) ||
-                  (activeTab === "text" && !textInputs.title.trim())
+                  (activeTab === "text" && !textInputs.description.trim())
                 }
               >
                 Continue to Select Accounts

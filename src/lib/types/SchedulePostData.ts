@@ -5,7 +5,7 @@ export interface SchedulePostData {
   socialAccountId: string;
   platform: string;
   scheduledAt: string | Date; // ISO string or Date object
-  title: string | null;
+  title?: string | null;
   description: string | null;
   mediaType: "video" | "image" | "text"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage

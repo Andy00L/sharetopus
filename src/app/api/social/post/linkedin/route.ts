@@ -226,7 +226,7 @@ export async function POST(request: NextRequest) {
           {
             status: "READY",
             description: {
-              text: title || text,
+              text: text,
             },
             media: assetUrn,
             title: title ? { text: title } : undefined,

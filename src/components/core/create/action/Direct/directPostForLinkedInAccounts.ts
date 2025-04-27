@@ -20,7 +20,7 @@ export async function directPostForLinkedInAccounts(config: {
   platformOptions: PlatformOptions;
   accountContent: Array<{
     accountId: string;
-    title: string;
+    title?: string;
     description: string;
     link: string;
     isCustomized: boolean;
@@ -107,7 +107,6 @@ export async function directPostForLinkedInAccounts(config: {
             accessToken: account.access_token,
             memberUrn: memberUrn,
             text: content.description,
-            title: content.title,
             link: content.link,
             base64Media: base64Media,
             mediaType: mediaType,

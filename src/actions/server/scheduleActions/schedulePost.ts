@@ -17,17 +17,24 @@ export async function schedulePost(
     return { success: false, message: "User not authenticated." };
   }
 
-  // Basic validation
+  // Basic validation - common fields for all post types
   if (
     !data.socialAccountId ||
     !data.platform ||
     !data.scheduledAt ||
-    !data.mediaType ||
-    !data.mediaStoragePath
+    !data.mediaType
   ) {
     return {
       success: false,
       message: "Missing required scheduling information.",
+    };
+  }
+
+  // Media-specific validation - only check mediaStoragePath for media posts
+  if (data.mediaType !== "text" && !data.mediaStoragePath) {
+    return {
+      success: false,
+      message: "Media path is required for image and video posts.",
     };
   }
 
@@ -58,7 +65,7 @@ export async function schedulePost(
       platform: data.platform,
       status: "scheduled", // Default status
       scheduled_at: new Date(data.scheduledAt).toISOString(), // Ensure it's ISO string
-      post_title: data.title,
+      post_title: data.title ?? "",
       post_description: data.description,
       post_options: data.postOptions, // Store the JSONB options
       media_type: data.mediaType,

@@ -14,7 +14,7 @@ export async function scheduleForLinkedInAccounts(config: {
   platformOptions: PlatformOptions;
   accountContent: Array<{
     accountId: string;
-    title: string;
+    title?: string;
     description: string;
     link: string;
     isCustomized: boolean;
@@ -68,7 +68,7 @@ export async function scheduleForLinkedInAccounts(config: {
         socialAccountId: account.id,
         platform: account.platform,
         scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-        title: content.title, // Utilisé comme titre pour les liens/images
+        title: "",
         description: content.description, // Texte principal du post
         mediaType: mediaType,
         mediaStoragePath: mediaPath,
@@ -79,6 +79,7 @@ export async function scheduleForLinkedInAccounts(config: {
         const result = await schedulePost(scheduleData, userId);
 
         if (!result.success) {
+          console.log(result.message);
           toast.error(
             `Failed to schedule for ${
               account.display_name ?? account.username
