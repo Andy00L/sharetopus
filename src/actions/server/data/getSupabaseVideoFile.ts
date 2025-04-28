@@ -1,6 +1,7 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
+import { auth } from "@clerk/nextjs/server";
 
 /**
  * Retrieves a video file from Supabase Storage
@@ -13,8 +14,10 @@ export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
 ): Promise<Buffer> {
-  if (!userId) {
-    throw new Error("User not authenticated.");
+  const { userId: clerkAuth } = await auth();
+
+  if (!userId || userId !== clerkAuth) {
+    throw new Error("Not authorised");
   }
 
   // Security Check: Ensure the file path starts with the user's ID

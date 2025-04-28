@@ -625,7 +625,7 @@ export default function SocialPostForm({
         });
 
         if (!uploadResult.success) {
-          throw new Error(uploadResult.message);
+          toast(uploadResult.message);
         }
 
         mediaStoragePath = uploadResult.path ?? "";
@@ -739,7 +739,7 @@ export default function SocialPostForm({
         });
 
         if (!uploadResult.success) {
-          throw new Error(uploadResult.message ?? "Failed to upload media");
+          toast(uploadResult.message ?? "Failed to upload media");
         }
 
         mediaPath = uploadResult.path ?? "";
@@ -748,6 +748,7 @@ export default function SocialPostForm({
       // Process Pinterest posts (only if we have media and accounts)
       if (activeTab === "media" && selectedFile) {
         if (selectedPinterestAccount.length > 0) {
+          // ───────────────── Pinterest ─────────────────
           pinterestResult = await directPostForPinterestAccounts({
             accounts: selectedPinterestAccount,
             mediaPath: mediaPath,
@@ -770,6 +771,7 @@ export default function SocialPostForm({
 
       // Process LinkedIn posts (for both media and text tabs)
       if (selectedLinkedinAccount.length > 0) {
+        // ───────────────── Linkedin ────────────────────
         linkedinResult = await directPostForLinkedInAccounts({
           accounts: selectedLinkedinAccount,
           mediaPath: activeTab === "media" && mediaPath ? mediaPath : "",
@@ -1191,7 +1193,7 @@ export default function SocialPostForm({
                         type="url"
                         value={
                           accountContent.find((item) => !item.isCustomized)
-                            ?.link || ""
+                            ?.link ?? ""
                         }
                         onChange={(e) => {
                           const newValue = e.target.value;

@@ -6,8 +6,10 @@ import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import { auth } from "@clerk/nextjs/server";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
+import { Suspense } from "react";
+import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 
-export default async function ManageAccountsPage() {
+const AccountsPageWithData = async () => {
   const { userId } = await auth();
   const accounts = await fetchSocialAccounts(userId);
 
@@ -16,7 +18,7 @@ export default async function ManageAccountsPage() {
   const pinterestAccounts = accounts.filter(
     (acc) => acc.platform === "pinterest"
   );
-  const LinkedinAccounts = accounts.filter(
+  const linkedinAccounts = accounts.filter(
     (acc) => acc.platform === "linkedin"
   );
 
@@ -53,6 +55,7 @@ export default async function ManageAccountsPage() {
             />
           </div>
         </div>
+
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">Linkedin</h2>
@@ -60,7 +63,7 @@ export default async function ManageAccountsPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
-              accounts={LinkedinAccounts}
+              accounts={linkedinAccounts}
               userId={userId}
             />
           </div>
@@ -73,5 +76,14 @@ export default async function ManageAccountsPage() {
         </SidebarGroup>
       )}
     </SidebarContent>
+  );
+};
+
+// Main page component with Suspense
+export default function ManageAccountsPage() {
+  return (
+    <Suspense fallback={<AccountsPageSkeleton />}>
+      <AccountsPageWithData />
+    </Suspense>
   );
 }

@@ -1,5 +1,6 @@
 "use server";
 import { adminSupabase } from "@/actions/api/supabase-client";
+import { auth } from "@clerk/nextjs/server";
 
 /**
  * Delete a file or folder from Supabase Storage with reference checking
@@ -18,8 +19,13 @@ export async function deleteSupabaseFileAction(
   filePath?: string | null,
   forceDelete: boolean = false
 ): Promise<{ success: boolean; message: string }> {
-  if (!userId) {
-    return { success: false, message: "User not authenticated." };
+  const { userId: clerkAuth } = await auth();
+
+  if (!userId || userId !== clerkAuth) {
+    return {
+      success: false,
+      message: "You are not authorized to disconnect this account.",
+    };
   }
 
   try {
