@@ -1,12 +1,7 @@
+"use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { toast } from "sonner";
-
-export interface ScheduleResult {
-  success: boolean;
-  count: number;
-  message?: string;
-}
+import { ScheduleResult } from "./scheduleForPinterestAccounts";
 
 export async function scheduleForLinkedInAccounts(config: {
   accounts: SocialAccount[];
@@ -36,7 +31,7 @@ export async function scheduleForLinkedInAccounts(config: {
 
   let successCount = 0;
   try {
-    console.log("[LinkedIn Scheduler] Starting to schedule posts");
+    console.log("[Schedule For Linkedin Accounts] Starting to schedule posts");
 
     for (const account of accounts) {
       // Find the content specific to this account
@@ -46,13 +41,17 @@ export async function scheduleForLinkedInAccounts(config: {
 
       // Skip if no content found for this account (shouldn't happen)
       if (!content) {
-        console.error(`No content found for account ${account.id}`);
+        console.error(
+          `[Schedule For Linkedin Accounts] No content found for account ${account.id}`
+        );
         continue;
       }
 
       // Vérifier si le compte a un identifiant LinkedIn
       if (!account.account_identifier) {
-        console.error(`No LinkedIn identifier found for account ${account.id}`);
+        console.error(
+          `[Schedule For Linkedin Accounts] No LinkedIn identifier found for account ${account.id}`
+        );
         continue;
       }
 
@@ -76,31 +75,35 @@ export async function scheduleForLinkedInAccounts(config: {
       };
 
       try {
+        console.log(
+          `[Schedule For Linkedin Accounts] Scheduling TikTok post for: ${account.display_name}`
+        );
         const result = await schedulePost(scheduleData, userId);
 
         if (!result.success) {
           console.log(result.message);
-          toast.error(
-            `Failed to schedule for ${
-              account.display_name ?? account.username
-            }: ${result.message}`
-          );
+          return {
+            success: false,
+            count: successCount,
+            message: `Failed to schedule for ${account.display_name}`,
+          };
         } else {
           successCount++;
           console.log(
-            `Successfully scheduled post for ${account.platform}:`,
+            `[Schedule For Linkedin Accounts]Successfully scheduled post for ${account.platform}:`,
             result
           );
         }
       } catch (scheduleError) {
         console.error(
-          `Schedule error for account ${account.id}:`,
+          `[Schedule For Linkedin Accounts] Schedule error for account ${account.id}:`,
           scheduleError
         );
-        toast.error(
-          `Error scheduling for ${account.display_name ?? account.username}`
-        );
-        throw scheduleError;
+        return {
+          success: false,
+          count: successCount,
+          message: `Error scheduling for ${account.display_name}`,
+        };
       }
     }
     return {
@@ -109,14 +112,12 @@ export async function scheduleForLinkedInAccounts(config: {
       message: `${successCount} LinkedIn posts scheduled successfully`,
     };
   } catch (e) {
-    console.error("[LinkedIn Scheduler] Error:", e);
+    console.error("[Schedule For Linkedin Accounts] Error:", e);
 
     return {
       success: false,
       count: 0,
-      message: `Failed to schedule LinkedIn posts: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      message: `Failed to schedule LinkedIn posts`,
     };
   }
 }

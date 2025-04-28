@@ -1,6 +1,6 @@
+"use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { toast } from "sonner";
 import { ScheduleResult } from "./scheduleForPinterestAccounts";
 
 export async function scheduleForTikTokAccounts(config: {
@@ -33,6 +33,8 @@ export async function scheduleForTikTokAccounts(config: {
 
   let successCount = 0;
   try {
+    console.log("[Schedule For Tiktok Accounts] Starting to schedule posts");
+
     for (const account of accounts) {
       // Find the content specific to this account
       const content = accountContent.find(
@@ -41,7 +43,9 @@ export async function scheduleForTikTokAccounts(config: {
 
       // Skip if no content found for this account (shouldn't happen)
       if (!content) {
-        console.error(`No content found for account ${account.id}`);
+        console.error(
+          `[Schedule For Tiktok Accounts] No content found for account ${account.id}`
+        );
         continue;
       }
 
@@ -56,36 +60,49 @@ export async function scheduleForTikTokAccounts(config: {
       };
 
       try {
-        console.log(`Scheduling TikTok post for: ${account.display_name}`);
+        console.log(
+          `[Schedule For Tiktok Accounts] Scheduling TikTok post for: ${account.display_name}`
+        );
         const result = await schedulePost(scheduleData, userId);
 
         if (!result.success) {
-          toast.error(`Failed to schedule: ${result.message}`);
+          console.log(result.message);
+          return {
+            success: false,
+            count: successCount,
+            message: `Failed to schedule for ${account.display_name}`,
+          };
         } else {
           successCount++;
-          toast.success(`Post scheduled for: ${account.display_name}`);
+          console.log(
+            `[Schedule For Tiktok Accounts] Successfully scheduled post for ${account.platform}:`,
+            result
+          );
         }
-      } catch (error) {
-        console.error(`Schedule error for TikTok account:`, error);
-        toast.error(`Unexpected error scheduling for ${account.display_name}`);
-        throw error;
+      } catch (scheduleError) {
+        console.error(
+          `[Schedule For Tiktok Accounts] Schedule error for account ${account.id}:`,
+          scheduleError
+        );
+        return {
+          success: false,
+          count: successCount,
+          message: `Error scheduling for ${account.display_name}`,
+        };
       }
     }
-
     return {
       success: true,
       count: successCount,
       message: `${successCount} Tiktok posts scheduled successfully`,
     };
   } catch (e) {
-    console.error("[Pinterest Scheduler] Error:", e);
+    console.error("[Schedule For Tiktok Accounts] Error:", e);
 
     return {
       success: false,
       count: 0,
-      message: `Failed to schedule Pinterest posts: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      message: `Failed to schedule Pinterest posts`,
     };
   }
 }

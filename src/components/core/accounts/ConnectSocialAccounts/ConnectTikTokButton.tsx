@@ -6,23 +6,13 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { generateState } from "./generateState";
 
 declare global {
   interface Window {
     onTikTokConnectSuccess?: () => void;
     onTikTokConnectFailure?: (error?: string) => void;
   }
-}
-
-function generateState(length = 32): string {
-  const charset =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    const randomIndex = Math.floor(Math.random() * charset.length);
-    result += charset[randomIndex];
-  }
-  return result;
 }
 
 export default function ConnectTikTokButton() {
@@ -171,11 +161,7 @@ export default function ConnectTikTokButton() {
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting TikTok connection:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to start TikTok connection"
-      );
+      toast.error("Failed to start TikTok connection");
       setIsConnecting(false);
     }
   };

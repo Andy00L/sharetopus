@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
+
     const {
       accessToken,
       boardId,
@@ -20,6 +21,7 @@ export async function POST(request: NextRequest) {
       base64Media,
       mediaType,
     } = await request.json();
+
     // Log the received parameters (truncating sensitive data)
     console.log("[Pinterest Post Routes] Received parameters:");
     console.log("[Pinterest Post Routes] boardId:", boardId);
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
     // Validate required fields for video uploads
     if (isVideo && !title) {
       console.log(
@@ -85,6 +88,7 @@ export async function POST(request: NextRequest) {
       } pin on board:`,
       boardId
     );
+
     // Construct request body based on media type
     const requestBody = {
       link,
@@ -144,6 +148,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      postId: data.id,
+      postUrl: `https://www.pinterest.com/pin/${data.id}/`,
       data,
       message: `Successfully created ${
         isImage ? "image" : "video"

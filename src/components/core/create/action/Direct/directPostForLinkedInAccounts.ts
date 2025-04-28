@@ -1,22 +1,15 @@
+"use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
+import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { getMimeTypeFromFileName } from "./getMimeTypeFromFileName";
 
-/**
- * Result interface for direct posting operations
- */
-export interface DirectPostResult {
-  success: boolean;
-  count: number;
-  message?: string;
-}
-
-/**
- * Directly posts content to LinkedIn accounts without scheduling
- * Converts the file to base64 and sends it to the LinkedIn API
- */
 export async function directPostForLinkedInAccounts(config: {
-  accounts: SocialAccount[];
-  file?: File;
+  accounts: SocialAccount[]; // Changed from accounts to accountIds
+  mediaPath: string;
   platformOptions: PlatformOptions;
   accountContent: Array<{
     accountId: string;
@@ -25,29 +18,70 @@ export async function directPostForLinkedInAccounts(config: {
     link: string;
     isCustomized: boolean;
   }>;
-  onProgress?: (progress: number) => void;
-}): Promise<DirectPostResult> {
-  const { accounts, file, accountContent, onProgress } = config;
+  userId: string | null;
+  cleanupFiles?: boolean;
+  fileName?: string;
+}): Promise<ScheduleResult> {
+  const {
+    accounts,
+    mediaPath,
+    accountContent,
+    userId,
+    cleanupFiles = true,
+    fileName,
+  } = config;
+
+  if (!accounts || accounts.length === 0) {
+    console.error("[LinkedIn Direct Post] Error fetching accounts:");
+
+    // New cleanup code
+    if (cleanupFiles && mediaPath) {
+      await deleteSupabaseFileAction(userId, mediaPath, true);
+    }
+
+    return {
+      success: false,
+      count: 0,
+      message: "Failed to fetch social accounts",
+    };
+  }
 
   let successCount = 0;
-  const totalAccounts = accounts.length;
 
   try {
     console.log("[LinkedIn Direct Post] Starting to post directly to LinkedIn");
 
     // Convert the file to base64 (only if provided)
-    let base64Media: string | undefined;
     let mediaType: string | undefined;
 
-    if (file) {
-      base64Media = await fileToBase64(file);
-      mediaType = file.type;
-      console.log("[LinkedIn Direct Post] Converted file to base64");
+    if (mediaPath && mediaPath.trim() !== "") {
+      try {
+        console.log(fileName);
+        mediaType = getMimeTypeFromFileName(fileName);
+        console.log("[LinkedIn Direct Post] Detected MIME type:", mediaType); // Add this log
+
+        console.log(
+          "[LinkedIn Direct Post] Verified file exists, will stream for upload"
+        );
+      } catch (fileProcessingError) {
+        console.error(
+          "[LinkedIn Direct Post] Error processing file:",
+          fileProcessingError
+        );
+        // Clean up the file if processing failed
+        if (cleanupFiles) {
+          await deleteSupabaseFileAction(userId, mediaPath, true);
+        }
+
+        return {
+          success: false,
+          count: 0,
+          message: `Failed to process media file`,
+        };
+      }
     }
 
-    // Track progress for each account
-    let completedAccounts = 0;
-
+    // Loop through accounts (keeping similar structure to your original code)
     for (const account of accounts) {
       // Find content specific to this account
       const content = accountContent.find(
@@ -59,8 +93,6 @@ export async function directPostForLinkedInAccounts(config: {
         console.error(
           `[LinkedIn Direct Post] No content found for account ${account.id}`
         );
-        completedAccounts++;
-        onProgress?.(Math.floor((completedAccounts / totalAccounts) * 100));
         continue;
       }
 
@@ -69,9 +101,6 @@ export async function directPostForLinkedInAccounts(config: {
         console.error(
           `[LinkedIn Direct Post] No access token for account ${account.id}`
         );
-
-        completedAccounts++;
-        onProgress?.(Math.floor((completedAccounts / totalAccounts) * 100));
         continue;
       }
 
@@ -85,8 +114,6 @@ export async function directPostForLinkedInAccounts(config: {
           `[LinkedIn Direct Post] No LinkedIn member URN found for account ${account.id}`
         );
 
-        completedAccounts++;
-        onProgress?.(Math.floor((completedAccounts / totalAccounts) * 100));
         continue;
       }
 
@@ -98,35 +125,64 @@ export async function directPostForLinkedInAccounts(config: {
         );
 
         // Call our API endpoint to post to LinkedIn
-        const postResult = await fetch("/api/social/post/linkedin", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            accessToken: account.access_token,
-            memberUrn: memberUrn,
-            text: content.description,
-            link: content.link,
-            base64Media: base64Media,
-            mediaType: mediaType,
-          }),
+        const postResult = await postToLinkedIn({
+          accessToken: account.access_token,
+          memberUrn: memberUrn,
+          text: content.description,
+          link: content.link,
+          mediaPath: mediaPath,
+          mediaType: mediaType,
+          fileName: fileName,
+          userId: userId ?? "",
         });
 
-        const resultData = await postResult.json();
+        // Add detailed console logging to examine the response structure
+        console.log(
+          `========== LINKEDIN POST RESPONSE (${account.username}) ==========`
+        );
+        console.log("Success:", postResult.success);
+        console.log("Post ID:", postResult.postId);
+        console.log("Message:", postResult.message);
+        console.log("Complete data structure:");
+        console.log(JSON.stringify(postResult.data, null, 2));
 
-        if (!postResult.ok || !resultData.success) {
-          console.error(
-            `[LinkedIn Direct Post] Failed to post for account ${account.id}:`,
-            resultData.error
-          );
-        } else {
-          successCount++;
-          console.log(
-            `[LinkedIn Direct Post] Successfully posted to account: ${
-              account.username ?? account.id
-            }`
-          );
+        // Determine post type for history
+        let postType = "text";
+        if (mediaPath) {
+          postType = mediaType?.startsWith("image/") ? "image" : "video";
+        }
+
+        if (postResult.success) {
+          try {
+            // Store content history
+            await storeContentHistory(
+              {
+                platform: "linkedin",
+                contentId: postResult.postId,
+                title: content.title ?? null,
+                description: content.description,
+                mediaUrl: `https://www.linkedin.com/feed/update/${postResult.postId}`,
+                extra: {
+                  post_data: postResult.data,
+                  post_type: postType,
+                  posted_at: new Date().toISOString(),
+                },
+              },
+              userId
+            );
+
+            successCount++;
+            console.log(
+              `[LinkedIn Direct Post] Successfully posted to account and saved to history`
+            );
+          } catch (historyError) {
+            console.error(
+              `[LinkedIn Direct Post] Error saving to content history:`,
+              historyError
+            );
+            // Still increment success since the post succeeded
+            successCount++;
+          }
         }
       } catch (postError) {
         console.error(
@@ -134,42 +190,35 @@ export async function directPostForLinkedInAccounts(config: {
           postError
         );
       }
+    }
 
-      // Update progress after each account is processed
-      completedAccounts++;
-      onProgress?.(Math.floor((completedAccounts / totalAccounts) * 100));
+    if (cleanupFiles && mediaPath && successCount > 0) {
+      await deleteSupabaseFileAction(userId, mediaPath, true);
+
+      console.log(
+        "[LinkedIn Direct Post] Cleaned up temporary media file after successful posting"
+      );
     }
 
     return {
-      success: successCount > 0,
+      success: true,
       count: successCount,
       message: `Successfully posted to ${successCount} LinkedIn account(s)`,
     };
   } catch (error) {
     console.error("[LinkedIn Direct Post] Error:", error);
+    // New cleanup code
+    if (cleanupFiles && mediaPath) {
+      await deleteSupabaseFileAction(userId, mediaPath, true);
+
+      console.log(
+        "[LinkedIn Direct Post] Cleaned up temporary media file after error"
+      );
+    }
     return {
       success: false,
       count: 0,
-      message: `Failed to post to LinkedIn: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      message: `Failed to post to LinkedIn: `,
     };
   }
-}
-
-/**
- * Helper function to convert a File object to a base64 string
- */
-async function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64String = reader.result as string;
-      // Extract just the base64 data part
-      const base64 = base64String.split(",")[1];
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }

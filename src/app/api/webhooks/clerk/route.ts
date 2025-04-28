@@ -1,6 +1,6 @@
 // app/api/webhooks/clerk/route.ts
 import { supabase } from "@/actions/api/supabase";
-import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
+import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import { WebhookEvent } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { Webhook } from "svix";

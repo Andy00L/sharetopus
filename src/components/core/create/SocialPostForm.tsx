@@ -1,6 +1,6 @@
 "use client";
 
-import { deleteSupabaseFileAction } from "@/actions/server/scheduleActions/deleteSupabaseFileAction";
+import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,10 @@ import { toast } from "sonner";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
-import { scheduleForPinterestAccounts } from "./action/Scheduled/scheduleForPinterestAccounts";
+import {
+  scheduleForPinterestAccounts,
+  ScheduleResult,
+} from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
 import FilePreview from "./renderFilePreview";
@@ -562,18 +565,10 @@ export default function SocialPostForm({
         setError("Please select a file to upload");
         return false;
       }
+    }
 
-      // Check if captions are provided (required for images only)
-      if (mediaType === "image") {
-        const missingDescription = accountContent.some(
-          (item) => !item.description.trim()
-        );
-        if (missingDescription) {
-          setError("Please provide a caption for your image");
-          return false;
-        }
-      }
-    } else {
+    // Check if captions are provided (required for images only)
+    if (mediaType === "text") {
       // Text post validation - we already have content from step 1
       const missingTitle = accountContent.some(
         (item) => !item.description.trim()
@@ -651,9 +646,8 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
-
       if (!pinterestResult.success) {
-        throw new Error(pinterestResult.message);
+        toast(pinterestResult.message);
       }
 
       const tiktokResult = await scheduleForTikTokAccounts({
@@ -669,11 +663,11 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
-
       if (!tiktokResult.success) {
-        throw new Error(tiktokResult.message);
+        toast(tiktokResult.message);
       }
-      const LinkedinResult = await scheduleForLinkedInAccounts({
+
+      const linkedinResult = await scheduleForLinkedInAccounts({
         accounts: selectedLinkedinAccount,
         mediaPath: mediaStoragePath,
         platformOptions,
@@ -686,12 +680,12 @@ export default function SocialPostForm({
         mediaType,
         userId,
       });
-
-      if (!LinkedinResult.success) {
-        throw new Error(LinkedinResult.message);
+      if (!linkedinResult.success) {
+        toast(linkedinResult.message);
       }
+
       const totalSuccessCount =
-        pinterestResult.count + tiktokResult.count + LinkedinResult.count;
+        pinterestResult.count + tiktokResult.count + linkedinResult.count;
 
       // 4. Notification de succès
       if (totalSuccessCount > 0) {
@@ -724,77 +718,80 @@ export default function SocialPostForm({
     setError(null);
     setUploadProgress(0);
 
-    try {
-      let pinterestResult = { success: false, count: 0 };
-      let linkedinResult = { success: false, count: 0 };
+    // Declare result variables at function scope
+    let pinterestResult: ScheduleResult = {
+      success: false,
+      count: 0,
+      message: "",
+    };
+    let linkedinResult: ScheduleResult = {
+      success: false,
+      count: 0,
+      message: "",
+    };
+    let mediaPath = "";
 
-      // Publication pour les posts média
+    try {
+      // Upload media file if needed (only for media tab)
+      if (activeTab === "media" && selectedFile) {
+        const uploadResult = await uploadMedia(selectedFile, (progress) => {
+          setUploadProgress(progress);
+        });
+
+        if (!uploadResult.success) {
+          throw new Error(uploadResult.message ?? "Failed to upload media");
+        }
+
+        mediaPath = uploadResult.path ?? "";
+      }
+
+      // Process Pinterest posts (only if we have media and accounts)
       if (activeTab === "media" && selectedFile) {
         if (selectedPinterestAccount.length > 0) {
           pinterestResult = await directPostForPinterestAccounts({
             accounts: selectedPinterestAccount,
-            file: selectedFile,
+            mediaPath: mediaPath,
             boards,
             platformOptions,
             accountContent: accountContent.filter((item) =>
               selectedPinterestAccount.some((acc) => acc.id === item.accountId)
             ),
-            onProgress: (progress) => {
-              setUploadProgress(progress);
-            },
+            userId, // Added userId parameter which is required
+            fileName: selectedFile.name,
           });
 
           if (!pinterestResult.success) {
-            console.error("Pinterest posting error:");
-          }
-        }
-
-        // LinkedIn (supporte média)
-        if (selectedLinkedinAccount.length > 0) {
-          linkedinResult = await directPostForLinkedInAccounts({
-            accounts: selectedLinkedinAccount,
-            file: selectedFile,
-            platformOptions,
-            accountContent: accountContent.filter((item) =>
-              selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
-            ),
-            onProgress: (progress) => {
-              setUploadProgress(progress);
-            },
-          });
-
-          if (!linkedinResult.success) {
-            console.error("LinkedIn posting error:");
-          }
-        }
-      }
-      // Publication pour les posts texte
-      else if (activeTab === "text") {
-        // LinkedIn supporte le texte
-        if (selectedLinkedinAccount.length > 0) {
-          linkedinResult = await directPostForLinkedInAccounts({
-            accounts: selectedLinkedinAccount,
-            platformOptions,
-            accountContent: accountContent.filter((item) =>
-              selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
-            ),
-            onProgress: (progress) => {
-              setUploadProgress(progress);
-            },
-          });
-
-          if (!linkedinResult.success) {
-            console.error("LinkedIn text posting error");
+            toast.error(
+              pinterestResult.message ?? "Failed to post to Pinterest"
+            );
           }
         }
       }
 
-      // Calculer le total des succès
+      // Process LinkedIn posts (for both media and text tabs)
+      if (selectedLinkedinAccount.length > 0) {
+        linkedinResult = await directPostForLinkedInAccounts({
+          accounts: selectedLinkedinAccount,
+          mediaPath: activeTab === "media" && mediaPath ? mediaPath : "",
+          platformOptions,
+          accountContent: accountContent.filter((item) =>
+            selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
+          ),
+          userId,
+          fileName: selectedFile?.name,
+        });
+
+        if (!linkedinResult.success) {
+          toast.error(linkedinResult.message ?? "Failed to post to LinkedIn");
+        }
+      }
+
+      // Calculate total successes
       const totalSuccessCount =
         (pinterestResult.success ? pinterestResult.count : 0) +
         (linkedinResult.success ? linkedinResult.count : 0);
 
-      // Notification du résultat
+      // Show success notification only if we had successful posts
       if (totalSuccessCount > 0) {
         const pinterestMsg =
           pinterestResult.success && pinterestResult.count > 0
@@ -812,7 +809,7 @@ export default function SocialPostForm({
           `${pinterestMsg}${separator}${linkedinMsg} published successfully!`
         );
         resetForm();
-      } else {
+      } else if (totalSuccessCount === 0) {
         toast.info("No posts were published.");
       }
     } catch (error) {

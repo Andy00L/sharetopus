@@ -1,7 +1,8 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
-import { deleteSupabaseFileAction } from "./scheduleActions/deleteSupabaseFileAction";
+import { auth } from "@clerk/nextjs/server";
+import { deleteSupabaseFileAction } from "./data/deleteSupabaseFileAction";
 
 /**
  * Disconnect a social media account from the user's profile
@@ -14,8 +15,13 @@ export async function disconnectSocialAccount(
   accountId: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string }> {
-  if (!userId) {
-    return { success: false, message: "User not authenticated." };
+  const { userId: clerkAuth } = await auth();
+
+  if (!userId || userId !== clerkAuth) {
+    return {
+      success: false,
+      message: "You are not authorized to disconnect this account.",
+    };
   }
 
   try {

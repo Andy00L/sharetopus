@@ -81,7 +81,7 @@ export async function schedulePost(
 
     if (error) {
       console.error("[schedulePost] Supabase insert error:", error);
-      return { success: false, message: `Database error: ${error.message}` };
+      return { success: false, message: `Database error}` };
     }
 
     if (!newSchedule?.id) {
@@ -118,8 +118,7 @@ export async function schedulePost(
     console.error("[schedulePost] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred.",
+      message: "An unexpected error occurred.",
     };
   }
 }

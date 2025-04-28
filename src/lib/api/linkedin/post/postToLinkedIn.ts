@@ -1,5 +1,6 @@
+import { adminSupabase } from "@/actions/api/supabase-client";
+import { ContentHistory } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
 
 // Définir un type pour les éléments de média
 interface MediaContent {
@@ -9,26 +10,46 @@ interface MediaContent {
   originalUrl?: string;
   title?: { text: string };
 }
-
-export async function POST(request: NextRequest) {
+// Define return type to make it easier to work with in the server action
+export interface LinkedInPostResult {
+  success: boolean;
+  postId?: string;
+  data?: ContentHistory[];
+  error?: string;
+  details?: Record<string, unknown>; // More specific than any
+  message?: string;
+}
+// Change to:
+export async function postToLinkedIn({
+  accessToken,
+  memberUrn,
+  text,
+  title,
+  link,
+  mediaPath,
+  mediaType,
+  userId,
+  fileName,
+}: {
+  accessToken: string;
+  memberUrn: string;
+  text: string;
+  title?: string;
+  link?: string;
+  mediaPath: string;
+  mediaType?: string;
+  userId: string;
+  fileName?: string;
+}) {
   try {
-    const { userId } = await auth();
+    const { userId: clerkUserId } = await auth();
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Unauthorized - Authentication required" },
-        { status: 401 }
-      );
+    if (!clerkUserId || clerkUserId !== userId) {
+      return {
+        success: false,
+        error: "Unauthorized - Authentication required",
+      };
     }
-    const {
-      accessToken,
-      memberUrn,
-      text,
-      title,
-      link,
-      base64Media,
-      mediaType,
-    } = await request.json();
 
     // Log the received parameters (truncating sensitive data)
     console.log("[LinkedIn Post Routes] Received parameters:");
@@ -43,26 +64,45 @@ export async function POST(request: NextRequest) {
     );
     console.log(
       "[LinkedIn Post Routes] base64Media length:",
-      base64Media ? base64Media.length : 0
+      mediaPath ? mediaPath.length : 0
     );
 
     // Vérification des paramètres requis
     if (!accessToken || !memberUrn) {
       console.log("[LinkedIn Post route] Missing required parameters");
-      return NextResponse.json(
-        {
-          error:
-            "Missing required parameters (accessToken, memberUrn, and text are required)",
-        },
-        { status: 400 }
-      );
+      return {
+        success: false,
+        error:
+          "Missing required parameters (accessToken, memberUrn, and text are required)",
+      };
     }
 
     // Déterminer le type de publication
     let shareMediaCategory = "NONE"; // Par défaut, partage de texte
     let mediaContent: MediaContent[] = [];
+    if (mediaPath) {
+      if (!mediaType && fileName) {
+        if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) {
+          mediaType = "image/jpeg";
+        } else if (fileName.endsWith(".png")) {
+          mediaType = "image/png";
+        } else if (fileName.endsWith(".mp4")) {
+          mediaType = "video/mp4";
+        } else if (fileName.endsWith(".gif")) {
+          mediaType = "image/gif";
+        }
+      }
+      if (!mediaType) {
+        console.log(
+          "[LinkedIn Post Routes] Could not determine media type from file"
+        );
+        return {
+          success: false,
+          error:
+            "Unable to determine media type. Please specify mediaType parameter.",
+        };
+      }
 
-    if (base64Media && mediaType) {
       const isImage = mediaType.startsWith("image/");
       const isVideo = mediaType.startsWith("video/");
 
@@ -71,14 +111,11 @@ export async function POST(request: NextRequest) {
           "[LinkedIn Post Routes] Unsupported media type:",
           mediaType
         );
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Unsupported media type. Only images and videos are supported for LinkedIn.",
-          },
-          { status: 400 }
-        );
+        return {
+          success: false,
+          error:
+            "Unsupported media type. Only images and videos are supported for LinkedIn.",
+        };
       }
 
       // Recette et catégorie en fonction du type de média
@@ -138,16 +175,13 @@ export async function POST(request: NextRequest) {
             "[LinkedIn Post Routes] Failed to register media upload:",
             errorDetails
           );
-          return NextResponse.json(
-            {
-              success: false,
-              error: `Failed to register ${
-                isImage ? "image" : "video"
-              } upload with LinkedIn`,
-              details: errorDetails,
-            },
-            { status: registerResponse.status }
-          );
+          return {
+            success: false,
+            error: `Failed to register ${
+              isImage ? "image" : "video"
+            } upload with LinkedIn`,
+            details: errorDetails,
+          };
         }
 
         const registerData = await registerResponse.json();
@@ -170,68 +204,95 @@ export async function POST(request: NextRequest) {
           uploadUrl
         );
 
-        // 2. Convertir base64 en binaire pour l'upload
-        const binaryData = Buffer.from(base64Media, "base64");
+        // 2. Stream the file directly from Supabase to LinkedIn
+        try {
+          // Get file as a stream from Supabase
+          const { data: fileStream, error: fileError } =
+            await adminSupabase.storage
+              .from("scheduled-videos")
+              .download(mediaPath);
 
-        // 3. Uploader le média
-        const uploadMethod = isVideo ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
-        const uploadResponse = await fetch(uploadUrl, {
-          method: uploadMethod,
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": mediaType,
-          },
-          body: binaryData,
-        });
-
-        if (!uploadResponse.ok) {
-          const errorText = await uploadResponse.text();
-          let errorDetails;
-          try {
-            errorDetails = JSON.parse(errorText);
-          } catch (parseError) {
-            errorDetails = { rawError: errorText };
+          if (fileError || !fileStream) {
             console.error(
-              "[LinkedIn Post Routes] Error parsing upload response:",
-              parseError
+              "[LinkedIn Post Routes] Error retrieving file from Supabase:",
+              fileError
             );
+            return {
+              success: false,
+              error: "Failed to retrieve media file from storage",
+              details: fileError,
+            };
           }
 
-          console.error(
-            `[LinkedIn Post Routes] Failed to upload ${
-              isImage ? "image" : "video"
-            }:`,
-            errorDetails
-          );
-          return NextResponse.json(
-            {
+          // Convert Blob to Buffer for upload
+          const binaryData = Buffer.from(await fileStream.arrayBuffer());
+
+          // 3. Uploader le média
+          const uploadMethod = isVideo ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
+          const uploadResponse = await fetch(uploadUrl, {
+            method: uploadMethod,
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": mediaType,
+            },
+            body: binaryData,
+          });
+
+          if (!uploadResponse.ok) {
+            const errorText = await uploadResponse.text();
+            let errorDetails;
+            try {
+              errorDetails = JSON.parse(errorText);
+            } catch (parseError) {
+              errorDetails = { rawError: errorText };
+              console.error(
+                "[LinkedIn Post Routes] Error parsing upload response:",
+                parseError
+              );
+            }
+
+            console.error(
+              `[LinkedIn Post Routes] Failed to upload ${
+                isImage ? "image" : "video"
+              }:`,
+              errorDetails
+            );
+            return {
               success: false,
               error: `Failed to upload ${
                 isImage ? "image" : "video"
               } to LinkedIn`,
               details: errorDetails,
-            },
-            { status: uploadResponse.status }
+            };
+          }
+
+          console.log(
+            `[LinkedIn Post Routes] ${
+              isImage ? "Image" : "Video"
+            } uploaded successfully, creating share with media`
           );
-        }
 
-        console.log(
-          `[LinkedIn Post Routes] ${
-            isImage ? "Image" : "Video"
-          } uploaded successfully, creating share with media`
-        );
-
-        // 4. Créer le média content pour le partage
-        mediaContent = [
-          {
-            status: "READY",
-            description: {
-              text: text,
+          // 4. Créer le média content pour le partage
+          mediaContent = [
+            {
+              status: "READY",
+              description: {
+                text: text,
+              },
+              media: assetUrn,
+              title: title ? { text: title } : undefined,
             },
-            media: assetUrn,
-            title: title ? { text: title } : undefined,
-          },
-        ];
+          ];
+        } catch (streamError) {
+          console.error(
+            `[LinkedIn Post Routes] Error streaming file from Supabase:`,
+            streamError
+          );
+          return {
+            success: false,
+            error: `Failed to stream media file for upload`,
+          };
+        }
       } catch (mediaError) {
         console.error(
           `[LinkedIn Post Routes] Error during ${
@@ -239,17 +300,10 @@ export async function POST(request: NextRequest) {
           } upload process:`,
           mediaError
         );
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Error during media upload: ${
-              mediaError instanceof Error
-                ? mediaError.message
-                : String(mediaError)
-            }`,
-          },
-          { status: 500 }
-        );
+        return {
+          success: false,
+          error: `Error during media upload`,
+        };
       }
     } else if (link) {
       // Publication avec lien
@@ -259,7 +313,7 @@ export async function POST(request: NextRequest) {
         {
           status: "READY",
           description: {
-            text: title || text,
+            text: title ?? text,
           },
           originalUrl: link,
           title: title ? { text: title } : undefined,
@@ -327,14 +381,11 @@ export async function POST(request: NextRequest) {
           "[LinkedIn Post Routes] LinkedIn API error:",
           errorDetails
         );
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Failed to post to LinkedIn",
-            details: errorDetails,
-          },
-          { status: linkedInResponse.status }
-        );
+        return {
+          success: false,
+          error: "Failed to post to LinkedIn",
+          details: errorDetails,
+        };
       }
 
       // Récupérer la réponse
@@ -344,6 +395,7 @@ export async function POST(request: NextRequest) {
       try {
         // La réponse peut être vide, donc nous vérifions
         data = responseText ? JSON.parse(responseText) : {};
+        console.log("Raw response:", responseText);
       } catch (parseError) {
         console.log(
           `[LinkedIn Post Routes] Response is not JSON:${parseError}`,
@@ -359,10 +411,10 @@ export async function POST(request: NextRequest) {
         (data && data.id) ||
         "unknown-post-id";
 
-      console.log("[LinkedIn Post API] Successfully posted to LinkedIn");
+      console.log("[LinkedIn Post Routes] Successfully posted to LinkedIn");
 
       // Retourner une réponse de succès
-      return NextResponse.json({
+      return {
         success: true,
         postId: postId,
         data: data,
@@ -375,32 +427,26 @@ export async function POST(request: NextRequest) {
             ? "video"
             : "image"
         } post on LinkedIn`,
-      });
+      };
     } catch (postError) {
       console.error(
         "[LinkedIn Post Routes] Error posting to LinkedIn:",
         postError
       );
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Error posting to LinkedIn: ${
-            postError instanceof Error ? postError.message : String(postError)
-          }`,
-        },
-        { status: 500 }
-      );
+      return {
+        success: false,
+        error: `Error posting to LinkedIn: ${
+          postError instanceof Error ? postError.message : String(postError)
+        }`,
+      };
     }
   } catch (error) {
-    console.error("[LinkedIn Post API] Unexpected error:", error);
+    console.error("[LinkedIn Post Routes] Unexpected error:", error);
 
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Failed to post to LinkedIn",
-        message: error instanceof Error ? error.message : String(error),
-      },
-      { status: 500 }
-    );
+    return {
+      success: false,
+      error: "Failed to post to LinkedIn",
+      message: error instanceof Error ? error.message : String(error),
+    };
   }
 }

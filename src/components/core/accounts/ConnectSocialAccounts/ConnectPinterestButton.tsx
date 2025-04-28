@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { generateState } from "./generateState";
 
 declare global {
   interface Window {
@@ -14,16 +15,7 @@ declare global {
   }
 }
 
-function generateState(length = 32): string {
-  const charset =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    const randomIndex = Math.floor(Math.random() * charset.length);
-    result += charset[randomIndex];
-  }
-  return result;
-}
+
 
 export default function ConnectPinterestButton() {
   const router = useRouter();

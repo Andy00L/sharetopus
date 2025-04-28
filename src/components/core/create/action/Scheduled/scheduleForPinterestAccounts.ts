@@ -1,6 +1,6 @@
+"use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { toast } from "sonner";
 
 export interface ScheduleResult {
   success: boolean;
@@ -44,8 +44,7 @@ export async function scheduleForPinterestAccounts(config: {
 
   let successCount = 0;
   try {
-    console.log("[Pinterest Scheduler] Starting to schedule posts");
-
+    console.log("[Schedule For Pinterest Accounts] Starting to schedule posts");
     for (const account of accounts) {
       // Find the content specific to this account
       const content = accountContent.find(
@@ -54,7 +53,9 @@ export async function scheduleForPinterestAccounts(config: {
 
       // Skip if no content found for this account (shouldn't happen)
       if (!content) {
-        console.error(`No content found for account ${account.id}`);
+        console.error(
+          `[Schedule For Pinterest Accounts] No content found for account ${account.id}`
+        );
         continue;
       }
 
@@ -82,26 +83,34 @@ export async function scheduleForPinterestAccounts(config: {
       };
 
       try {
+        console.log(
+          `[Schedule For Pinterest Accounts] Scheduling Pinterest post for: ${account.display_name}`
+        );
         const result = await schedulePost(scheduleData, userId);
 
         if (!result.success) {
-          toast.error(
-            `Failed to schedule for ${account.display_name}: ${result.message}`
-          );
+          return {
+            success: false,
+            count: successCount,
+            message: `Failed to schedule for ${account.display_name}`,
+          };
         } else {
           successCount++;
           console.log(
-            `Successfully scheduled post for ${account.platform}:`,
+            `[Schedule For Pinterest Accounts] Successfully scheduled post for ${account.platform}:`,
             result
           );
         }
       } catch (scheduleError) {
         console.error(
-          `Schedule error for account ${account.id}:`,
+          `[Schedule For Pinterest Accounts] Schedule error for account ${account.id}:`,
           scheduleError
         );
-        toast.error(`Error scheduling for ${account.display_name}`);
-        throw scheduleError;
+        return {
+          success: false,
+          count: successCount,
+          message: `Error scheduling for ${account.display_name}`,
+        };
       }
     }
     return {
@@ -110,14 +119,12 @@ export async function scheduleForPinterestAccounts(config: {
       message: `${successCount} Pinterest posts scheduled successfully`,
     };
   } catch (e) {
-    console.error("[Pinterest Scheduler] Error:", e);
+    console.error("[Schedule For Pinterest Accounts]  Error:", e);
 
     return {
       success: false,
       count: 0,
-      message: `Failed to schedule Pinterest posts: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
+      message: `Failed to schedule Pinterest posts`,
     };
   }
 }

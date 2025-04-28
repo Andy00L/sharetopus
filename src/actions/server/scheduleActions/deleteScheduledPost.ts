@@ -1,7 +1,7 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
-import { deleteSupabaseFileAction } from "./deleteSupabaseFileAction";
+import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
 
 /**
  * Completely delete a scheduled post and its associated media (if no longer used)
