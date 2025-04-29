@@ -204,8 +204,8 @@ export async function postToPinterest({
 
     const registerData = await registerResponse.json();
     console.log(
-      "[Pinterest Post Function] Media registration successful",
-      registerData
+      "[Pinterest Post Function] Media registration successful"
+      // registerData
     );
 
     const { media_id, upload_url, upload_parameters } =

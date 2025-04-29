@@ -49,7 +49,7 @@ export async function getPinterestBoards(
       return [];
     }
     const data = await response.json();
-    console.log(data.items);
+    console.log("[GetPinterestBoards] : ", data.items[0].name);
     return data.items ?? [];
   } catch (error) {
     console.error("[GetPinterestBoards] Unexpected error:", error);
