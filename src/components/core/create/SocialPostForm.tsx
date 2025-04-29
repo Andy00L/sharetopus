@@ -30,6 +30,7 @@ import {
   SendHorizontal,
   UploadCloud,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
@@ -834,12 +835,9 @@ export default function SocialPostForm({
           <p className="text-muted-foreground mb-4">
             You haven&apos;t connected any social media accounts yet.
           </p>
-          <Button
-            onClick={() => (window.location.href = "/accounts")}
-            variant="outline"
-          >
-            Connect Accounts
-          </Button>
+          <Link href="/accounts">
+            <Button variant="outline">Connect Accounts</Button>
+          </Link>
         </div>
       )}
 
