@@ -185,7 +185,7 @@ export default function SocialPostForm({
     setError(null);
     setPlatformOptions({
       tiktok: {
-        privacyLevel: "PUBLIC_TO_EVERYONE",
+        privacyLevel: "SELF_ONLY",
         disableComment: false,
         disableDuet: false,
         disableStitch: false,

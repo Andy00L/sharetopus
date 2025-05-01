@@ -71,7 +71,7 @@ export async function postToTikTok({
   accessToken,
   title,
   description,
-  privacyLevel = "PUBLIC_TO_EVERYONE",
+  privacyLevel = "SELF_ONLY",
   disableComment = false,
   disableDuet = false,
   disableStitch = false,

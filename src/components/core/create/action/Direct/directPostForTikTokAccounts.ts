@@ -108,7 +108,7 @@ export async function directPostForTikTokAccounts(config: {
 
     // Extract TikTok options from platformOptions
     const tikTokOptions = platformOptions.tiktok || {
-      privacyLevel: "PUBLIC_TO_EVERYONE",
+      privacyLevel: "SELF_ONLY",
       disableComment: false,
       disableDuet: false,
       disableStitch: false,
