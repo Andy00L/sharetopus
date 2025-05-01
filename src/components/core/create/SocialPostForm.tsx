@@ -136,7 +136,7 @@ export default function SocialPostForm({
 
   const [platformOptions, setPlatformOptions] = useState<PlatformOptions>({
     tiktok: {
-      privacyLevel: "PUBLIC_TO_EVERYONE",
+      privacyLevel: "SELF_ONLY",
       disableComment: false,
       disableDuet: false,
       disableStitch: false,
