@@ -25,6 +25,7 @@ export async function getScheduledPosts(userId: string | null) {
         post_title,
         error_message,
         media_type,
+        batch_id,
         social_accounts:social_account_id (
           
           display_name,

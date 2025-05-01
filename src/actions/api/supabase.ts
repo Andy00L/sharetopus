@@ -1,4 +1,4 @@
-"server only";
+import "server-only";
 import { auth } from "@clerk/nextjs/server";
 import { createClient } from "@supabase/supabase-js";
 

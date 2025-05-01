@@ -30,9 +30,9 @@ import {
   SendHorizontal,
   UploadCloud,
 } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { generateState } from "../accounts/ConnectSocialAccounts/generateState";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
@@ -42,6 +42,7 @@ import {
 } from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import { uploadMedia } from "./action/uploadMedia";
+import NoAccountAvaible from "./NoAccountAvaible";
 import FilePreview from "./renderFilePreview";
 import { StepProgress } from "./StepProgress";
 
@@ -715,6 +716,7 @@ export default function SocialPostForm({
   const handleDirectPostSubmit = async () => {
     // Initial validation of form fields
     if (!checksBeforeSubmission()) return;
+
     setIsLoading(true);
     setError(null);
     setUploadProgress(0);
@@ -731,8 +733,10 @@ export default function SocialPostForm({
       message: "",
     };
     let mediaPath = "";
-
+    let batchId = "";
     try {
+      batchId = generateState();
+
       // Upload media file if needed (only for media tab)
       if (activeTab === "media" && selectedFile) {
         const uploadResult = await uploadMedia(selectedFile, (progress) => {
@@ -758,6 +762,7 @@ export default function SocialPostForm({
             accountContent: accountContent.filter((item) =>
               selectedPinterestAccount.some((acc) => acc.id === item.accountId)
             ),
+            batchId: batchId,
             userId, // Added userId parameter which is required
             fileName: selectedFile.name,
           });
@@ -780,6 +785,7 @@ export default function SocialPostForm({
           accountContent: accountContent.filter((item) =>
             selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
           ),
+          batchId: batchId,
           userId,
           fileName: selectedFile?.name,
         });
@@ -826,20 +832,7 @@ export default function SocialPostForm({
   return (
     <SidebarGroup className="w-full max-w-3xl mx-auto">
       {/**No accounts avaible */}
-      {accounts.length === 0 && (
-        <div className="text-center p-8 border rounded-lg">
-          <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium mb-2">
-            No social accounts connected
-          </h3>
-          <p className="text-muted-foreground mb-4">
-            You haven&apos;t connected any social media accounts yet.
-          </p>
-          <Link href="/accounts">
-            <Button variant="outline">Connect Accounts</Button>
-          </Link>
-        </div>
-      )}
+      {accounts.length === 0 && <NoAccountAvaible />}
 
       {accounts.length !== 0 && (
         <>

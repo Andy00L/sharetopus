@@ -1,10 +1,10 @@
 // src/components/core/accounts/social/AvatarWithFallback.tsx
 "use client";
 
-import Image from "next/image";
-import { UserCheck } from "lucide-react";
-import { useState } from "react";
 import clsx from "clsx";
+import { UserCheck } from "lucide-react";
+import Image from "next/image";
+import { useState } from "react";
 
 interface Props {
   /** Image URL (may be undefined or empty). */
@@ -21,7 +21,7 @@ export default function AvatarWithFallback({
   src,
   alt,
   className,
-  size = 64,
+  size = 40,
 }: Props) {
   const [errored, setErrored] = useState(false);
 
@@ -39,14 +39,20 @@ export default function AvatarWithFallback({
 
   /* ---------- otherwise show the real avatar ---------- */
   return (
-    <Image
-      src={src}
-      alt={alt}
-      width={size}
-      height={size}
-      className={clsx("object-cover", className)}
-      onError={() => setErrored(true)}
-      /* keep blurDataURL / priority / placeholder if you already used them */
-    />
+    <div
+      className={clsx(
+        "  rounded-full overflow-hidden  bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border",
+        className
+      )}
+    >
+      <Image
+        src={src}
+        alt={alt}
+        width={size}
+        height={size}
+        className={clsx("object-cover ", className)}
+        onError={() => setErrored(true)}
+      />
+    </div>
   );
 }

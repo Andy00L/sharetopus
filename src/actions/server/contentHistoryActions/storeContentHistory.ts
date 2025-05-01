@@ -2,18 +2,7 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
-
-/**
- * Interface for content history data
- */
-export interface ContentHistoryData {
-  platform: string;
-  contentId: string;
-  title?: string | null;
-  description?: string | null;
-  mediaUrl?: string | null;
-  extra?: Record<string, unknown> | null;
-}
+import { ContentHistory } from "@/lib/types/dbTypes";
 
 /**
  * Stores a record of posted content in the content_history table
@@ -22,11 +11,16 @@ export interface ContentHistoryData {
  * @returns Object with success status, message, and optionally the record ID
  */
 export async function storeContentHistory(
-  data: ContentHistoryData,
+  data: ContentHistory,
   userId: string | null
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
   // Basic validation
-  if (!userId || !data.platform || !data.contentId) {
+  if (
+    !userId ||
+    !data.platform ||
+    !data.content_id ||
+    !data.social_account_id
+  ) {
     return {
       success: false,
       message: "Missing required information (userId, platform, contentId)",
@@ -38,7 +32,7 @@ export async function storeContentHistory(
       `[storeContentHistory] Storing content history for user ${userId}`,
       {
         platform: data.platform,
-        contentId: data.contentId,
+        contentId: data.content_id,
       }
     );
 
@@ -46,10 +40,15 @@ export async function storeContentHistory(
     const insertData = {
       user_id: userId,
       platform: data.platform,
-      content_id: data.contentId,
+      content_id: data.content_id,
       title: data.title ?? null,
       description: data.description ?? null,
-      media_url: data.mediaUrl ?? null,
+      media_url: data.media_url ?? null,
+      media_type: data.media_type,
+      status: data.status,
+      batch_id: data.batch_id,
+      social_account_id: data.social_account_id,
+
       extra: data.extra ? JSON.stringify(data.extra) : null,
       created_at: new Date().toISOString(),
     };

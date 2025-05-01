@@ -2,6 +2,7 @@
 
 import { disconnectSocialAccount } from "@/actions/server/disconnectSocialAccount";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -91,13 +92,11 @@ export default function SocialAccountBadge({ account, userId }: Props) {
   }${isDisconnecting ? "animate-pulse opacity-70" : ""}
 `}
       >
-        <div className="h-8 w-8 rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
-          <AvatarWithFallback
-            src={account.avatar_url}
-            alt={account.display_name ?? `Utilisateur ${account.platform}`}
-            className="h-full w-full"
-          />
-        </div>
+        <AvatarWithFallback
+          src={account.avatar_url}
+          alt={account.display_name ?? `Utilisateur ${account.platform}`}
+          className="h-8 w-8"
+        />
 
         <span className="text-sm font-medium truncate max-w-[100px]">
           {account.display_name ?? account.username}

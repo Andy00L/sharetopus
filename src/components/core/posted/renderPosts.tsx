@@ -1,0 +1,37 @@
+import { getContentHistoryGroupedByBatch } from "@/actions/server/contentHistoryActions/getContentHistory";
+import { auth } from "@clerk/nextjs/server";
+import ContentHistoryCard from "./ContentHistoryCard";
+import NoBatch from "./noBatch";
+import NoData from "./noData";
+
+export default async function RenderPosts() {
+  const { userId } = await auth();
+  const posts = await getContentHistoryGroupedByBatch(userId);
+
+  // If there's an error or no data, display an appropriate message
+  if (!posts.success || posts.data === null) {
+    return <NoData />;
+  }
+  const data = posts.data;
+  if (data === null) {
+    return <NoData />;
+  }
+  // Check if we have any batches
+  const batchIds = Object.keys(posts.data!);
+  if (batchIds.length === 0) {
+    return <NoBatch />;
+  }
+  return (
+    <div className="p-4 w-full">
+      <div className="grid gap-4  grid-cols-2  lg:grid-cols-4">
+        {batchIds.map((batchId) => (
+          <ContentHistoryCard
+            key={batchId}
+            batchId={batchId}
+            items={data[batchId]}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}

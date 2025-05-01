@@ -21,6 +21,7 @@ export async function directPostForLinkedInAccounts(config: {
   userId: string | null;
   cleanupFiles?: boolean;
   fileName?: string;
+  batchId: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -28,6 +29,7 @@ export async function directPostForLinkedInAccounts(config: {
     accountContent,
     userId,
     cleanupFiles = true,
+    batchId,
     fileName,
   } = config;
 
@@ -158,10 +160,14 @@ export async function directPostForLinkedInAccounts(config: {
             await storeContentHistory(
               {
                 platform: "linkedin",
-                contentId: postResult.postId,
+                content_id: postResult.postId,
                 title: content.title ?? null,
                 description: content.description,
-                mediaUrl: `https://www.linkedin.com/feed/update/${postResult.postId}`,
+                media_url: `https://www.linkedin.com/feed/update/${postResult.postId}`,
+                batch_id: batchId,
+                media_type: postType,
+                status: "posted",
+                social_account_id: content.accountId,
                 extra: {
                   post_data: postResult.data,
                   post_type: postType,

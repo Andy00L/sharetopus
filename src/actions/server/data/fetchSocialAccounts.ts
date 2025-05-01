@@ -1,4 +1,4 @@
-"server only";
+import "server-only";
 import { adminSupabase } from "@/actions/api/supabase-client";
 import { SocialAccount } from "@/lib/types/dbTypes";
 

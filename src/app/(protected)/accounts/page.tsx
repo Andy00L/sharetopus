@@ -1,13 +1,13 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
-import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
-import { auth } from "@clerk/nextjs/server";
-import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
-import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
-import { Suspense } from "react";
+import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
+import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
+import { auth } from "@clerk/nextjs/server";
+import { Suspense } from "react";
 
 const AccountsPageWithData = async () => {
   const { userId } = await auth();

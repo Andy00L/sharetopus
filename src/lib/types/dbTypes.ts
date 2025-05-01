@@ -157,7 +157,7 @@ export interface ScheduledPost {
   error_message: string | null;
   created_at?: string;
   updated_at?: string;
-
+  batch_id: string;
   // Relations
   social_accounts?: SocialAccountAccessible;
 
@@ -182,16 +182,22 @@ export interface AnalyticsMetric {
 }
 
 export interface ContentHistory {
-  id: string;
-  user_id: string;
+  id?: string;
+  user_id?: string;
   platform: string;
   content_id: string;
   title: string | null;
   description: string | null;
   media_url: string | null;
-  extra: string | null;
-  created_at: string;
-
+  extra: Record<string, unknown> | null;
+  created_at?: string;
+  batch_id: string;
+  status: string;
+  media_type: string | null;
+  social_account_id: string;
+  social_accounts?: {
+    avatar_url: string | null;
+  };
   // Relations
   users?: User;
 }

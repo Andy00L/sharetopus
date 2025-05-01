@@ -3,9 +3,9 @@ import React from "react";
 
 export default function ComingSoon() {
   return (
-    <div className="flex items-center justify-center min-h-[70vh] bg-white w-full">
+    <div className="flex items-center justify-center min-h-[70vh]  w-full">
       <div className="relative">
-        <h1 className="font-black text-black tracking-tight text-5xl sm:text-6xl md:text-7xl lg:text-8xl text-center">
+        <h1 className="font-black  tracking-tight text-5xl sm:text-6xl md:text-7xl lg:text-8xl text-center">
           COMING SOON
         </h1>
 

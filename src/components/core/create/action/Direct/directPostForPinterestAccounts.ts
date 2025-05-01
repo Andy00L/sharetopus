@@ -31,6 +31,7 @@ export async function directPostForPinterestAccounts(config: {
   userId: string | null;
   cleanupFiles?: boolean;
   fileName: string;
+  batchId: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -39,6 +40,7 @@ export async function directPostForPinterestAccounts(config: {
     accountContent,
     userId,
     cleanupFiles = true,
+    batchId,
     fileName,
   } = config;
 
@@ -171,10 +173,14 @@ export async function directPostForPinterestAccounts(config: {
             await storeContentHistory(
               {
                 platform: "pinterest",
-                contentId: postResult.postId!,
+                content_id: postResult.postId!,
+                social_account_id: content.accountId,
                 title: content.title ?? null,
                 description: content.description,
-                mediaUrl: postResult.postUrl,
+                media_url: postResult.postUrl!,
+                batch_id: batchId,
+                status: "posted",
+                media_type: mediaType?.startsWith("image/") ? "image" : "video", // Use the same logic as in your extra.post_type
                 extra: {
                   post_data: postResult.data,
                   post_type: mediaType?.startsWith("image/")

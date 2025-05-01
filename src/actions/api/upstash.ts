@@ -1,5 +1,5 @@
 // api/upstash.ts
-"server only";
+import "server-only";
 
 import { Redis } from "@upstash/redis";
 

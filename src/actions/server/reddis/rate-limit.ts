@@ -1,5 +1,5 @@
 // lib/rate-limit.ts
-"server only";
+import "server-only";
 
 import { redis } from "@/actions/api/upstash";
 import { headers } from "next/headers";
