@@ -35,6 +35,7 @@ import { toast } from "sonner";
 import { generateState } from "../accounts/ConnectSocialAccounts/generateState";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
+import { directPostForTikTokAccounts } from "./action/Direct/directPostForTikTokAccounts";
 import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
 import {
   scheduleForPinterestAccounts,
@@ -732,6 +733,12 @@ export default function SocialPostForm({
       count: 0,
       message: "",
     };
+    // Add this new line
+    let tiktokResult: ScheduleResult = {
+      success: false,
+      count: 0,
+      message: "",
+    };
     let mediaPath = "";
     let batchId = "";
     try {
@@ -773,6 +780,25 @@ export default function SocialPostForm({
             );
           }
         }
+        if (selectedTikTokAccount.length > 0) {
+          // ───────────────── TikTok ───────────────────
+          tiktokResult = await directPostForTikTokAccounts({
+            accounts: selectedTikTokAccount,
+            mediaPath: mediaPath,
+            platformOptions,
+            accountContent: accountContent.filter((item) =>
+              selectedTikTokAccount.some((acc) => acc.id === item.accountId)
+            ),
+            batchId: batchId,
+            userId,
+            fileName: selectedFile.name,
+            cleanupFiles: false, // Let the main function handle cleanup
+          });
+
+          if (!tiktokResult.success) {
+            toast.error(tiktokResult.message ?? "Failed to post to TikTok");
+          }
+        }
       }
 
       // Process LinkedIn posts (for both media and text tabs)
@@ -795,28 +821,40 @@ export default function SocialPostForm({
         }
       }
 
-      // Calculate total successes
+      // Remove the complex separator code and replace with this simpler approach
       const totalSuccessCount =
         (pinterestResult.success ? pinterestResult.count : 0) +
-        (linkedinResult.success ? linkedinResult.count : 0);
+        (linkedinResult.success ? linkedinResult.count : 0) +
+        (tiktokResult.success ? tiktokResult.count : 0);
 
       // Show success notification only if we had successful posts
       if (totalSuccessCount > 0) {
-        const pinterestMsg =
-          pinterestResult.success && pinterestResult.count > 0
-            ? `${pinterestResult.count} post(s) on Pinterest`
-            : "";
+        const successMessages = [];
 
-        const linkedinMsg =
-          linkedinResult.success && linkedinResult.count > 0
-            ? `${linkedinResult.count} post(s) on LinkedIn`
-            : "";
+        if (pinterestResult.success && pinterestResult.count > 0) {
+          successMessages.push(`${pinterestResult.count} post(s) on Pinterest`);
+        }
 
-        const separator = pinterestMsg && linkedinMsg ? " and " : "";
+        if (linkedinResult.success && linkedinResult.count > 0) {
+          successMessages.push(`${linkedinResult.count} post(s) on LinkedIn`);
+        }
 
-        toast.success(
-          `${pinterestMsg}${separator}${linkedinMsg} published successfully!`
-        );
+        if (tiktokResult.success && tiktokResult.count > 0) {
+          successMessages.push(`${tiktokResult.count} post(s) on TikTok`);
+        }
+
+        // Join with commas and 'and' for the last item
+        let successMsg = "";
+        if (successMessages.length === 1) {
+          successMsg = successMessages[0];
+        } else if (successMessages.length === 2) {
+          successMsg = successMessages.join(" and ");
+        } else if (successMessages.length > 2) {
+          const lastItem = successMessages.pop();
+          successMsg = successMessages.join(", ") + ", and " + lastItem;
+        }
+
+        toast.success(`${successMsg} published successfully!`);
         resetForm();
       } else if (totalSuccessCount === 0) {
         toast.info("No posts were published.");

@@ -11,7 +11,9 @@ export default function NoAccountAvaible() {
         You haven&apos;t connected any social media accounts yet.
       </p>
       <Link href="/accounts">
-        <Button variant="outline">Connect Accounts</Button>
+        <Button variant="outline" className="cursor-pointer">
+          Connect Accounts
+        </Button>
       </Link>
     </div>
   );
