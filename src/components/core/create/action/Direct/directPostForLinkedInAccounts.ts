@@ -2,6 +2,7 @@
 // createPostForm/action/directPostForLinkedInAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
@@ -98,10 +99,12 @@ export async function directPostForLinkedInAccounts(config: {
         continue;
       }
 
-      // Verify access token is available
-      if (!account.access_token) {
+      // Vérifier et rafraîchir le token si nécessaire
+      const validToken = await ensureValidToken(account);
+
+      if (!validToken) {
         console.error(
-          `[LinkedIn Direct Post] No access token for account ${account.id}`
+          `[TikTok Direct Post] No valid access token for account ${account.id}`
         );
         continue;
       }
@@ -128,7 +131,7 @@ export async function directPostForLinkedInAccounts(config: {
 
         // Call our API endpoint to post to LinkedIn
         const postResult = await postToLinkedIn({
-          accessToken: account.access_token,
+          accessToken: validToken,
           memberUrn: memberUrn,
           text: content.description,
           link: content.link,

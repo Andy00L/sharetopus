@@ -1,3 +1,4 @@
+// components/core/scheduled/RescheduleDialog.tsx
 import { updateScheduledTime } from "@/actions/server/scheduleActions/updateScheduledTime";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,13 +23,18 @@ interface RescheduleDialogProps {
   readonly onClose: () => void;
   readonly userId: string | null;
   readonly onSuccess: () => void;
+  readonly batchMode?: boolean;
+  readonly postIds?: string[];
 }
+
 export default function RescheduleDialog({
   post,
   isOpen,
   onClose,
   userId,
   onSuccess,
+  batchMode = true,
+  postIds = [],
 }: RescheduleDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [newDate, setNewDate] = useState<Date | null>(
@@ -49,14 +55,34 @@ export default function RescheduleDialog({
 
     try {
       setIsLoading(true);
-      const result = await updateScheduledTime(post.id, newDate, userId);
 
-      if (result.success) {
-        toast.success(result.message);
-        onSuccess();
-        onClose();
+      if (batchMode && postIds.length > 0) {
+        // Handle batch update
+        const results = await Promise.all(
+          postIds.map((id) => updateScheduledTime(id, newDate, userId))
+        );
+
+        const success = results.every((r) => r.success);
+        if (success) {
+          toast.success("All posts rescheduled successfully");
+          onSuccess();
+          onClose();
+        } else {
+          const errors = results
+            .filter((r) => !r.success)
+            .map((r) => r.message);
+          toast.error(`Failed to reschedule some posts: ${errors.join(", ")}`);
+        }
       } else {
-        toast.error(result.message);
+        // Handle single post update
+        const result = await updateScheduledTime(post.id, newDate, userId);
+        if (result.success) {
+          toast.success(result.message);
+          onSuccess();
+          onClose();
+        } else {
+          toast.error(result.message);
+        }
       }
     } catch (error) {
       const errorMessage =
@@ -93,9 +119,13 @@ export default function RescheduleDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Reschedule Post</DialogTitle>
+          <DialogTitle>
+            {batchMode ? "Reschedule Batch" : "Reschedule Post"}
+          </DialogTitle>
           <DialogDescription>
-            Select a new date and time for this post to be published.
+            {batchMode
+              ? `Select a new date and time for all ${postIds.length} posts in this batch.`
+              : "Select a new date and time for this post to be published."}
           </DialogDescription>
         </DialogHeader>
 
@@ -131,7 +161,7 @@ export default function RescheduleDialog({
 
           {newDate && (
             <div className="text-sm text-muted-foreground">
-              Post will be published on:{" "}
+              {batchMode ? "Posts" : "Post"} will be published on:{" "}
               <span className="font-medium">
                 {format(newDate, "PPP 'at' p")}
               </span>

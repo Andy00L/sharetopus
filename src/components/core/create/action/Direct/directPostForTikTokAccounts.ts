@@ -2,6 +2,7 @@
 "use server";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
@@ -63,7 +64,6 @@ export async function directPostForTikTokAccounts(config: {
     if (mediaPath) {
       try {
         mediaType = getMimeTypeFromFileName(fileName);
-        console.log("[TikTok Direct Post] Detected MIME type:", mediaType);
         console.log(
           "[TikTok Direct Post] Verified file exists, preparing for upload"
         );
@@ -96,7 +96,15 @@ export async function directPostForTikTokAccounts(config: {
     // Determine if we're posting image(s) or video
     const isImage = mediaType?.startsWith("image/");
     const isVideo = mediaType?.startsWith("video/");
-
+    //Implementation temporaire
+    if (isImage) {
+      console.error("[TikTok Direct Post] We don't support image uploaf");
+      return {
+        success: false,
+        count: 0,
+        message: " We don't support image uploaf",
+      };
+    }
     if (!isVideo && !isImage) {
       console.error("[TikTok Direct Post] Unsupported media type:", mediaType);
       return {
@@ -105,18 +113,6 @@ export async function directPostForTikTokAccounts(config: {
         message: "Unsupported media type. Must be image or video.",
       };
     }
-
-    // Extract TikTok options from platformOptions
-    const tikTokOptions = platformOptions.tiktok || {
-      privacyLevel: "SELF_ONLY",
-      disableComment: false,
-      disableDuet: false,
-      disableStitch: false,
-    };
-
-    // Determine if we should try signed URLs for PULL_FROM_URL
-    // For images, we have to use this approach, for videos it's optional
-    const usePullFromUrl = isImage || false; // Set to true if you want to try for videos too
 
     // Loop through each TikTok account
     for (const account of accounts) {
@@ -132,11 +128,12 @@ export async function directPostForTikTokAccounts(config: {
         );
         continue;
       }
+      // Vérifier et rafraîchir le token si nécessaire
+      const validToken = await ensureValidToken(account);
 
-      // Verify access token is available
-      if (!account.access_token) {
+      if (!validToken) {
         console.error(
-          `[TikTok Direct Post] No access token for account ${account.id}`
+          `[TikTok Direct Post] No valid access token for account ${account.id}`
         );
         continue;
       }
@@ -152,20 +149,13 @@ export async function directPostForTikTokAccounts(config: {
         console.log(`[TikTok Direct Post] File name: ${fileName}`);
         // Call our TikTok posting function
         const postResult = await postToTikTok({
-          accessToken: account.access_token,
+          accessToken: validToken,
           title: content.title || "",
           description: content.description || "",
-          privacyLevel: tikTokOptions.privacyLevel,
-          disableComment: tikTokOptions.disableComment,
-          disableDuet: tikTokOptions.disableDuet,
-          disableStitch: tikTokOptions.disableStitch,
+          tikTokOptions: platformOptions.tiktok,
           mediaPath: mediaPath,
           mediaType: mediaType || "",
-          fileName: fileName,
           userId: userId || "",
-          supabaseBucket: "scheduled-videos",
-          postMode: "DIRECT_POST",
-          usePullFromUrl: usePullFromUrl,
         });
 
         // Add detailed console logging
@@ -192,14 +182,13 @@ export async function directPostForTikTokAccounts(config: {
                 description: content.description || null,
                 media_url: postResult.postUrl || null,
                 batch_id: batchId,
-                status: postResult.postId ? "posted" : "processing",
+                status: postResult.status,
                 media_type: isImage ? "image" : "video",
                 extra: {
                   post_data: postResult.data,
                   post_type: isImage ? "image" : "video",
                   posted_at: new Date().toISOString(),
-                  publish_id: postResult.publishId,
-                  privacy_level: tikTokOptions.privacyLevel,
+                  privacy_level: platformOptions.tiktok,
                 },
               },
               userId
@@ -224,6 +213,7 @@ export async function directPostForTikTokAccounts(config: {
             "[TikTok Direct Post] Failed with error:",
             postResult.error
           );
+
           console.error(
             "[TikTok Direct Post] Error details:",
             postResult.details
@@ -242,7 +232,7 @@ export async function directPostForTikTokAccounts(config: {
     }
 
     // Clean up the media file if posting was successful
-    if (cleanupFiles && mediaPath) {
+    if (cleanupFiles) {
       await deleteSupabaseFileAction(userId, mediaPath, true);
       console.log(
         "[TikTok Direct Post] Cleaned up temporary media file after successful posting"

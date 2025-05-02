@@ -250,6 +250,11 @@ export default function SocialPostForm({
         return null;
       }
 
+      // Skip TikTok for image uploads - this is the new condition
+      if (mediaType === "image" && platform === "tiktok") {
+        return null;
+      }
+
       // Filter accounts for current platform
       const platformAccounts = accounts.filter(
         (account) => account.platform === platform
@@ -582,6 +587,9 @@ export default function SocialPostForm({
       }
     }
 
+    if (!mediaType) {
+      return false;
+    }
     if (
       isScheduled &&
       new Date(`${scheduledDate}T${scheduledTime}`) < new Date()
@@ -619,8 +627,10 @@ export default function SocialPostForm({
     setUploadProgress(0);
 
     let mediaStoragePath = "";
+    let batchId = "";
 
     try {
+      batchId = generateState();
       // 2. Téléchargement du média (si nécessaire)
       if (activeTab === "media" && selectedFile) {
         const uploadResult = await uploadMedia(selectedFile, (progress) => {
@@ -646,9 +656,11 @@ export default function SocialPostForm({
         accountContent: accountContent.filter((item) =>
           selectedPinterestAccount.some((acc) => acc.id === item.accountId)
         ),
+        batchId,
         mediaType,
         userId,
       });
+
       if (!pinterestResult.success) {
         toast(pinterestResult.message);
       }
@@ -664,6 +676,7 @@ export default function SocialPostForm({
           selectedTikTokAccount.some((acc) => acc.id === item.accountId)
         ),
         mediaType,
+        batchId,
         userId,
       });
       if (!tiktokResult.success) {
@@ -680,9 +693,11 @@ export default function SocialPostForm({
         accountContent: accountContent.filter((item) =>
           selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
         ),
+        batchId,
         mediaType,
         userId,
       });
+
       if (!linkedinResult.success) {
         toast(linkedinResult.message);
       }
@@ -733,12 +748,12 @@ export default function SocialPostForm({
       count: 0,
       message: "",
     };
-    // Add this new line
     let tiktokResult: ScheduleResult = {
       success: false,
       count: 0,
       message: "",
     };
+
     let mediaPath = "";
     let batchId = "";
     try {
@@ -755,10 +770,6 @@ export default function SocialPostForm({
         }
 
         mediaPath = uploadResult.path ?? "";
-      }
-
-      // Process Pinterest posts (only if we have media and accounts)
-      if (activeTab === "media" && selectedFile) {
         if (selectedPinterestAccount.length > 0) {
           // ───────────────── Pinterest ─────────────────
           pinterestResult = await directPostForPinterestAccounts({
@@ -792,7 +803,6 @@ export default function SocialPostForm({
             batchId: batchId,
             userId,
             fileName: selectedFile.name,
-            cleanupFiles: false, // Let the main function handle cleanup
           });
 
           if (!tiktokResult.success) {
@@ -1077,19 +1087,19 @@ export default function SocialPostForm({
                                 />
 
                                 {/**Account Avatar  */}
-                                <div className="w-6 h-6 rounded-full overflow-hidden">
-                                  <AvatarWithFallback
-                                    src={account.avatar_url}
-                                    alt={account.username ?? "Account"}
-                                    size={24}
-                                    className="w-full h-full object-cover"
-                                  />
-                                </div>
+                                <AvatarWithFallback
+                                  src={account.avatar_url}
+                                  alt={account.username ?? "Account"}
+                                  size={24}
+                                  className="h-8 w-8"
+                                />
 
                                 {/**Account name */}
-                                <span className="text-sm">
-                                  {account.display_name ?? account.username}
-                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-sm truncate block overflow-hidden text-ellipsis">
+                                    {account.display_name ?? account.username}
+                                  </span>
+                                </div>
                               </div>
                             ))}
                           </div>

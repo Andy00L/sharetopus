@@ -150,7 +150,8 @@ export interface ScheduledPost {
   status: PostStatus;
   scheduled_at: string;
   posted_at?: string | null;
-  post_title: string | null;
+  post_title?: string | null;
+  post_description: string | null;
   post_options?: PlatformOptions | null;
   media_type: string;
   media_storage_path?: string;
@@ -192,7 +193,7 @@ export interface ContentHistory {
   extra: Record<string, unknown> | null;
   created_at?: string;
   batch_id: string;
-  status: string;
+  status?: string;
   media_type: string | null;
   social_account_id: string;
   social_accounts?: {
@@ -242,13 +243,14 @@ export interface SchedulePostData {
 }
 
 export interface TokenExchangeResponse {
+  error: string;
   token_type: string;
   access_token: string;
   refresh_token?: string;
   expires_in: number;
-  refresh_expires_in?: number;
+  refresh_expires_in?: string;
   scope?: string;
-  user_id?: string;
+  user_id: string;
   open_id?: string;
 }
 

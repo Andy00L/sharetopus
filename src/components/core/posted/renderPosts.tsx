@@ -17,21 +17,18 @@ export default async function RenderPosts() {
     return <NoData />;
   }
   // Check if we have any batches
-  const batchIds = Object.keys(posts.data!);
+  const batchIds = Object.keys(posts.data);
+
   if (batchIds.length === 0) {
     return <NoBatch />;
   }
   return (
-    <div className="p-4 w-full">
-      <div className="grid gap-4  grid-cols-2  lg:grid-cols-4">
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {batchIds.map((batchId) => (
-          <ContentHistoryCard
-            key={batchId}
-            batchId={batchId}
-            items={data[batchId]}
-          />
+          <ContentHistoryCard key={batchId} items={data[batchId]} />
         ))}
       </div>
-    </div>
+    </>
   );
 }

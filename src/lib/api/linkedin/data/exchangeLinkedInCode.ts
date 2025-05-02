@@ -1,5 +1,6 @@
 // lib/api/linkedin/exchangeLinkedInCode.ts
-import { TokenExchangeResponse } from "@/lib/types/TokenExchangeResponse";
+
+import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 
 export async function exchangeLinkedInCode(
   code: string

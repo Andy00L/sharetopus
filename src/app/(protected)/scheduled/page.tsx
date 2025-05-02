@@ -1,12 +1,25 @@
 // app/(protected)/scheduled/page.tsx
-import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
+import { getScheduledPostsGroupedByBatch } from "@/actions/server/scheduleActions/getScheduledPosts";
+import NoData from "@/components/core/posted/noData";
 import PostsGrid from "@/components/core/scheduled/PostsGrid";
+import ScheduledPostsSkeleton from "@/components/suspense/scheduled/ScheduledPostsSkeleton";
 
 import { auth } from "@clerk/nextjs/server";
+import { Suspense } from "react";
+
+const ScheduledPostsWithData = async () => {
+  const { userId } = await auth();
+  const postsResult = await getScheduledPostsGroupedByBatch(userId);
+  if (!postsResult.success || !postsResult.data) {
+    return <NoData />;
+  }
+  return <PostsGrid posts={postsResult.data} userId={userId} />;
+};
 
 export default async function ScheduledPostsPage() {
-  const { userId } = await auth();
-  const posts = await getScheduledPosts(userId);
-
-  return <PostsGrid posts={posts} userId={userId} />;
+  return (
+    <Suspense fallback={<ScheduledPostsSkeleton />}>
+      <ScheduledPostsWithData />
+    </Suspense>
+  );
 }

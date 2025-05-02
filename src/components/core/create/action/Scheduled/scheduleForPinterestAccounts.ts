@@ -29,6 +29,7 @@ export async function scheduleForPinterestAccounts(config: {
   scheduledTime: string;
   mediaType: "image" | "video" | "text";
   userId: string | null;
+  batchId: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -40,6 +41,7 @@ export async function scheduleForPinterestAccounts(config: {
     accountContent,
     mediaType,
     userId,
+    batchId,
   } = config;
 
   let successCount = 0;
@@ -80,6 +82,7 @@ export async function scheduleForPinterestAccounts(config: {
         mediaType: mediaType,
         mediaStoragePath: mediaPath,
         postOptions: postOptions,
+        batch_id: batchId,
       };
 
       try {

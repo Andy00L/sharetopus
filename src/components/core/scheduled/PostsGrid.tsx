@@ -1,21 +1,26 @@
-// components/core/scheduled/PostsGrid.server.tsx
-
+// components/core/scheduled/PostsGrid.tsx
 import { Button } from "@/components/ui/button";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { ScheduledPost } from "@/lib/types/dbTypes";
 import Link from "next/link";
 import EmptyContent from "./EmptyContent";
-import PostCard from "./PostCard";
+import BatchedPostCard from "./BatchedPostCard";
 
-export default function PostsGrid({
-  posts,
-  userId,
-}: {
-  readonly posts: ScheduledPost[];
+interface PostsGridProps {
+  readonly posts: Record<string, ScheduledPost[]>;
   readonly userId: string | null;
-}) {
+}
+
+export default function PostsGrid({ posts, userId }: PostsGridProps) {
+  // Get all batch IDs
+  const batchIds = Object.keys(posts);
+  const totalPosts = batchIds.reduce(
+    (sum, batchId) => sum + posts[batchId].length,
+    0
+  );
+
   return (
-    <SidebarContent className=" px-4 py-6">
+    <SidebarContent className="px-4 py-6">
       <SidebarGroup className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold">Scheduled Posts</h1>
@@ -24,20 +29,23 @@ export default function PostsGrid({
           </p>
         </div>
 
-        {/* Pas d'onClick → peut rester server */}
-        {posts.length !== 0 && (
+        {totalPosts > 0 && (
           <Button asChild className="ml-auto">
             <Link href="/create">Schedule New Post</Link>
           </Button>
         )}
       </SidebarGroup>
 
-      {posts.length === 0 && <EmptyContent />}
+      {totalPosts === 0 && <EmptyContent />}
 
-      {posts.length !== 0 && (
+      {totalPosts > 0 && (
         <SidebarGroup className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {posts.map((post) => (
-            <PostCard key={post.id} post={post} userId={userId} />
+          {batchIds.map((batchId) => (
+            <BatchedPostCard
+              key={batchId}
+              posts={posts[batchId]}
+              userId={userId}
+            />
           ))}
         </SidebarGroup>
       )}

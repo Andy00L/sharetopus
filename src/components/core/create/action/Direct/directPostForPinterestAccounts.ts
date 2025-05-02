@@ -2,6 +2,7 @@
 "use server";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
@@ -13,7 +14,7 @@ import { getMimeTypeFromFileName } from "./getMimeTypeFromFileName";
  */
 export async function directPostForPinterestAccounts(config: {
   accounts: SocialAccount[];
-  mediaPath?: string;
+  mediaPath: string;
   boards: Array<{
     boardID: string;
     boardName: string;
@@ -71,8 +72,6 @@ export async function directPostForPinterestAccounts(config: {
 
     if (mediaPath) {
       try {
-        // Retrieve file from Supabase storage
-        // Determine media type from the file extension
         mediaType = getMimeTypeFromFileName(fileName);
 
         console.log(
@@ -83,6 +82,7 @@ export async function directPostForPinterestAccounts(config: {
           "[Pinterest Direct Post] Error processing file:",
           fileProcessingError
         );
+
         // Clean up the file if processing failed
         if (cleanupFiles) {
           await deleteSupabaseFileAction(userId, mediaPath, true);
@@ -116,14 +116,16 @@ export async function directPostForPinterestAccounts(config: {
         );
         continue;
       }
-      // Verify access token is available
-      if (!account.access_token) {
+
+      // Vérifier et rafraîchir le token si nécessaire
+      const validToken = await ensureValidToken(account);
+
+      if (!validToken) {
         console.error(
-          `[Pinterest Direct Post] No access token for account ${account.id}`
+          `[TikTok Direct Post] No valid access token for account ${account.id}`
         );
         continue;
       }
-
       // Get the selected board for this account
       const selectedBoard = boards.find(
         (board) => board.isSelected && board.accountId === account.id
@@ -145,7 +147,7 @@ export async function directPostForPinterestAccounts(config: {
 
         // Call our new postToPinterest function instead of the API endpoint
         const postResult = await postToPinterest({
-          accessToken: account.access_token,
+          accessToken: validToken,
           boardId: selectedBoard.boardID,
           title: content.title,
           description: content.description,

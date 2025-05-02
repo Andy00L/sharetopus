@@ -18,6 +18,7 @@ export async function scheduleForLinkedInAccounts(config: {
   scheduledTime: string;
   mediaType: "image" | "video" | "text";
   userId: string | null;
+  batchId: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -27,6 +28,7 @@ export async function scheduleForLinkedInAccounts(config: {
     accountContent,
     mediaType,
     userId,
+    batchId,
   } = config;
 
   let successCount = 0;
@@ -72,6 +74,7 @@ export async function scheduleForLinkedInAccounts(config: {
         mediaType: mediaType,
         mediaStoragePath: mediaPath,
         postOptions: postOptions,
+        batch_id: batchId,
       };
 
       try {

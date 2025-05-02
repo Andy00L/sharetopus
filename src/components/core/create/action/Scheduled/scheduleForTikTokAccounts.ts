@@ -19,6 +19,7 @@ export async function scheduleForTikTokAccounts(config: {
 
   mediaType: "image" | "video" | "text";
   userId: string | null;
+  batchId: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -29,6 +30,7 @@ export async function scheduleForTikTokAccounts(config: {
     accountContent,
     mediaType,
     userId,
+    batchId,
   } = config;
 
   let successCount = 0;
@@ -57,6 +59,7 @@ export async function scheduleForTikTokAccounts(config: {
         mediaType: mediaType,
         mediaStoragePath: mediaPath,
         postOptions: platformOptions.tiktok || null,
+        batch_id: batchId,
       };
 
       try {

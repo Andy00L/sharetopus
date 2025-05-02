@@ -1,6 +1,8 @@
+// Updated getScheduledPosts.ts
 "use server";
 
 import { adminSupabase } from "@/actions/api/supabase-client";
+import { ScheduledPost } from "@/lib/types/dbTypes";
 
 /**
  * Get all scheduled posts for the authenticated user
@@ -10,6 +12,7 @@ import { adminSupabase } from "@/actions/api/supabase-client";
 export async function getScheduledPosts(userId: string | null) {
   if (!userId) {
     console.log("[GetScheduledPosts]: User not authenticated.");
+    return [];
   }
 
   try {
@@ -23,11 +26,13 @@ export async function getScheduledPosts(userId: string | null) {
         status,
         platform,
         post_title,
+        post_description,
         error_message,
         media_type,
+        media_storage_path,
         batch_id,
         social_accounts:social_account_id (
-          
+          id,
           display_name,
           avatar_url
         )
@@ -44,5 +49,37 @@ export async function getScheduledPosts(userId: string | null) {
   } catch (err) {
     console.error("[Get Scheduled Posts] Unexpected error:", err);
     throw err;
+  }
+}
+/**
+ * Group scheduled posts by batch ID
+ */
+export async function getScheduledPostsGroupedByBatch(userId: string | null) {
+  try {
+    const posts = await getScheduledPosts(userId);
+
+    // Group posts by batch_id
+    const groupedPosts = posts.reduce(
+      (acc: Record<string, ScheduledPost[]>, post) => {
+        const batchId = post.batch_id;
+        if (!acc[batchId]) {
+          acc[batchId] = [];
+        }
+        acc[batchId].push(post);
+        return acc;
+      },
+      {}
+    );
+
+    return {
+      success: true,
+      data: groupedPosts,
+    };
+  } catch (err) {
+    console.error("[Group Scheduled Posts] Error:", err);
+    return {
+      success: false,
+      data: null,
+    };
   }
 }

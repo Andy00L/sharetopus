@@ -1,5 +1,6 @@
 // lib/api/pinterest/exchangePinterestCode.ts
-import { TokenExchangeResponse } from "@/lib/types/TokenExchangeResponse";
+
+import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 
 export async function exchangePinterestCode(
   code: string

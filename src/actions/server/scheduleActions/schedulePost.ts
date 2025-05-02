@@ -70,6 +70,7 @@ export async function schedulePost(
       post_options: data.postOptions, // Store the JSONB options
       media_type: data.mediaType,
       media_storage_path: data.mediaStoragePath,
+      batch_id: data.batch_id,
     };
 
     // Insert the record into the scheduled_posts table
