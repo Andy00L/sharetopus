@@ -90,6 +90,8 @@ export async function postToLinkedIn({
           mediaType = "video/mp4";
         } else if (fileName.endsWith(".gif")) {
           mediaType = "image/gif";
+        } else if (fileName.endsWith(".mov")) {
+          mediaType = "image/mov";
         }
       }
       if (!mediaType) {
