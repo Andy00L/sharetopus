@@ -365,18 +365,6 @@ export default function BatchedPostCard({
             <div className="mt-4">
               <h4 className="text-sm font-medium mb-2">Content</h4>
 
-              {/* Media preview */}
-              {mediaType !== "text" && firstPost.media_storage_path && (
-                <div className="mb-4">
-                  <MediaPreview
-                    mediaPath={firstPost.media_storage_path}
-                    mediaType={mediaType}
-                    title=""
-                    size="large"
-                  />
-                </div>
-              )}
-
               {firstPost.post_title && (
                 <p className="text-sm mb-2">
                   <span className="font-medium">Title:</span>{" "}

@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/my-function.js": {
+      "maxDuration": 60
+    }
+  }
+}

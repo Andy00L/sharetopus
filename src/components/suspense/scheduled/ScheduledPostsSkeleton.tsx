@@ -1,11 +1,11 @@
 // components/core/scheduled/ScheduledPostsSkeleton.tsx
-import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import {
   Card,
   CardContent,
   CardFooter,
   CardHeader,
 } from "@/components/ui/card";
+import { SidebarGroup } from "@/components/ui/sidebar";
 
 // Individual post card skeleton
 function BatchedPostCardSkeleton() {
@@ -51,29 +51,13 @@ function BatchedPostCardSkeleton() {
 // Full grid skeleton
 export default function ScheduledPostsSkeleton() {
   return (
-    <SidebarContent className="px-4 py-6">
-      {/* Header section */}
-      <SidebarGroup className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-        <div>
-          {/* Title placeholder */}
-          <div className="h-8 w-48 bg-gray-200 dark:bg-gray-700 rounded mb-2"></div>
-          {/* Subtitle placeholder */}
-          <div className="h-5 w-64 bg-gray-200 dark:bg-gray-700 rounded"></div>
-        </div>
-
-        {/* Button placeholder */}
-        <div className="h-9 w-36 bg-gray-200 dark:bg-gray-700 rounded-md ml-auto"></div>
-      </SidebarGroup>
-
-      {/* Cards grid */}
-      <SidebarGroup className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <BatchedPostCardSkeleton />
-        <BatchedPostCardSkeleton />
-        <BatchedPostCardSkeleton />
-        <BatchedPostCardSkeleton />
-        <BatchedPostCardSkeleton />
-        <BatchedPostCardSkeleton />
-      </SidebarGroup>
-    </SidebarContent>
+    <SidebarGroup className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <BatchedPostCardSkeleton />
+      <BatchedPostCardSkeleton />
+      <BatchedPostCardSkeleton />
+      <BatchedPostCardSkeleton />
+      <BatchedPostCardSkeleton />
+      <BatchedPostCardSkeleton />
+    </SidebarGroup>
   );
 }
