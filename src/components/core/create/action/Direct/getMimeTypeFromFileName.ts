@@ -3,6 +3,7 @@
 // Or even more specifically, create a union type of allowed MIME types
 type MediaMimeType =
   | "video/mp4"
+  | "video/mov"
   | "image/jpeg"
   | "image/png"
   | "image/gif"
@@ -36,6 +37,9 @@ export function getMimeTypeFromFileName(fileName?: string): MediaMimeType {
   } else if (lowerFileName.endsWith(".gif")) {
     console.log("Detected GIF file");
     return "image/gif";
+  } else if (lowerFileName.endsWith(".mov")) {
+    console.log("Detected MOV file");
+    return "video/mov";
   }
 
   // Fall back to extension extraction if direct matching doesn't work
@@ -49,6 +53,7 @@ export function getMimeTypeFromFileName(fileName?: string): MediaMimeType {
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
     gif: "image/gif",
+    mov: "video/mov",
   };
 
   // Look up the MIME type or return default
