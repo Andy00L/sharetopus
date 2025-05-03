@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/my-function.js": {
+    "src/app/api/direct/**/*.ts": {
       "maxDuration": 60
     }
   }
