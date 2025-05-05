@@ -7,7 +7,7 @@ export interface SchedulePostData {
   scheduledAt: string | Date; // ISO string or Date object
   title?: string | null;
   description: string | null;
-  mediaType: "video" | "image" | "text"; // Extended to support images
+  postType: "video" | "image" | "text"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage
   batch_id: string;
   postOptions: {

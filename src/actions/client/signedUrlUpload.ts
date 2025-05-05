@@ -105,7 +105,9 @@ export async function uploadWithSignedUrl(
           onSuccess?.(path);
           resolve(path);
         } else {
-          const error = new Error(`Upload failed with status: ${xhr.status}`);
+          const error = new Error(
+            `Upload failed with status: ${xhr.status}, ${xhr.response}`
+          );
           onError?.(error);
           reject(error);
         }

@@ -261,6 +261,7 @@ export default function BatchedPostCard({
               mediaType={mediaType}
               title={firstPost.post_title!}
               description={firstPost.post_description!}
+              userId={userId!}
               size="small"
             />
           </div>

@@ -33,6 +33,7 @@ interface SocialAvatarWrapperProps {
   readonly className: string;
   /** Width/height in pixels, default 64px */
   readonly size?: number;
+  readonly isSelected?: boolean;
 }
 // Map of platform names to their respective icon components
 const PLATFORM_ICONS = {
@@ -52,6 +53,7 @@ export default function SocialAvatarWrapper({
   platform,
   className,
   size = 64,
+  isSelected = false,
 }: SocialAvatarWrapperProps) {
   // Calculate icon size (approximately 1/3 of the avatar size)
   const iconSize = Math.floor(size / 2);
@@ -73,6 +75,7 @@ export default function SocialAvatarWrapper({
         alt={alt}
         size={size}
         className={className}
+        isSelected={isSelected}
       />
       {/* The social icon overlay */}
       <div

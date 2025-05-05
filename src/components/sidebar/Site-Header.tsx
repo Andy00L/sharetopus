@@ -1,7 +1,6 @@
 "use client";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { ModeToggle } from "./ModeToggle";
 import { usePathname } from "next/navigation";
 
 export function SiteHeader() {
@@ -47,7 +46,7 @@ export function SiteHeader() {
           <h1 className="text-lg sm:text-base font-medium">{pageName}</h1>
         </div>
 
-        <ModeToggle />
+        {/**<ModeToggle />*/}
       </div>
     </header>
   );

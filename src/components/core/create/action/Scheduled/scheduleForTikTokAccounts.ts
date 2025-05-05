@@ -17,7 +17,7 @@ export async function scheduleForTikTokAccounts(config: {
   scheduledDate: string;
   scheduledTime: string;
 
-  mediaType: "image" | "video" | "text";
+  postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
 }): Promise<ScheduleResult> {
@@ -28,7 +28,7 @@ export async function scheduleForTikTokAccounts(config: {
     scheduledDate,
     scheduledTime,
     accountContent,
-    mediaType,
+    postType,
     userId,
     batchId,
   } = config;
@@ -56,7 +56,7 @@ export async function scheduleForTikTokAccounts(config: {
         platform: account.platform,
         scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
         description: content.description,
-        mediaType: mediaType,
+        postType: postType,
         mediaStoragePath: mediaPath,
         postOptions: platformOptions.tiktok || null,
         batch_id: batchId,

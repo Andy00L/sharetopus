@@ -1,4 +1,5 @@
 // lib/client/getSignedViewUrl.ts
+
 export interface SignedViewUrlResponse {
   success: boolean;
   url: string;
@@ -7,7 +8,8 @@ export interface SignedViewUrlResponse {
 
 export async function getSignedViewUrl(
   path: string,
-  expiresIn: number = 1800 // 30 minutes by default
+  requestUserId: string,
+  expiresIn: number = 300
 ): Promise<SignedViewUrlResponse> {
   try {
     const response = await fetch("/api/storage/generate-view-url", {
@@ -18,6 +20,7 @@ export async function getSignedViewUrl(
       body: JSON.stringify({
         path,
         expiresIn,
+        requestUserId,
       }),
     });
 

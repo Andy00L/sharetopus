@@ -2,9 +2,9 @@
 
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
+import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,89 +22,52 @@ import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards"
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 import {
-  AlertCircle,
   CalendarIcon,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Loader2,
   Search,
   SendHorizontal,
-  UploadCloud,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import FilePreview from "../../renderFilePreview";
 import { generateState } from "../accounts/ConnectSocialAccounts/generateState";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { directPostForTikTokAccounts } from "./action/Direct/directPostForTikTokAccounts";
+import { uploadMedia } from "./action/media/uploadMedia";
 import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
 import {
   scheduleForPinterestAccounts,
   ScheduleResult,
 } from "./action/Scheduled/scheduleForPinterestAccounts";
 import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
-import { uploadMedia } from "./action/uploadMedia";
+import {
+  ALLOWED_IMAGE_TYPES,
+  ALLOWED_VIDEO_TYPES,
+  MAX_IMAGE_SIZE_BYTES,
+  MAX_IMAGE_SIZE_MB,
+  MAX_VIDEO_SIZE_BYTES,
+  MAX_VIDEO_SIZE_MB,
+} from "./constants/constants";
 import NoAccountAvaible from "./NoAccountAvaible";
-import FilePreview from "./renderFilePreview";
-import { StepProgress } from "./StepProgress";
-
-// File upload constraints
-export const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png"];
-export const ALLOWED_VIDEO_TYPES = [
-  "video/mp4",
-  "video/quicktime",
-  "video/mov",
-];
-const MAX_IMAGE_SIZE_MB = 20;
-const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
-const MAX_VIDEO_SIZE_MB = 50;
-const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
-
-// Platform icons and display names mapping
-const platformConfig: Record<
-  string,
-  { icon: React.ReactNode; displayName: string }
-> = {
-  pinterest: {
-    icon: <span className="text-red-600">📌</span>,
-    displayName: "Pinterest",
-  },
-  tiktok: {
-    icon: <span className="text-black">🎵</span>,
-    displayName: "TikTok",
-  },
-  // Add other platforms as needed
-  instagram: {
-    icon: <span className="text-pink-500">📸</span>,
-    displayName: "Instagram",
-  },
-  facebook: {
-    icon: <span className="text-blue-600">👤</span>,
-    displayName: "Facebook",
-  },
-};
+import { ImageUpload } from "./upload/ImageUploadCard";
+import { VideoUpload } from "./upload/VideoUploadCard";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
   readonly userId: string | null;
+  readonly postType: "text" | "image" | "video";
 }
-
-type PlatformGroup = {
-  platform: string;
-  accounts: SocialAccount[];
-  icon: React.ReactNode;
-  displayName: string;
-};
 
 export default function SocialPostForm({
   accounts,
   userId,
+  postType,
 }: SocialPostFormProps) {
-  // Step tracking
-  const [currentStep, setCurrentStep] = useState<number>(1);
-  const steps = ["Content", "Accounts", "Details"];
-
   // Content step state
-  const [activeTab, setActiveTab] = useState("media");
   const [isDragging, setIsDragging] = useState(false);
   const [isScheduled, setIsScheduled] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -112,9 +75,7 @@ export default function SocialPostForm({
   const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [mediaType, setMediaType] = useState<"image" | "video" | "text">(
-    "video"
-  );
+
   // Add new single state for all account content
   const [accountContent, setAccountContent] = useState<
     {
@@ -166,7 +127,7 @@ export default function SocialPostForm({
   // Reset form state
   const resetForm = () => {
     setSelectedFile(null);
-    setMediaType("video");
+    setAccountContent([]);
     setTextInputs({
       title: "",
       description: "",
@@ -174,10 +135,7 @@ export default function SocialPostForm({
     });
     setAccountContent([]);
     setSelectedAccounts({});
-    setCurrentStep(1);
 
-    // Missing resets
-    setActiveTab("media");
     setIsDragging(false);
     setIsScheduled(false);
     setIsLoading(false);
@@ -202,7 +160,8 @@ export default function SocialPostForm({
     setScheduledTime("12:00");
     setSearchQuery("");
     setBoards([]);
-
+    setEditingAccounts({});
+    setOpenTab(undefined);
     // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -233,82 +192,45 @@ export default function SocialPostForm({
     }[]
   >([]);
 
-  //========================================================================
-
   // Process accounts by platform with filtering
-  const filteredPlatformGroups = Array.from(
-    new Set(accounts.map((account) => account.platform))
-  )
-    .map((platform): PlatformGroup | null => {
-      // Skip platforms that don't support text posts when in text mode
-      if (
-        activeTab === "text" &&
-        (platform === "pinterest" ||
-          platform === "tiktok" ||
-          platform === "instagram")
-      ) {
-        return null;
-      }
-
-      // Skip TikTok for image uploads - this is the new condition
-      if (mediaType === "image" && platform === "tiktok") {
-        return null;
-      }
-
-      // Filter accounts for current platform
-      const platformAccounts = accounts.filter(
-        (account) => account.platform === platform
-      );
-
-      // Apply search filter
-      const filtered = searchQuery.trim()
-        ? platformAccounts.filter((account) => {
-            const searchFields = [
-              account.username,
-              account.display_name,
-              account.platform,
-            ]
-              .filter(Boolean)
-              .map((field) => field?.toLowerCase());
-            return searchFields.some((field) =>
-              field?.includes(searchQuery.toLowerCase())
-            );
-          })
-        : platformAccounts;
-
-      // Only return platforms that have accounts after filtering
-      if (filtered.length === 0) return null;
-
-      const { icon, displayName } = platformConfig[platform] || {
-        icon: null,
-        displayName: platform.charAt(0).toUpperCase() + platform.slice(1),
-      };
-
-      return {
-        platform,
-        accounts: filtered,
-        icon,
-        displayName,
-      };
-    })
-    .filter((group): group is PlatformGroup => group !== null);
-
-  useEffect(() => {
-    if (!selectedFile) {
-      setPreviewUrl(null);
-      return;
+  // Add this new constant near your other state declarations
+  const filteredAccounts = accounts.filter((account) => {
+    // Skip platforms that don't support text posts when in text mode
+    if (
+      postType === "text" &&
+      (account.platform === "pinterest" ||
+        account.platform === "tiktok" ||
+        account.platform === "instagram")
+    ) {
+      return false;
     }
 
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
+    // Skip TikTok for image uploads
+    if (postType === "image" && account.platform === "tiktok") {
+      return false;
+    }
 
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [selectedFile]);
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const searchFields = [
+        account.username,
+        account.display_name,
+        account.platform,
+      ]
+        .filter(Boolean)
+        .map((field) => field?.toLowerCase());
+      return searchFields.some((field) =>
+        field?.includes(searchQuery.toLowerCase())
+      );
+    }
+
+    return true;
+  });
+
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
 
   // Handle file selection for upload
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -335,8 +257,8 @@ export default function SocialPostForm({
 
     // Set file and media type
     setSelectedFile(file);
-    setMediaType(isImage ? "image" : "video");
     setError(null);
+    // Generate thumbnail if it's a video
   };
 
   // Drag and drop handlers
@@ -357,7 +279,7 @@ export default function SocialPostForm({
     e.stopPropagation();
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
@@ -386,70 +308,7 @@ export default function SocialPostForm({
     }
 
     setSelectedFile(file);
-    setMediaType(isImage ? "image" : "video");
     setError(null);
-  };
-
-  // Click upload button handler
-  const handleClickUpload = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
-  };
-
-  // Remove selected file
-  const handleRemoveFile = () => {
-    setSelectedFile(null);
-    setMediaType("video");
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  // Tab change handler
-  const handleTabChange = (value: string) => {
-    setActiveTab(value);
-    setError(null); // Clear errors when switching tabs
-
-    // Reset content when switching tabs
-    setTextInputs({
-      title: "",
-      description: "",
-      link: "",
-    });
-
-    // Set the appropriate media type based on tab
-    if (value === "text") {
-      setMediaType("text");
-
-      // Clear the file if switching to text tab
-      if (value === "text" && selectedFile) {
-        handleRemoveFile();
-      }
-
-      // Clear selections for platforms that don't support text posts
-      setSelectedAccounts((prev) => {
-        const newSelections = { ...prev };
-        accounts.forEach((account) => {
-          if (
-            account.platform === "pinterest" ||
-            account.platform === "tiktok" ||
-            account.platform === "instagram"
-          ) {
-            newSelections[account.id] = false;
-          }
-        });
-        return newSelections;
-      });
-    } else if (selectedFile) {
-      // Keep existing media type if there's a file already
-      setMediaType(
-        ALLOWED_IMAGE_TYPES.includes(selectedFile.type) ? "image" : "video"
-      );
-    } else {
-      // Default for media tab with no selection
-      setMediaType("video");
-    }
   };
 
   // Account toggle handler
@@ -460,97 +319,113 @@ export default function SocialPostForm({
     }));
   };
 
-  // Next step handler
-  const handleNextStep = () => {
-    if (currentStep === 1) {
-      // Validate Content step
-      if (activeTab === "media" && !selectedFile) {
-        setError("Please upload a file before continuing.");
-        return;
-      }
-
-      if (activeTab === "text" && !textInputs.description.trim()) {
-        setError("Please enter a caption before continuing.");
-        return;
-      }
-      setError(null);
-    }
-
-    if (currentStep === 2) {
-      // Validate Accounts step
-      const hasSelectedAccounts = Object.values(selectedAccounts).some(
-        (selected) => selected
-      );
-
-      if (!hasSelectedAccounts) {
-        toast.error("Please select at least one account.");
-        return;
-      }
-
-      // Initialize account content for all selected accounts
-      const selectedAccountsList = accounts.filter(
-        (acc) => selectedAccounts[acc.id]
-      );
-
-      const initialContent = selectedAccountsList.map((account) => ({
-        accountId: account.id,
-        title: activeTab === "text" ? textInputs.title : "",
-        description: activeTab === "text" ? textInputs.description : "",
-        link: activeTab === "text" ? textInputs.link : "",
-        isCustomized: false,
-      }));
-
-      setAccountContent(initialContent);
-      loadPlatformSpecificData();
-    }
-
-    setCurrentStep((prev) => prev + 1);
-  };
-
-  // Previous step handler
-  const handlePrevStep = () => {
-    setCurrentStep((prev) => prev - 1);
-    setError(null);
-  };
-
   // Load platform-specific data based on selected accounts
-  const loadPlatformSpecificData = () => {
+  // Change your loadPlatformSpecificData function to use useCallback
+  const loadPlatformSpecificData = useCallback(() => {
     setIsLoadingBoards(true);
+
+    // Get all selected Pinterest account IDs
     const pinterestIds = accounts
       .filter(
         (acc) =>
-          // First, check if it's a Pinterest account
-          acc.platform === "pinterest" &&
-          // Then check if it's selected in our selectedAccounts object
-          selectedAccounts[acc.id] === true
+          acc.platform === "pinterest" && selectedAccounts[acc.id] === true
       )
       .map((acc) => acc.id);
 
-    pinterestIds.forEach(async (accountId) => {
+    // Filter to only accounts that don't already have boards loaded
+    const accountsToFetch = pinterestIds.filter(
+      (accountId) => !boards.some((board) => board.accountId === accountId)
+    );
+
+    // If no accounts need fetching, just finish loading
+    if (accountsToFetch.length === 0) {
+      setIsLoadingBoards(false);
+      return;
+    }
+
+    // Fetch boards only for accounts that don't have boards yet
+    accountsToFetch.forEach(async (accountId) => {
       const account = accounts.find((acc) => acc.id === accountId);
       if (!account?.access_token) return;
 
       const fetchedBoards = await getPinterestBoards(account.access_token);
 
       const formatedBoards = fetchedBoards.map((board) => ({
-        boardID: board.id, // Keep the original ID
-        boardName: board.name, // Keep the board name
+        boardID: board.id,
+        boardName: board.name,
         accountId: accountId,
         isSelected: false,
       }));
 
       setBoards((prevBoards) => {
-        // Filter out any existing boards for this account
-        const otherAccountBoards = prevBoards.filter(
-          (board) => board.accountId !== accountId
+        const existingBoardIds = new Set(
+          prevBoards
+            .filter((board) => board.accountId === accountId)
+            .map((board) => board.boardID)
         );
 
-        // Add the newly fetched boards
-        return [...otherAccountBoards, ...formatedBoards];
+        const newBoards = formatedBoards.filter(
+          (board) => !existingBoardIds.has(board.boardID)
+        );
+        // Keep existing boards and add new ones
+        return [...prevBoards, ...newBoards];
       });
       setIsLoadingBoards(false);
     });
-  };
+  }, [accounts, selectedAccounts, boards]);
+
+  // Add this useEffect to handle account content initialization
+  useEffect(() => {
+    const selectedAccountsList = accounts.filter(
+      (acc) => selectedAccounts[acc.id]
+    );
+
+    if (selectedAccountsList.length > 0) {
+      // Filter out accounts that are already in accountContent
+      const newAccounts = selectedAccountsList.filter(
+        (acc) => !accountContent.some((item) => item.accountId === acc.id)
+      );
+      const initialContent = newAccounts.map((account) => ({
+        accountId: account.id,
+        title: textInputs.title,
+        description: textInputs.description, // Always use textInputs.description
+        link: textInputs.link,
+        isCustomized: false,
+      }));
+
+      setAccountContent((prev) => [...prev, ...initialContent]);
+    }
+  }, [
+    selectedAccounts,
+    postType,
+    textInputs,
+    accounts,
+    loadPlatformSpecificData,
+  ]);
+
+  useEffect(() => {
+    const pinterestAccounts = accounts.filter(
+      (acc) => selectedAccounts[acc.id] && acc.platform === "pinterest"
+    );
+
+    if (pinterestAccounts.length > 0) {
+      loadPlatformSpecificData();
+    }
+  }, [selectedAccounts, accounts, loadPlatformSpecificData]);
+
+  useEffect(() => {
+    if (!selectedFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(selectedFile);
+    setPreviewUrl(url);
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [selectedFile]);
 
   const checksBeforeSubmission = () => {
     // Basic validation
@@ -568,7 +443,7 @@ export default function SocialPostForm({
     }
 
     // Media validation
-    if (activeTab === "media") {
+    if (postType === "video" || postType === "image") {
       if (!selectedFile) {
         setError("Please select a file to upload");
         return false;
@@ -576,7 +451,7 @@ export default function SocialPostForm({
     }
 
     // Check if captions are provided (required for images only)
-    if (mediaType === "text") {
+    if (postType === "text") {
       // Text post validation - we already have content from step 1
       const missingTitle = accountContent.some(
         (item) => !item.description.trim()
@@ -587,7 +462,7 @@ export default function SocialPostForm({
       }
     }
 
-    if (!mediaType) {
+    if (!postType) {
       return false;
     }
     if (
@@ -599,7 +474,10 @@ export default function SocialPostForm({
     }
 
     // Pinterest-specific validation
-    if (selectedPinterestAccount.length > 0 && activeTab === "media") {
+    if (
+      selectedPinterestAccount.length > 0 &&
+      (postType === "video" || postType === "image")
+    ) {
       const unselectedAccount = selectedPinterestAccount.find(
         (account) =>
           !boards.some(
@@ -632,7 +510,7 @@ export default function SocialPostForm({
     try {
       batchId = generateState();
       // 2. Téléchargement du média (si nécessaire)
-      if (activeTab === "media" && selectedFile) {
+      if ((postType === "video" || postType === "image") && selectedFile) {
         const uploadResult = await uploadMedia(selectedFile, (progress) => {
           setUploadProgress(progress); // Update progress state
         });
@@ -657,7 +535,7 @@ export default function SocialPostForm({
           selectedPinterestAccount.some((acc) => acc.id === item.accountId)
         ),
         batchId,
-        mediaType,
+        postType,
         userId,
       });
 
@@ -675,7 +553,7 @@ export default function SocialPostForm({
         accountContent: accountContent.filter((item) =>
           selectedTikTokAccount.some((acc) => acc.id === item.accountId)
         ),
-        mediaType,
+        postType,
         batchId,
         userId,
       });
@@ -694,7 +572,7 @@ export default function SocialPostForm({
           selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
         ),
         batchId,
-        mediaType,
+        postType,
         userId,
       });
 
@@ -717,7 +595,7 @@ export default function SocialPostForm({
       setError("Failed to publish post");
 
       // Nettoyage des fichiers si nécessaire
-      if (mediaStoragePath && activeTab === "media") {
+      if (mediaStoragePath && (postType === "video" || postType === "image")) {
         try {
           await deleteSupabaseFileAction(mediaStoragePath, userId);
         } catch (deleteError) {
@@ -760,7 +638,7 @@ export default function SocialPostForm({
       batchId = generateState();
 
       // Upload media file if needed (only for media tab)
-      if (activeTab === "media" && selectedFile) {
+      if ((postType === "video" || postType === "image") && selectedFile) {
         const uploadResult = await uploadMedia(selectedFile, (progress) => {
           setUploadProgress(progress);
         });
@@ -816,7 +694,10 @@ export default function SocialPostForm({
         // ───────────────── Linkedin ────────────────────
         linkedinResult = await directPostForLinkedInAccounts({
           accounts: selectedLinkedinAccount,
-          mediaPath: activeTab === "media" && mediaPath ? mediaPath : "",
+          mediaPath:
+            (postType === "video" || postType === "image") && mediaPath
+              ? mediaPath
+              : "",
           platformOptions,
           accountContent: accountContent.filter((item) =>
             selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
@@ -877,746 +758,574 @@ export default function SocialPostForm({
     setIsLoading(false);
   };
 
+  // New state for tracking which accounts are in edit mode
+  const [editingAccounts, setEditingAccounts] = useState<
+    Record<string, boolean>
+  >({});
+  const [openTab, setOpenTab] = useState<string | undefined>(undefined);
+
   return (
-    <SidebarGroup className="w-full max-w-3xl mx-auto">
+    <>
       {/**No accounts avaible */}
       {accounts.length === 0 && <NoAccountAvaible />}
 
       {accounts.length !== 0 && (
         <>
-          {/* Progress bar */}
-          <StepProgress steps={steps} currentStep={currentStep} />
+          <SidebarGroup className="flex-1  lg:w-3/6 space-y-6">
+            {/* Account selection section */}
+            <div>
+              <div className="flex-grow space-y-4">
+                {/* Search bar */}
+                <div className="relative">
+                  {!isSearchExpanded ? (
+                    // Collapsed state - compact button
+                    <div className="inline-block">
+                      <button
+                        onClick={() => setIsSearchExpanded(true)}
+                        className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-all duration-300 ease-in-out"
+                      >
+                        <Search className="h-3 w-3" />
+                        <span>Search & Filter</span>
+                        <ChevronDown className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    // Expanded state - button and search bar
+                    <div className="flex flex-col gap-2">
+                      <div className="inline-block">
+                        <button
+                          onClick={() => setIsSearchExpanded(false)}
+                          className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-all duration-300 ease-in-out"
+                        >
+                          <Search className="h-3 w-3" />
+                          <span>Search & Filter</span>
+                          <ChevronUp className="h-3 w-3" />
+                        </button>
+                      </div>
 
-          {/* Step 1: Content */}
-          {currentStep === 1 && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">Create a post</h1>
+                      <div className="relative w-full transition-all duration-500 ease-out origin-top transform animate-in fade-in-0 slide-in-from-top-2">
+                        <Input
+                          placeholder="Search accounts..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="w-full border-[0.5px] focus:ring-0 focus:border-gray-400 focus:outline-none focus-visible:ring-1 focus-visible:ring-gray-300"
+                          autoFocus
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-              <Tabs
-                defaultValue="media"
-                value={activeTab}
-                onValueChange={handleTabChange}
-                className="w-full"
-              >
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="media">Media Post</TabsTrigger>
-                  <TabsTrigger value="text">Text Post</TabsTrigger>
-                </TabsList>
-
-                {/*media content*/}
-                <TabsContent value="media" className="space-y-4 mt-4 ">
-                  {!selectedFile && (
+                {/* Account grid */}
+                <div className="flex flex-row flex-wrap gap-4">
+                  {filteredAccounts.map((account) => (
                     <div
-                      role="button"
-                      tabIndex={0}
-                      aria-label="Upload file area"
-                      className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors cursor-pointer ${
-                        isDragging
-                          ? "border-primary bg-primary/5"
-                          : "border-muted-foreground/20 hover:border-primary/50 hover:bg-muted/30"
-                      }`}
-                      onDragEnter={handleDragEnter}
-                      onDragLeave={handleDragLeave}
-                      onDragOver={handleDragOver}
-                      onDrop={handleDrop}
-                      onClick={handleClickUpload}
-                      onKeyDown={(e) => {
-                        // Trigger click on Enter or Space key
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          handleClickUpload();
+                      key={`grid-${account.id}`}
+                      className="relative cursor-pointer group"
+                      onClick={() => handleAccountToggle(account.id)}
+                    >
+                      <div
+                        className={`
+                          relative transition-all duration-100
+                          ${
+                            !selectedAccounts[account.id]
+                              ? "grayscale opacity-60 hover:opacity-80"
+                              : "grayscale-0 opacity-100"
+                          }
+                        `}
+                      >
+                        <SocialAvatarWrapper
+                          src={account.avatar_url}
+                          alt={account.username ?? "Account"}
+                          platform={account.platform}
+                          className="h-12 w-12"
+                          size={48}
+                          isSelected={!!selectedAccounts[account.id]}
+                        />
+                      </div>
+
+                      {/* Tooltip with account name on hover */}
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                        {account.display_name ?? account.username}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/*video content*/}
+            {postType === "video" && !selectedFile && (
+              <VideoUpload
+                onFileChange={handleFileChange}
+                onDrop={handleDrop}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                isDragging={isDragging}
+                fileInputRef={fileInputRef}
+                // Pass the parent's ref
+              />
+            )}
+
+            {/*image content*/}
+            {postType === "image" && !selectedFile && (
+              <ImageUpload
+                onFileChange={handleFileChange}
+                onDrop={handleDrop}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                isDragging={isDragging}
+                fileInputRef={fileInputRef} // Pass the parent's ref
+              />
+            )}
+
+            {/* caption field */}
+
+            <Label htmlFor="text-content">
+              {postType === "text" ? "Content" : "Caption"}
+            </Label>
+            <Textarea
+              id="text-content"
+              value={textInputs.description}
+              onChange={(e) =>
+                setTextInputs({
+                  ...textInputs,
+                  description: e.target.value,
+                })
+              }
+              placeholder={
+                postType === "text"
+                  ? "Write your post content here"
+                  : "Write a caption for your post"
+              }
+              rows={6}
+              required
+            />
+
+            {/* Post details section */}
+            {(postType === "video" || postType === "image") && (
+              <>
+                {/* For multiple accounts - show default caption and tabs */}
+                {(selectedPinterestAccount.length > 0 ||
+                  Object.values(selectedAccounts).filter(Boolean).length >
+                    1) && (
+                  <>
+                    {/* Tabs for customization - with toggle behavior */}
+
+                    <Tabs
+                      value={openTab}
+                      onValueChange={(value) => {
+                        // If we're clicking the currently open tab, close it by setting undefined
+                        if (openTab === value) {
+                          setOpenTab(undefined);
+                        } else {
+                          // Otherwise, open the clicked tab
+                          setOpenTab(value);
                         }
                       }}
+                      defaultValue={
+                        selectedPinterestAccount.length === 1 &&
+                        Object.values(selectedAccounts).filter(Boolean)
+                          .length === 1
+                          ? "pinterest"
+                          : undefined
+                      }
                     >
-                      <div className="w-full h-full flex flex-col items-center justify-center">
-                        <UploadCloud className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="font-medium text-lg mb-2">
-                          Click to upload or drag and drop
-                        </h3>
-                        <p className="text-sm text-muted-foreground mb-1">
-                          or paste from clipboard
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Images (JPEG, PNG) up to {MAX_IMAGE_SIZE_MB}MB or
-                          Videos (MP4, MOV) up to {MAX_VIDEO_SIZE_MB}MB
-                        </p>
-                      </div>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept={[
-                          ...ALLOWED_IMAGE_TYPES,
-                          ...ALLOWED_VIDEO_TYPES,
-                        ].join(",")}
-                        onChange={handleFileChange}
-                        className="hidden"
+                      <TabsList>
+                        {!(
+                          selectedPinterestAccount.length === 1 &&
+                          Object.values(selectedAccounts).filter(Boolean)
+                            .length === 1
+                        ) && (
+                          <TabsTrigger value="captions">
+                            Custom Captions
+                          </TabsTrigger>
+                        )}
+                        {selectedPinterestAccount.length > 0 && (
+                          <TabsTrigger value="pinterest">
+                            Pinterest Settings
+                          </TabsTrigger>
+                        )}
+                      </TabsList>
+
+                      {/* Custom Captions Tab */}
+                      <TabsContent value="captions" className="mt-4">
+                        <div className="space-y-4">
+                          {accounts
+                            .filter((account) => selectedAccounts[account.id])
+                            .map((account) => {
+                              const accountData = accountContent.find(
+                                (item) => item.accountId === account.id
+                              );
+                              const isCustomized =
+                                accountData?.isCustomized || false;
+                              const isEditing =
+                                editingAccounts[account.id] || false;
+
+                              return (
+                                <div
+                                  key={`caption-${account.id}`}
+                                  className="border rounded p-3"
+                                >
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <AvatarWithFallback
+                                        src={account.avatar_url}
+                                        alt={account.username ?? "Account"}
+                                        size={42}
+                                        className="h-8 w-8"
+                                      />
+                                      <span>
+                                        {account.display_name ??
+                                          account.username}
+                                      </span>
+                                      {isCustomized && (
+                                        <span className="text-xs text-muted-foreground">
+                                          (Customized)
+                                        </span>
+                                      )}
+                                    </div>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        if (isEditing || isCustomized) {
+                                          // Clear button - revert to default
+                                          const defaultContent =
+                                            accountContent.find(
+                                              (item) => !item.isCustomized
+                                            );
+                                          setAccountContent((prev) =>
+                                            prev.map((item) =>
+                                              item.accountId === account.id
+                                                ? {
+                                                    ...item,
+                                                    isCustomized: false,
+                                                    description:
+                                                      defaultContent?.description ||
+                                                      "",
+                                                    title:
+                                                      defaultContent?.title ||
+                                                      "",
+                                                  }
+                                                : item
+                                            )
+                                          );
+                                          setEditingAccounts((prev) => ({
+                                            ...prev,
+                                            [account.id]: false,
+                                          }));
+                                        } else {
+                                          // Edit button - enable editing
+                                          setEditingAccounts((prev) => ({
+                                            ...prev,
+                                            [account.id]: true,
+                                          }));
+                                        }
+                                      }}
+                                    >
+                                      {isEditing || isCustomized
+                                        ? "Clear"
+                                        : "Edit"}
+                                    </Button>
+                                  </div>
+
+                                  <Textarea
+                                    value={accountData?.description || ""}
+                                    onChange={(e) => {
+                                      if (isEditing) {
+                                        setAccountContent((prev) =>
+                                          prev.map((item) =>
+                                            item.accountId === account.id
+                                              ? {
+                                                  ...item,
+                                                  description: e.target.value,
+                                                  isCustomized: true,
+                                                }
+                                              : item
+                                          )
+                                        );
+                                      }
+                                    }}
+                                    placeholder="Caption for this account"
+                                    rows={3}
+                                    disabled={!isEditing}
+                                    className={!isEditing ? "bg-muted/50" : ""}
+                                  />
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </TabsContent>
+
+                      {/* Pinterest Settings Tab */}
+                      {selectedPinterestAccount.length > 0 && (
+                        <TabsContent value="pinterest" className="mt-4">
+                          <div className="space-y-4">
+                            {/* Board selection for each Pinterest account */}
+                            {selectedPinterestAccount.map((account) => (
+                              <div
+                                key={`pinterest-${account.id}`}
+                                className="space-y-3 border rounded p-3"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <AvatarWithFallback
+                                    src={account.avatar_url}
+                                    alt={account.username ?? "Account"}
+                                    size={42}
+                                    className="h-8 w-8"
+                                  />
+                                  <span className="font-medium">
+                                    {account.display_name ?? account.username}
+                                  </span>
+                                </div>
+
+                                {isLoadingBoards && (
+                                  <div className="p-2 border rounded-md text-gray-500">
+                                    Loading boards...
+                                  </div>
+                                )}
+
+                                {!isLoadingBoards &&
+                                  boards.filter(
+                                    (board) => board.accountId === account.id
+                                  ).length === 0 && (
+                                    <div className="p-2 border rounded-md text-gray-500">
+                                      No boards available for this account
+                                    </div>
+                                  )}
+
+                                {!isLoadingBoards &&
+                                  boards.filter(
+                                    (board) => board.accountId === account.id
+                                  ).length > 0 && (
+                                    <Select
+                                      value={
+                                        boards.find(
+                                          (b) =>
+                                            b.accountId === account.id &&
+                                            b.isSelected
+                                        )?.boardID ?? ""
+                                      }
+                                      onValueChange={(boardId) => {
+                                        setBoards((prevBoards) =>
+                                          prevBoards.map((board) => ({
+                                            ...board,
+                                            isSelected:
+                                              board.accountId === account.id
+                                                ? board.boardID === boardId
+                                                : board.isSelected,
+                                          }))
+                                        );
+                                      }}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select a board" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {boards
+                                          .filter(
+                                            (board) =>
+                                              board.accountId === account.id
+                                          )
+                                          .map((board) => (
+                                            <SelectItem
+                                              key={`${account.id}-${board.boardID}`}
+                                              value={board.boardID}
+                                            >
+                                              {board.boardName}
+                                            </SelectItem>
+                                          ))}
+                                      </SelectContent>
+                                    </Select>
+                                  )}
+                              </div>
+                            ))}
+                            {/* Single title field for all Pinterest accounts */}
+                            <div className="space-y-2 mb-4">
+                              <Label htmlFor="pinterest-title">
+                                Title (Optional)
+                              </Label>
+                              <Input
+                                id="pinterest-title"
+                                value={textInputs.title}
+                                onChange={(e) => {
+                                  // Update the main textInputs state
+                                  setTextInputs((prev) => ({
+                                    ...prev,
+                                    title: e.target.value,
+                                  }));
+
+                                  // Update all Pinterest account titles at once
+                                  setAccountContent((prev) =>
+                                    prev.map((item) =>
+                                      selectedPinterestAccount.some(
+                                        (acc) => acc.id === item.accountId
+                                      )
+                                        ? { ...item, title: e.target.value }
+                                        : item
+                                    )
+                                  );
+                                }}
+                                placeholder="Add a title for all Pinterest pins"
+                              />
+                            </div>
+                            {/* Single link field for all Pinterest accounts */}
+                            <div className="space-y-2">
+                              <Label htmlFor="pinterest-link">
+                                Link (Optional)
+                              </Label>
+                              <Input
+                                id="pinterest-link"
+                                type="url"
+                                value={platformOptions.pinterest?.link ?? ""}
+                                onChange={(e) => {
+                                  setPlatformOptions((prev) => ({
+                                    ...prev,
+                                    pinterest: {
+                                      ...prev.pinterest!,
+                                      link: e.target.value,
+                                    },
+                                  }));
+                                }}
+                                placeholder="https://example.com"
+                              />
+                            </div>
+                          </div>
+                        </TabsContent>
+                      )}
+                    </Tabs>
+                  </>
+
+                  /* Single account view - simplified when only one account is selected */
+                )}
+              </>
+            )}
+          </SidebarGroup>
+
+          <SidebarGroup className="w-full  lg:w-2/6 space-y-6">
+            {/* Preview panel */}
+            {selectedFile && (
+              <div className="border rounded-2xl  bg-white ">
+                <div className="p-5">
+                  <h1 className="mb-3">Media Preview</h1>
+                  <div className="rounded-lg overflow-hidden bg-white relative">
+                    <FilePreview
+                      selectedFile={selectedFile}
+                      mediaType={postType}
+                      previewUrl={previewUrl}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/**Scheduling button */}
+            <div className=" p-2.5 border rounded-2xl">
+              {/* Scheduling toggle */}
+              <div className="flex items-center  space-x-2 py-2">
+                <Switch
+                  id="schedule-toggle"
+                  checked={isScheduled}
+                  onCheckedChange={setIsScheduled}
+                />
+                <Label htmlFor="schedule-toggle">Schedule for later</Label>
+              </div>
+
+              {/* Scheduling options */}
+              {isScheduled && (
+                <div className="grid gap-4 py-2">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="schedule-date">Date</Label>
+                      <Input
+                        id="schedule-date"
+                        type="date"
+                        value={scheduledDate}
+                        min={format(new Date(), "yyyy-MM-dd")}
+                        onChange={(e) => setScheduledDate(e.target.value)}
                       />
                     </div>
-                  )}
-
-                  {/**Remove file button */}
-                  {selectedFile && (
-                    <div className="border rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="font-medium">Selected {mediaType}</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleRemoveFile}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-
-                      {/**render file preview */}
-                      <FilePreview
-                        selectedFile={selectedFile}
-                        mediaType={mediaType}
-                        previewUrl={previewUrl}
-                      />
-                      <div className="text-sm text-muted-foreground mt-2">
-                        {selectedFile.name} (
-                        {(selectedFile.size / 1024 / 1024).toFixed(2)} MB)
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-
-                {/*text content*/}
-                <TabsContent value="text" className="space-y-4 mt-4">
-                  <div className="border rounded-lg p-4 space-y-3">
-                    {/**Small alert */}
-                    <Alert className="mb-4">
-                      <AlertCircle className="h-4 w-4 mr-2" />
-                      <AlertDescription>
-                        Text posts are only supported on Facebook, Twitter,
-                        Threads, Linkedin. Other platforms require media
-                        content.
-                      </AlertDescription>
-                    </Alert>
-
-                    {/**Caption */}
-                    <div>
-                      <Label htmlFor="text-content">Content</Label>
-                      <Textarea
-                        id="text-content"
-                        value={textInputs.description}
-                        onChange={(e) =>
-                          setTextInputs({
-                            ...textInputs,
-                            description: e.target.value,
-                          })
-                        }
-                        placeholder="Write your post content here"
-                        rows={6}
-                        required
+                    <div className="space-y-2">
+                      <Label htmlFor="schedule-time">Time</Label>
+                      <Input
+                        id="schedule-time"
+                        type="time"
+                        value={scheduledTime}
+                        onChange={(e) => setScheduledTime(e.target.value)}
                       />
                     </div>
                   </div>
-                </TabsContent>
-              </Tabs>
+                  <div className="text-sm text-muted-foreground flex items-center">
+                    <Clock className="mr-2 h-4 w-4" />
+                    Will be posted on{" "}
+                    {format(
+                      new Date(`${scheduledDate}T${scheduledTime}`),
+                      "PPP 'at' p"
+                    )}
+                  </div>
+                </div>
+              )}
 
+              {/* Error display */}
               {error && (
                 <Alert variant="destructive">
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               )}
 
-              {/* Button to go to the next step*/}
-              <Button
-                className="w-full"
-                onClick={handleNextStep}
-                disabled={
-                  (activeTab === "media" && !selectedFile) ||
-                  (activeTab === "text" && !textInputs.description.trim())
-                }
-              >
-                Continue to Select Accounts
-              </Button>
-            </div>
-          )}
-
-          {/* Step 2: Account Selection */}
-          {currentStep === 2 && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">Select Accounts</h1>
-
-              <div className="flex gap-4">
-                <div className="flex-grow space-y-4">
-                  {/* Search bar */}
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-                    <Input
-                      placeholder="Search accounts..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-9"
-                    />
-                  </div>
-
-                  {/* Account grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredPlatformGroups.map(
-                      ({
-                        platform,
-                        accounts: filteredAccounts,
-                        icon,
-                        displayName,
-                      }) => (
-                        <div
-                          key={platform}
-                          className="border rounded-lg overflow-hidden bg-card"
-                        >
-                          <div className="bg-muted p-3 flex items-center gap-2 font-medium">
-                            {icon}
-                            <span>{displayName}</span>
-                          </div>
-
-                          <div className="p-2 space-y-1">
-                            {filteredAccounts.map((account: SocialAccount) => (
-                              <div
-                                key={account.id}
-                                className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded"
-                              >
-                                <Checkbox
-                                  id={`account-${account.id}`}
-                                  checked={!!selectedAccounts[account.id]}
-                                  onCheckedChange={() =>
-                                    handleAccountToggle(account.id)
-                                  }
-                                />
-
-                                {/**Account Avatar  */}
-                                <AvatarWithFallback
-                                  src={account.avatar_url}
-                                  alt={account.username ?? "Account"}
-                                  size={24}
-                                  className="h-8 w-8"
-                                />
-
-                                {/**Account name */}
-                                <div className="flex-1 min-w-0">
-                                  <span className="text-sm truncate block overflow-hidden text-ellipsis">
-                                    {account.display_name ?? account.username}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    )}
+              {selectedFile && isLoading && (
+                <div className="mt-2">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Uploading: {uploadProgress}%
+                  </p>
+                  <div className="w-full bg-muted rounded-full h-2.5">
+                    <div
+                      className="bg-primary h-2.5 rounded-full"
+                      style={{ width: `${uploadProgress}%` }}
+                    ></div>
                   </div>
                 </div>
+              )}
 
-                {/* Preview panel */}
-                <div className="w-64 space-y-4 hidden lg:block">
-                  {selectedFile && (
-                    <>
-                      <FilePreview
-                        selectedFile={selectedFile}
-                        mediaType={mediaType}
-                        previewUrl={previewUrl}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/**Navigation Buttons*/}
-              <div className="flex justify-between pt-4">
-                {/**Back button */}
-                <Button variant="outline" onClick={handlePrevStep}>
-                  Back
-                </Button>
-
-                {/**Button to step 3 */}
-                <Button
-                  onClick={handleNextStep}
-                  disabled={
-                    !Object.values(selectedAccounts).some(
-                      (selected) => selected
-                    )
-                  }
-                >
-                  Continue to Details
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Final Details & Scheduling */}
-          {currentStep === 3 && (
-            <div className="space-y-4">
-              <h1 className="text-2xl font-bold">Post Details</h1>
-
-              <div className="border rounded-lg p-4 space-y-4">
-                {/* Caption customization UI for media posts */}
-                {activeTab === "media" && (
-                  <div className="border rounded-lg p-4 space-y-4 mb-4">
-                    <h3 className="font-medium">Post Caption</h3>
-
-                    {/* Global caption - always shown for media posts */}
-                    <div className="space-y-2">
-                      {/* Add global Pinterest title field when Pinterest accounts are selected */}
-                      {selectedPinterestAccount.length > 0 && (
-                        <div className="space-y-2 pb-2 border-b">
-                          <Label htmlFor="global-pin-title">
-                            {Object.values(selectedAccounts).filter(Boolean)
-                              .length > 1
-                              ? "Default Pinterest Title"
-                              : "Pinterest Title"}
-                          </Label>
-
-                          <Input
-                            id="global-pin-title"
-                            value={
-                              accountContent.find((item) => !item.isCustomized)
-                                ?.title ?? ""
-                            }
-                            onChange={(e) => {
-                              const newValue = e.target.value;
-                              setAccountContent((prev) =>
-                                prev.map((item) =>
-                                  item.isCustomized
-                                    ? item
-                                    : {
-                                        ...item,
-                                        title: newValue,
-                                      }
-                                )
-                              );
-                            }}
-                            placeholder="Add a title for your Pinterest pin"
-                          />
-                        </div>
-                      )}
-
-                      <Label htmlFor="global-caption">
-                        {Object.values(selectedAccounts).filter(Boolean)
-                          .length > 1
-                          ? "Default Caption"
-                          : "Caption"}
-                      </Label>
-                      <Textarea
-                        id="global-caption"
-                        value={
-                          accountContent.find((item) => !item.isCustomized)
-                            ?.description ?? ""
-                        }
-                        onChange={(e) => {
-                          const newValue = e.target.value;
-                          setAccountContent((prev) =>
-                            prev.map((item) =>
-                              item.isCustomized
-                                ? item
-                                : {
-                                    ...item,
-                                    description: newValue,
-                                  }
-                            )
-                          );
-                        }}
-                        placeholder="Write a caption for your post"
-                        rows={3}
-                      />
-
-                      <Label htmlFor="global-link">
-                        {Object.values(selectedAccounts).filter(Boolean)
-                          .length > 1
-                          ? "Default Link (Optional)"
-                          : "Link (Optional)"}
-                      </Label>
-                      <Input
-                        id="global-link"
-                        type="url"
-                        value={
-                          accountContent.find((item) => !item.isCustomized)
-                            ?.link ?? ""
-                        }
-                        onChange={(e) => {
-                          const newValue = e.target.value;
-                          setAccountContent((prev) =>
-                            prev.map((item) =>
-                              item.isCustomized
-                                ? item
-                                : {
-                                    ...item,
-                                    link: newValue,
-                                  }
-                            )
-                          );
-                        }}
-                        placeholder="https://example.com"
-                      />
-                    </div>
-
-                    {/* Custom captions section - only shown if multiple accounts are selected */}
-                    {Object.values(selectedAccounts).filter(Boolean).length >
-                      1 && (
-                      <div className="pt-2">
-                        <h4 className="text-sm font-medium mb-2">
-                          Custom Captions by Account
-                        </h4>
-
-                        {accounts
-                          .filter(
-                            (account) =>
-                              selectedAccounts[account.id] &&
-                              accountContent.some(
-                                (item) => item.accountId === account.id
-                              )
-                          )
-                          .map((account) => (
-                            <div
-                              key={account.id}
-                              className="border rounded p-3 mb-3"
-                            >
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <AvatarWithFallback
-                                    src={account.avatar_url}
-                                    alt={account.username ?? "Account"}
-                                    size={24}
-                                  />
-                                  <span>
-                                    {account.display_name ?? account.username}
-                                  </span>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <Switch
-                                    id={`custom-caption-${account.id}`}
-                                    checked={
-                                      accountContent.find(
-                                        (item) => item.accountId === account.id
-                                      )?.isCustomized || false
-                                    }
-                                    onCheckedChange={(checked) => {
-                                      setAccountContent((prev) =>
-                                        prev.map((item) =>
-                                          item.accountId === account.id
-                                            ? {
-                                                ...item,
-                                                isCustomized: checked,
-                                              }
-                                            : item
-                                        )
-                                      );
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`custom-caption-${account.id}`}
-                                    className="text-xs"
-                                  >
-                                    Custom Caption
-                                  </Label>
-                                </div>
-                              </div>
-
-                              {accountContent.find(
-                                (item) => item.accountId === account.id
-                              )?.isCustomized ? (
-                                <div className="space-y-2 pt-2">
-                                  {/* Add Pinterest title field for Pinterest accounts only */}
-                                  {account.platform === "pinterest" && (
-                                    <div className="mb-2">
-                                      <Input
-                                        value={
-                                          accountContent.find(
-                                            (item) =>
-                                              item.accountId === account.id
-                                          )?.title ?? ""
-                                        }
-                                        onChange={(e) => {
-                                          setAccountContent((prev) =>
-                                            prev.map((item) =>
-                                              item.accountId === account.id
-                                                ? {
-                                                    ...item,
-                                                    title: e.target.value,
-                                                  }
-                                                : item
-                                            )
-                                          );
-                                        }}
-                                        placeholder="Custom Pinterest title"
-                                      />
-                                    </div>
-                                  )}
-                                  <Textarea
-                                    value={
-                                      accountContent.find(
-                                        (item) => item.accountId === account.id
-                                      )?.description ?? ""
-                                    }
-                                    onChange={(e) => {
-                                      setAccountContent((prev) =>
-                                        prev.map((item) =>
-                                          item.accountId === account.id
-                                            ? {
-                                                ...item,
-                                                description: e.target.value,
-                                              }
-                                            : item
-                                        )
-                                      );
-                                    }}
-                                    placeholder="Custom caption for this account"
-                                    rows={2}
-                                  />
-
-                                  <Input
-                                    type="url"
-                                    value={
-                                      accountContent.find(
-                                        (item) => item.accountId === account.id
-                                      )?.link ?? ""
-                                    }
-                                    onChange={(e) => {
-                                      setAccountContent((prev) =>
-                                        prev.map((item) =>
-                                          item.accountId === account.id
-                                            ? {
-                                                ...item,
-                                                link: e.target.value,
-                                              }
-                                            : item
-                                        )
-                                      );
-                                    }}
-                                    placeholder="Custom link (optional)"
-                                  />
-                                </div>
-                              ) : (
-                                <div className="text-sm text-muted-foreground italic">
-                                  Using default caption
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Text post preview - only shown for text posts */}
-                {activeTab === "text" && (
-                  <div className="border rounded-lg p-4 space-y-4 mb-4">
-                    <h3 className="font-medium">Text Post Preview</h3>
-                    <div className="space-y-3">
-                      {textInputs.title && (
-                        <div>
-                          <h4 className="text-sm font-medium mb-1">Title</h4>
-                          <p className="p-2 bg-muted/30 rounded-md">
-                            {textInputs.title}
-                          </p>
-                        </div>
-                      )}
-
-                      <div>
-                        <h4 className="text-sm font-medium mb-1">Content</h4>
-                        <p className="p-2 bg-muted/30 rounded-md whitespace-pre-wrap">
-                          {textInputs.description}
-                        </p>
-                      </div>
-
-                      {textInputs.link && (
-                        <div>
-                          <h4 className="text-sm font-medium mb-1">Link</h4>
-                          <p className="p-2 bg-muted/30 rounded-md text-blue-600 underline">
-                            {textInputs.link}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Pinterest-specific options */}
-                {selectedPinterestAccount.map((account) => (
-                  <div key={account.id} className="space-y-3 border-b pb-4">
-                    <h3 className="font-medium">
-                      Pinterest Options for{" "}
-                      {account.display_name ?? account.username}
-                    </h3>
-                    <div className="space-y-2">
-                      <Label htmlFor={`pinterest-board-${account.id}`}>
-                        Pinterest Board
-                      </Label>
-
-                      {isLoadingBoards && (
-                        <div className="p-2 border rounded-md text-gray-500">
-                          Loading boards...
-                        </div>
-                      )}
-
-                      {!isLoadingBoards &&
-                        boards.filter((board) => board.accountId === account.id)
-                          .length === 0 && (
-                          <div className="p-2 border rounded-md text-gray-500">
-                            No boards available for this account
-                          </div>
+              {!isLoading && (
+                <div className="pt-4 flex justify-between">
+                  <Button
+                    onClick={() =>
+                      isScheduled
+                        ? handleSchedueleSubmit()
+                        : handleDirectPostSubmit()
+                    }
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        {isScheduled ? "Scheduling..." : "Publishing..."}
+                      </>
+                    ) : (
+                      <>
+                        {isScheduled ? (
+                          <>
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            Schedule Post
+                          </>
+                        ) : (
+                          <>
+                            <SendHorizontal className="mr-2 h-4 w-4" />
+                            Publish Now
+                          </>
                         )}
-
-                      {/**The dropdown menu */}
-                      {!isLoadingBoards &&
-                        boards.filter((board) => board.accountId === account.id)
-                          .length > 0 && (
-                          <Select
-                            value={
-                              boards.find(
-                                (b) =>
-                                  b.accountId === account.id && b.isSelected
-                              )?.boardID ?? ""
-                            }
-                            onValueChange={(boardId) => {
-                              setBoards((prevBoards) =>
-                                prevBoards.map((board) => ({
-                                  ...board,
-                                  isSelected:
-                                    board.accountId === account.id
-                                      ? board.boardID === boardId
-                                      : board.isSelected,
-                                }))
-                              );
-                            }}
-                            disabled={isLoadingBoards}
-                          >
-                            <SelectTrigger id={`pinterest-board-${account.id}`}>
-                              <SelectValue placeholder="Select a board" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {boards
-                                .filter(
-                                  (board) => board.accountId === account.id
-                                )
-                                .map((board) => (
-                                  <SelectItem
-                                    key={board.boardID}
-                                    value={board.boardID}
-                                  >
-                                    {board.boardName}
-                                  </SelectItem>
-                                ))}
-                            </SelectContent>
-                          </Select>
-                        )}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Scheduling toggle */}
-                <div className="flex items-center space-x-2 py-2">
-                  <Switch
-                    id="schedule-toggle"
-                    checked={isScheduled}
-                    onCheckedChange={setIsScheduled}
-                  />
-                  <Label htmlFor="schedule-toggle">Schedule for later</Label>
+                      </>
+                    )}
+                  </Button>
                 </div>
-
-                {/* Scheduling options */}
-                {isScheduled && (
-                  <div className="grid gap-4 py-2">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="schedule-date">Date</Label>
-                        <Input
-                          id="schedule-date"
-                          type="date"
-                          value={scheduledDate}
-                          min={format(new Date(), "yyyy-MM-dd")}
-                          onChange={(e) => setScheduledDate(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="schedule-time">Time</Label>
-                        <Input
-                          id="schedule-time"
-                          type="time"
-                          value={scheduledTime}
-                          onChange={(e) => setScheduledTime(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <div className="text-sm text-muted-foreground flex items-center">
-                      <Clock className="mr-2 h-4 w-4" />
-                      Will be posted on{" "}
-                      {format(
-                        new Date(`${scheduledDate}T${scheduledTime}`),
-                        "PPP 'at' p"
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Error display */}
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
-
-                {selectedFile && isLoading && (
-                  <div className="mt-2">
-                    <p className="text-sm text-muted-foreground mb-1">
-                      Uploading: {uploadProgress}%
-                    </p>
-                    <div className="w-full bg-muted rounded-full h-2.5">
-                      <div
-                        className="bg-primary h-2.5 rounded-full"
-                        style={{ width: `${uploadProgress}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                )}
-
-                {!isLoading && (
-                  <div className="pt-4 flex justify-between">
-                    <Button
-                      variant="outline"
-                      onClick={handlePrevStep}
-                      disabled={isLoading}
-                    >
-                      Back
-                    </Button>
-
-                    <Button
-                      onClick={() =>
-                        isScheduled
-                          ? handleSchedueleSubmit()
-                          : handleDirectPostSubmit()
-                      }
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {isScheduled ? "Scheduling..." : "Publishing..."}
-                        </>
-                      ) : (
-                        <>
-                          {isScheduled ? (
-                            <>
-                              <CalendarIcon className="mr-2 h-4 w-4" />
-                              Schedule Post
-                            </>
-                          ) : (
-                            <>
-                              <SendHorizontal className="mr-2 h-4 w-4" />
-                              Publish Now
-                            </>
-                          )}
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
-          )}
+          </SidebarGroup>
         </>
       )}
-    </SidebarGroup>
+    </>
   );
 }

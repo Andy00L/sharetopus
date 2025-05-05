@@ -4,33 +4,31 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
+    const { path, expiresIn, requestUserId } = await request.json();
+
     // Get authenticated user
     const { userId } = await auth();
 
-    if (!userId) {
+    if (!userId || requestUserId !== userId) {
       console.error("[Generate Upload URL] Authentication error: No userId");
       return NextResponse.json(
         { error: "User not authenticated" },
         { status: 401 }
       );
     }
-    const { path, expiresIn = 1800 } = await request.json(); // Default 30 minutes
 
-    if (!path) {
+    if (!path || !expiresIn) {
       return NextResponse.json(
         { success: false, error: "Path is required" },
         { status: 400 }
       );
     }
 
-    // Create Supabase client
+    console.log("[Generate Upload URL]", path);
 
-    // Get the bucket name from the path (format: "bucket/path/to/file")
-    const bucketName = "scheduled-videos";
-    console.log(path);
     // Generate signed URL
     const { data, error } = await adminSupabase.storage
-      .from(bucketName)
+      .from("scheduled-videos")
       .createSignedUrl(path, expiresIn);
 
     if (error) {
@@ -40,7 +38,6 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-
     return NextResponse.json({
       success: true,
       url: data.signedUrl,
@@ -50,7 +47,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
     );

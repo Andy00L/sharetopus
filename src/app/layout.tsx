@@ -1,4 +1,3 @@
-import { ThemeProvider } from "@/actions/ui/Theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
@@ -110,7 +109,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ClerkProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          {children}
           <Toaster />
           <Analytics />
           <SpeedInsights />

@@ -15,6 +15,7 @@ interface Props {
   readonly className?: string;
   /** Width / height — defaults to 64 × 64 (px) like your design. */
   readonly size?: number;
+  readonly isSelected?: boolean;
 }
 
 export default function AvatarWithFallback({
@@ -22,6 +23,7 @@ export default function AvatarWithFallback({
   alt,
   className,
   size = 40,
+  isSelected = false,
 }: Props) {
   const [errored, setErrored] = useState(false);
 
@@ -41,7 +43,8 @@ export default function AvatarWithFallback({
   return (
     <div
       className={clsx(
-        "  rounded-full overflow-hidden  bg-muted flex items-center justify-center flex-shrink-0 border-2 border-border",
+        "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",
+        isSelected ? "border-2 border-green-500" : "border-2 border-border", // Conditional border
         className
       )}
     >

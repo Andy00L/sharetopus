@@ -15,28 +15,33 @@ export default function FilePreview({
   if (!selectedFile || !previewUrl) return null;
 
   return (
-    <div className="rounded-lg overflow-hidden bg-black relative">
+    <>
       {mediaType === "image" && (
         <Image
           src={previewUrl}
           width={640}
           height={480}
           alt="Preview"
-          className="w-full h-64 object-contain"
+          className="w-full h-[420px] object-contain"
         />
       )}
       {mediaType === "video" && (
         <video
           src={previewUrl}
           controls
-          className="w-full h-64 object-contain"
+          autoPlay
+          loop
+          muted
+          className="w-full h-[420px] object-contain"
         ></video>
       )}
       {!mediaType && (
-        <div className="w-full h-64 bg-muted flex items-center justify-center">
+        <div className="w-full h-[420px] bg-muted flex items-center justify-center">
           <AlertCircle className="h-12 w-12 text-muted-foreground" />
         </div>
       )}
-    </div>
+    </>
   );
 }
+
+//collors #EEEFE8 #F3F4EF

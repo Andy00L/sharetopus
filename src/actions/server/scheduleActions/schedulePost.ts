@@ -22,7 +22,7 @@ export async function schedulePost(
     !data.socialAccountId ||
     !data.platform ||
     !data.scheduledAt ||
-    !data.mediaType
+    !data.postType
   ) {
     return {
       success: false,
@@ -31,7 +31,7 @@ export async function schedulePost(
   }
 
   // Media-specific validation - only check mediaStoragePath for media posts
-  if (data.mediaType !== "text" && !data.mediaStoragePath) {
+  if (data.postType !== "text" && !data.mediaStoragePath) {
     return {
       success: false,
       message: "Media path is required for image and video posts.",
@@ -68,7 +68,7 @@ export async function schedulePost(
       post_title: data.title ?? "",
       post_description: data.description,
       post_options: data.postOptions, // Store the JSONB options
-      media_type: data.mediaType,
+      media_type: data.postType,
       media_storage_path: data.mediaStoragePath,
       batch_id: data.batch_id,
     };

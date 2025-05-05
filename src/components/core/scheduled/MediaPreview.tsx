@@ -12,6 +12,7 @@ interface MediaPreviewProps {
   readonly title?: string;
   readonly description?: string;
   readonly size?: "small" | "large";
+  readonly userId: string;
   readonly onClick?: () => void;
 }
 
@@ -21,6 +22,7 @@ export default function MediaPreview({
   title,
   description,
   size = "small",
+  userId,
   onClick,
 }: MediaPreviewProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export default function MediaPreview({
 
     if (mediaType === "image") {
       setIsLoading(true);
-      getSignedViewUrl(mediaPath)
+      getSignedViewUrl(mediaPath, userId)
         .then((res) => {
           if (res.success && res.url) {
             setPreviewUrl(res.url);
@@ -45,15 +47,13 @@ export default function MediaPreview({
         .finally(() => setIsLoading(false));
     } else if (mediaType === "video") {
       setIsLoading(true);
-      getSignedViewUrl(mediaPath)
+      getSignedViewUrl(mediaPath, userId)
         .then(async (res) => {
           if (res.success && res.url) {
             try {
-              // This range is enough for a short preview (2-5 seconds) for most videos
-              // 3MB is a reasonable compromise for preview quality
               const response = await fetch(res.url, {
                 headers: {
-                  Range: "bytes=0-3145728", // First 3MB
+                  Range: "bytes=0-10485760", // First 10MB
                 },
               });
 
@@ -76,11 +76,12 @@ export default function MediaPreview({
     } else {
       setIsLoading(false);
     }
+    return () => {
+      if (previewUrl && previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
   }, [mediaPath, mediaType]);
-
-  const handleVideoClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-  };
 
   // If no media or it's text, show title/description
   if (!mediaPath || mediaType === "text") {
@@ -134,50 +135,12 @@ export default function MediaPreview({
     );
   }
 
-  // Video preview - small size
-  if (mediaType === "video" && previewUrl && size === "small") {
-    return (
-      <div
-        className="flex flex-col items-center w-full h-full cursor-pointer"
-        onClick={onClick}
-      >
-        <div className="relative w-full h-full overflow-hidden rounded-md bg-black">
-          <video
-            src={previewUrl}
-            className="w-full h-full object-cover"
-            muted
-            autoPlay
-            loop
-            playsInline
-            onClick={handleVideoClick}
-          />
-          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30">
-            <VideoIcon className="h-8 w-8 text-white" />
-          </div>
-        </div>
-        {title && <p className="text-sm mt-2">{title}</p>}
-      </div>
-    );
-  }
-
   // Video preview - large size
-  if (mediaType === "video" && previewUrl && size === "large") {
+  if (mediaType === "video" && previewUrl) {
     return (
       <div className="flex flex-col items-center w-full max-h-96">
         <div className="relative w-full h-full overflow-hidden rounded-md bg-black">
-          <video
-            src={previewUrl}
-            className="w-full h-full object-contain"
-            controls
-            autoPlay
-            loop
-            muted
-            playsInline
-            onClick={handleVideoClick}
-          />
-          <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 px-2 py-1 text-xs text-white text-center">
-            Preview only - First few seconds of video
-          </div>
+          <video src={previewUrl} autoPlay loop muted />
         </div>
         {title && <p className="text-sm mt-2">{title}</p>}
       </div>
