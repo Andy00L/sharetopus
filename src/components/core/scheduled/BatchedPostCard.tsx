@@ -18,12 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-} from "@/components/ui/card";
+import { Card, CardFooter, CardHeader } from "@/components/ui/card";
 
 import {
   CalendarIcon,
@@ -39,7 +34,6 @@ import { deleteScheduledPost } from "@/actions/server/scheduleActions/deleteSche
 import { resumeScheduledPost } from "@/actions/server/scheduleActions/resumeScheduledPost";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { ScheduledPost } from "@/lib/types/dbTypes";
-import MediaPreview from "./MediaPreview";
 import RescheduleDialog from "./RescheduleDialog";
 
 interface BatchedPostCardProps {
@@ -253,8 +247,8 @@ export default function BatchedPostCard({
           </div>
         </CardHeader>
 
-        <CardContent>
-          {/* Content preview based on media type */}
+        {/*  <CardContent>
+          Content preview based on media type 
           <div className="flex flex-col items-center justify-center p-2 h-32">
             <MediaPreview
               mediaPath={firstPost.media_storage_path}
@@ -265,7 +259,7 @@ export default function BatchedPostCard({
               size="small"
             />
           </div>
-        </CardContent>
+        </CardContent>*/}
 
         <CardFooter className="p-3 pt-0 mt-auto flex flex-wrap gap-2 items-center">
           {/* Show avatars for all social accounts */}
