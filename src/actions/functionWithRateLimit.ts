@@ -1,14 +1,15 @@
 import "server-only";
 
 import { SocialAccount } from "@/lib/types/dbTypes";
+import { disconnectSocialAccount } from "./server/accounts/disconnectSocialAccount";
 import { fetchSocialAccounts } from "./server/data/fetchSocialAccounts";
-import { disconnectSocialAccount } from "./server/disconnectSocialAccount";
 import { withRateLimit } from "./server/reddis/rate-limit";
 
 /**
  * Rate-limited version of fetchSocialAccounts
  * Limited to 30 requests per minute per user
  */
+
 export async function fetchSocialAccountsProtected(
   userId: string | null
 ): Promise<{ success: boolean; message: string; data?: SocialAccount[] }> {
@@ -38,7 +39,7 @@ export async function disconnectSocialAccountProtected(
     disconnectSocialAccount,
     "disconnectSocialAccount",
     userId,
-    10, // 10 requests
+    15, // 10 requests
     60 // per 60 seconds
   );
 

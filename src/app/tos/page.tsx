@@ -1,5 +1,4 @@
 // app/terms/page.tsx
-"use client";
 
 import Link from "next/link";
 
@@ -116,7 +115,7 @@ export default function page() {
         <p>
           Nous offrons un remboursement complet dans les 24 heures suivant
           l&apos;achat. Pour demander un remboursement, veuillez nous contacter
-          à jack@frikit.net.
+          à EMAIL.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
@@ -144,11 +143,8 @@ export default function page() {
         <p>
           Pour toute question ou préoccupation concernant ces Conditions
           d&apos;utilisation, veuillez nous contacter à{" "}
-          <Link
-            href="mailto:jack@frikit.net"
-            className="text-blue-500 hover:underline"
-          >
-            jack@frikit.net
+          <Link href="mailto:" className="text-blue-500 hover:underline">
+            ...
           </Link>
           .
         </p>

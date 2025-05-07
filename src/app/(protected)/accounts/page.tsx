@@ -1,10 +1,10 @@
 import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
-import NotFound from "@/app/not-found";
 import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
+import RateLimitError from "@/components/RateLimitError";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -15,7 +15,7 @@ const AccountsPageWithData = async () => {
   const fetchResult = await fetchSocialAccountsProtected(userId);
 
   if (!fetchResult.success) {
-    return <NotFound />;
+    return <RateLimitError />;
   }
   const accounts = fetchResult.data!;
 

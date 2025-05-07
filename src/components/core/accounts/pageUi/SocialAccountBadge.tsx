@@ -1,6 +1,6 @@
 "use client";
 
-import { disconnectSocialAccount } from "@/actions/server/disconnectSocialAccount";
+import { disconnectSocialAccount } from "@/actions/server/accounts/disconnectSocialAccount";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 
 import {

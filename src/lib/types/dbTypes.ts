@@ -96,7 +96,7 @@ export interface User {
   last_name: string | null;
   created_at: string;
   updated_at: string;
-
+  stripe_customer_id: string;
   // Relations (optional for type safety in joins)
   analytics_metrics?: AnalyticsMetric[];
   content_history?: ContentHistory[];

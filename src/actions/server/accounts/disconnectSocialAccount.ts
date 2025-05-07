@@ -2,7 +2,7 @@
 
 import { adminSupabase } from "@/actions/api/supabase-client";
 import { auth } from "@clerk/nextjs/server";
-import { deleteSupabaseFileAction } from "./data/deleteSupabaseFileAction";
+import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
 
 /**
  * Disconnect a social media account from the user's profile

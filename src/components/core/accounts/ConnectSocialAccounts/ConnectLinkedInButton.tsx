@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { generateState } from "./generateState";
+import { toast } from "sonner";
 
 declare global {
   interface Window {

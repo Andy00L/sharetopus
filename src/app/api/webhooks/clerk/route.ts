@@ -1,6 +1,7 @@
 // app/api/webhooks/clerk/route.ts
 import { supabase } from "@/actions/api/supabase";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import stripe from "@/lib/stripe";
 import { WebhookEvent } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { Webhook } from "svix";
@@ -111,7 +112,30 @@ async function handleUserCreated(data: ClerkUserData) {
       data.last_name ??
       (data.full_name ? data.full_name.split(" ").slice(1).join(" ") : "");
 
-    // Use profile_image_url if provided; otherwise optionally fall back to image_url.
+    //stripe customer creation
+    let stripeCustomerId: string | null = null;
+    try {
+      const customer = await stripe.customers.create({
+        email: email,
+        name: firstName && lastName ? `${firstName} ${lastName}` : undefined,
+        metadata: {
+          userId: userId, // Link Stripe customer to your user
+        },
+      });
+
+      stripeCustomerId = customer.id;
+      console.log(
+        `[Clerk Routes]: Stripe customer created for user ${userId}: ${stripeCustomerId}`
+      );
+    } catch (stripeError) {
+      console.error(
+        "[Clerk Routes]: Erreur lors de la création du client Stripe:",
+        stripeError
+      );
+      // We'll continue with user creation even if Stripe fails
+    }
+
+    ////////////////////////////////
 
     // Insert the new user into your Supabase table.
     const { error } = await supabase.from("users").insert({
@@ -119,6 +143,7 @@ async function handleUserCreated(data: ClerkUserData) {
       email,
       first_name: firstName,
       last_name: lastName,
+      stripe_customer_id: stripeCustomerId,
     });
 
     if (error) {
@@ -126,6 +151,22 @@ async function handleUserCreated(data: ClerkUserData) {
         "[Clerk Routes]: Erreur lors de la création de l'utilisateur dans Supabase:",
         error
       );
+
+      // Clean up Stripe customer if user creation failed
+      if (stripeCustomerId) {
+        try {
+          await stripe.customers.del(stripeCustomerId);
+          console.log(
+            `[Clerk Routes]: Stripe customer ${stripeCustomerId} deleted after Supabase error`
+          );
+        } catch (deleteError) {
+          console.error(
+            "[Clerk Routes]: Erreur lors de la suppression du client Stripe:",
+            deleteError
+          );
+          throw error;
+        }
+      }
     }
   } catch (error) {
     console.error("[Clerk Routes]: Erreur dans handleUserCreated:", error);
@@ -162,6 +203,29 @@ async function handleUserUpdated(data: ClerkUserData) {
         error
       );
     }
+    // Get stripe_customer_id to update Stripe
+    const { data: userData } = await supabase
+      .from("users")
+      .select("stripe_customer_id")
+      .eq("id", userId)
+      .single();
+
+    if (userData?.stripe_customer_id) {
+      try {
+        await stripe.customers.update(userData.stripe_customer_id, {
+          email: email,
+          name: firstName && lastName ? `${firstName} ${lastName}` : undefined,
+        });
+        console.log(
+          `[Clerk Routes]: Client Stripe mis à jour: ${userData.stripe_customer_id}`
+        );
+      } catch (stripeError) {
+        console.error(
+          "[Clerk Routes]: Erreur mise à jour client Stripe:",
+          stripeError
+        );
+      }
+    }
   } catch (error) {
     console.error("[Clerk Routes]: Erreur dans handleUserUpdated:", error);
     throw error;
@@ -171,28 +235,53 @@ async function handleUserUpdated(data: ClerkUserData) {
 async function handleUserDeleted(data: { id: string }) {
   try {
     const userId = data.id;
-    // Delete user from the database
+    // Get stripe_customer_id before deleting the user
+    const { data: userData } = await supabase
+      .from("users")
+      .select("stripe_customer_id")
+      .eq("id", userId)
+      .single();
+
+    // Delete user from Supabase (this will cascade delete subscriptions)
     const { error } = await supabase.from("users").delete().eq("id", userId);
+
     if (error) {
       console.error(
         "[Clerk Routes]: Erreur lors de la suppression de l'utilisateur dans Supabase:",
         error
       );
-    } // Delete user folder from storage
-    const { success, message } = await deleteSupabaseFileAction(
-      userId,
-      null,
-      true
-    );
-    if (!success) {
-      console.error(
-        "[Clerk Routes]: Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
-        message
-      );
     } else {
-      console.log(
-        `[Clerk Routes]: Dossier de l'utilisateur ${userId} supprimé avec succès`
+      // Delete Stripe customer if exists
+      if (userData?.stripe_customer_id) {
+        try {
+          await stripe.customers.del(userData.stripe_customer_id);
+          console.log(
+            `[Clerk Routes]: Client Stripe supprimé: ${userData.stripe_customer_id}`
+          );
+        } catch (stripeError) {
+          console.error(
+            "[Clerk Routes]: Erreur suppression client Stripe:",
+            stripeError
+          );
+        }
+      }
+
+      // Delete user folder from storage
+      const { success, message } = await deleteSupabaseFileAction(
+        userId,
+        null,
+        true
       );
+      if (!success) {
+        console.error(
+          "[Clerk Routes]: Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
+          message
+        );
+      } else {
+        console.log(
+          `[Clerk Routes]: Dossier de l'utilisateur ${userId} supprimé avec succès`
+        );
+      }
     }
   } catch (error) {
     console.error("[Clerk Routes]: Erreur dans handleUserDeleted:", error);
