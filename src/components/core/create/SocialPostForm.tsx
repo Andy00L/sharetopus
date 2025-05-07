@@ -380,29 +380,37 @@ export default function SocialPostForm({
       (acc) => selectedAccounts[acc.id]
     );
 
-    if (selectedAccountsList.length > 0) {
-      // Filter out accounts that are already in accountContent
-      const newAccounts = selectedAccountsList.filter(
-        (acc) => !accountContent.some((item) => item.accountId === acc.id)
+    if (selectedAccountsList.length === 0) return;
+
+    const updatedAccountContent = selectedAccountsList.map((account) => {
+      const existingContent = accountContent.find(
+        (item) => item.accountId === account.id
       );
-      const initialContent = newAccounts.map((account) => ({
+
+      if (existingContent) {
+        // Only update non-customized accounts
+        if (!existingContent.isCustomized) {
+          return {
+            ...existingContent,
+            description: textInputs.description,
+            title: textInputs.title,
+            link: textInputs.link,
+          };
+        }
+        return existingContent; // Skip customized accounts
+      }
+
+      return {
         accountId: account.id,
         title: textInputs.title,
-        description: textInputs.description, // Always use textInputs.description
+        description: textInputs.description,
         link: textInputs.link,
         isCustomized: false,
-      }));
+      };
+    });
 
-      setAccountContent((prev) => [...prev, ...initialContent]);
-    }
-  }, [
-    selectedAccounts,
-    postType,
-    textInputs,
-    accounts,
-    loadPlatformSpecificData,
-  ]);
-
+    setAccountContent(updatedAccountContent);
+  }, [selectedAccounts, textInputs, accounts]);
   useEffect(() => {
     const pinterestAccounts = accounts.filter(
       (acc) => selectedAccounts[acc.id] && acc.platform === "pinterest"

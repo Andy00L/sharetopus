@@ -1,4 +1,5 @@
-import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
+import NotFound from "@/app/not-found";
 import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
@@ -11,7 +12,12 @@ import { Suspense } from "react";
 
 const AccountsPageWithData = async () => {
   const { userId } = await auth();
-  const accounts = await fetchSocialAccounts(userId);
+  const fetchResult = await fetchSocialAccountsProtected(userId);
+
+  if (!fetchResult.success) {
+    return <NotFound />;
+  }
+  const accounts = fetchResult.data!;
 
   // Filter accounts by platform
   const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");

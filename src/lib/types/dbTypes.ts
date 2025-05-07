@@ -206,14 +206,20 @@ export interface ContentHistory {
 export interface StripeSubscription {
   id: string;
   stripe_subscription_id: string;
-  user_id: string;
+  stripe_customer_id: string;
+  stripe_price_id: string;
   plan: string;
-  status: string;
+  status: SubscriptionStatus;
   start_date: string;
   current_period_end: string;
   cancel_reason: string | null;
+  amount: number;
+  currency: string;
+  is_active: boolean;
+  metadata: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  user_id: string;
 
   // Relations
   users?: User;

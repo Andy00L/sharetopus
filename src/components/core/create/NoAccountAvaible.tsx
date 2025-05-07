@@ -4,7 +4,7 @@ import Link from "next/link";
 
 export default function NoAccountAvaible() {
   return (
-    <div className="text-center p-8 border rounded-lg">
+    <div className="text-center mx-auto p-8 border rounded-lg">
       <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
       <h3 className="text-lg font-medium mb-2">No social accounts connected</h3>
       <p className="text-muted-foreground mb-4">

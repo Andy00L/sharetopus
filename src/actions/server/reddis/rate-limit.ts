@@ -1,4 +1,4 @@
-// lib/rate-limit.ts
+//rate-limit.ts
 import "server-only";
 
 import { redis } from "@/actions/api/upstash";
@@ -6,9 +6,12 @@ import { headers } from "next/headers";
 import { Ratelimit } from "@upstash/ratelimit";
 
 // Define result type to avoid 'any'
-export type RateLimitResult<T> =
-  | { success: true; data: T }
-  | { success: false; error: string };
+export type RateLimitResult<T> = {
+  success: boolean;
+  message: string;
+  data?: T;
+  error?: string;
+};
 
 /**
  * Get the client IP address from request headers
@@ -35,13 +38,15 @@ async function getIpAddress(): Promise<string | null> {
  * Apply rate limiting to any function
  *
  * @param fn The function to rate-limit
- * @param operationName Name of operation (e.g., 'fetchCards')
+ * @param operationName Name of operation (e.g., 'fetchdata')
+ * @param userId Optional: User ID to use for rate limiting (overrides IP)
  * @param limit Number of requests allowed
  * @param window Time window in seconds
  */
 export function withRateLimit<T, Args extends unknown[]>(
   fn: (...args: Args) => Promise<T>,
   operationName: string,
+  userId?: string | null,
   limit: number = 20,
   window: number = 60
 ): (...args: Args) => Promise<RateLimitResult<T>> {
@@ -55,36 +60,59 @@ export function withRateLimit<T, Args extends unknown[]>(
 
   // Return the rate-limited function
   return async (...args: Args): Promise<RateLimitResult<T>> => {
-    // Try to get the IP address
-    const ipAddress = await getIpAddress();
+    let identifier: string | null = null;
 
-    // Skip rate limiting if IP can't be determined
-    if (!ipAddress) {
-      try {
-        const result = await fn(...args);
-        return { success: true, data: result };
-      } catch (error) {
-        throw error;
-      }
+    // Use the provided userId if available
+    if (userId) {
+      identifier = userId;
+    } else {
+      // Fallback to IP-based rate limiting
+      const ipAddress = await getIpAddress();
+      identifier = ipAddress;
+    }
+
+    // If no identifier is available, return an error
+    if (!identifier) {
+      return {
+        success: false,
+        message: "Rate limit identifier not available",
+        error: "No identifier found for rate limiting",
+      };
     }
 
     // Apply rate limiting
-    const { success } = await limiter.limit(ipAddress);
-
-    // Return error if rate limited
-    if (!success) {
+    try {
+      const { success } = await limiter.limit(identifier);
+      if (!success) {
+        return {
+          success: false,
+          message: "Rate limit exceeded. Please try again later.",
+        };
+      }
+    } catch (error) {
       return {
         success: false,
-        error: "Rate limit exceeded. Please try again later.",
+        message:
+          error instanceof Error ? error.message : "Rate limit check failed",
+        error: error instanceof Error ? error.message : undefined,
       };
     }
 
     // Run the function if within rate limit
     try {
       const result = await fn(...args);
-      return { success: true, data: result };
+      return {
+        success: true,
+        message: "Success",
+        data: result,
+      };
     } catch (error) {
-      throw error;
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : "Function execution failed",
+        error: error instanceof Error ? error.message : undefined,
+      };
     }
   };
 }
