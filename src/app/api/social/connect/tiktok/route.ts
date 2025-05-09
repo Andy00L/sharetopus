@@ -1,5 +1,5 @@
 // app/api/social/connect/tiktok/route.ts
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/data/exchangeTikTokCode";
 import { getTikTokProfile } from "@/lib/api/tiktok/data/getTikTokProfile";
 import { auth } from "@clerk/nextjs/server";

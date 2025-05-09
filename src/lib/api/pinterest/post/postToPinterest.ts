@@ -1,5 +1,5 @@
 // lib/api/pinterest/post/postToPinterest.ts
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { auth } from "@clerk/nextjs/server";
 import FormData from "form-data";
 import fetch from "node-fetch";
@@ -219,7 +219,7 @@ export async function postToPinterest({
 
     // Add all upload parameters from Pinterest
     Object.entries(upload_parameters).forEach(([key, value]) => {
-      formData.append(key, value as string);
+      formData.append(key, value);
     });
 
     const { data: fileStream, error: streamError } = await adminSupabase.storage

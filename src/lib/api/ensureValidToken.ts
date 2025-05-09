@@ -1,9 +1,9 @@
 // lib/api/auth/ensureValidToken.ts
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
-import { adminSupabase } from "@/actions/api/supabase-client";
 import refreshLinkedInToken from "./linkedin/data/refreshLinkedinToken";
-import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
 import refreshPinterestToken from "./pinterest/data/refreshPinterestToken";
+import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
 
 /**
  * Vérifie et rafraîchit si nécessaire un token pour n'importe quelle plateforme

@@ -18,7 +18,8 @@ export function SiteHeader() {
     const pageNames: Record<string, string> = {
       create: "Create",
       studio: "Studio",
-      accounts: "Accounts",
+      connections: "Accounts",
+      userProfile: "User Profile",
       scheduled: "Scheduled",
       posted: "Posted",
     };

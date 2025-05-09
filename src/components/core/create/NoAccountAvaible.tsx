@@ -10,7 +10,7 @@ export default function NoAccountAvaible() {
       <p className="text-muted-foreground mb-4">
         You haven&apos;t connected any social media accounts yet.
       </p>
-      <Link href="/accounts">
+      <Link href="/connections">
         <Button variant="outline" className="cursor-pointer">
           Connect Accounts
         </Button>

@@ -1,5 +1,5 @@
 "use server";
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 
 /**
  * Update the scheduled time of a post

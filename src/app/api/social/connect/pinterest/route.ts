@@ -1,5 +1,5 @@
 // app/api/social/connect/pinterest/route.ts
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangePinterestCode } from "@/lib/api/pinterest/data/exchangePinterestCode";
 import { getPinterestProfile } from "@/lib/api/pinterest/data/getPinterestProfile";
 import { auth } from "@clerk/nextjs/server";

@@ -1,7 +1,7 @@
 import { getContentHistoryGroupedByBatch } from "@/actions/server/contentHistoryActions/getContentHistory";
 import { auth } from "@clerk/nextjs/server";
 import ContentHistoryCard from "./ContentHistoryCard";
-import NoBatch from "./noBatch";
+import NoBatch from "./EmptyContentHistory";
 import NoData from "./noData";
 
 export default async function RenderPosts() {

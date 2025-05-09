@@ -4,11 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 
-export const getStripeSession = async ({
-  priceId,
-}: {
-  readonly priceId: string;
-}) => {
+export const CreateCustomerPortal = async () => {
   try {
     const { userId } = await auth();
 
@@ -31,16 +27,9 @@ export const getStripeSession = async ({
 
     const customerId = data.stripe_customer_id;
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      mode: "subscription",
-      billing_address_collection: "auto",
-      line_items: [{ price: priceId, quantity: 1 }],
-      payment_method_types: ["card"],
-      customer_update: { address: "auto", name: "auto" },
-      success_url: `${process.env.FRONTEND_URL}/payment/success`,
-      cancel_url: `${process.env.FRONTEND_URL}`,
-      allow_promotion_codes: true,
+      return_url: `${process.env.FRONTEND_URL}/create`,
     });
 
     return session.url;

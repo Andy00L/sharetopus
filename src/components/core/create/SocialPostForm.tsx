@@ -411,6 +411,7 @@ export default function SocialPostForm({
 
     setAccountContent(updatedAccountContent);
   }, [selectedAccounts, textInputs, accounts]);
+
   useEffect(() => {
     const pinterestAccounts = accounts.filter(
       (acc) => selectedAccounts[acc.id] && acc.platform === "pinterest"

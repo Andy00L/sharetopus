@@ -1,5 +1,5 @@
 // lib/api/tiktok/post/postToTikTok.ts
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";
@@ -197,8 +197,17 @@ async function handleVideoPost({
 }): Promise<TikTokPostResult> {
   try {
     // Download the file for direct upload
-    const buffer = await getSupabaseVideoFile(mediaPath, userId);
-    const fileSize = buffer.length;
+    const responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
+    if (!responseBuffer.success) {
+      return {
+        success: false,
+        error: responseBuffer.message,
+      };
+    }
+
+    const buffer = responseBuffer.buffer!;
+
+    const fileSize = buffer?.length;
 
     // Calculate optimal chunk size based on file size
     let chunkSize: number;

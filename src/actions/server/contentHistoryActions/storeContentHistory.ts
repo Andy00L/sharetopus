@@ -1,7 +1,7 @@
 // actions/server/contentHistoryActions/storeContentHistory.ts
 "use server";
 
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ContentHistory } from "@/lib/types/dbTypes";
 
 /**

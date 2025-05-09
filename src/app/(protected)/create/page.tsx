@@ -19,35 +19,19 @@ export default async function CreatePostPage() {
       title: "Text Post",
       icon: FileText,
       href: "/create/text",
-      platforms: ["facebook", "twitter", "linkedin", "threads"],
+      platforms: ["linkedin"],
     },
     {
       title: "Image Post",
       icon: Image,
       href: "/create/image",
-      platforms: [
-        "facebook",
-        "twitter",
-        "linkedin",
-        "threads",
-        "instagram",
-        "pinterest",
-        "tiktok",
-      ],
+      platforms: ["linkedin", "pinterest", "tiktok"],
     },
     {
       title: "Video Post",
       icon: Video,
       href: "/create/video",
-      platforms: [
-        "facebook",
-        "linkedin",
-        "threads",
-        "twitter",
-        "instagram",
-        "pinterest",
-        "tiktok",
-      ],
+      platforms: ["linkedin", "pinterest", "tiktok"],
     },
   ];
 
@@ -114,7 +98,7 @@ export default async function CreatePostPage() {
       {/* Footer section remains the same */}
       <div className="text-center">
         <Link
-          href="/accounts"
+          href="/connections"
           className="text-sm text-muted-foreground hover:text-primary inline-flex items-center gap-1 transition-colors duration-200"
         >
           <span className="text-green-500">●</span>

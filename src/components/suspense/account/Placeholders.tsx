@@ -41,7 +41,7 @@ function AccountBadgeSkeleton() {
 }
 export default function AccountsPageSkeleton() {
   return (
-    <SidebarContent className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
+    <SidebarContent className=" px-4 py-6 ">
       <SidebarGroup className="mb-8">
         <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
         <div className="h-5 w-3/4 bg-gray-100 dark:bg-gray-800 rounded animate-pulse mt-2"></div>

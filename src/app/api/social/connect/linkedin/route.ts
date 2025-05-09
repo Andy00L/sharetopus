@@ -1,5 +1,5 @@
 // app/api/auth/linkedin/route.ts
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeLinkedInCode } from "@/lib/api/linkedin/data/exchangeLinkedInCode";
 import { getLinkedInProfile } from "@/lib/api/linkedin/data/getLinkedInProfile";
 import { auth } from "@clerk/nextjs/server";

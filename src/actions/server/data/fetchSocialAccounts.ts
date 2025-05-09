@@ -1,6 +1,6 @@
-import "server-only";
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { SocialAccount } from "@/lib/types/dbTypes";
+import "server-only";
 
 export async function fetchSocialAccounts(
   userId: string | null

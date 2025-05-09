@@ -11,7 +11,6 @@ export default async function RootLayout({
     <SidebarProvider>
       <AppSidebar variant="inset" />
       <SidebarInset>
-        {/**ca C'EST CLIENT */}
         <SiteHeader />
         {children}
       </SidebarInset>

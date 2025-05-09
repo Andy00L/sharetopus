@@ -1,7 +1,7 @@
 // Updated getScheduledPosts.ts
 "use server";
 
-import { adminSupabase } from "@/actions/api/supabase-client";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ScheduledPost } from "@/lib/types/dbTypes";
 
 /**

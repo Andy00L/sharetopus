@@ -1,7 +1,7 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/supabase-client";
-import { auth } from "@clerk/nextjs/server";
+import { adminSupabase } from "@/actions/api/adminSupabase";
+import { validateUserAuthorization } from "@/actions/authentificationCheck";
 import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
 
 /**
@@ -15,9 +15,8 @@ export async function disconnectSocialAccount(
   accountId: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string }> {
-  const { userId: clerkAuth } = await auth();
-
-  if (!userId || userId !== clerkAuth) {
+  const isAuth = await validateUserAuthorization(userId);
+  if (!isAuth) {
     return {
       success: false,
       message: "You are not authorized to disconnect this account.",

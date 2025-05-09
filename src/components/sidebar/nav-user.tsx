@@ -1,14 +1,37 @@
 "use client";
 
+import { CreateCustomerPortal } from "@/actions/server/stripe/customerPortal";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
-import { UserButton, useUser } from "@clerk/nextjs";
+import { useClerk, useUser } from "@clerk/nextjs";
+import {
+  CreditCardIcon,
+  LogOutIcon,
+  MoreVerticalIcon,
+  UserCircleIcon,
+} from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
 export function NavUser() {
   const { user, isLoaded, isSignedIn } = useUser();
+  const { isMobile } = useSidebar();
+  const { signOut } = useClerk();
+  const [isLoading, setIsLoading] = useState(false); // Add loading state
 
   // Show loading state when authentication is being processed
   if (!isLoaded) {
@@ -27,14 +50,31 @@ export function NavUser() {
       </SidebarMenu>
     );
   }
+
   // Only show component when user is logged in
   if (!isSignedIn) {
     return null;
   }
-
+  const handleBillingPortal = async () => {
+    setIsLoading(true);
+    try {
+      const portalUrl = await CreateCustomerPortal();
+      if (typeof portalUrl === "string" && portalUrl.startsWith("http")) {
+        window.location.href = portalUrl;
+      } else {
+        console.error("Invalid portal URL received", portalUrl);
+        // Optionally show an error toast/notification here
+      }
+    } catch (error) {
+      console.error("Error opening billing portal:", error);
+      // Optionally show an error toast/notification here
+    } finally {
+      setIsLoading(false);
+    }
+  };
   // Get user data from Clerk
   const userData = {
-    name: user?.fullName ?? "Credit Savvy",
+    name: user?.fullName,
     email: user?.primaryEmailAddress?.emailAddress ?? "",
     avatar: user?.imageUrl ?? "",
     initials: user?.fullName
@@ -50,20 +90,81 @@ export function NavUser() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton
-          size="lg"
-          className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-        >
-          <div className="h-8 w-8">
-            <UserButton />
-          </div>
-          <div className="grid flex-1 text-left text-sm leading-tight ml-2">
-            <span className="truncate font-medium">{userData.name}</span>
-            <span className="truncate text-xs text-muted-foreground">
-              {userData.email}
-            </span>
-          </div>
-        </SidebarMenuButton>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuButton
+              size="lg"
+              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            >
+              <Avatar className="h-8 w-8 rounded-lg">
+                <AvatarImage src={userData.avatar} alt={userData.name ?? ""} />
+                <AvatarFallback className="rounded-lg">
+                  {userData.initials}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid flex-1 text-left text-sm leading-tight ml-2">
+                <span className="truncate font-medium">{userData.name}</span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {userData.email}
+                </span>
+              </div>
+              <MoreVerticalIcon className="ml-auto size-4" />
+            </SidebarMenuButton>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
+            side={isMobile ? "bottom" : "right"}
+            align="end"
+            sideOffset={4}
+          >
+            <DropdownMenuLabel className="p-0 font-normal">
+              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
+                <Avatar className="h-8 w-8 rounded-lg">
+                  <AvatarImage
+                    src={userData.avatar}
+                    alt={userData.name ?? ""}
+                  />
+                  <AvatarFallback className="rounded-lg">
+                    {userData.initials}
+                  </AvatarFallback>
+                </Avatar>{" "}
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-medium">{userData.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {userData.email}
+                  </span>
+                </div>
+              </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem asChild className="cursor-pointer">
+                <Link href="/userProfile">
+                  <UserCircleIcon className="mr-2 h-4 w-4" />
+                  <span className="ml-1">Account</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="cursor-pointer"
+                disabled={isLoading}
+                onSelect={handleBillingPortal}
+              >
+                <CreditCardIcon className="mr-2 h-4 w-4" />
+                <span className="ml-1">
+                  {isLoading ? "Loading..." : "Billing"}
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onSelect={() => signOut()}
+              className="cursor-pointer"
+            >
+              <LogOutIcon className="mr-2 h-4 w-4" />
+              Log out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
   );

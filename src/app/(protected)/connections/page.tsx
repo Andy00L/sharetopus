@@ -1,9 +1,14 @@
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
 import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
+import PinterestSVGIcon, {
+  LinkedinSVGIcon,
+  TiktokSVGIcon,
+} from "@/components/icons/allPlatformsIcons";
 import RateLimitError from "@/components/RateLimitError";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
@@ -13,7 +18,10 @@ import { Suspense } from "react";
 const AccountsPageWithData = async () => {
   const { userId } = await auth();
   const fetchResult = await fetchSocialAccountsProtected(userId);
-
+  const subscriptionActive = await checkActiveSubscription(userId);
+  if (!subscriptionActive.isActive) {
+    return <RateLimitError />;
+  }
   if (!fetchResult.success) {
     return <RateLimitError />;
   }
@@ -29,7 +37,7 @@ const AccountsPageWithData = async () => {
   );
 
   return (
-    <SidebarContent className="container mx-auto px-4 py-6 flex flex-col min-h-screen">
+    <SidebarContent className="px-4 py-6 ">
       <SidebarGroup className="mb-8">
         <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
         <p className="text-muted-foreground mt-2">
@@ -40,7 +48,11 @@ const AccountsPageWithData = async () => {
 
       <SidebarGroup className="mb-8 space-y-6">
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <TiktokSVGIcon />
+            </div>
+
             <h2 className="text-xl font-semibold">TikTok</h2>
             <ConnectTikTokButton />
           </div>
@@ -50,7 +62,11 @@ const AccountsPageWithData = async () => {
         </div>
 
         <div className="space-y-3 pt-4 border-t">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <PinterestSVGIcon />
+            </div>
+
             <h2 className="text-xl font-semibold">Pinterest</h2>
             <ConnectPinterestButton />
           </div>
@@ -63,7 +79,11 @@ const AccountsPageWithData = async () => {
         </div>
 
         <div className="space-y-3 pt-4 border-t">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <LinkedinSVGIcon />
+            </div>
+
             <h2 className="text-xl font-semibold">Linkedin</h2>
             <ConnectLinkedInButton />
           </div>

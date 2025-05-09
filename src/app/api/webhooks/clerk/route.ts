@@ -111,22 +111,12 @@ async function handleUserCreated(data: ClerkUserData) {
     const lastName =
       data.last_name ??
       (data.full_name ? data.full_name.split(" ").slice(1).join(" ") : "");
-    const customerName =
-      firstName && lastName
-        ? `${firstName} ${lastName}`
-        : firstName
-        ? firstName
-        : lastName
-        ? lastName
-        : username
-        ? username
-        : undefined;
+
     //stripe customer creation
     let stripeCustomerId: string | null = null;
     try {
       const customer = await stripe.customers.create({
         email: email,
-        name: customerName,
         metadata: {
           userId: userId, // Link Stripe customer to your user
         },
@@ -195,16 +185,6 @@ async function handleUserUpdated(data: ClerkUserData) {
 
     const firstName = nameParts[0] || null;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
-    const customerName =
-      firstName && lastName
-        ? `${firstName} ${lastName}`
-        : firstName
-        ? firstName
-        : lastName
-        ? lastName
-        : data.username
-        ? data.username
-        : undefined;
 
     const { error } = await supabase
       .from("users")
@@ -233,7 +213,6 @@ async function handleUserUpdated(data: ClerkUserData) {
       try {
         await stripe.customers.update(userData.stripe_customer_id, {
           email: email,
-          name: customerName,
         });
         console.log(
           `[Clerk Routes]: Client Stripe mis à jour: ${userData.stripe_customer_id}`
