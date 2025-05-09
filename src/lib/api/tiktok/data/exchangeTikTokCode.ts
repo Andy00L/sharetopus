@@ -7,7 +7,7 @@ export async function exchangeTikTokCode(
   // Get configuration from environment variables
   const client_id = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
   const client_secret = process.env.TIKTOK_CLIENT_SECRET;
-  const redirect_uri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL;
+  const redirect_uri = process.env.TIKTOK_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {
     throw new Error(

@@ -8,7 +8,7 @@ export async function exchangePinterestCode(
   // Get configuration from environment variables
   const client_id = process.env.NEXT_PUBLIC_PINTEREST_CLIENT_ID;
   const client_secret = process.env.PINTEREST_CLIENT_SECRET;
-  const redirect_uri = process.env.NEXT_PUBLIC_PINTEREST_REDIRECT_URL;
+  const redirect_uri = process.env.PINTEREST_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {
     throw new Error(

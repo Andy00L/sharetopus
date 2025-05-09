@@ -8,7 +8,7 @@ export async function exchangeLinkedInCode(
   // Get configuration from environment variables
   const client_id = process.env.NEXT_PUBLIC_LINKEDIN_CLIENT_ID;
   const client_secret = process.env.LINKEDIN_CLIENT_SECRET;
-  const redirect_uri = process.env.NEXT_PUBLIC_LINKEDIN_REDIRECT_URL;
+  const redirect_uri = process.env.LINKEDIN_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {
     throw new Error(
