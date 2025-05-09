@@ -59,11 +59,6 @@ const AccountsPageWithData = async () => {
                 {limitsCheck.currentCount} / {limitsCheck.maxAllowed}
               </span>{" "}
               comptes connectés
-              {subscriptionCheck.plan && (
-                <span className="text-muted-foreground ml-2">
-                  ({subscriptionCheck.plan})
-                </span>
-              )}
             </p>
             {!limitsCheck.canAddMore && (
               <p className="text-xs text-destructive mt-1">

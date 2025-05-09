@@ -81,7 +81,7 @@ export const PLAN_ACCOUNT_LIMITS = {
 // config/subscriptionLimits.ts
 export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = {
   // Starter plan - 5 accounts
-  price_1RKr9JCZd1WOWtsDVHl5MsP6: 3, // Monthly
+  price_1RKr9JCZd1WOWtsDVHl5MsP6: 5, // Monthly
   price_1RKrGNCZd1WOWtsDcU2r7iNf: 5, // Yearly
 
   // Creator plan - 15 accounts
