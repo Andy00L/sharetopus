@@ -6,7 +6,7 @@ import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 export default async function refreshLinkedInToken(
   refreshToken: string
 ): Promise<TokenExchangeResponse | null> {
-  const clientId = process.env.NEXT_PUBLIC_LINKEDIN_CLIENT_ID;
+  const clientId = process.env.LINKEDIN_CLIENT_ID;
   const clientSecret = process.env.LINKEDIN_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {

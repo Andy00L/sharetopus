@@ -6,7 +6,7 @@ import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 export default async function refreshTikTokToken(
   refreshToken: string
 ): Promise<TokenExchangeResponse | null> {
-  const clientKey = process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY;
+  const clientKey = process.env.TIKTOK_CLIENT_KEY;
   const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
 
   if (!clientKey || !clientSecret) {

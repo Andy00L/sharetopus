@@ -113,7 +113,7 @@ export default function ConnectLinkedInButton({
       setIsConnecting(true);
 
       // Call server endpoint to start OAuth flow
-      const response = await fetch("/api/auth/linkedin/initiate", {
+      const response = await fetch("/api/social/initiate/linkedin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

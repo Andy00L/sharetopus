@@ -6,7 +6,7 @@ import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 export default async function refreshPinterestToken(
   refreshToken: string
 ): Promise<TokenExchangeResponse | null> {
-  const clientId = process.env.NEXT_PUBLIC_PINTEREST_CLIENT_ID;
+  const clientId = process.env.PINTEREST_CLIENT_ID;
   const clientSecret = process.env.PINTEREST_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
