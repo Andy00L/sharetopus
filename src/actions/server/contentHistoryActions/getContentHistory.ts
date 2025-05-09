@@ -1,4 +1,4 @@
-"use server";
+import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ContentHistory } from "@/lib/types/dbTypes";
@@ -50,8 +50,7 @@ export async function getContentHistory(
     console.error("[getContentHistory] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred",
+      message: "An unexpected error occurred",
     };
   }
 }
@@ -69,7 +68,6 @@ export async function getContentHistoryGroupedByBatch(
   const result = await getContentHistory(userId);
 
   if (!result.success || !result.data) {
-    // Fix the type mismatch by returning the correct interface
     return {
       success: result.success,
       message: result.message,

@@ -1,5 +1,5 @@
 // Updated getScheduledPosts.ts
-"use server";
+import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ScheduledPost } from "@/lib/types/dbTypes";

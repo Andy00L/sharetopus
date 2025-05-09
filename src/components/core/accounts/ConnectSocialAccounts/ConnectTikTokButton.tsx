@@ -6,7 +6,6 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { generateState } from "./generateState";
 
 declare global {
   interface Window {
@@ -15,7 +14,14 @@ declare global {
   }
 }
 
-export default function ConnectTikTokButton() {
+// Properly define component props
+interface ConnectTikTokButtonProps {
+  readonly canConnect?: boolean;
+}
+
+export default function ConnectTikTokButton({
+  canConnect,
+}: ConnectTikTokButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -23,10 +29,6 @@ export default function ConnectTikTokButton() {
   const popupRef = useRef<Window | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Define required TikTok scopes
-  const scopes =
-    "user.info.basic,user.info.profile,video.publish,video.upload,user.info.stats";
 
   // Clear any active timeouts
   const clearInactivityTimeout = () => {
@@ -106,43 +108,37 @@ export default function ConnectTikTokButton() {
   }, [router]);
 
   // Open TikTok popup with security measures
-  const openTikTokPopup = () => {
+  const openTikTokPopup = async () => {
     // Prevent multiple connection attempts
-    if (isConnecting) return;
+    if (isConnecting || !canConnect) return;
 
     try {
       setIsConnecting(true);
 
-      // Generate new state token for this connection attempt
-      const newState = generateState();
+      // Call server endpoint to start OAuth flow
+      const response = await fetch("/api/social/initiate/tiktok", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
-      // Store in sessionStorage for verification when TikTok redirects back
-      sessionStorage.setItem("tiktokAuthState", newState);
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message ?? "Failed to start TikTok connection");
+      }
 
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
 
-      // Get the redirect URI from env
-      const redirectUri = process.env.NEXT_PUBLIC_TIKTOK_REDIRECT_URL;
-
-      if (!redirectUri) {
-        throw new Error("TikTok redirect URL not configured");
-      }
-
       // Create a unique window name using timestamp
       const uniqueWindowName = `TikTokOAuth_${Date.now()}`;
 
-      // Add force_login=true to force a new login screen
-      const TIKTOK_AUTH_URL = `https://www.tiktok.com/v2/auth/authorize/?client_key=${
-        process.env.NEXT_PUBLIC_TIKTOK_CLIENT_KEY
-      }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&state=${newState}&response_type=code&force_login=true`;
-
       const popup = window.open(
-        TIKTOK_AUTH_URL,
+        data.authUrl,
         uniqueWindowName,
         `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
       );
@@ -167,7 +163,11 @@ export default function ConnectTikTokButton() {
   };
 
   return (
-    <Button onClick={openTikTokPopup} disabled={isConnecting}>
+    <Button
+      onClick={openTikTokPopup}
+      disabled={isConnecting || !canConnect}
+      className="cursor-pointer"
+    >
       {isConnecting ? (
         <>
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />

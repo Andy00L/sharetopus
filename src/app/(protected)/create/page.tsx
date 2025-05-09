@@ -1,3 +1,4 @@
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import PinterestSVGIcon, {
   FacebookSVGIcon,
   InstagramSVGIcon,
@@ -6,13 +7,20 @@ import PinterestSVGIcon, {
   TiktokSVGIcon,
   TwitterVGIcon,
 } from "@/components/icons/allPlatformsIcons";
+import { SimpleSubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import { Card } from "@/components/ui/card";
 import { SidebarContent } from "@/components/ui/sidebar";
+import { auth } from "@clerk/nextjs/server";
 import { FileText, Image, Video } from "lucide-react";
 import Link from "next/link";
 import React from "react";
 
 export default async function CreatePostPage() {
+  const { userId } = await auth();
+  const isPaid = await checkActiveSubscription(userId);
+  if (!isPaid.isActive) {
+    return <SimpleSubscriptionPrompt />;
+  }
   // Define the post types with their supported platforms
   const postTypes = [
     {

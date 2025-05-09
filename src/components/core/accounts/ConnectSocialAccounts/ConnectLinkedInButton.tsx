@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { generateState } from "./generateState";
 import { toast } from "sonner";
 
 declare global {
@@ -14,8 +13,13 @@ declare global {
     onLinkedInConnectFailure?: (error?: string) => void;
   }
 }
-
-export default function ConnectLinkedInButton() {
+// Properly define component props
+interface ConnectLinkedInButtonProps {
+  readonly canConnect?: boolean;
+}
+export default function ConnectLinkedInButton({
+  canConnect,
+}: ConnectLinkedInButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -23,11 +27,6 @@ export default function ConnectLinkedInButton() {
   const popupRef = useRef<Window | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Define required scopes for LinkedIn
-  // openid, profile, email pour les infos de profil
-  // w_member_social pour pouvoir publier sur LinkedIn
-  const scopes = ["openid", "profile", "email", "w_member_social"].join(" ");
 
   // Clear inactivity timeout
   const clearInactivityTimeout = () => {
@@ -87,8 +86,7 @@ export default function ConnectLinkedInButton() {
   };
 
   // Add failure handler
-  const handleLinkedInFailure = (error?: string) => {
-    console.error("LinkedIn connection failed:", error);
+  const handleLinkedInFailure = () => {
     toast.error(`Échec de la connexion au compte LinkedIn`);
     cleanupAuthFlow();
   };
@@ -107,44 +105,36 @@ export default function ConnectLinkedInButton() {
   }, [router]);
 
   // Open LinkedIn popup with unique window name
-  const openLinkedInPopup = () => {
+  const openLinkedInPopup = async () => {
     // Prevent multiple connection attempts
-    if (isConnecting) return;
+    if (isConnecting || !canConnect) return;
 
     try {
       setIsConnecting(true);
 
-      // Generate new state token for this connection attempt
-      const newState = generateState();
+      // Call server endpoint to start OAuth flow
+      const response = await fetch("/api/auth/linkedin/initiate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      const data = await response.json();
 
-      // Store in sessionStorage for verification
-      sessionStorage.setItem("linkedinAuthState", newState);
+      if (!response.ok || !data.success) {
+        toast(data.message ?? "Failed to start LinkedIn connection");
+      }
 
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
 
-      // Get redirect URI from environment variables
-      const redirectUri = process.env.NEXT_PUBLIC_LINKEDIN_REDIRECT_URL;
-
-      if (!redirectUri) {
-        throw new Error("LinkedIn redirect URL not configured");
-      }
-
       // Create a unique window name using timestamp to prevent cache issues
       const uniqueWindowName = `LinkedInOAuth_${Date.now()}`;
 
-      // LinkedIn OAuth URL - Documentation à cette URL:
-      // https://www.linkedin.com/developers/apps/verification/authorization-code-flow
-      const LINKEDIN_AUTH_URL = `https://www.linkedin.com/oauth/v2/authorization?client_id=${
-        process.env.NEXT_PUBLIC_LINKEDIN_CLIENT_ID
-      }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&state=${newState}&response_type=code&prompt=login`;
-
       const popup = window.open(
-        LINKEDIN_AUTH_URL,
+        data.authUrl,
         uniqueWindowName,
         `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
       );
@@ -159,7 +149,8 @@ export default function ConnectLinkedInButton() {
         );
       }
 
-      // Start monitoring popup status
+      // Start monitoring popup status - this includes BOTH the interval check
+      // AND the 10-minute timeout
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
@@ -169,10 +160,14 @@ export default function ConnectLinkedInButton() {
   };
 
   return (
-    <Button onClick={openLinkedInPopup} disabled={isConnecting}>
+    <Button
+      onClick={openLinkedInPopup}
+      disabled={isConnecting || !canConnect}
+      className="cursor-pointer"
+    >
       {isConnecting ? (
         <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          <Loader2 className="mr-2 h-4 w-4 animate-spin " />
           Connexion en cours...
         </>
       ) : (

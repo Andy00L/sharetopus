@@ -7,6 +7,7 @@ import { Suspense } from "react";
 
 const SocialPostFormWithData = async () => {
   const { userId } = await auth();
+
   const accounts = await fetchSocialAccounts(userId);
 
   return (

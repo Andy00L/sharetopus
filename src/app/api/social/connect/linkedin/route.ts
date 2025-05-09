@@ -3,6 +3,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeLinkedInCode } from "@/lib/api/linkedin/data/exchangeLinkedInCode";
 import { getLinkedInProfile } from "@/lib/api/linkedin/data/getLinkedInProfile";
 import { auth } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -53,9 +54,44 @@ export async function GET(request: NextRequest) {
         }
       );
     }
+    const storedState = (await cookies()).get("linkedin_auth_state")?.value;
+
+    // Verify state matches to prevent CSRF attacks
+    if (!state || !storedState || state !== storedState) {
+      return new Response(
+        `
+<html>
+  <head>
+    <title>Vérification de sécurité échouée</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Vérification de sécurité échouée");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>La vérification de sécurité a échoué. Cette fenêtre va se fermer automatiquement.</p>
+  </body>
+</html>
+`,
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "text/html",
+          },
+        }
+      );
+    }
+
+    // Clear the state cookie immediately after verification
+    (
+      await // Clear the state cookie immediately after verification
+      cookies()
+    ).delete("linkedin_auth_state");
 
     // Vérifier la présence du code et du state
-    if (!code || !state) {
+    if (!code) {
       return new Response(
         `
         <html>

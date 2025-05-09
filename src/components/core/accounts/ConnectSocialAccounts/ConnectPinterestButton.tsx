@@ -6,7 +6,6 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { generateState } from "./generateState";
 
 declare global {
   interface Window {
@@ -15,9 +14,14 @@ declare global {
   }
 }
 
+// Properly define component props
+interface ConnectPinterestButtonProps {
+  readonly canConnect?: boolean;
+}
 
-
-export default function ConnectPinterestButton() {
+export default function ConnectPinterestButton({
+  canConnect,
+}: ConnectPinterestButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -25,17 +29,6 @@ export default function ConnectPinterestButton() {
   const popupRef = useRef<Window | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Define required scopes
-  const scopes = [
-    "boards:read",
-    "boards:write",
-    "pins:read",
-    "pins:write",
-    "user_accounts:read",
-    "catalogs:read",
-    "catalogs:write",
-  ].join(",");
 
   // Clear inactivity timeout
   const clearInactivityTimeout = () => {
@@ -115,43 +108,36 @@ export default function ConnectPinterestButton() {
   }, [router]);
 
   // Open Pinterest popup with unique window name
-  const openPinterestPopup = () => {
+  const openPinterestPopup = async () => {
     // Prevent multiple connection attempts
-    if (isConnecting) return;
+    if (isConnecting || !canConnect) return;
 
     try {
       setIsConnecting(true);
 
-      // Generate new state token for this connection attempt
-      const newState = generateState();
+      // Call server endpoint to start OAuth flow
+      const response = await fetch("/api/social/initiate/pinterest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
 
-      // Store in sessionStorage for verification
-      sessionStorage.setItem("pinterestAuthState", newState);
+      const data = await response.json();
 
+      if (!response.ok || !data.success) {
+        throw new Error(data.message ?? "Failed to start Pinterest connection");
+      }
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
 
-      // Get redirect URI
-      const redirectUri = process.env.NEXT_PUBLIC_PINTEREST_REDIRECT_URL;
-
-      if (!redirectUri) {
-        throw new Error("Pinterest redirect URL not configured");
-      }
-
       // Create a unique window name using timestamp
       const uniqueWindowName = `PinterestOAuth_${Date.now()}`;
 
-      // Add prompt=login parameter to force fresh login
-      const PINTEREST_AUTH_URL = `https://www.pinterest.com/oauth/?client_id=${
-        process.env.NEXT_PUBLIC_PINTEREST_CLIENT_ID
-      }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&state=${newState}&response_type=code&prompt=login`;
-
       const popup = window.open(
-        PINTEREST_AUTH_URL,
+        data.authUrl,
         uniqueWindowName,
         `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
       );
@@ -170,17 +156,17 @@ export default function ConnectPinterestButton() {
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting Pinterest connection:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to start Pinterest connection"
-      );
+      toast.error("Failed to start Pinterest connection");
       setIsConnecting(false);
     }
   };
 
   return (
-    <Button onClick={openPinterestPopup} disabled={isConnecting}>
+    <Button
+      onClick={openPinterestPopup}
+      disabled={isConnecting || !canConnect}
+      className="cursor-pointer"
+    >
       {isConnecting ? (
         <>
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />

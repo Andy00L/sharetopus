@@ -1,5 +1,6 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
+import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
@@ -13,18 +14,23 @@ import RateLimitError from "@/components/RateLimitError";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
+import Link from "next/link";
 import { Suspense } from "react";
 
 const AccountsPageWithData = async () => {
   const { userId } = await auth();
-  const fetchResult = await fetchSocialAccountsProtected(userId);
-  const subscriptionActive = await checkActiveSubscription(userId);
-  if (!subscriptionActive.isActive) {
+  const subscriptionCheck = await checkActiveSubscription(userId);
+  if (!subscriptionCheck.isActive || !subscriptionCheck.success) {
     return <RateLimitError />;
   }
+  const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
+  const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
+
+  const fetchResult = await fetchSocialAccountsProtected(userId);
   if (!fetchResult.success) {
     return <RateLimitError />;
   }
+
   const accounts = fetchResult.data!;
 
   // Filter accounts by platform
@@ -38,12 +44,40 @@ const AccountsPageWithData = async () => {
 
   return (
     <SidebarContent className="px-4 py-6 ">
+      {/* Account information and limit display */}
       <SidebarGroup className="mb-8">
         <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
         <p className="text-muted-foreground mt-2">
           Connectez vos comptes sociaux pour publier du contenu sur plusieurs
           plateformes.
         </p>
+        {/* Account limits display */}
+        {limitsCheck.success && (
+          <div className="mt-4 p-3 bg-muted/50 rounded-md">
+            <p className="text-sm">
+              <span className="font-medium">
+                {limitsCheck.currentCount} / {limitsCheck.maxAllowed}
+              </span>{" "}
+              comptes connectés
+              {subscriptionCheck.plan && (
+                <span className="text-muted-foreground ml-2">
+                  ({subscriptionCheck.plan})
+                </span>
+              )}
+            </p>
+            {!limitsCheck.canAddMore && (
+              <p className="text-xs text-destructive mt-1">
+                Vous avez atteint la limite de comptes pour votre abonnement.
+                <Link
+                  href="/pricing"
+                  className="text-primary ml-1 hover:underline"
+                >
+                  Mettre à niveau
+                </Link>
+              </p>
+            )}
+          </div>
+        )}
       </SidebarGroup>
 
       <SidebarGroup className="mb-8 space-y-6">
@@ -54,7 +88,7 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">TikTok</h2>
-            <ConnectTikTokButton />
+            <ConnectTikTokButton canConnect={canAddMoreAccounts} />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge accounts={tiktokAccounts} userId={userId} />
@@ -68,7 +102,7 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">Pinterest</h2>
-            <ConnectPinterestButton />
+            <ConnectPinterestButton canConnect={canAddMoreAccounts} />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
@@ -85,7 +119,7 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">Linkedin</h2>
-            <ConnectLinkedInButton />
+            <ConnectLinkedInButton canConnect={canAddMoreAccounts} />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge

@@ -7,13 +7,16 @@ import "server-only";
 export async function checkActiveSubscription(userId: string | null): Promise<{
   success: boolean;
   message: string;
+  plan: string | null;
   isActive: boolean;
 }> {
   if (!userId) {
+    console.error(`[checkActiveSubscription] No userId provided`);
     return {
       success: false,
       message: "Missing required user ID",
       isActive: false,
+      plan: null,
     };
   }
 
@@ -36,15 +39,17 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
         success: false,
         message: `Database error: ${error.message}`,
         isActive: false,
+        plan: null,
       };
     }
 
     const hasActiveSubscription = data && data.length > 0;
+    const subscriptionPlan = hasActiveSubscription ? data[0].plan : null;
 
     console.log(
       `[checkActiveSubscription] User ${userId} subscription status: ${
         hasActiveSubscription ? "Active" : "Inactive"
-      }`
+      }, Plan: ${subscriptionPlan ?? "None"}`
     );
 
     return {
@@ -53,6 +58,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
         ? "User has an active subscription"
         : "User does not have an active subscription",
       isActive: hasActiveSubscription,
+      plan: subscriptionPlan,
     };
   } catch (err) {
     console.error("[checkActiveSubscription] Unexpected error:", err);
@@ -60,6 +66,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
       success: false,
       message: "An unexpected error occurred",
       isActive: false,
+      plan: null,
     };
   }
 }

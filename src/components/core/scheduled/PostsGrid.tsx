@@ -1,17 +1,24 @@
 // components/core/scheduled/PostsGrid.tsx
+import { getScheduledPostsGroupedByBatch } from "@/actions/server/scheduleActions/getScheduledPosts";
 import { SidebarGroup } from "@/components/ui/sidebar";
-import { ScheduledPost } from "@/lib/types/dbTypes";
+import { auth } from "@clerk/nextjs/server";
+import NoData from "../posted/noData";
 import BatchedPostCard from "./BatchedPostCard";
 import EmptyContent from "./EmptyContent";
 
-interface PostsGridProps {
-  readonly posts: Record<string, ScheduledPost[]>;
-  readonly userId: string | null;
-}
+export default async function PostsGrid() {
+  const { userId } = await auth();
+  const postsResult = await getScheduledPostsGroupedByBatch(userId);
 
-export default function PostsGrid({ posts, userId }: PostsGridProps) {
+  if (!postsResult.success || !postsResult.data) {
+    return <NoData />;
+  }
+
+  const posts = postsResult.data;
+
   // Get all batch IDs
   const batchIds = Object.keys(posts);
+
   const totalPosts = batchIds.reduce(
     (sum, batchId) => sum + posts[batchId].length,
     0
@@ -19,22 +26,6 @@ export default function PostsGrid({ posts, userId }: PostsGridProps) {
 
   return (
     <>
-      {/**
-      //<SidebarGroup className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
-      //  <div>
-      //    <h1 className="text-2xl font-bold">Scheduled Posts</h1>
-      //    <p className="text-muted-foreground">
-      //      Manage your scheduled posts for all your social platforms
-      //    </p>
-      //  </div>
-//
-      //  {totalPosts > 0 && (
-      //    <Button asChild className="ml-auto">
-      //      <Link href="/create">Schedule New Post</Link>
-      //    </Button>
-      //  )}
-      //</SidebarGroup>
- */}
       {totalPosts === 0 && <EmptyContent />}
 
       {totalPosts > 0 && (

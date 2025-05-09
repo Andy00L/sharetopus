@@ -3,9 +3,10 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/data/exchangeTikTokCode";
 import { getTikTokProfile } from "@/lib/api/tiktok/data/getTikTokProfile";
 import { auth } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET(req: Request) {
+export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
 
@@ -16,14 +17,103 @@ export async function GET(req: Request) {
       );
     }
     // Parse URL parameters
-    const { searchParams } = new URL(req.url);
+    const searchParams = request.nextUrl.searchParams;
     const code = searchParams.get("code");
+    const state = searchParams.get("state");
+    const error = searchParams.get("error");
+    const errorDescription = searchParams.get("error_description");
+
+    // First check for OAuth errors returned by TikTok
+    if (error) {
+      console.error(
+        `[TikTok Connect Route] OAuth error: ${error} - ${errorDescription}`
+      );
+      return new NextResponse(
+        `
+    <html>
+      <head>
+        <title>Connexion échouée</title>
+        <script>
+          if (window.opener) {
+            window.opener.onTikTokConnectFailure("${
+              errorDescription ?? error
+            }");
+            window.close();
+          }
+        </script>
+      </head>
+      <body>
+        <p>Connexion TikTok échouée: ${
+          errorDescription ?? error
+        }. Cette fenêtre va se fermer automatiquement.</p>
+      </body>
+    </html>
+    `,
+        {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        }
+      );
+    }
+
+    const storedState = (await cookies()).get("tiktok_auth_state")?.value;
+
+    // Verify state matches to prevent CSRF attacks
+    if (!state || !storedState || state !== storedState) {
+      console.error(
+        `[TikTok Connect Route] State verification failed. Received: ${state}, Stored: ${storedState}`
+      );
+      return new NextResponse(
+        `
+    <html>
+      <head>
+        <title>Vérification de sécurité échouée</title>
+        <script>
+          if (window.opener) {
+            window.opener.onTikTokConnectFailure("Vérification de sécurité échouée");
+            window.close();
+          }
+        </script>
+      </head>
+      <body>
+        <p>La vérification de sécurité a échoué. Cette fenêtre va se fermer automatiquement.</p>
+      </body>
+    </html>
+    `,
+        {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        }
+      );
+    }
+
+    // Clear the state cookie immediately after verification
+    (await cookies()).delete("tiktok_auth_state");
+    console.log(`[TikTok Connect Route] State verified and cookie cleared`);
 
     if (!code) {
-      console.error("[TikTok Connect Route]  Missing 'code' parameter");
+      console.error("[TikTok Connect Route] Missing 'code' parameter");
       return new NextResponse(
-        `<html><body><script>window.close();</script>Le paramètre 'code' est manquant.</body></html>`,
-        { status: 400, headers: { "Content-Type": "text/html" } }
+        `
+        <html>
+          <head>
+            <title>Paramètre manquant</title>
+            <script>
+              if (window.opener) {
+                window.opener.onTikTokConnectFailure("Code d'autorisation manquant");
+                window.close();
+              }
+            </script>
+          </head>
+          <body>
+            <p>Code d'autorisation manquant. Cette fenêtre va se fermer automatiquement.</p>
+          </body>
+        </html>
+        `,
+        {
+          status: 400,
+          headers: { "Content-Type": "text/html" },
+        }
       );
     }
 
