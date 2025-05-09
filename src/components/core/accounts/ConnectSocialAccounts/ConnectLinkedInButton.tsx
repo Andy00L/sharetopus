@@ -118,11 +118,17 @@ export default function ConnectLinkedInButton({
         headers: {
           "Content-Type": "application/json",
         },
+        credentials: "include",
       });
+      console.log("API response status:", response.status);
+
       const data = await response.json();
+      console.log("API response data:", data);
 
       if (!response.ok || !data.success) {
         toast(data.message ?? "Failed to start LinkedIn connection");
+        setIsConnecting(false);
+        return;
       }
 
       const width = 600;

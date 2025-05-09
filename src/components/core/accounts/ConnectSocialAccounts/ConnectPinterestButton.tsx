@@ -126,7 +126,9 @@ export default function ConnectPinterestButton({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.message ?? "Failed to start Pinterest connection");
+        toast(data.message ?? "Failed to start LinkedIn connection");
+        setIsConnecting(false);
+        return;
       }
       const width = 600;
       const height = 700;
