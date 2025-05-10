@@ -106,56 +106,55 @@ export default function ConnectLinkedInButton({
 
   // Open LinkedIn popup with unique window name
   const openLinkedInPopup = async () => {
-    // Prevent multiple connection attempts
     if (isConnecting || !canConnect) return;
     try {
       setIsConnecting(true);
 
-      // Call server endpoint to start OAuth flow
-      const response = await fetch("/api/social/initiate/linkedin", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-      console.log("API response status:", response.status);
-
-      const data = await response.json();
-      console.log("API response data:", data);
-
-      if (!response.ok || !data.success) {
-        toast(data.message ?? "Failed to start LinkedIn connection");
-        setIsConnecting(false);
-        return;
-      }
-
+      // Open blank popup IMMEDIATELY (during user click)
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
-
-      // Create a unique window name using timestamp to prevent cache issues
       const uniqueWindowName = `LinkedInOAuth_${Date.now()}`;
       const popup = window.open(
-        data.authUrl,
+        "about:blank", // Start with blank page
         uniqueWindowName,
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,resizable=yes,status=yes`
+        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
       );
 
-      // Store the popup reference
+      // Store reference
       popupRef.current = popup;
 
       // Check if popup was blocked
       if (!popup || popup.closed || typeof popup.closed === "undefined") {
         toast("La fenêtre de connexion a été bloquée par le navigateur");
+        setIsConnecting(false);
+        return;
       }
 
-      // Start monitoring popup status - this includes BOTH the interval check
-      // AND the 10-minute timeout
+      // THEN fetch the auth URL
+      const response = await fetch("/api/social/initiate/linkedin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        popup.close();
+        toast(data.message ?? "Failed to start LinkedIn connection");
+        setIsConnecting(false);
+        return;
+      }
+
+      // Update the popup's location to the auth URL
+      popup.location.href = data.authUrl;
+
+      // Start monitoring popup status
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
-      toast.error(`Failed to start LinkedIn connection `);
+      toast.error(`Failed to start LinkedIn connection`);
       setIsConnecting(false);
     }
   };
