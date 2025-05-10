@@ -120,7 +120,7 @@ export async function POST() {
       process.env.PINTEREST_CLIENT_ID
     }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
       redirectUri
-    )}&state=${state}&response_type=code&prompt=login`;
+    )}&state=${state}&response_type=code&prompt=login&auth_type=reauthenticate`;
 
     // Return the authorization URL to the client
     return NextResponse.json({

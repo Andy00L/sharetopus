@@ -110,7 +110,7 @@ export async function POST() {
       process.env.TIKTOK_CLIENT_KEY
     }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
       redirectUri
-    )}&state=${state}&response_type=code&force_login=true`;
+    )}&state=${state}&response_type=code&force_login=true&auth_type=reauthenticate`;
 
     // Return the authorization URL to the client
     return NextResponse.json({
