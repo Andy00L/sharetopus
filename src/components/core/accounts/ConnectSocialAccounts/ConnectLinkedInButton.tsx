@@ -127,7 +127,7 @@ export default function ConnectLinkedInButton({
 
       // Check if popup was blocked
       if (!popup || popup.closed || typeof popup.closed === "undefined") {
-        toast("La fenêtre de connexion a été bloquée par le navigateur");
+        toast.error("La fenêtre de connexion a été bloquée par le navigateur");
         setIsConnecting(false);
         return;
       }
@@ -142,7 +142,7 @@ export default function ConnectLinkedInButton({
 
       if (!response.ok || !data.success) {
         popup.close();
-        toast(data.message ?? "Failed to start LinkedIn connection");
+        toast.error(data.message ?? "Failed to start LinkedIn connection");
         setIsConnecting(false);
         return;
       }
@@ -153,6 +153,10 @@ export default function ConnectLinkedInButton({
       // Start monitoring popup status
       checkPopupStatus();
     } catch (error) {
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.close();
+      }
+
       console.error("Error starting LinkedIn connection:", error);
       toast.error(`Failed to start LinkedIn connection`);
       setIsConnecting(false);

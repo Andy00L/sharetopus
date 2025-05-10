@@ -115,7 +115,31 @@ export default function ConnectTikTokButton({
     try {
       setIsConnecting(true);
 
-      // Call server endpoint to start OAuth flow
+      // Open blank popup IMMEDIATELY during user click
+      const width = 600;
+      const height = 700;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      const uniqueWindowName = `TikTokOAuth_${Date.now()}`;
+
+      // Open a blank popup right away to preserve the user gesture connection
+      const popup = window.open(
+        "about:blank", // Start with blank page
+        uniqueWindowName,
+        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
+      );
+
+      // Store reference to popup
+      popupRef.current = popup;
+
+      // Check if popup was blocked
+      if (!popup || popup.closed || typeof popup.closed === "undefined") {
+        toast.error("La fenêtre de connexion a été bloquée par le navigateur");
+        setIsConnecting(false);
+        return;
+      }
+
+      // THEN fetch the auth URL
       const response = await fetch("/api/social/initiate/tiktok", {
         method: "POST",
         headers: {
@@ -126,44 +150,29 @@ export default function ConnectTikTokButton({
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        toast(data.message ?? "Failed to start LinkedIn connection");
+        // Close the popup if there was an error
+        popup.close();
+        toast.error(data.message ?? "Failed to start TikTok connection");
         setIsConnecting(false);
         return;
       }
 
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      // Create a unique window name using timestamp
-      const uniqueWindowName = `TikTokOAuth_${Date.now()}`;
-
-      const popup = window.open(
-        data.authUrl,
-        uniqueWindowName,
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
-      );
-
-      // Store reference to popup and start monitoring
-      popupRef.current = popup;
-
-      // Check if popup was blocked
-      if (!popup || popup.closed || typeof popup.closed === "undefined") {
-        throw new Error(
-          "La fenêtre de connexion a été bloquée par le navigateur"
-        );
-      }
+      // Update the popup's location to the auth URL
+      popup.location.href = data.authUrl;
 
       // Start monitoring popup status
       checkPopupStatus();
     } catch (error) {
+      // Close the popup if there was an error
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.close();
+      }
+
       console.error("Error starting TikTok connection:", error);
       toast.error("Failed to start TikTok connection");
       setIsConnecting(false);
     }
   };
-
   return (
     <Button
       onClick={openTikTokPopup}
