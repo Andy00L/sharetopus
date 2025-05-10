@@ -7,7 +7,10 @@ import { headers } from "next/headers";
 import { Webhook } from "svix";
 
 export async function POST(req: Request) {
-  const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
+  const WEBHOOK_SECRET =
+    process.env.NODE_ENV === "production"
+      ? process.env.CLERK_WEBHOOK_SECRET!
+      : process.env.CLERK_WEBHOOK_SECRET_DEV!;
 
   if (!WEBHOOK_SECRET) {
     console.error(
