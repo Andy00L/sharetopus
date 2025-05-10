@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import ConnectionLimitModal from "./ConnectionLimitModal";
 
 declare global {
   interface Window {
@@ -17,13 +18,18 @@ declare global {
 // Properly define component props
 interface ConnectTikTokButtonProps {
   readonly canConnect?: boolean;
+  readonly currentCount?: number;
+  readonly maxAllowed?: number;
 }
 
 export default function ConnectTikTokButton({
   canConnect,
+  currentCount,
+  maxAllowed,
 }: ConnectTikTokButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   // Use refs to maintain references across renders
   const popupRef = useRef<Window | null>(null);
@@ -106,7 +112,14 @@ export default function ConnectTikTokButton({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
-
+  // Handle button click - either start auth flow or show limit modal
+  const handleButtonClick = () => {
+    if (!canConnect) {
+      setShowLimitModal(true);
+    } else {
+      openTikTokPopup();
+    }
+  };
   // Open TikTok popup with security measures
   const openTikTokPopup = async () => {
     // Prevent multiple connection attempts
@@ -174,19 +187,27 @@ export default function ConnectTikTokButton({
     }
   };
   return (
-    <Button
-      onClick={openTikTokPopup}
-      disabled={isConnecting || !canConnect}
-      className="cursor-pointer"
-    >
-      {isConnecting ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Connexion en cours...
-        </>
-      ) : (
-        "Connecter un compte TikTok"
-      )}
-    </Button>
+    <>
+      <Button
+        onClick={handleButtonClick}
+        disabled={isConnecting}
+        className="cursor-pointer"
+      >
+        {isConnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Connexion en cours...
+          </>
+        ) : (
+          "Connecter un compte TikTok"
+        )}
+      </Button>{" "}
+      <ConnectionLimitModal
+        isOpen={showLimitModal}
+        onClose={() => setShowLimitModal(false)}
+        currentCount={currentCount!}
+        maxAllowed={maxAllowed!}
+      />
+    </>
   );
 }

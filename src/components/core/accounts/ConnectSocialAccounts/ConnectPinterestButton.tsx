@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import ConnectionLimitModal from "./ConnectionLimitModal";
 
 declare global {
   interface Window {
@@ -17,13 +18,18 @@ declare global {
 // Properly define component props
 interface ConnectPinterestButtonProps {
   readonly canConnect?: boolean;
+  readonly currentCount?: number;
+  readonly maxAllowed?: number;
 }
 
 export default function ConnectPinterestButton({
   canConnect,
+  currentCount,
+  maxAllowed,
 }: ConnectPinterestButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   // Use refs to maintain references across renders
   const popupRef = useRef<Window | null>(null);
@@ -107,6 +113,13 @@ export default function ConnectPinterestButton({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
+  const handleButtonClick = () => {
+    if (!canConnect) {
+      setShowLimitModal(true);
+    } else {
+      openPinterestPopup();
+    }
+  };
   // Open Pinterest popup with unique window name
   const openPinterestPopup = async () => {
     // Prevent multiple connection attempts
@@ -174,19 +187,27 @@ export default function ConnectPinterestButton({
     }
   };
   return (
-    <Button
-      onClick={openPinterestPopup}
-      disabled={isConnecting || !canConnect}
-      className="cursor-pointer"
-    >
-      {isConnecting ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Connexion en cours...
-        </>
-      ) : (
-        "Connecter un compte Pinterest"
-      )}
-    </Button>
+    <>
+      <Button
+        onClick={handleButtonClick}
+        disabled={isConnecting}
+        className="cursor-pointer"
+      >
+        {isConnecting ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Connexion en cours...
+          </>
+        ) : (
+          "Connecter un compte Pinterest"
+        )}
+      </Button>
+      <ConnectionLimitModal
+        isOpen={showLimitModal}
+        onClose={() => setShowLimitModal(false)}
+        currentCount={currentCount!}
+        maxAllowed={maxAllowed!}
+      />
+    </>
   );
 }

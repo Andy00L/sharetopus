@@ -56,7 +56,8 @@ const AccountsPageWithData = async () => {
           <div className="mt-4 p-3 bg-muted/50 rounded-md">
             <p className="text-sm">
               <span className="font-medium">
-                {limitsCheck.currentCount} / {limitsCheck.maxAllowed}
+                {limitsCheck.currentCount}{" "}
+                {limitsCheck.maxAllowed < 30 && ` / ${limitsCheck.maxAllowed}`}
               </span>{" "}
               comptes connectés
             </p>
@@ -83,7 +84,11 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">TikTok</h2>
-            <ConnectTikTokButton canConnect={canAddMoreAccounts} />
+            <ConnectTikTokButton
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge accounts={tiktokAccounts} userId={userId} />
@@ -97,7 +102,11 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">Pinterest</h2>
-            <ConnectPinterestButton canConnect={canAddMoreAccounts} />
+            <ConnectPinterestButton
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
@@ -114,7 +123,11 @@ const AccountsPageWithData = async () => {
             </div>
 
             <h2 className="text-xl font-semibold">Linkedin</h2>
-            <ConnectLinkedInButton canConnect={canAddMoreAccounts} />
+            <ConnectLinkedInButton
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
