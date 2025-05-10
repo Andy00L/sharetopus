@@ -108,7 +108,7 @@ export default function ConnectLinkedInButton({
   const openLinkedInPopup = async () => {
     // Prevent multiple connection attempts
     if (isConnecting || !canConnect) return;
-
+    let datat;
     try {
       setIsConnecting(true);
 
@@ -138,7 +138,7 @@ export default function ConnectLinkedInButton({
 
       // Create a unique window name using timestamp to prevent cache issues
       const uniqueWindowName = `LinkedInOAuth_${Date.now()}`;
-
+      datat = data.authUrl;
       const popup = window.open(
         data.authUrl,
         uniqueWindowName,
@@ -160,7 +160,7 @@ export default function ConnectLinkedInButton({
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
-      toast.error("Failed to start LinkedIn connection");
+      toast.error("Failed to start LinkedIn connection", datat);
       setIsConnecting(false);
     }
   };
