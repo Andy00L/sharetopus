@@ -9,8 +9,11 @@ import { NextResponse } from "next/server";
 
 export async function POST() {
   try {
+    console.log("LinkedIn initiation started");
+
     // Authenticate user
     const { userId } = await auth();
+    console.log("User authenticated:", userId ? "Yes" : "No");
 
     if (!userId) {
       return NextResponse.json(
@@ -18,9 +21,12 @@ export async function POST() {
         { status: 401 }
       );
     }
+    console.log("Checking subscription");
 
     // Check subscription status
     const subscriptionCheck = await checkActiveSubscription(userId);
+    console.log("Subscription check result:", subscriptionCheck);
+
     if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
       return NextResponse.json(
         { success: false, message: "Abonnement actif requis" },
@@ -29,10 +35,13 @@ export async function POST() {
     }
 
     // Check account limits
+    console.log("Checking account limits");
+
     const limitsCheck = await checkAccountLimits(
       userId,
       subscriptionCheck.plan
     );
+    console.log("Limits check result:", limitsCheck);
 
     if (!limitsCheck.success) {
       return NextResponse.json(
@@ -80,16 +89,24 @@ export async function POST() {
     const state = nanoid(32);
 
     // Store state in a secure, HTTP-only cookie
-    (
-      await // Store state in a secure, HTTP-only cookie
-      cookies()
-    ).set("linkedin_auth_state", state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: 60 * 15, // 15 minutes
-      path: "/",
-    });
+    console.log("Attempting to set state cookie");
+
+    try {
+      (await cookies()).set("linkedin_auth_state", state, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 60 * 15,
+        path: "/",
+      });
+      console.log("Cookie set successfully");
+    } catch (cookieError) {
+      console.error("Error setting cookie:", cookieError);
+      return NextResponse.json(
+        { success: false, message: "Error setting authentication state" },
+        { status: 500 }
+      );
+    }
 
     // Define required scopes for LinkedIn
     const scopes = ["openid", "profile", "email", "w_member_social"].join(" ");
