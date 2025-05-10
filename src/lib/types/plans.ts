@@ -1,3 +1,16 @@
+export interface Plan {
+  title: string;
+  monthlyPrice: number;
+  yearlyPrice: number;
+  monthlyYearlyprice: number;
+  description: string;
+  features: string[];
+  priceIdMonthly: string;
+  priceIdYearly: string;
+  actionLabel: string;
+  popular?: boolean;
+}
+
 // Just check the environment
 const isProd = process.env.NODE_ENV === "production";
 
@@ -133,7 +146,7 @@ const prodPlanPrices = [
 export const planPrices = isProd ? prodPlanPrices : devPlanPrices;
 
 // Same for the account limits
-const devPriceIdAccountLimits = {
+const devPriceIdAccountLimits: Record<string, number> = {
   // Starter plan - 5 accounts
   price_1RKr9JCZd1WOWtsDVHl5MsP6: 5, // Monthly
   price_1RKrGNCZd1WOWtsDcU2r7iNf: 5, // Yearly
@@ -147,7 +160,7 @@ const devPriceIdAccountLimits = {
   price_1RKrGyCZd1WOWtsD2avrk52o: 999, // Yearly
 };
 
-const prodPriceIdAccountLimits = {
+const prodPriceIdAccountLimits: Record<string, number> = {
   // Starter plan - 5 accounts
   price_1RNMXJCyG8V2WH2FUpSI7VJt: 5, // Monthly
   price_1RNMXJCyG8V2WH2FLLApU9iL: 5, // Yearly
@@ -162,7 +175,7 @@ const prodPriceIdAccountLimits = {
 };
 
 // Export the right account limits based on environment
-export const PRICE_ID_ACCOUNT_LIMITS = isProd
+export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = isProd
   ? prodPriceIdAccountLimits
   : devPriceIdAccountLimits;
 
