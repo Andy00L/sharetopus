@@ -29,24 +29,24 @@ export async function GET(request: NextRequest) {
       );
       return new Response(
         `
-        <html>
-          <head>
-            <title>Connexion échouée</title>
-            <script>
-              if (window.opener) {
-                window.opener.onPinterestConnectFailure("${
-                  errorDescription ?? error
-                }");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Connexion Pinterest échouée: ${
-              errorDescription ?? error
-            }. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+       <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Connection Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onPinterestConnectFailure("${errorDescription ?? error}");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Pinterest connection failed: ${
+      errorDescription ?? error
+    }. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -66,20 +66,22 @@ export async function GET(request: NextRequest) {
       );
       return new Response(
         `
-    <html>
-      <head>
-        <title>Vérification de sécurité échouée</title>
-        <script>
-          if (window.opener) {
-            window.opener.onPinterestConnectFailure("Vérification de sécurité échouée");
-            window.close();
-          }
-        </script>
-      </head>
-      <body>
-        <p>La vérification de sécurité a échoué. Cette fenêtre va se fermer automatiquement.</p>
-      </body>
-    </html>
+    <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Security Verification Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onPinterestConnectFailure("Security verification failed");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>The security verification has failed. This window will close automatically.</p>
+  </body>
+</html>
     `,
         {
           status: 400,
@@ -99,20 +101,22 @@ export async function GET(request: NextRequest) {
 
       return new Response(
         `
-        <html>
-          <head>
-            <title>Paramètre manquant</title>
-            <script>
-              if (window.opener) {
-                window.opener.onPinterestConnectFailure("Code d'autorisation manquant");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Code d'autorisation manquant. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+      <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Missing Parameter</title>
+    <script>
+      if (window.opener) {
+        window.opener.onPinterestConnectFailure("Missing authorization code");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Authorization code is missing. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -131,20 +135,22 @@ export async function GET(request: NextRequest) {
       console.error("[Pinterest Connect route] Token exchange failed");
       return new Response(
         `
-         <html>
-           <head>
-             <title>Échange de token échoué</title>
-             <script>
-               if (window.opener) {
-                 window.opener.onPinterestConnectFailure("Échec d'échange de token");
-                 window.close();
-               }
-             </script>
-           </head>
-           <body>
-             <p>Échec lors de l'échange du code d'autorisation. Cette fenêtre va se fermer automatiquement.</p>
-           </body>
-         </html>
+        <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Token Exchange Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onPinterestConnectFailure("Token exchange failure");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Failed to exchange the authorization code. This window will close automatically.</p>
+  </body>
+</html>
          `,
         {
           status: 400,
@@ -258,9 +264,12 @@ export async function GET(request: NextRequest) {
     const htmlResponse = `
 <!DOCTYPE html>
 <html>
-<head><title>Connexion...</title><meta charset="UTF-8"></head>
+<head>
+  <title>Connecting...</title>
+  <meta charset="UTF-8">
+</head>
 <body>
-  <p>Connexion réussie. Cette fenêtre va se fermer...</p>
+  <p>Connection successful. This window will close shortly...</p>
   <script>
     window.onload = function() {
       try {
@@ -269,7 +278,7 @@ export async function GET(request: NextRequest) {
           // Wait before closing to ensure the function completes
           setTimeout(function() { 
             window.close(); 
-          }, 1000);
+          }, 500);
         } else {
           window.close();
         }
@@ -294,20 +303,22 @@ export async function GET(request: NextRequest) {
     );
     return new Response(
       `
-  <html>
-    <head>
-      <title>Erreur inattendue</title>
-      <script>
-        if (window.opener) {
-          window.opener.onPinterestConnectFailure("Une erreur inattendue s'est produite");
-          window.close();
-        }
-      </script>
-    </head>
-    <body>
-      <p>Une erreur inattendue s'est produite. Cette fenêtre va se fermer automatiquement.</p>
-    </body>
-  </html>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Unexpected Error</title>
+    <script>
+      if (window.opener) {
+        window.opener.onPinterestConnectFailure("An unexpected error occurred");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>An unexpected error occurred. This window will close automatically.</p>
+  </body>
+</html>
   `,
       {
         status: 500,

@@ -1,6 +1,6 @@
 "use client";
 
-import { disconnectSocialAccount } from "@/actions/server/accounts/disconnectSocialAccount";
+import { disconnectAccountAction } from "@/actions/server/accounts/disconnectAccountAction";
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 
 import {
@@ -35,7 +35,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
     try {
       setIsDisconnecting(true);
 
-      const result = await disconnectSocialAccount(account.id, userId);
+      const result = await disconnectAccountAction(account.id, userId);
 
       if (result.success) {
         toast.success(result.message);

@@ -2,16 +2,14 @@
 "use client";
 import { useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
-import {
-  ALLOWED_VIDEO_TYPES,
-  MAX_VIDEO_SIZE_MB,
-} from "@/components/core/create/constants/constants";
+import { ALLOWED_VIDEO_TYPES } from "@/components/core/create/constants/constants";
 
 interface VideoUploadProps {
-  readonly onFileSelected: (file: File) => void; // New callback prop
+  readonly onFileSelected: (file: File) => void;
+  readonly maxSizeMB: number;
 }
 
-export function VideoUploads({ onFileSelected }: VideoUploadProps) {
+export function VideoUploads({ onFileSelected, maxSizeMB }: VideoUploadProps) {
   // Local state management
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -109,7 +107,7 @@ export function VideoUploads({ onFileSelected }: VideoUploadProps) {
         </p>
         <p className="text-sm text-muted-foreground mb-1">or click to browse</p>
         <p className="text-xs text-muted-foreground">
-          Videos (MP4, MOV) up to {MAX_VIDEO_SIZE_MB}MB
+          Videos (MP4, MOV) up to {maxSizeMB}MB
         </p>
       </div>
       <input

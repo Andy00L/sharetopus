@@ -1,7 +1,7 @@
 "use client";
-import { getStripeSession } from "@/actions/server/stripe/checkOutSession";
+import { getStripeSessionProtected } from "@/actions/server/stripe/checkOutSession";
 import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
-import { CreateCustomerPortal } from "@/actions/server/stripe/customerPortal";
+import { createCustomerPortalProtected } from "@/actions/server/stripe/customerPortal";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -51,7 +51,6 @@ export default function PricingSection() {
   const handleSubscribe = async (plan: Plan) => {
     try {
       setLoadingPlan(plan.title);
-
       if (!isLoaded) {
         // Auth isn't loaded yet, wait briefly
         return;
@@ -63,16 +62,35 @@ export default function PricingSection() {
         return;
       }
       // Check if user has an active subscription
-      const hasActiveSubscription = await checkUserSubscription(); // You'd need to create this
+      const hasActiveSubscription = await checkUserSubscription();
+
       let redirectUrl;
       if (hasActiveSubscription) {
         // This will redirect the user directly
-        redirectUrl = await CreateCustomerPortal();
+        const result = await createCustomerPortalProtected();
+        if (!result.success) {
+          // Show error message to user
+          console.error(result.message);
+          setLoadingPlan(null);
+          return;
+        } // If successful, result.data will contain the URL
+        redirectUrl = result.data;
       } else {
         // This would also use redirect internally
         const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
 
-        redirectUrl = await getStripeSession({ priceId });
+        const result = await getStripeSessionProtected({ priceId });
+
+        // Check for success just like with the customer portal
+        if (!result.success) {
+          // Show error message to user
+          console.error(result.message);
+          setLoadingPlan(null);
+          return;
+        }
+
+        // If successful, result.data will contain the URL
+        redirectUrl = result.data;
       }
 
       // Note: Code here might not run if redirect happens

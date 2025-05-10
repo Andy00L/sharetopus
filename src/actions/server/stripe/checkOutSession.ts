@@ -3,6 +3,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
+import { withRateLimit } from "../reddis/rate-limit";
 
 export const getStripeSession = async ({
   priceId,
@@ -49,3 +50,31 @@ export const getStripeSession = async ({
     return "Failed to create checkout session";
   }
 };
+
+/**
+ * Rate-limited version of getStripeSession
+ * Limited to 5 requests per minute per user
+ */
+export async function getStripeSessionProtected({
+  priceId,
+}: {
+  readonly priceId: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  data?: string | null;
+}> {
+  const { userId } = await auth();
+
+  // Create the rate limited function with the user ID
+  const rateLimitedFn = withRateLimit(
+    getStripeSession,
+    "stripeCheckout",
+    userId,
+    5, // 5 requests
+    60 // per 60 seconds
+  );
+
+  // Call the rate limited function with the price ID
+  return rateLimitedFn({ priceId });
+}

@@ -27,7 +27,7 @@ const AccountsPageWithData = async () => {
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
 
-  const fetchResult = await fetchSocialAccountsProtected(userId);
+  const fetchResult = await fetchSocialAccountsProtected(userId, false);
   if (!fetchResult.success) {
     return <RateLimitError />;
   }

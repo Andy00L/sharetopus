@@ -29,22 +29,22 @@ export async function GET(request: NextRequest) {
       console.error(`LinkedIn OAuth error: ${error} - ${errorDescription}`);
       return new Response(
         `
-        <html>
-          <head>
-            <title>Connexion échouée</title>
-            <script>
-              if (window.opener) {
-                window.opener.onLinkedInConnectFailure("${
-                  errorDescription ?? error
-                }");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Connexion LinkedIn échouée. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+        <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Connection Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("${errorDescription ?? error}");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>LinkedIn connection failed. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -60,18 +60,20 @@ export async function GET(request: NextRequest) {
     if (!state || !storedState || state !== storedState) {
       return new Response(
         `
+<!DOCTYPE html>
 <html>
   <head>
-    <title>Vérification de sécurité échouée</title>
+    <meta charset="UTF-8">
+    <title>Security Verification Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Vérification de sécurité échouée");
+        window.opener.onLinkedInConnectFailure("Security verification failed");
         window.close();
       }
     </script>
   </head>
   <body>
-    <p>La vérification de sécurité a échoué. Cette fenêtre va se fermer automatiquement.</p>
+    <p>The security verification has failed. This window will close automatically.</p>
   </body>
 </html>
 `,
@@ -94,20 +96,22 @@ export async function GET(request: NextRequest) {
     if (!code) {
       return new Response(
         `
-        <html>
-          <head>
-            <title>Paramètres manquants</title>
-            <script>
-              if (window.opener) {
-                window.opener.onLinkedInConnectFailure("Code ou state manquant");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Paramètres nécessaires manquants. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+        <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Missing Parameters</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Missing code or state");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Necessary parameters are missing. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -128,20 +132,22 @@ export async function GET(request: NextRequest) {
     if (!tokenResponse?.access_token) {
       return new Response(
         `
-        <html>
-          <head>
-            <title>Échange de token échoué</title>
-            <script>
-              if (window.opener) {
-                window.opener.onLinkedInConnectFailure("Échec d'échange de token");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Échec lors de l'échange du code d'autorisation. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+       <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Token Exchange Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Token exchange failure");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Failed to exchange the authorization code. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -181,20 +187,22 @@ export async function GET(request: NextRequest) {
       );
       return new Response(
         `
-        <html>
-          <head>
-            <title>Erreur de base de données</title>
-            <script>
-              if (window.opener) {
-                window.opener.onLinkedInConnectFailure("Erreur de base de données");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Erreur lors de la vérification du compte. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+        <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Database Error</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Database error");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Error while verifying the account. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 500,
@@ -233,20 +241,22 @@ export async function GET(request: NextRequest) {
         console.error("Error updating LinkedIn account:", updateError);
         return new Response(
           `
-          <html>
-            <head>
-              <title>Erreur de mise à jour</title>
-              <script>
-                if (window.opener) {
-                  window.opener.onLinkedInConnectFailure("Erreur lors de la mise à jour du compte LinkedIn");
-                  window.close();
-                }
-              </script>
-            </head>
-            <body>
-              <p>Erreur lors de la mise à jour du compte. Cette fenêtre va se fermer automatiquement.</p>
-            </body>
-          </html>
+         <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Update Error</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Error updating LinkedIn account");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Error updating the account. This window will close automatically.</p>
+  </body>
+</html>
           `,
           {
             status: 500,
@@ -280,20 +290,22 @@ export async function GET(request: NextRequest) {
         console.error("Error inserting LinkedIn account:", insertError);
         return new Response(
           `
-          <html>
-            <head>
-              <title>Erreur de création</title>
-              <script>
-                if (window.opener) {
-                  window.opener.onLinkedInConnectFailure("Erreur lors de la création du compte LinkedIn");
-                  window.close();
-                }
-              </script>
-            </head>
-            <body>
-              <p>Erreur lors de la création du compte. Cette fenêtre va se fermer automatiquement.</p>
-            </body>
-          </html>
+          <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Creation Error</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("Error creating LinkedIn account");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Error creating the account. This window will close automatically.</p>
+  </body>
+</html>
           `,
           {
             status: 500,
@@ -308,20 +320,22 @@ export async function GET(request: NextRequest) {
     // Retourner une page HTML avec un script pour communiquer avec la fenêtre parent et fermer la popup
     return new Response(
       `
-      <html>
-        <head>
-          <title>Connexion réussie</title>
-          <script>
-            if (window.opener) {
-              window.opener.onLinkedInConnectSuccess();
-              window.close();
-            }
-          </script>
-        </head>
-        <body>
-          <p>Compte LinkedIn connecté avec succès. Cette fenêtre va se fermer automatiquement.</p>
-        </body>
-      </html>
+      <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Connection Successful</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectSuccess();
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>LinkedIn account successfully connected. This window will close automatically.</p>
+  </body>
+</html>
       `,
       {
         status: 200,
@@ -334,20 +348,22 @@ export async function GET(request: NextRequest) {
     console.error("Unexpected error in LinkedIn auth callback:", error);
     return new Response(
       `
-      <html>
-        <head>
-          <title>Erreur inattendue</title>
-          <script>
-            if (window.opener) {
-              window.opener.onLinkedInConnectFailure("Une erreur inattendue s'est produite");
-              window.close();
-            }
-          </script>
-        </head>
-        <body>
-          <p>Une erreur inattendue s'est produite. Cette fenêtre va se fermer automatiquement.</p>
-        </body>
-      </html>
+      <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Unexpected Error</title>
+    <script>
+      if (window.opener) {
+        window.opener.onLinkedInConnectFailure("An unexpected error occurred");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>An unexpected error occurred. This window will close automatically.</p>
+  </body>
+</html>
       `,
       {
         status: 500,

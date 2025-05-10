@@ -1,6 +1,6 @@
 "use client";
 
-import { CreateCustomerPortal } from "@/actions/server/stripe/customerPortal";
+import { createCustomerPortalProtected } from "@/actions/server/stripe/customerPortal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 
 export function NavUser() {
   const { user, isLoaded, isSignedIn } = useUser();
@@ -58,7 +59,13 @@ export function NavUser() {
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
-      const portalUrl = await CreateCustomerPortal();
+      const fetchedPortalUrl = await createCustomerPortalProtected();
+      // Check the success property first
+      if (!fetchedPortalUrl.success) {
+        toast.error("Too many requests. Please try again in a minute.");
+        return;
+      }
+      const portalUrl = fetchedPortalUrl.data;
       if (typeof portalUrl === "string" && portalUrl.startsWith("http")) {
         window.location.href = portalUrl;
       } else {

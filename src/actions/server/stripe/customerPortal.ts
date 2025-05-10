@@ -3,6 +3,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
+import { withRateLimit } from "../reddis/rate-limit";
 
 export const CreateCustomerPortal = async () => {
   try {
@@ -38,3 +39,27 @@ export const CreateCustomerPortal = async () => {
     return "Failed to create checkout session";
   }
 };
+
+/*
+ * Rate-limited version of CreateCustomerPortal
+ * Limited to 30 requests per minute per user
+ */
+export async function createCustomerPortalProtected(): Promise<{
+  success: boolean;
+  message: string;
+  data?: string;
+}> {
+  const { userId } = await auth();
+
+  // Create the rate limited function with the user ID
+  const rateLimitedFn = withRateLimit(
+    CreateCustomerPortal,
+    "customerPortal",
+    userId,
+    30, // 30 requests
+    60 // per 60 seconds
+  );
+
+  // Simply call and return the original function's result
+  return rateLimitedFn();
+}

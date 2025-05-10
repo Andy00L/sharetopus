@@ -1,17 +1,15 @@
 // components/uploads/ImageUpload.tsx
 "use client";
 import { useState, useRef } from "react";
-import {
-  ALLOWED_IMAGE_TYPES,
-  MAX_IMAGE_SIZE_MB,
-} from "@/components/core/create/constants/constants";
+import { ALLOWED_IMAGE_TYPES } from "@/components/core/create/constants/constants";
 import { UploadCloud } from "lucide-react";
 
 interface ImageUploadProps {
-  readonly onFileSelected: (file: File) => void; // New callback prop
+  readonly onFileSelected: (file: File) => void;
+  readonly maxSizeMB: number;
 }
 
-export function ImageUploads({ onFileSelected }: ImageUploadProps) {
+export function ImageUploads({ onFileSelected, maxSizeMB }: ImageUploadProps) {
   // Local state management
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,7 +109,7 @@ export function ImageUploads({ onFileSelected }: ImageUploadProps) {
         </p>
         <p className="text-sm text-muted-foreground mb-1">or click to browse</p>
         <p className="text-xs text-muted-foreground">
-          Images (JPEG, PNG) up to {MAX_IMAGE_SIZE_MB}MB
+          Images (JPEG, PNG) up to {maxSizeMB}MB
         </p>
       </div>
       <input

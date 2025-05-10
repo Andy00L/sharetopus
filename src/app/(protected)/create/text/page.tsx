@@ -1,6 +1,7 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
 import SocialPostForm from "@/components/core/create/SocialPostForm";
+import RateLimitError from "@/components/RateLimitError";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -9,13 +10,17 @@ import { Suspense } from "react";
 
 const SocialPostFormWithData = async () => {
   const { userId } = await auth();
-  const isPaid = await checkActiveSubscription(userId);
-  if (!isPaid.isActive) {
+  const subscriptionInfo = await checkActiveSubscription(userId);
+  if (!subscriptionInfo.isActive) {
     redirect("/create");
   }
-  const accounts = await fetchSocialAccounts(userId);
-
-  return <SocialPostForm accounts={accounts} userId={userId} postType="text" />;
+  const accounts = await fetchSocialAccountsProtected(userId);
+  if (!accounts.success) {
+    return <RateLimitError />;
+  }
+  return (
+    <SocialPostForm accounts={accounts.data!} userId={userId} postType="text" />
+  );
 };
 export default function page() {
   return (

@@ -1,7 +1,5 @@
-"use server";
-
+import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { validateUserAuthorization } from "@/actions/authentificationCheck";
 import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
 
 /**
@@ -15,14 +13,6 @@ export async function disconnectSocialAccount(
   accountId: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string }> {
-  const isAuth = await validateUserAuthorization(userId);
-  if (!isAuth) {
-    return {
-      success: false,
-      message: "You are not authorized to disconnect this account.",
-    };
-  }
-
   try {
     console.log(`[Disconnect Account] Processing account: ${accountId}`);
 

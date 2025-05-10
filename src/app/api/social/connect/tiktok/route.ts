@@ -30,24 +30,24 @@ export async function GET(request: NextRequest) {
       );
       return new NextResponse(
         `
-    <html>
-      <head>
-        <title>Connexion échouée</title>
-        <script>
-          if (window.opener) {
-            window.opener.onTikTokConnectFailure("${
-              errorDescription ?? error
-            }");
-            window.close();
-          }
-        </script>
-      </head>
-      <body>
-        <p>Connexion TikTok échouée: ${
-          errorDescription ?? error
-        }. Cette fenêtre va se fermer automatiquement.</p>
-      </body>
-    </html>
+    <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Connection Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onTikTokConnectFailure("${errorDescription ?? error}");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>TikTok connection failed: ${
+      errorDescription ?? error
+    }. This window will close automatically.</p>
+  </body>
+</html>
     `,
         {
           status: 400,
@@ -65,20 +65,22 @@ export async function GET(request: NextRequest) {
       );
       return new NextResponse(
         `
-    <html>
-      <head>
-        <title>Vérification de sécurité échouée</title>
-        <script>
-          if (window.opener) {
-            window.opener.onTikTokConnectFailure("Vérification de sécurité échouée");
-            window.close();
-          }
-        </script>
-      </head>
-      <body>
-        <p>La vérification de sécurité a échoué. Cette fenêtre va se fermer automatiquement.</p>
-      </body>
-    </html>
+    <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Security Verification Failed</title>
+    <script>
+      if (window.opener) {
+        window.opener.onTikTokConnectFailure("Security verification failed");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>The security verification has failed. This window will close automatically.</p>
+  </body>
+</html>
     `,
         {
           status: 400,
@@ -95,20 +97,22 @@ export async function GET(request: NextRequest) {
       console.error("[TikTok Connect Route] Missing 'code' parameter");
       return new NextResponse(
         `
-        <html>
-          <head>
-            <title>Paramètre manquant</title>
-            <script>
-              if (window.opener) {
-                window.opener.onTikTokConnectFailure("Code d'autorisation manquant");
-                window.close();
-              }
-            </script>
-          </head>
-          <body>
-            <p>Code d'autorisation manquant. Cette fenêtre va se fermer automatiquement.</p>
-          </body>
-        </html>
+        <!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Missing Parameter</title>
+    <script>
+      if (window.opener) {
+        window.opener.onTikTokConnectFailure("Missing authorization code");
+        window.close();
+      }
+    </script>
+  </head>
+  <body>
+    <p>Authorization code is missing. This window will close automatically.</p>
+  </body>
+</html>
         `,
         {
           status: 400,
@@ -220,31 +224,34 @@ export async function GET(request: NextRequest) {
       // --- FIX: Return HTML to close popup and refresh opener ---
       const htmlResponse = `
       <!DOCTYPE html>
-      <html>
-      <head><title>Connexion...</title><meta charset="UTF-8"></head>
-      <body>
-        <p>Connexion réussie. Cette fenêtre va se fermer...</p>
-        <script>
-          window.onload = function() {
-            try {
-              if (window.opener && window.opener.onTikTokConnectSuccess) {
-                window.opener.onTikTokConnectSuccess();
-                // Wait before closing to ensure the function completes
-                setTimeout(function() { 
-                  window.close(); 
-                }, 1000);
-              } else {
-                console.warn('Opener window or success function not found.');
-                window.close();
-              }
-            } catch (e) {
-              console.error('Error calling opener function:', e);
-              window.close();
-            }
-          };
-        </script>
-      </body>
-      </html>
+<html>
+<head>
+  <title>Connecting...</title>
+  <meta charset="UTF-8">
+</head>
+<body>
+  <p>Connection successful. This window will close shortly...</p>
+  <script>
+    window.onload = function() {
+      try {
+        if (window.opener && window.opener.onTikTokConnectSuccess) {
+          window.opener.onTikTokConnectSuccess();
+          // Wait before closing to ensure the function completes
+          setTimeout(function() { 
+            window.close(); 
+          }, 500);
+        } else {
+          console.warn('Opener window or success function not found.');
+          window.close();
+        }
+      } catch (e) {
+        console.error('Error calling opener function:', e);
+        window.close();
+      }
+    };
+  </script>
+</body>
+</html>
     `;
       return new NextResponse(htmlResponse, {
         status: 200,

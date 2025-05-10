@@ -47,10 +47,6 @@ import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokA
 import {
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,
-  MAX_IMAGE_SIZE_BYTES,
-  MAX_IMAGE_SIZE_MB,
-  MAX_VIDEO_SIZE_BYTES,
-  MAX_VIDEO_SIZE_MB,
 } from "./constants/constants";
 import NoAccountAvaible from "./NoAccountAvaible";
 import { ImageUploads } from "./upload/ImageUpload ";
@@ -60,19 +56,22 @@ interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
+  readonly uploadLimits?: { image: number; video: number };
 }
 
 export default function SocialPostForm({
   accounts,
   userId,
   postType,
+  uploadLimits,
 }: SocialPostFormProps) {
   // Content step state
   const [isScheduled, setIsScheduled] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-
+  const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
+  const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Add new single state for all account content
@@ -776,6 +775,7 @@ export default function SocialPostForm({
             {/*video content*/}
             {postType === "video" && !selectedFile && (
               <VideoUploads
+                maxSizeMB={uploadLimits?.video ?? 50}
                 onFileSelected={(file) => {
                   // Do any validation here
                   const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
@@ -786,7 +786,7 @@ export default function SocialPostForm({
 
                   if (file.size > MAX_VIDEO_SIZE_BYTES) {
                     setError(
-                      `File size exceeds the maximum limit of ${MAX_VIDEO_SIZE_MB}MB.`
+                      `File size exceeds the maximum limit of ${uploadLimits?.video}MB.`
                     );
                     return;
                   }
@@ -801,6 +801,7 @@ export default function SocialPostForm({
 
             {postType === "image" && !selectedFile && (
               <ImageUploads
+                maxSizeMB={uploadLimits?.image ?? 50}
                 onFileSelected={(file) => {
                   // Do any validation here
                   const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
@@ -811,7 +812,7 @@ export default function SocialPostForm({
 
                   if (file.size > MAX_IMAGE_SIZE_BYTES) {
                     setError(
-                      `File size exceeds the maximum limit of ${MAX_IMAGE_SIZE_MB}MB.`
+                      `File size exceeds the maximum limit of ${uploadLimits?.image}MB.`
                     );
                     return;
                   }

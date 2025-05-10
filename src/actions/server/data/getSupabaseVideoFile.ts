@@ -1,7 +1,6 @@
-"use server";
-
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { validateUserAuthorization } from "@/actions/authentificationCheck";
+import "server-only";
 
 /**
  * Retrieves a video file from Supabase Storage

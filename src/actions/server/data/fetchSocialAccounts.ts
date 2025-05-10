@@ -2,8 +2,15 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
+/**
+ * Fetches social accounts for a specific user with optional availability filtering
+ * @param userId - The ID of the user whose social accounts to fetch
+ * @param filterByAvailability - When true, only returns accounts marked as available (default: true)
+ * @returns Promise resolving to an array of social accounts
+ */
 export async function fetchSocialAccounts(
-  userId: string | null
+  userId: string | null,
+  filterByAvailability: boolean = true
 ): Promise<SocialAccount[]> {
   // Get user ID using server-side auth
 
@@ -17,18 +24,25 @@ export async function fetchSocialAccounts(
 
   try {
     // Fetch data using the admin client (bypasses RLS if needed)
-    const { data, error } = await adminSupabase
+    // Start building the query
+    let query = adminSupabase
       .from("social_accounts")
       .select("*")
       .eq("user_id", userId);
+
+    // Only apply the availability filter if requested
+    if (filterByAvailability) {
+      query = query.eq("is_availble", true);
+    }
+
+    // Execute the query
+    const { data, error } = await query;
 
     if (error) {
       console.error(
         "[FetchScocialAccounts]: Supabase error fetching TikTok accounts:",
         error
       );
-      // Depending on your error handling strategy, you might throw the error
-      // or return an empty array. Returning empty allows the page to render.
       return [];
     }
 
