@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { ArrowRight, BarChart, Clock, Upload } from "lucide-react";
 import Link from "next/link";
-import { ArrowRight, Clock, BarChart, Upload } from "lucide-react";
 
 export default function Cta() {
   return (
@@ -41,7 +41,7 @@ export default function Cta() {
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
             <Button size="lg" className="px-8 py-6 text-lg group">
-              <Link href="/dashboard" className="flex items-center">
+              <Link href="/create" className="flex items-center">
                 Get Started For Free
                 <ArrowRight
                   size={18}
