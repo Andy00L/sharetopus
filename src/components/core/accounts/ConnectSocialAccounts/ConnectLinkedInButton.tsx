@@ -108,7 +108,6 @@ export default function ConnectLinkedInButton({
   const openLinkedInPopup = async () => {
     // Prevent multiple connection attempts
     if (isConnecting || !canConnect) return;
-    let datat;
     try {
       setIsConnecting(true);
 
@@ -118,7 +117,6 @@ export default function ConnectLinkedInButton({
         headers: {
           "Content-Type": "application/json",
         },
-        credentials: "include",
       });
       console.log("API response status:", response.status);
 
@@ -138,7 +136,6 @@ export default function ConnectLinkedInButton({
 
       // Create a unique window name using timestamp to prevent cache issues
       const uniqueWindowName = `LinkedInOAuth_${Date.now()}`;
-      datat = data.authUrl;
       const popup = window.open(
         data.authUrl,
         uniqueWindowName,
@@ -150,9 +147,7 @@ export default function ConnectLinkedInButton({
 
       // Check if popup was blocked
       if (!popup || popup.closed || typeof popup.closed === "undefined") {
-        throw new Error(
-          "La fenêtre de connexion a été bloquée par le navigateur"
-        );
+        toast("La fenêtre de connexion a été bloquée par le navigateur");
       }
 
       // Start monitoring popup status - this includes BOTH the interval check
@@ -160,7 +155,7 @@ export default function ConnectLinkedInButton({
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
-      toast.error(`Failed to start LinkedIn connection : ${datat}`);
+      toast.error(`Failed to start LinkedIn connection `);
       setIsConnecting(false);
     }
   };
