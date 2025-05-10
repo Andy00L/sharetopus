@@ -30,10 +30,10 @@ import {
   Search,
   SendHorizontal,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { nanoid } from "nanoid";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import FilePreview from "../../renderFilePreview";
-import { generateState } from "../accounts/ConnectSocialAccounts/generateState";
 import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
 import { directPostForTikTokAccounts } from "./action/Direct/directPostForTikTokAccounts";
@@ -53,8 +53,8 @@ import {
   MAX_VIDEO_SIZE_MB,
 } from "./constants/constants";
 import NoAccountAvaible from "./NoAccountAvaible";
-import { ImageUpload } from "./upload/ImageUploadCard";
-import { VideoUpload } from "./upload/VideoUploadCard";
+import { ImageUploads } from "./upload/ImageUpload ";
+import { VideoUploads } from "./upload/VideoUpload";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -68,7 +68,6 @@ export default function SocialPostForm({
   postType,
 }: SocialPostFormProps) {
   // Content step state
-  const [isDragging, setIsDragging] = useState(false);
   const [isScheduled, setIsScheduled] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
@@ -118,8 +117,7 @@ export default function SocialPostForm({
     format(new Date(Date.now() + 24 * 60 * 60 * 1000), "yyyy-MM-dd") // Default to tomorrow
   );
   const [scheduledTime, setScheduledTime] = useState("12:00"); // Default noon
-  // Processing state
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Accounts step state
   const [searchQuery, setSearchQuery] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -136,7 +134,6 @@ export default function SocialPostForm({
     setAccountContent([]);
     setSelectedAccounts({});
 
-    setIsDragging(false);
     setIsScheduled(false);
     setIsLoading(false);
     setIsLoadingBoards(false);
@@ -162,10 +159,6 @@ export default function SocialPostForm({
     setBoards([]);
     setEditingAccounts({});
     setOpenTab(undefined);
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
   };
 
   const [selectedAccounts, setSelectedAccounts] = useState<
@@ -228,88 +221,6 @@ export default function SocialPostForm({
   });
 
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
-
-  // Handle file selection for upload
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Determine if image or video
-    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
-    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-
-    // File validation
-    if (!isImage && !isVideo) {
-      setError(
-        "Please select a valid image (JPEG, PNG) or video (MP4, MOV) file."
-      );
-      return;
-    }
-
-    // Check file size
-    const sizeLimit = isImage ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
-    const sizeLimitMB = isImage ? MAX_IMAGE_SIZE_MB : MAX_VIDEO_SIZE_MB;
-
-    if (file.size > sizeLimit) {
-      setError(`File size exceeds the maximum limit of ${sizeLimitMB}MB.`);
-      return;
-    }
-
-    // Set file and media type
-    setSelectedFile(file);
-    setError(null);
-    // Generate thumbnail if it's a video
-  };
-
-  // Drag and drop handlers
-  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragging(false);
-
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-
-    // File validation
-    const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
-    const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
-
-    if (!isImage && !isVideo) {
-      setError(
-        "Please select a valid image (JPEG, PNG) or video (MP4, MOV) file."
-      );
-      return;
-    }
-
-    // Size validation
-    const sizeLimit = isImage ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
-    const sizeLimitMB = isImage ? MAX_IMAGE_SIZE_MB : MAX_VIDEO_SIZE_MB;
-
-    if (file.size > sizeLimit) {
-      setError(`File size exceeds the maximum limit of ${sizeLimitMB}MB.`);
-      return;
-    }
-
-    setSelectedFile(file);
-    setError(null);
-  };
 
   // Account toggle handler
   const handleAccountToggle = (accountId: string) => {
@@ -517,7 +428,7 @@ export default function SocialPostForm({
     let batchId = "";
 
     try {
-      batchId = generateState();
+      batchId = nanoid(32);
       // 2. Téléchargement du média (si nécessaire)
       if ((postType === "video" || postType === "image") && selectedFile) {
         const uploadResult = await uploadMedia(selectedFile, (progress) => {
@@ -644,7 +555,7 @@ export default function SocialPostForm({
     let mediaPath = "";
     let batchId = "";
     try {
-      batchId = generateState();
+      batchId = nanoid(32);
 
       // Upload media file if needed (only for media tab)
       if ((postType === "video" || postType === "image") && selectedFile) {
@@ -862,34 +773,54 @@ export default function SocialPostForm({
                 </div>
               </div>
             </div>
-
             {/*video content*/}
             {postType === "video" && !selectedFile && (
-              <VideoUpload
-                onFileChange={handleFileChange}
-                onDrop={handleDrop}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                isDragging={isDragging}
-                fileInputRef={fileInputRef}
-                // Pass the parent's ref
+              <VideoUploads
+                onFileSelected={(file) => {
+                  // Do any validation here
+                  const isVideo = ALLOWED_VIDEO_TYPES.includes(file.type);
+                  if (!isVideo) {
+                    setError("Please select a valid video (MP4, MOV) file.");
+                    return;
+                  }
+
+                  if (file.size > MAX_VIDEO_SIZE_BYTES) {
+                    setError(
+                      `File size exceeds the maximum limit of ${MAX_VIDEO_SIZE_MB}MB.`
+                    );
+                    return;
+                  }
+
+                  setSelectedFile(file);
+                  setError(null);
+                }}
               />
             )}
 
             {/*image content*/}
+
             {postType === "image" && !selectedFile && (
-              <ImageUpload
-                onFileChange={handleFileChange}
-                onDrop={handleDrop}
-                onDragEnter={handleDragEnter}
-                onDragLeave={handleDragLeave}
-                onDragOver={handleDragOver}
-                isDragging={isDragging}
-                fileInputRef={fileInputRef} // Pass the parent's ref
+              <ImageUploads
+                onFileSelected={(file) => {
+                  // Do any validation here
+                  const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+                  if (!isImage) {
+                    setError("Please select a valid image (JPEG, PNG) file.");
+                    return;
+                  }
+
+                  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+                    setError(
+                      `File size exceeds the maximum limit of ${MAX_IMAGE_SIZE_MB}MB.`
+                    );
+                    return;
+                  }
+
+                  setSelectedFile(file);
+                  setError(null);
+                }}
               />
             )}
-
             {/* caption field */}
 
             <Label htmlFor="text-content">

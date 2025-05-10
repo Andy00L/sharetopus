@@ -80,7 +80,7 @@ const SimplePaymentSuccess = () => {
   }, [confetti]);
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-50">
+    <div className="flex items-center justify-center min-h-screen bg-slate-50 px-4 py-6">
       {/* Confetti animation */}
       {confetti.map((particle) => (
         <div

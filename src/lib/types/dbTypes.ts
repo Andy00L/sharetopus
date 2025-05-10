@@ -113,6 +113,7 @@ export interface SocialAccount {
   account_identifier: string;
   access_token: string | null;
   refresh_token: string | null;
+  is_availble: boolean;
   token_expires_at: string | null;
   extra: SocialAccountExtra | null;
   created_at: string | null;

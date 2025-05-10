@@ -1,9 +1,9 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
-import ConnectLinkedInButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectLinkedInButton";
-import ConnectPinterestButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectPinterestButton";
-import ConnectTikTokButton from "@/components/core/accounts/ConnectSocialAccounts/ConnectTikTokButton";
+import ConnectLinkedInButton from "@/components/core/accounts/connectAccountsButton/ConnectLinkedInButton";
+import ConnectPinterestButton from "@/components/core/accounts/connectAccountsButton/ConnectPinterestButton";
+import ConnectTikTokButton from "@/components/core/accounts/connectAccountsButton/ConnectTikTokButton";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import PinterestSVGIcon, {
@@ -11,6 +11,7 @@ import PinterestSVGIcon, {
   TiktokSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
 import RateLimitError from "@/components/RateLimitError";
+import { SimpleSubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -21,7 +22,7 @@ const AccountsPageWithData = async () => {
   const { userId } = await auth();
   const subscriptionCheck = await checkActiveSubscription(userId);
   if (!subscriptionCheck.isActive || !subscriptionCheck.success) {
-    return <RateLimitError />;
+    return <SimpleSubscriptionPrompt />;
   }
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
@@ -46,10 +47,10 @@ const AccountsPageWithData = async () => {
     <SidebarContent className="px-4 py-6 ">
       {/* Account information and limit display */}
       <SidebarGroup className="mb-8">
-        <h1 className="text-2xl font-bold">Gérez vos comptes sociaux</h1>
+        <h1 className="text-2xl font-bold">Manage your social accounts</h1>
         <p className="text-muted-foreground mt-2">
-          Connectez vos comptes sociaux pour publier du contenu sur plusieurs
-          plateformes.
+          Connect your social accounts to publish content across multiple
+          platforms.
         </p>
         {/* Account limits display */}
         {limitsCheck.success && (
@@ -59,16 +60,16 @@ const AccountsPageWithData = async () => {
                 {limitsCheck.currentCount}{" "}
                 {limitsCheck.maxAllowed < 30 && ` / ${limitsCheck.maxAllowed}`}
               </span>{" "}
-              comptes connectés
+              connected accounts
             </p>
             {!limitsCheck.canAddMore && (
               <p className="text-xs text-destructive mt-1">
-                Vous avez atteint la limite de comptes pour votre abonnement.
+                You have reached the account limit for your subscription.
                 <Link
                   href="/pricing"
                   className="text-primary ml-1 hover:underline"
                 >
-                  Mettre à niveau
+                  Upgrade
                 </Link>
               </p>
             )}

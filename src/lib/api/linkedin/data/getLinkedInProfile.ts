@@ -1,4 +1,5 @@
 // lib/api/linkedin/getLinkedInProfile.ts
+import "server-only";
 
 import { LinkedInProfile } from "@/lib/types/LinkedinProfile";
 

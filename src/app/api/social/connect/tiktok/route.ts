@@ -165,6 +165,7 @@ export async function GET(request: NextRequest) {
           user_id: userId,
           platform: "tiktok",
           account_identifier: open_id,
+          is_availble: true,
           access_token,
           refresh_token,
           token_expires_at: new Date(

@@ -1,4 +1,5 @@
 // lib/api/tiktok/client.ts
+import "server-only";
 import { TikTokProfile } from "@/lib/types/TikTokProfile"; // Adjust path if needed
 
 export async function getTikTokProfile(

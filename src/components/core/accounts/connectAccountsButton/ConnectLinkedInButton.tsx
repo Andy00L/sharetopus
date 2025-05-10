@@ -1,4 +1,4 @@
-// components/ConnectTikTokButton.tsx
+// components/core/accounts/ConnectLinkedInButton.tsx
 "use client";
 
 import { Button } from "@/components/ui/button";
@@ -10,23 +10,21 @@ import ConnectionLimitModal from "./ConnectionLimitModal";
 
 declare global {
   interface Window {
-    onTikTokConnectSuccess?: () => void;
-    onTikTokConnectFailure?: (error?: string) => void;
+    onLinkedInConnectSuccess?: () => void;
+    onLinkedInConnectFailure?: (error?: string) => void;
   }
 }
-
 // Properly define component props
-interface ConnectTikTokButtonProps {
+interface ConnectLinkedInButtonProps {
   readonly canConnect?: boolean;
   readonly currentCount?: number;
   readonly maxAllowed?: number;
 }
-
-export default function ConnectTikTokButton({
+export default function ConnectLinkedInButton({
   canConnect,
   currentCount,
   maxAllowed,
-}: ConnectTikTokButtonProps) {
+}: ConnectLinkedInButtonProps) {
   const router = useRouter();
   const [isConnecting, setIsConnecting] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
@@ -36,7 +34,7 @@ export default function ConnectTikTokButton({
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Clear any active timeouts
+  // Clear inactivity timeout
   const clearInactivityTimeout = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
@@ -66,7 +64,7 @@ export default function ConnectTikTokButton({
     setIsConnecting(false);
   };
 
-  // Monitor popup status
+  // Check if popup is closed
   const checkPopupStatus = () => {
     // Clear any existing interval first
     clearPopupCheckInterval();
@@ -79,70 +77,67 @@ export default function ConnectTikTokButton({
       }
     }, 1000);
 
-    // Set a maximum timeout for the entire auth flow (8 minutes)
+    // Set a maximum timeout for the entire auth flow (10 minutes)
     timeoutRef.current = setTimeout(() => {
       cleanupAuthFlow();
       toast.error("La connexion a expiré en raison d'inactivité");
-    }, 480000); // 8 minutes
+    }, 600000); // 10 minutes
   };
 
   // Function to handle success from popup
-  const handleTikTokSuccess = () => {
-    toast.success("Compte TikTok connecté avec succès!");
+  const handleLinkedInSuccess = () => {
+    toast.success("Compte LinkedIn connecté avec succès!");
     cleanupAuthFlow();
     router.refresh();
   };
 
   // Add failure handler
-  const handleTikTokFailure = (error?: string) => {
-    console.error("TikTok connection failed:", error);
-    toast.error("Échec de la connexion au compte TikTok");
+  const handleLinkedInFailure = () => {
+    toast.error(`Échec de la connexion au compte LinkedIn`);
     cleanupAuthFlow();
   };
 
   // Setup and cleanup for window event handlers
   useEffect(() => {
-    window.onTikTokConnectSuccess = handleTikTokSuccess;
-    window.onTikTokConnectFailure = handleTikTokFailure;
+    window.onLinkedInConnectSuccess = handleLinkedInSuccess;
+    window.onLinkedInConnectFailure = handleLinkedInFailure;
 
     return () => {
-      window.onTikTokConnectSuccess = undefined;
-      window.onTikTokConnectFailure = undefined;
+      window.onLinkedInConnectSuccess = undefined;
+      window.onLinkedInConnectFailure = undefined;
       cleanupAuthFlow(); // Ensure cleanup on component unmount
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
+
   // Handle button click - either start auth flow or show limit modal
   const handleButtonClick = () => {
     if (!canConnect) {
       setShowLimitModal(true);
     } else {
-      openTikTokPopup();
+      openLinkedInPopup();
     }
   };
-  // Open TikTok popup with security measures
-  const openTikTokPopup = async () => {
-    // Prevent multiple connection attempts
-    if (isConnecting || !canConnect) return;
 
+  // Open LinkedIn popup with unique window name
+  const openLinkedInPopup = async () => {
+    if (isConnecting || !canConnect) return;
     try {
       setIsConnecting(true);
 
-      // Open blank popup IMMEDIATELY during user click
+      // Open blank popup IMMEDIATELY (during user click)
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
-      const uniqueWindowName = `TikTokOAuth_${Date.now()}`;
-
-      // Open a blank popup right away to preserve the user gesture connection
+      const uniqueWindowName = `LinkedInOAuth_${Date.now()}`;
       const popup = window.open(
         "about:blank", // Start with blank page
         uniqueWindowName,
         `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
       );
 
-      // Store reference to popup
+      // Store reference
       popupRef.current = popup;
 
       // Check if popup was blocked
@@ -153,19 +148,16 @@ export default function ConnectTikTokButton({
       }
 
       // THEN fetch the auth URL
-      const response = await fetch("/api/social/initiate/tiktok", {
+      const response = await fetch("/api/social/initiate/linkedin", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
       });
 
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        // Close the popup if there was an error
         popup.close();
-        toast.error(data.message ?? "Failed to start TikTok connection");
+        toast.error(data.message ?? "Failed to start LinkedIn connection");
         setIsConnecting(false);
         return;
       }
@@ -176,16 +168,16 @@ export default function ConnectTikTokButton({
       // Start monitoring popup status
       checkPopupStatus();
     } catch (error) {
-      // Close the popup if there was an error
       if (popupRef.current && !popupRef.current.closed) {
         popupRef.current.close();
       }
 
-      console.error("Error starting TikTok connection:", error);
-      toast.error("Failed to start TikTok connection");
+      console.error("Error starting LinkedIn connection:", error);
+      toast.error(`Failed to start LinkedIn connection`);
       setIsConnecting(false);
     }
   };
+
   return (
     <>
       <Button
@@ -195,13 +187,13 @@ export default function ConnectTikTokButton({
       >
         {isConnecting ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Connexion en cours...
+            <Loader2 className="mr-2 h-4 w-4 animate-spin " />
+            Connecting....
           </>
         ) : (
-          "Connecter un compte TikTok"
+          "Connect a LinkedIn account"
         )}
-      </Button>{" "}
+      </Button>
       <ConnectionLimitModal
         isOpen={showLimitModal}
         onClose={() => setShowLimitModal(false)}

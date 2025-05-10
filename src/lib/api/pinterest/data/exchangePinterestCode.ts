@@ -1,4 +1,5 @@
 // lib/api/pinterest/exchangePinterestCode.ts
+import "server-only";
 
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 

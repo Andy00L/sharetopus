@@ -1,4 +1,5 @@
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
+import "server-only";
 
 /**
  * Rafraîchit un token Pinterest expiré

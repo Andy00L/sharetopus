@@ -1,4 +1,5 @@
 // lib/api/pinterest/getPinterestProfile.ts
+import "server-only";
 
 import { PinterestProfile } from "@/lib/types/PinterestProfile ";
 

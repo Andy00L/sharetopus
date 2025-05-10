@@ -1,4 +1,6 @@
 // lib/api/pinterest/post/postToPinterest.ts
+import "server-only";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { auth } from "@clerk/nextjs/server";
 import FormData from "form-data";

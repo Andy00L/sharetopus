@@ -1,4 +1,5 @@
 // lib/api/tiktok/post/postToTikTok.ts
+import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";

@@ -1,3 +1,4 @@
+import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ContentHistory } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";

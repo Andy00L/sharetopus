@@ -1,3 +1,4 @@
+import "server-only";
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 
 // lib/api/tiktok/auth.ts

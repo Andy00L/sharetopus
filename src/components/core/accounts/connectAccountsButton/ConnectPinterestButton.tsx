@@ -196,10 +196,10 @@ export default function ConnectPinterestButton({
         {isConnecting ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Connexion en cours...
+            Connecting...
           </>
         ) : (
-          "Connecter un compte Pinterest"
+          "Connect a Pinterest account"
         )}
       </Button>
       <ConnectionLimitModal

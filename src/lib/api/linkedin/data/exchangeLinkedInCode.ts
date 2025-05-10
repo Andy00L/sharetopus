@@ -1,4 +1,5 @@
 // lib/api/linkedin/exchangeLinkedInCode.ts
+import "server-only";
 
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 

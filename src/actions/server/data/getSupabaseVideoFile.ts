@@ -69,8 +69,8 @@ export async function getSupabaseVideoFile(
       `[Get Supabase video File]  Successfully retrieved file: ${filePath} (${buffer.length} bytes)`
     );
     return {
-      success: false,
-      message: "You are not authorized to disconnect this account.",
+      success: true,
+      message: "Successfully retrieved file",
       buffer: buffer,
     };
   } catch (err) {
