@@ -160,7 +160,7 @@ export default function ConnectLinkedInButton({
       checkPopupStatus();
     } catch (error) {
       console.error("Error starting LinkedIn connection:", error);
-      toast.error("Failed to start LinkedIn connection", datat);
+      toast.error(`Failed to start LinkedIn connection : ${datat}`);
       setIsConnecting(false);
     }
   };
