@@ -139,7 +139,7 @@ export default function ConnectLinkedInButton({
       const popup = window.open(
         data.authUrl,
         uniqueWindowName,
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes`
+        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,resizable=yes,status=yes`
       );
 
       // Store the popup reference
