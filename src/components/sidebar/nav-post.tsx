@@ -1,5 +1,6 @@
 import { CheckCircle, Clock } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -10,6 +11,7 @@ import {
 } from "../ui/sidebar";
 
 export default function NavPost() {
+  const pathname = usePathname();
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Posts</SidebarGroupLabel>
@@ -17,7 +19,12 @@ export default function NavPost() {
         <SidebarMenu>
           <SidebarMenuItem></SidebarMenuItem>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild>
+            <SidebarMenuButton
+              asChild
+              className={
+                pathname === "/scheduled" ? "bg-blue-500 text-white" : ""
+              }
+            >
               <Link href="/scheduled">
                 <Clock className="h-4 w-4" />
                 <span>Scheduled</span>
@@ -26,7 +33,10 @@ export default function NavPost() {
           </SidebarMenuItem>
 
           <SidebarMenuItem>
-            <SidebarMenuButton asChild>
+            <SidebarMenuButton
+              asChild
+              className={pathname === "/posted" ? "bg-blue-500 text-white" : ""}
+            >
               <Link href="/posted">
                 <CheckCircle className="h-4 w-4" />
                 <span>Posted</span>
