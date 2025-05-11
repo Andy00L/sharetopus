@@ -14,8 +14,9 @@ import { auth } from "@clerk/nextjs/server";
  */
 export async function checkUserSubscription(): Promise<boolean> {
   const { userId } = await auth();
-  console.log(userId);
   try {
+    console.log("[checkUserSubscription]  ${userId}");
+
     // Query the stripe_subscriptions table for any active subscriptions
     const { data, error } = await adminSupabase
       .from("stripe_subscriptions")
@@ -23,9 +24,13 @@ export async function checkUserSubscription(): Promise<boolean> {
       .eq("user_id", userId)
       .order("created_at", { ascending: false }) // Get the most recent first
       .limit(1); // We only need to know if at least one exists
-
+    console.log("[checkUserSubscription]: Query result:", {
+      dataExists: !!data,
+      dataLength: data?.length,
+      errorExists: !!error,
+    });
     if (error) {
-      if (error.code === "PGRST116" || error) {
+      if (error.code === "PGRST116") {
         // This is expected when user has no subscription
         return false;
       }
