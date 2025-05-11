@@ -26,11 +26,12 @@ import {
   UserCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import router from "next/router";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
 export function NavUser() {
+  const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
   const { isMobile } = useSidebar();
   const { signOut } = useClerk();
