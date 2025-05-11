@@ -24,11 +24,7 @@ export async function checkUserSubscription(): Promise<boolean> {
       .eq("user_id", userId)
       .order("created_at", { ascending: false }) // Get the most recent first
       .limit(1); // We only need to know if at least one exists
-    console.log("[checkUserSubscription]: Query result:", {
-      dataExists: !!data,
-      dataLength: data?.length,
-      errorExists: !!error,
-    });
+
     if (error) {
       if (error.code === "PGRST116") {
         // This is expected when user has no subscription
@@ -36,6 +32,10 @@ export async function checkUserSubscription(): Promise<boolean> {
       }
       console.error("[checkUserSubscription]: Database query error:", error);
       // In case of error, we default to false to avoid giving access incorrectly
+      return false;
+    }
+    if (!data || data.length === 0) {
+      console.log("[checkUserSubscription]: No subscription found for user");
       return false;
     }
 
