@@ -29,7 +29,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
       .from("stripe_subscriptions")
       .select("*")
       .eq("user_id", userId)
-      .eq("status", ["active", "trialing"])
+      .in("status", ["active", "trialing"])
       .order("created_at", { ascending: false })
       .limit(1);
 

@@ -78,9 +78,7 @@ export function NavUser() {
       if (typeof portalUrl === "string" && portalUrl.startsWith("http")) {
         window.location.href = portalUrl;
       } else {
-        console.error(`Invalid portal URL received${portalUrl}`, portalUrl);
-        toast("An error occured");
-        // Optionally show an error toast/notification here
+        toast("An error occured with the portal url");
       }
     } catch (error) {
       console.error("Error opening billing portal:", error);
