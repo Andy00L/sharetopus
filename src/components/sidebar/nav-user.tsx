@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import router from "next/router";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -63,7 +64,8 @@ export function NavUser() {
     try {
       const hasActiveSubscription = await checkUserSubscription();
       if (!hasActiveSubscription) {
-        redirect("/pricing");
+        router.push("/pricing"); // This is the correct way to redirect client-side
+        return;
       }
       const fetchedPortalUrl = await createCustomerPortalProtected();
 
