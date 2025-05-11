@@ -26,7 +26,6 @@ import {
   UserCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import router from "next/router";
 import { useState } from "react";
 import { toast } from "sonner";
