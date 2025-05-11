@@ -4,9 +4,15 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { withRateLimit } from "../reddis/rate-limit";
+import { checkUserSubscription } from "./checkUserSubscription";
 
 export const CreateCustomerPortal = async () => {
   try {
+    const hasActiveSubscription = await checkUserSubscription();
+
+    if (!hasActiveSubscription) {
+      return "error";
+    }
     console.log("[CheckOutSession]: Creating stripe customer portal");
     const { userId } = await auth();
 

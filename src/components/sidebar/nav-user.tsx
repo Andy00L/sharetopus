@@ -1,5 +1,6 @@
 "use client";
 
+import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
 import { createCustomerPortalProtected } from "@/actions/server/stripe/customerPortal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -25,6 +26,7 @@ import {
   UserCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -59,6 +61,10 @@ export function NavUser() {
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
+      const hasActiveSubscription = await checkUserSubscription();
+      if (!hasActiveSubscription) {
+        redirect("/pricing");
+      }
       const fetchedPortalUrl = await createCustomerPortalProtected();
 
       // Check the success property first
