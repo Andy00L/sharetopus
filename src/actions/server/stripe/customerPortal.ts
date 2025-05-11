@@ -7,6 +7,7 @@ import { withRateLimit } from "../reddis/rate-limit";
 
 export const CreateCustomerPortal = async () => {
   try {
+    console.log("[CheckOutSession]: Creating stripe customer portal");
     const { userId } = await auth();
 
     //get the user customer_id
@@ -15,6 +16,9 @@ export const CreateCustomerPortal = async () => {
       .select("stripe_customer_id")
       .eq("id", userId)
       .single();
+    console.log(
+      `[CheckOutSession]: User ${userId} as a customer ID ${data?.stripe_customer_id}`
+    );
 
     if (error) {
       console.error(
@@ -32,6 +36,9 @@ export const CreateCustomerPortal = async () => {
       customer: customerId,
       return_url: `${process.env.FRONTEND_URL}/create`,
     });
+    console.log(
+      `[CheckOutSession]: Creating stripe customer portal session url ${session.url}`
+    );
 
     return session.url;
   } catch (error) {

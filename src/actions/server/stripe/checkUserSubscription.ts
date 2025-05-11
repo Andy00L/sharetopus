@@ -14,7 +14,7 @@ import { auth } from "@clerk/nextjs/server";
  */
 export async function checkUserSubscription(): Promise<boolean> {
   const { userId } = await auth();
-
+  console.log(userId);
   try {
     // Query the stripe_subscriptions table for any active subscriptions
     const { data, error } = await adminSupabase

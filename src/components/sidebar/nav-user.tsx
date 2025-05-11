@@ -60,6 +60,7 @@ export function NavUser() {
     setIsLoading(true);
     try {
       const fetchedPortalUrl = await createCustomerPortalProtected();
+
       // Check the success property first
       if (!fetchedPortalUrl.success) {
         toast.error("Too many requests. Please try again in a minute.");
@@ -69,7 +70,8 @@ export function NavUser() {
       if (typeof portalUrl === "string" && portalUrl.startsWith("http")) {
         window.location.href = portalUrl;
       } else {
-        console.error("Invalid portal URL received", portalUrl);
+        console.error(`Invalid portal URL received${portalUrl}`, portalUrl);
+        toast("An error occured");
         // Optionally show an error toast/notification here
       }
     } catch (error) {
