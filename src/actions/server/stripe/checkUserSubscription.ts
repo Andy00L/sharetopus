@@ -25,7 +25,7 @@ export async function checkUserSubscription(): Promise<boolean> {
       .limit(1); // We only need to know if at least one exists
 
     if (error) {
-      if (error.code === "PGRST116") {
+      if (error.code === "PGRST116" || error) {
         // This is expected when user has no subscription
         return false;
       }
