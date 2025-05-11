@@ -64,8 +64,7 @@ export function NavUser() {
     try {
       const hasActiveSubscription = await checkUserSubscription();
       if (!hasActiveSubscription) {
-        toast("ninja");
-        router.push("/pricing"); // This is the correct way to redirect client-side
+        router.push("/#pricing"); // This is the correct way to redirect client-side
         return;
       }
       const fetchedPortalUrl = await createCustomerPortalProtected();
