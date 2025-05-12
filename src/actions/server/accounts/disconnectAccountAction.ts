@@ -1,12 +1,12 @@
 // actions/server/accounts/disconnectAction.ts
 "use server";
 
-import { disconnectSocialAccountProtected } from "../../functionWithRateLimit";
+import { disconnectSocialAccount } from "./disconnectSocialAccount";
 
 export async function disconnectAccountAction(
   accountId: string,
   userId: string
 ) {
-  const result = await disconnectSocialAccountProtected(accountId, userId);
+  const result = await disconnectSocialAccount(accountId, userId);
   return result;
 }

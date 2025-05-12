@@ -1,6 +1,6 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import ConnectLinkedInButton from "@/components/core/accounts/connectAccountsButton/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/connectAccountsButton/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/connectAccountsButton/ConnectTikTokButton";
@@ -27,9 +27,9 @@ const AccountsPageWithData = async () => {
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
 
-  const fetchResult = await fetchSocialAccountsProtected(userId, false);
+  const fetchResult = await fetchSocialAccounts(userId, false);
   if (!fetchResult.success) {
-    return <RateLimitError />;
+    return <RateLimitError resetIn={fetchResult.resetIn} />;
   }
 
   const accounts = fetchResult.data!;

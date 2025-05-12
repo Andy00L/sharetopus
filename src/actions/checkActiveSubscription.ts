@@ -42,7 +42,6 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
         plan: null,
       };
     }
-    console.error(`[checkActiveSubscription] ${data[0].plan}`);
 
     const hasActiveSubscription = data && data.length > 0;
     const subscriptionPlan = hasActiveSubscription ? data[0].plan : null;

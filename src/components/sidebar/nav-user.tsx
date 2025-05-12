@@ -1,7 +1,7 @@
 "use client";
 
 import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
-import { createCustomerPortalProtected } from "@/actions/server/stripe/customerPortal";
+import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useClerk, useUser } from "@clerk/nextjs";
+import { useAuth, useClerk, useUser } from "@clerk/nextjs";
 import {
   CreditCardIcon,
   LogOutIcon,
@@ -33,6 +33,7 @@ import { toast } from "sonner";
 export function NavUser() {
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
+  const { userId } = useAuth();
   const { isMobile } = useSidebar();
   const { signOut } = useClerk();
   const [isLoading, setIsLoading] = useState(false); // Add loading state
@@ -62,12 +63,12 @@ export function NavUser() {
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
-      const hasActiveSubscription = await checkUserSubscription();
+      const hasActiveSubscription = await checkUserSubscription(userId!);
       if (!hasActiveSubscription) {
         router.push("/#pricing"); // This is the correct way to redirect client-side
         return;
       }
-      const fetchedPortalUrl = await createCustomerPortalProtected();
+      const fetchedPortalUrl = await createCustomerPortal();
 
       // Check the success property first
       if (!fetchedPortalUrl.success) {

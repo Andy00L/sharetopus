@@ -1,29 +1,45 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { auth } from "@clerk/nextjs/server";
+import { authCheck } from "@/actions/authCheck";
 
 /**
- * Checks if a user has an active subscription.
+ * Checks if a user has an active subscription in Stripe.
  *
- * Active subscriptions are those with status: 'active', 'trialing', or 'past_due'
- * (past_due subscriptions are still considered active until they're explicitly canceled)
+ * Subscription status meanings:
+ * - 'active': Subscription is in good standing and the customer has been charged successfully
+ * - 'trialing': Subscription is in trial period and hasn't been charged yet
+ * - 'past_due': Payment has failed but Stripe is still attempting to collect payment
+ *   (past_due subscriptions are still considered active until payment attempts are exhausted)
  *
- * @param userId - The ID of the user to check
- * @returns A promise that resolves to a boolean indicating if the user has an active subscription
+ * @returns {Promise<boolean>} True if user has an active, trialing, or past_due subscription; false otherwise
  */
-export async function checkUserSubscription(): Promise<boolean> {
-  const { userId } = await auth();
-  try {
-    console.log("[checkUserSubscription]  ${userId}");
+export async function checkUserSubscription(
+  userId: string | null
+): Promise<boolean> {
+  // Get authenticated user ID from Clerk auth
 
-    // Query the stripe_subscriptions table for any active subscriptions
+  // Validate the user is properly authenticated
+  const result = await authCheck(userId);
+  if (!result) {
+    console.error(
+      `[checkUserSubscription] Authentication check failed for userId: ${userId}`
+    );
+    return false;
+  }
+
+  try {
+    console.log(
+      `[checkUserSubscription] Checking subscription status for user: ${userId}`
+    );
+
+    // Query the stripe_subscriptions table to find the most recent subscription
     const { data, error } = await adminSupabase
       .from("stripe_subscriptions")
-      .select(" status")
+      .select("status")
       .eq("user_id", userId)
-      .order("created_at", { ascending: false }) // Get the most recent first
-      .limit(1); // We only need to know if at least one exists
+      .order("created_at", { ascending: false }) // Get the most recent subscription first
+      .limit(1); // We only need the most recent subscription
 
     if (error) {
       if (error.code === "PGRST116") {
@@ -34,13 +50,15 @@ export async function checkUserSubscription(): Promise<boolean> {
       // In case of error, we default to false to avoid giving access incorrectly
       return false;
     }
+
     if (!data || data.length === 0) {
-      console.log("[checkUserSubscription]: No subscription found for user");
+      console.error("[checkUserSubscription]: No subscription found for user");
       return false;
     }
 
     // If we found at least one matching subscription, the user has an active subscription
     const activeStatuses = ["active", "trialing", "past_due"];
+
     return activeStatuses.includes(data[0].status);
   } catch (error) {
     console.error("[checkUserSubscription]: Unexpected error:", error);

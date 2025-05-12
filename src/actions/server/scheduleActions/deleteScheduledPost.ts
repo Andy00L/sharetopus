@@ -2,6 +2,7 @@
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
+import { authCheck } from "@/actions/authCheck";
 
 /**
  * Completely delete a scheduled post and its associated media (if no longer used)
@@ -14,8 +15,16 @@ export async function deleteScheduledPost(
   postId: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string }> {
-  if (!userId) {
-    return { success: false, message: "User not authenticated." };
+  // Verify user is properly authenticated
+  const authResult = await authCheck(userId);
+  if (!authResult) {
+    console.error(
+      `[fetchSocialAccounts]: Authentication check failed for user ID: ${userId}`
+    );
+    return {
+      success: false,
+      message: "Authentication validation failed. Please sign in again.",
+    };
   }
 
   try {

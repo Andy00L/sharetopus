@@ -1,5 +1,5 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { validateUserAuthorization } from "@/actions/authentificationCheck";
+import { authCheck } from "@/actions/authCheck";
 import "server-only";
 
 /**
@@ -13,7 +13,7 @@ export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string; buffer?: Buffer }> {
-  const isAuth = await validateUserAuthorization(userId);
+  const isAuth = await authCheck(userId);
   if (!isAuth) {
     return {
       success: false,

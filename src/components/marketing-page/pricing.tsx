@@ -1,7 +1,7 @@
 "use client";
-import { getStripeSessionProtected } from "@/actions/server/stripe/checkOutSession";
+import { checkOutSession } from "@/actions/server/stripe/checkOutSession";
 import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
-import { createCustomerPortalProtected } from "@/actions/server/stripe/customerPortal";
+import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -16,11 +16,12 @@ import { useAuth } from "@clerk/nextjs";
 import { ArrowRight, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 export default function PricingSection() {
   const [isYearly, setIsYearly] = useState(true);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const { isLoaded, isSignedIn } = useAuth();
+  const { userId, isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
   // Function to render feature text with bold formatting if needed
   const renderFeatureText = (feature: string) => {
@@ -61,16 +62,17 @@ export default function PricingSection() {
         router.push("/create"); // Redirect to Clerk sign-up page
         return;
       }
-      // Check if user has an active subscription
-      const hasActiveSubscription = await checkUserSubscription();
 
+      // Check if user has an active subscription
+      const hasActiveSubscription = await checkUserSubscription(userId);
       let redirectUrl;
+
       if (hasActiveSubscription) {
         // This will redirect the user directly
-        const result = await createCustomerPortalProtected();
+        const result = await createCustomerPortal();
         if (!result.success) {
           // Show error message to user
-          console.error(result.message);
+          toast(result.message);
           setLoadingPlan(null);
           return;
         } // If successful, result.data will contain the URL
@@ -79,12 +81,12 @@ export default function PricingSection() {
         // This would also use redirect internally
         const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
 
-        const result = await getStripeSessionProtected({ priceId });
+        const result = await checkOutSession(priceId);
 
         // Check for success just like with the customer portal
         if (!result.success) {
           // Show error message to user
-          console.error(result.message);
+          toast.error(result.message);
           setLoadingPlan(null);
           return;
         }
@@ -99,11 +101,16 @@ export default function PricingSection() {
         window.location.href = redirectUrl;
       } else {
         // Handle error
-        console.error("Failed to get redirect URL");
+        toast.error("Failed to get redirect URL");
         setLoadingPlan(null);
+        return;
       }
     } catch (error) {
-      console.error("Error during subscription process::", error);
+      console.error("Subscription error:", error);
+
+      toast.error(
+        "Unable to process subscription request. Please try again later."
+      );
       setLoadingPlan(null);
     }
   };

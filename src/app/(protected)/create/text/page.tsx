@@ -1,5 +1,5 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { fetchSocialAccountsProtected } from "@/actions/functionWithRateLimit";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import SocialPostForm from "@/components/core/create/SocialPostForm";
 import RateLimitError from "@/components/RateLimitError";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
@@ -14,9 +14,9 @@ const SocialPostFormWithData = async () => {
   if (!subscriptionInfo.isActive) {
     redirect("/create");
   }
-  const accounts = await fetchSocialAccountsProtected(userId);
+  const accounts = await fetchSocialAccounts(userId);
   if (!accounts.success) {
-    return <RateLimitError />;
+    return <RateLimitError resetIn={accounts.resetIn} />;
   }
   return (
     <SocialPostForm accounts={accounts.data!} userId={userId} postType="text" />
