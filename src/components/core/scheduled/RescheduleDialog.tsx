@@ -141,7 +141,7 @@ export default function RescheduleDialog({
           <DialogTitle>
             {isSinglePost
               ? "Reschedule Post"
-              : "Reschedule ${postsCount} Posts"}
+              : `Reschedule ${postsCount} Posts`}
           </DialogTitle>
           <DialogDescription>
             {isSinglePost
