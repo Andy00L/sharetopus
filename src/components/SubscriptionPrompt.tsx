@@ -1,5 +1,3 @@
-"use client";
-
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,7 +11,7 @@ import Link from "next/link";
 
 export function SimpleSubscriptionPrompt() {
   return (
-    <Card className="border-primary/20 shadow-lg max-w-2xl mx-auto animate-in fade-in-50 duration-500">
+    <Card className="border-primary/20 px-4 py-6 shadow-lg max-w-2xl mx-auto animate-in fade-in-50 duration-500">
       <CardHeader className="pb-2 relative overflow-hidden">
         <div className="absolute -right-20 -top-20 bg-primary/5 w-64 h-64 rounded-full blur-3xl z-0"></div>
 
@@ -57,7 +55,7 @@ export function SimpleSubscriptionPrompt() {
               <div>
                 <p className="font-medium">Access all premium features</p>
                 <p className="text-sm text-muted-foreground">
-                  Analytics, optimization tools, and priority support
+                  Increased Storage/Upload, post speed and priority support
                 </p>
               </div>
             </li>
@@ -70,8 +68,10 @@ export function SimpleSubscriptionPrompt() {
           size="lg"
           className="w-full sm:w-auto bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary shadow-md hover:shadow-lg transition-all"
         >
-          <SparklesIcon className="mr-2 h-5 w-5" />
-          Subscribe now
+          <Link href="/#pricing">
+            <SparklesIcon className="mr-2 h-5 w-5" />
+            Subscribe now
+          </Link>
         </Button>
 
         <Link
