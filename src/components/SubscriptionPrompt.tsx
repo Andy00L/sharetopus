@@ -11,7 +11,7 @@ import Link from "next/link";
 
 export function SimpleSubscriptionPrompt() {
   return (
-    <Card className="border-primary/20 px-4 py-6 shadow-lg max-w-2xl mx-auto animate-in fade-in-50 duration-500">
+    <Card className="border-primary/20 mt-6 shadow-lg max-w-2xl mx-auto animate-in fade-in-50 duration-500">
       <CardHeader className="pb-2 relative overflow-hidden">
         <div className="absolute -right-20 -top-20 bg-primary/5 w-64 h-64 rounded-full blur-3xl z-0"></div>
 
