@@ -30,12 +30,20 @@ export default function AvatarWithFallback({
   /* ---------- show icon if: no src OR already failed ---------- */
   if (!src || errored) {
     return (
-      <UserCheck
-        aria-label={alt}
-        className={clsx("text-muted-foreground", className)}
-        width={size}
-        height={size}
-      />
+      <div
+        className={clsx(
+          "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",
+          isSelected ? "border-2 border-green-500" : "border-2 border-border", // Conditional border
+          className
+        )}
+      >
+        <UserCheck
+          aria-label={alt}
+          className={clsx("text-muted-foreground", className)}
+          width={size}
+          height={size}
+        />
+      </div>
     );
   }
 

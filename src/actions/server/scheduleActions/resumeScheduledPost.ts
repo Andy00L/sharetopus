@@ -1,24 +1,87 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { authCheck } from "@/actions/authCheck";
+import { checkRateLimit } from "../reddis/rate-limit";
 
 /**
- * Resume a previously cancelled post
+ * Resumes a previously cancelled post by setting it back to "scheduled" status
  *
- * @param postId ID of the post to resume
- * @param userId ID of the authenticated user
- * @returns Object with success status and message
+ * This function:
+ * 1. Verifies user authentication
+ * 2. Performs rate limiting to prevent abuse
+ * 3. Validates post ownership and eligibility for resuming
+ * 4. Updates the post status to "scheduled"
+ * 5. Ensures the scheduled time is in the future
+ * 6. Returns a structured response with the operation result
+ *
+ * @param postId - ID of the post to resume
+ * @param userId - ID of the authenticated user
+ * @returns Object with success status, message, and optional reset time
  */
 export async function resumeScheduledPost(
   postId: string,
   userId: string | null
-): Promise<{ success: boolean; message: string }> {
-  if (!userId) {
-    return { success: false, message: "User not authenticated." };
-  }
-
+): Promise<{ success: boolean; message: string; resetIn?: number }> {
   try {
-    // First, get the post to check ownership and current status
+    console.log(
+      `[resumeScheduledPost]: Starting resume process for post ID: ${postId}`
+    );
+
+    // Step 1: Verify user is properly authenticated
+    if (!userId) {
+      console.error(`[resumeScheduledPost]: Missing user ID in request`);
+      return {
+        success: false,
+        message: "User authentication required. Please sign in to continue.",
+      };
+    }
+
+    const authResult = await authCheck(userId);
+    if (!authResult) {
+      console.error(
+        `[resumeScheduledPost]: Authentication check failed for user ID: ${userId}`
+      );
+      return {
+        success: false,
+        message: "Authentication validation failed. Please sign in again.",
+      };
+    }
+    console.log(
+      `[resumeScheduledPost]: Authentication validated for user: ${userId}`
+    );
+
+    // Step 2: Check rate limits to prevent abuse
+    console.log(
+      `[resumeScheduledPost]: Checking rate limits for user: ${userId}`
+    );
+    const rateCheck = await checkRateLimit(
+      "resumeScheduledPost", // Unique identifier for this operation
+      userId, // User identifier
+      30, // Limit (30 requests)
+      60 // Window (60 seconds)
+    );
+
+    if (!rateCheck.success) {
+      console.warn(
+        `[resumeScheduledPost]: Rate limit exceeded for user: ${userId}. Reset in: ${
+          rateCheck.resetIn ?? "unknown"
+        } seconds`
+      );
+      return {
+        success: false,
+        message: "Too many requests. Please try again later.",
+        resetIn: rateCheck.resetIn,
+      };
+    }
+    console.log(
+      `[resumeScheduledPost]: Rate limit check passed for user: ${userId}`
+    );
+
+    // Step 3: Fetch post data to verify ownership and current status
+    console.log(
+      `[resumeScheduledPost]: Fetching post data for verification: ${postId}`
+    );
     const { data: post, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
       .select("user_id, status, scheduled_at")
@@ -26,43 +89,70 @@ export async function resumeScheduledPost(
       .single();
 
     if (fetchError || !post) {
-      console.error("[Resume Scheduled Post] Fetch error:", fetchError);
-      return {
-        success: false,
-        message: "Failed to find the scheduled post.",
-      };
-    }
-
-    // Security check: ensure the post belongs to this user
-    if (post.user_id !== userId) {
-      console.warn(
-        `[Resume Scheduled Post] User ${userId} attempted to resume post ${postId} owned by ${post.user_id}`
+      console.error(
+        `[resumeScheduledPost]: Failed to find post with ID ${postId}:`,
+        fetchError?.message || "Post not found"
       );
       return {
         success: false,
-        message: "You are not authorized to resume this post.",
+        message: "The post could not be found. It may have been deleted.",
       };
     }
 
-    // Only allow resuming if the post is in "cancelled" status
-    if (post.status !== "cancelled") {
+    console.log(
+      `[resumeScheduledPost]: Found post data for platform, status: ${post.status}`
+    );
+
+    // Step 4: Verify post ownership (security check)
+    if (post.user_id !== userId) {
+      console.warn(
+        `[resumeScheduledPost]: Security violation - User ${userId} attempted to resume post ${postId} owned by ${post.user_id}`
+      );
       return {
         success: false,
-        message: `This post cannot be resumed because it is in "${post.status}" status.`,
+        message: "You don't have permission to resume this post.",
+      };
+    }
+    console.log(
+      `[resumeScheduledPost]: Post ownership verified for user: ${userId}`
+    );
+
+    // Step 5: Verify post is in a resumable state
+    if (post.status !== "cancelled") {
+      console.warn(
+        `[resumeScheduledPost]: Cannot resume post in "${post.status}" status: ${postId}`
+      );
+      return {
+        success: false,
+        message: `This post cannot be resumed because it is in "${post.status}" status. Only cancelled posts can be resumed.`,
       };
     }
 
-    // Make sure the scheduled time is in the future
+    console.log(
+      `[resumeScheduledPost]: Post is eligible for resuming: ${postId}`
+    );
+
+    // Step 6: Ensure the scheduled time is in the future
     const scheduledAt = new Date(post.scheduled_at);
     const now = new Date();
+    let timeUpdated = false;
 
     if (scheduledAt <= now) {
-      // If the scheduled time is in the past, we need to set a new time in the future
-      // Let's set it to 1 hour from now as a default
+      // If the scheduled time is in the past, set it to 1 hour from now
+      console.log(
+        `[resumeScheduledPost]: Original scheduled time ${scheduledAt.toISOString()} is in the past, rescheduling`
+      );
       scheduledAt.setTime(now.getTime() + 60 * 60 * 1000);
+      timeUpdated = true;
+      console.log(
+        `[resumeScheduledPost]: New scheduled time set to ${scheduledAt.toISOString()}`
+      );
     }
 
-    // Update the post status to "scheduled" and update the scheduled_at if needed
+    // Step 7: Update post status to "scheduled" and update time if needed
+    console.log(
+      `[resumeScheduledPost]: Updating post status to "scheduled": ${postId}`
+    );
     const { error: updateError } = await adminSupabase
       .from("scheduled_posts")
       .update({
@@ -72,23 +162,45 @@ export async function resumeScheduledPost(
       .eq("id", postId);
 
     if (updateError) {
-      console.error("[Resume Scheduled Post] Update error:", updateError);
+      console.error(
+        `[resumeScheduledPost]: Database error updating post status:`,
+        updateError.message,
+        updateError.details
+      );
       return {
         success: false,
-        message: `Failed to resume the post.`,
+        message:
+          "Failed to resume the post due to a database error. Please try again.",
       };
     }
 
+    // Step 8: Return success response
+    const scheduledTime = scheduledAt.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hour12: true,
+    });
+    console.log(`[resumeScheduledPost]: Successfully resumed post: ${postId}`);
+
     return {
       success: true,
-      message:
-        "Post resumed successfully. It will be published at the scheduled time.",
+      message: timeUpdated
+        ? `Your  post has been resumed and rescheduled for ${scheduledTime}.`
+        : `Your} post has been resumed and will be published at ${scheduledTime}.`,
     };
   } catch (err) {
-    console.error("[Resume Scheduled Post] Unexpected error:", err);
+    // Step 9: Handle unexpected errors
+    console.error(
+      `[resumeScheduledPost]: Unexpected error during post resumption:`,
+      err instanceof Error ? err.message : err
+    );
     return {
       success: false,
-      message: "An unexpected error occurred.",
+      message:
+        "An unexpected error occurred while resuming the post. Please try again later.",
     };
   }
 }

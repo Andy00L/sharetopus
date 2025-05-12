@@ -1,5 +1,5 @@
 // components/core/scheduled/RescheduleDialog.tsx
-import { updateScheduledTime } from "@/actions/server/scheduleActions/updateScheduledTime";
+import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/updateScheduledTime";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScheduledPost } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
-import { RefreshCw, CalendarIcon } from "lucide-react";
+import { CalendarIcon, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -37,49 +37,65 @@ export default function RescheduleDialog({
   postIds = [],
 }: RescheduleDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
-  const [newDate, setNewDate] = useState<Date | null>(
-    post ? new Date(post.scheduled_at) : null
-  );
+  const initialDate = post
+    ? new Date(post.scheduled_at)
+    : new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+  const [newDate, setNewDate] = useState<Date | null>(initialDate);
+
   const [dateInputValue, setDateInputValue] = useState(
-    post ? format(new Date(post.scheduled_at), "yyyy-MM-dd") : ""
+    format(initialDate, "yyyy-MM-dd")
   );
   const [timeInputValue, setTimeInputValue] = useState(
-    post ? format(new Date(post.scheduled_at), "HH:mm") : ""
+    format(initialDate, "HH:mm")
   );
 
+  // Determine which post IDs to update
+  const getPostIdsToUpdate = () => {
+    // Use postIds from props if in batch mode and available
+    if (batchMode && postIds.length > 0) {
+      return postIds;
+    }
+    // Otherwise, use the single post ID if available
+    if (post?.id) {
+      return [post.id];
+    }
+    // If neither is available, return empty array
+    return [];
+  };
+
   const handleSubmit = async () => {
-    if (!post || !newDate || !userId) {
+    if (!newDate || !userId) {
       toast.error("Missing information for rescheduling");
       return;
     }
-
+    const idsToUpdate = getPostIdsToUpdate();
+    if (idsToUpdate.length === 0) {
+      toast.error("No posts selected for rescheduling");
+      return;
+    }
     try {
       setIsLoading(true);
 
-      if (batchMode && postIds.length > 0) {
-        // Handle batch update
-        const results = await Promise.all(
-          postIds.map((id) => updateScheduledTime(id, newDate, userId))
-        );
+      // Always use the batch function for both single and multiple posts
+      const result = await updateScheduledTimeBatch(
+        idsToUpdate,
+        newDate,
+        userId
+      );
 
-        const success = results.every((r) => r.success);
-        if (success) {
-          toast.success("All posts rescheduled successfully");
-          onSuccess();
-          onClose();
-        } else {
-          const errors = results
-            .filter((r) => !r.success)
-            .map((r) => r.message);
-          toast.error(`Failed to reschedule some posts: ${errors.join(", ")}`);
-        }
+      if (result.success) {
+        // Use the server's message for more detailed feedback
+
+        toast.success(result.message);
+        onSuccess();
+        onClose();
       } else {
-        // Handle single post update
-        const result = await updateScheduledTime(post.id, newDate, userId);
-        if (result.success) {
-          toast.success(result.message);
-          onSuccess();
-          onClose();
+        // Handle rate limiting specifically
+        if (result.resetIn) {
+          toast.error(
+            `${result.message} Please try again in ${result.resetIn} seconds.`
+          );
         } else {
           toast.error(result.message);
         }
@@ -114,18 +130,23 @@ export default function RescheduleDialog({
       console.error("Date parsing error:", e);
     }
   };
+  // Get the actual number of posts to update
+  const postsCount = getPostIdsToUpdate().length;
+  const isSinglePost = postsCount === 1;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {batchMode ? "Reschedule Batch" : "Reschedule Post"}
+            {isSinglePost
+              ? "Reschedule Post"
+              : "Reschedule ${postsCount} Posts"}
           </DialogTitle>
           <DialogDescription>
-            {batchMode
-              ? `Select a new date and time for all ${postIds.length} posts in this batch.`
-              : "Select a new date and time for this post to be published."}
+            {isSinglePost
+              ? "Select a new date and time for this post to be published."
+              : `Select a new date and time for all ${postsCount} posts in this batch.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -161,7 +182,7 @@ export default function RescheduleDialog({
 
           {newDate && (
             <div className="text-sm text-muted-foreground">
-              {batchMode ? "Posts" : "Post"} will be published on:{" "}
+              {isSinglePost ? "Post" : "Posts"} will be published on:{" "}
               <span className="font-medium">
                 {format(newDate, "PPP 'at' p")}
               </span>
@@ -173,7 +194,10 @@ export default function RescheduleDialog({
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={isLoading || !newDate}>
+          <Button
+            onClick={handleSubmit}
+            disabled={isLoading || !newDate || postsCount === 0}
+          >
             {isLoading ? (
               <>
                 <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
@@ -182,7 +206,9 @@ export default function RescheduleDialog({
             ) : (
               <>
                 <CalendarIcon className="mr-2 h-4 w-4" />
-                Update Schedule
+                {isSinglePost
+                  ? "Update Schedule"
+                  : `Reschedule ${postsCount} Posts`}{" "}
               </>
             )}
           </Button>
