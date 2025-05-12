@@ -5,32 +5,56 @@ import { authCheck } from "@/actions/authCheck";
 import { checkRateLimit } from "../reddis/rate-limit";
 
 /**
- * Resumes a previously cancelled post by setting it back to "scheduled" status
+ * Resumes multiple cancelled posts at once
  *
  * This function:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse
- * 3. Validates post ownership and eligibility for resuming
- * 4. Updates the post status to "scheduled"
- * 5. Ensures the scheduled time is in the future
- * 6. Returns a structured response with the operation result
+ * 1. Performs a single authentication and rate limit check
+ * 2. Validates and updates multiple posts in a batch operation
+ * 3. Returns aggregate results of the operation
  *
- * @param postId - ID of the post to resume
+ * @param postIds - Array of post IDs to resume
  * @param userId - ID of the authenticated user
- * @returns Object with success status, message, and optional reset time
+ * @returns Object with success status, message, and details about the operation
  */
-export async function resumeScheduledPost(
-  postId: string,
+export async function resumeScheduledPostBatch(
+  postIds: string[],
   userId: string | null
-): Promise<{ success: boolean; message: string; resetIn?: number }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  resetIn?: number;
+  details?: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    timeUpdated: number;
+  };
+}> {
   try {
+    // Early validation: Check if postIds array is empty
+    if (!postIds || postIds.length === 0) {
+      console.error(
+        `[resumeScheduledPostBatch]: No post IDs provided for resumption`
+      );
+      return {
+        success: false,
+        message: "No posts specified to resume.",
+        details: {
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          timeUpdated: 0,
+        },
+      };
+    }
+
     console.log(
-      `[resumeScheduledPost]: Starting resume process for post ID: ${postId}`
+      `[resumeScheduledPostBatch]: Starting batch resumption for ${postIds.length} posts`
     );
 
     // Step 1: Verify user is properly authenticated
     if (!userId) {
-      console.error(`[resumeScheduledPost]: Missing user ID in request`);
+      console.error(`[resumeScheduledPostBatch]: Missing user ID in request`);
       return {
         success: false,
         message: "User authentication required. Please sign in to continue.",
@@ -40,7 +64,7 @@ export async function resumeScheduledPost(
     const authResult = await authCheck(userId);
     if (!authResult) {
       console.error(
-        `[resumeScheduledPost]: Authentication check failed for user ID: ${userId}`
+        `[resumeScheduledPostBatch]: Authentication check failed for user ID: ${userId}`
       );
       return {
         success: false,
@@ -48,15 +72,15 @@ export async function resumeScheduledPost(
       };
     }
     console.log(
-      `[resumeScheduledPost]: Authentication validated for user: ${userId}`
+      `[resumeScheduledPostBatch]: Authentication validated for user: ${userId}`
     );
 
     // Step 2: Check rate limits to prevent abuse
     console.log(
-      `[resumeScheduledPost]: Checking rate limits for user: ${userId}`
+      `[resumeScheduledPostBatch]: Checking rate limits for user: ${userId}`
     );
     const rateCheck = await checkRateLimit(
-      "resumeScheduledPost", // Unique identifier for this operation
+      "resumeScheduledPostBatch", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
       60 // Window (60 seconds)
@@ -64,7 +88,7 @@ export async function resumeScheduledPost(
 
     if (!rateCheck.success) {
       console.warn(
-        `[resumeScheduledPost]: Rate limit exceeded for user: ${userId}. Reset in: ${
+        `[resumeScheduledPostBatch]: Rate limit exceeded for user: ${userId}. Reset in: ${
           rateCheck.resetIn ?? "unknown"
         } seconds`
       );
@@ -75,132 +99,220 @@ export async function resumeScheduledPost(
       };
     }
     console.log(
-      `[resumeScheduledPost]: Rate limit check passed for user: ${userId}`
+      `[resumeScheduledPostBatch]: Rate limit check passed for user: ${userId}`
     );
 
     // Step 3: Fetch post data to verify ownership and current status
     console.log(
-      `[resumeScheduledPost]: Fetching post data for verification: ${postId}`
+      `[resumeScheduledPostBatch]: Fetching data for ${postIds.length} posts`
     );
-    const { data: post, error: fetchError } = await adminSupabase
+
+    const { data: posts, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
-      .select("user_id, status, scheduled_at")
-      .eq("id", postId)
-      .single();
-
-    if (fetchError || !post) {
+      .select("id, user_id, status, scheduled_at, platform")
+      .in("id", postIds);
+    if (fetchError) {
       console.error(
-        `[resumeScheduledPost]: Failed to find post with ID ${postId}:`,
-        fetchError?.message || "Post not found"
+        `[resumeScheduledPostBatch]: Database error fetching posts:`,
+        fetchError.message,
+        fetchError.details
       );
       return {
         success: false,
-        message: "The post could not be found. It may have been deleted.",
+        message: "Failed to retrieve post information. Please try again.",
       };
     }
 
-    console.log(
-      `[resumeScheduledPost]: Found post data for platform, status: ${post.status}`
-    );
-
-    // Step 4: Verify post ownership (security check)
-    if (post.user_id !== userId) {
-      console.warn(
-        `[resumeScheduledPost]: Security violation - User ${userId} attempted to resume post ${postId} owned by ${post.user_id}`
-      );
-      return {
-        success: false,
-        message: "You don't have permission to resume this post.",
-      };
-    }
-    console.log(
-      `[resumeScheduledPost]: Post ownership verified for user: ${userId}`
-    );
-
-    // Step 5: Verify post is in a resumable state
-    if (post.status !== "cancelled") {
-      console.warn(
-        `[resumeScheduledPost]: Cannot resume post in "${post.status}" status: ${postId}`
-      );
-      return {
-        success: false,
-        message: `This post cannot be resumed because it is in "${post.status}" status. Only cancelled posts can be resumed.`,
-      };
-    }
-
-    console.log(
-      `[resumeScheduledPost]: Post is eligible for resuming: ${postId}`
-    );
-
-    // Step 6: Ensure the scheduled time is in the future
-    const scheduledAt = new Date(post.scheduled_at);
-    const now = new Date();
-    let timeUpdated = false;
-
-    if (scheduledAt <= now) {
-      // If the scheduled time is in the past, set it to 1 hour from now
-      console.log(
-        `[resumeScheduledPost]: Original scheduled time ${scheduledAt.toISOString()} is in the past, rescheduling`
-      );
-      scheduledAt.setTime(now.getTime() + 60 * 60 * 1000);
-      timeUpdated = true;
-      console.log(
-        `[resumeScheduledPost]: New scheduled time set to ${scheduledAt.toISOString()}`
-      );
-    }
-
-    // Step 7: Update post status to "scheduled" and update time if needed
-    console.log(
-      `[resumeScheduledPost]: Updating post status to "scheduled": ${postId}`
-    );
-    const { error: updateError } = await adminSupabase
-      .from("scheduled_posts")
-      .update({
-        status: "scheduled",
-        scheduled_at: scheduledAt.toISOString(),
-      })
-      .eq("id", postId);
-
-    if (updateError) {
+    // Check if we found any posts
+    if (!posts || posts.length === 0) {
       console.error(
-        `[resumeScheduledPost]: Database error updating post status:`,
-        updateError.message,
-        updateError.details
+        `[resumeScheduledPostBatch]: No posts found with the provided IDs`
+      );
+      return {
+        success: false,
+        message: "No posts found to resume. They may have been deleted.",
+      };
+    }
+
+    if (posts.length !== postIds.length) {
+      console.warn(
+        `[resumeScheduledPostBatch]: Not all requested posts were found. Found ${posts.length} of ${postIds.length}`
+      );
+    }
+
+    // Step 4: Verify post ownership and eligibility for resumption
+    console.log(
+      `[resumeScheduledPostBatch]: Verifying post ownership and eligibility`
+    );
+
+    // Check if all posts belong to the user
+    const unauthorizedPosts = posts.filter((post) => post.user_id !== userId);
+    if (unauthorizedPosts.length > 0) {
+      console.warn(
+        `[resumeScheduledPostBatch]: Security violation - User ${userId} attempted to resume ${unauthorizedPosts.length} posts owned by others`
       );
       return {
         success: false,
         message:
-          "Failed to resume the post due to a database error. Please try again.",
+          "You don't have permission to resume some or all of these posts.",
       };
     }
 
-    // Step 8: Return success response
-    const scheduledTime = scheduledAt.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-      hour12: true,
-    });
-    console.log(`[resumeScheduledPost]: Successfully resumed post: ${postId}`);
+    // Filter posts to only those in "cancelled" status that can be resumed
+    const resumablePosts = posts.filter((post) => post.status === "cancelled");
+
+    if (resumablePosts.length === 0) {
+      console.warn(
+        `[resumeScheduledPostBatch]: No posts are in a resumable state`
+      );
+      return {
+        success: false,
+        message:
+          "None of the selected posts can be resumed. They may not be in cancelled status.",
+      };
+    }
+
+    if (resumablePosts.length !== posts.length) {
+      console.warn(
+        `[resumeScheduledPostBatch]: Not all posts can be resumed. Only ${resumablePosts.length} of ${posts.length} are eligible`
+      );
+    }
+
+    console.log(
+      `[resumeScheduledPostBatch]: ${resumablePosts.length} posts verified and eligible for resumption`
+    );
+
+    // Step 5: Check which posts have dates in the past that need to be updated
+    const now = new Date();
+    let timeUpdatedCount = 0;
+
+    // Group posts into two categories: those that need date updates and those that don't
+    const postsNeedingTimeUpdate = [];
+    const postsWithFutureDates = [];
+
+    for (const post of resumablePosts) {
+      const scheduledAt = new Date(post.scheduled_at);
+      if (scheduledAt <= now) {
+        postsNeedingTimeUpdate.push(post.id);
+        timeUpdatedCount++;
+      } else {
+        postsWithFutureDates.push(post.id);
+      }
+    }
+
+    console.log(
+      `[resumeScheduledPostBatch]: ${timeUpdatedCount} posts need time updates, ${postsWithFutureDates.length} have future dates`
+    );
+
+    // Step 6: Update posts in two batches based on whether they need time updates
+    let updateSuccessful = true;
+
+    // First batch: Update posts that need new scheduled times (1 hour from now)
+    if (postsNeedingTimeUpdate.length > 0) {
+      const newTime = new Date(now.getTime() + 60 * 60 * 1000);
+      console.log(
+        `[resumeScheduledPostBatch]: Updating status and time to ${newTime.toISOString()} for ${
+          postsNeedingTimeUpdate.length
+        } posts`
+      );
+
+      const { error: pastUpdateError } = await adminSupabase
+        .from("scheduled_posts")
+        .update({
+          status: "scheduled",
+          scheduled_at: newTime.toISOString(),
+        })
+        .in("id", postsNeedingTimeUpdate);
+
+      if (pastUpdateError) {
+        console.error(
+          `[resumeScheduledPostBatch]: Error updating posts with past dates:`,
+          pastUpdateError.message,
+          pastUpdateError.details
+        );
+        updateSuccessful = false;
+      }
+    }
+
+    // Second batch: Update posts that already have future scheduled times
+    if (postsWithFutureDates.length > 0) {
+      console.log(
+        `[resumeScheduledPostBatch]: Updating only status for ${postsWithFutureDates.length} posts with future dates`
+      );
+
+      const { error: futureUpdateError } = await adminSupabase
+        .from("scheduled_posts")
+        .update({
+          status: "scheduled",
+        })
+        .in("id", postsWithFutureDates);
+
+      if (futureUpdateError) {
+        console.error(
+          `[resumeScheduledPostBatch]: Error updating posts with future dates:`,
+          futureUpdateError.message,
+          futureUpdateError.details
+        );
+        updateSuccessful = false;
+      }
+    }
+
+    if (!updateSuccessful) {
+      return {
+        success: false,
+        message: "Failed to resume some or all posts due to a database error.",
+        details: {
+          total: postIds.length,
+          succeeded: 0,
+          failed: resumablePosts.length,
+          timeUpdated: 0,
+        },
+      };
+    }
+    // Step 7: Return success response with details
+    console.log(
+      `[resumeScheduledPostBatch]: Successfully resumed ${resumablePosts.length} posts`
+    );
+
+    // Get unique platforms for better messaging
+    const platforms = [...new Set(resumablePosts.map((post) => post.platform))];
+    const platformText =
+      platforms.length === 1
+        ? platforms[0].charAt(0).toUpperCase() + platforms[0].slice(1)
+        : "Social media";
+
+    // Create appropriate success message based on the number of posts
+    const successMessage =
+      resumablePosts.length === 1
+        ? `Your ${platformText} post has been successfully resumed${
+            timeUpdatedCount > 0 ? " and rescheduled" : ""
+          }.`
+        : `${resumablePosts.length} posts have been successfully resumed${
+            timeUpdatedCount > 0
+              ? ", including " + timeUpdatedCount + " that were rescheduled"
+              : ""
+          }.`;
 
     return {
       success: true,
-      message: timeUpdated
-        ? `Your  post has been resumed and rescheduled for ${scheduledTime}.`
-        : `Your} post has been resumed and will be published at ${scheduledTime}.`,
+      message: successMessage,
+      details: {
+        total: postIds.length,
+        succeeded: resumablePosts.length,
+        failed: postIds.length - resumablePosts.length,
+        timeUpdated: timeUpdatedCount,
+      },
     };
   } catch (err) {
-    // Step 9: Handle unexpected errors
+    // Step 8: Handle unexpected errors
     console.error(
-      `[resumeScheduledPost]: Unexpected error during post resumption:`,
+      `[resumeScheduledPostBatch]: Unexpected error during batch resumption:`,
       err instanceof Error ? err.message : err
     );
     return {
       success: false,
       message:
-        "An unexpected error occurred while resuming the post. Please try again later.",
+        "An unexpected error occurred while resuming the posts. Please try again later.",
     };
   }
 }

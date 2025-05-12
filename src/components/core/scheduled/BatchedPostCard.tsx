@@ -29,9 +29,9 @@ import {
   X,
 } from "lucide-react";
 
-import { cancelScheduledPost } from "@/actions/server/scheduleActions/cancelScheduledPost";
-import { deleteScheduledPost } from "@/actions/server/scheduleActions/deleteScheduledPost";
-import { resumeScheduledPost } from "@/actions/server/scheduleActions/resumeScheduledPost";
+import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancelScheduledPost";
+import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
+import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resumeScheduledPost";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { ScheduledPost } from "@/lib/types/dbTypes";
 import RescheduleDialog from "./RescheduleDialog";
@@ -138,7 +138,7 @@ export default function BatchedPostCard({
 
   // Actions
   const runAction = async (
-    fn: () => Promise<{ success: boolean; message: string }>
+    fn: () => Promise<{ success: boolean; message: string; resetIn?: number }>
   ) => {
     if (loading) return;
     setLoading(true);
@@ -147,6 +147,11 @@ export default function BatchedPostCard({
       if (res.success) {
         toast.success(res.message);
         router.refresh();
+      } else if (res.resetIn) {
+        // Special handling for rate limits
+        toast.error(
+          `${res.message} Please try again in ${res.resetIn} seconds.`
+        );
       } else {
         toast.error(res.message);
       }
@@ -161,69 +166,116 @@ export default function BatchedPostCard({
 
   // Cancel all posts in batch
   const cancelAllPosts = async () => {
-    const results = await Promise.all(
-      posts
+    try {
+      // Use the batch function instead of multiple API calls
+      const scheduledPostIds = posts
         .filter((post) => post.status === "scheduled")
-        .map((post) => cancelScheduledPost(post.id, userId))
-    );
+        .map((post) => post.id);
 
-    const success = results.every((r) => r.success);
-    if (!success) {
-      const errors = results.filter((r) => !r.success).map((r) => r.message);
+      if (scheduledPostIds.length === 0) {
+        return {
+          success: false,
+          message: "No posts available to cancel.",
+        };
+      }
+
+      const result = await cancelScheduledPostBatch(scheduledPostIds, userId);
+
+      // Use the details to provide more specific messages
+      if (result.success) {
+        return {
+          success: true,
+          message: result.message,
+        };
+      } else if (result.resetIn) {
+        return {
+          success: false,
+          message: `${result.message} Please try again in ${result.resetIn} seconds.`,
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message,
+        };
+      }
+    } catch (error) {
       return {
         success: false,
-        message: `Failed to cancel some posts: ${errors.join(", ")}`,
+        message: `Unexpected error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       };
     }
-
-    return {
-      success: true,
-      message: `${results.length} posts cancelled successfully`,
-    };
   };
 
   // Delete all posts in batch
   const deleteAllPosts = async () => {
-    const results = await Promise.all(
-      posts.map((post) => deleteScheduledPost(post.id, userId))
-    );
+    try {
+      // Instead of making multiple API calls, use the batch deletion function
+      const postIds = posts.map((post) => post.id);
 
-    const success = results.every((r) => r.success);
-    if (!success) {
-      const errors = results.filter((r) => !r.success).map((r) => r.message);
+      // With our new batch function, we can delete all posts in one call
+      const result = await deleteScheduledPostBatch(postIds, userId);
+
+      // Return the result directly
+      return {
+        success: result.success,
+        message: result.message,
+        resetIn: result.resetIn,
+      };
+    } catch (error) {
       return {
         success: false,
-        message: `Failed to delete some posts: ${errors.join(", ")}`,
+        message: `Unexpected error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       };
     }
-
-    return {
-      success: true,
-      message: `${results.length} posts deleted successfully`,
-    };
   };
 
   // Resume all posts in batch
   const resumeAllPosts = async () => {
-    const results = await Promise.all(
-      posts
+    try {
+      // Filter for posts that can be resumed
+      const cancelledPostIds = posts
         .filter((post) => post.status === "cancelled")
-        .map((post) => resumeScheduledPost(post.id, userId))
-    );
+        .map((post) => post.id);
 
-    const success = results.every((r) => r.success);
-    if (!success) {
-      const errors = results.filter((r) => !r.success).map((r) => r.message);
+      if (cancelledPostIds.length === 0) {
+        return {
+          success: false,
+          message: "No posts available to resume.",
+        };
+      }
+
+      const result = await resumeScheduledPostBatch(cancelledPostIds, userId);
+
+      // Use the details to provide more specific messages
+      if (result.success) {
+        return {
+          success: true,
+          message: result.message,
+        };
+      } else if (result.resetIn) {
+        return {
+          success: false,
+          message: result.message,
+          resetIn: result.resetIn,
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message,
+        };
+      }
+    } catch (error) {
       return {
         success: false,
-        message: `Failed to resume some posts: ${errors.join(", ")}`,
+        message: `Unexpected error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       };
     }
-
-    return {
-      success: true,
-      message: `${results.length} posts resumed successfully`,
-    };
   };
 
   return (

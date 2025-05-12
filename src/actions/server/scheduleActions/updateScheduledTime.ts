@@ -31,6 +31,22 @@ export async function updateScheduledTimeBatch(
     resumedCount: number;
   };
 }> {
+  // Early validation: Check if postIds array is empty
+  if (!postIds || postIds.length === 0) {
+    console.error(
+      `[cancelScheduledPostBatch]: No post IDs provided for cancellation`
+    );
+    return {
+      success: false,
+      message: "No posts specified for cancellation.",
+      details: {
+        total: 0,
+        succeeded: 0,
+        failed: 0,
+        resumedCount: 0,
+      },
+    };
+  }
   try {
     console.log(
       `[updateScheduledTimeBatch]: Starting batch rescheduling for ${postIds.length} posts`

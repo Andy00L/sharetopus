@@ -6,32 +6,55 @@ import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
 import { checkRateLimit } from "../reddis/rate-limit";
 
 /**
- * Completely deletes a scheduled post and its associated media (if no longer used)
+ * Batch deletes multiple scheduled posts and their associated media (if no longer used)
  *
  * This function:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse
- * 3. Validates post ownership and retrieves media information
- * 4. Deletes the post record from the database
- * 5. Attempts to delete associated media files (if not referenced elsewhere)
- * 6. Returns a structured response with the operation result
+ * 1. Performs a single authentication and rate limit check
+ * 2. Validates and deletes multiple posts in a batch operation
+ * 3. Handles media deletion for all posts as needed
+ * 4. Returns aggregate results of the operation
  *
- * @param postId - ID of the scheduled post to delete
+ * @param postIds - Array of post IDs to delete
  * @param userId - ID of the authenticated user
- * @returns Object with success status, message, and optional reset time
+ * @returns Object with success status, message, and details about the operation
  */
-export async function deleteScheduledPost(
-  postId: string,
+export async function deleteScheduledPostBatch(
+  postIds: string[],
   userId: string | null
-): Promise<{ success: boolean; message: string; resetIn?: number }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  resetIn?: number;
+  details?: {
+    total: number;
+    succeeded: number;
+    failed: number;
+    mediaDeleted: number;
+  };
+}> {
   try {
+    // Early validation: Check if postIds array is empty
+    if (!postIds || postIds.length === 0) {
+      console.error(
+        `[deleteScheduledPostBatch]: No post IDs provided for deletion`
+      );
+      return {
+        success: false,
+        message: "No posts specified to delete.",
+        details: {
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+          mediaDeleted: 0,
+        },
+      };
+    }
     console.log(
-      `[deleteScheduledPost]: Starting deletion process for post ID: ${postId}`
+      `[deleteScheduledPostBatch]: Starting batch deletion for ${postIds.length} posts`
     );
-
     // Step 1: Verify user is properly authenticated
     if (!userId) {
-      console.error(`[deleteScheduledPost]: Missing user ID in request`);
+      console.error(`[deleteScheduledPostBatch]: Missing user ID in request`);
       return {
         success: false,
         message: "User authentication required. Please sign in to continue.",
@@ -42,7 +65,7 @@ export async function deleteScheduledPost(
     const authResult = await authCheck(userId);
     if (!authResult) {
       console.error(
-        `[fetchSocialAccounts]: Authentication check failed for user ID: ${userId}`
+        `[deleteScheduledPostBatch]: Authentication check failed for user ID: ${userId}`
       );
       return {
         success: false,
@@ -50,21 +73,22 @@ export async function deleteScheduledPost(
       };
     }
 
-    console.log(`[Delete Scheduled Post] Processing post: ${postId}`);
-
+    console.log(
+      `[deleteScheduledPostBatch]: Authentication validated for user: ${userId}`
+    );
     // Step 2: Check rate limits to prevent abuse
     console.log(
-      `[deleteScheduledPost]: Checking rate limits for user: ${userId}`
+      `[deleteScheduledPostBatch]: Checking rate limits for user: ${userId}`
     );
     const rateCheck = await checkRateLimit(
-      "deleteScheduledPost", // Unique identifier for this operation
+      "deleteScheduledPostBatch", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
       60 // Window (60 seconds)
     );
     if (!rateCheck.success) {
       console.warn(
-        `[deleteScheduledPost]: Rate limit exceeded for user: ${userId}. Reset in: ${
+        `[deleteScheduledPostBatch]: Rate limit exceeded for user: ${userId}. Reset in: ${
           rateCheck.resetIn ?? "unknown"
         } seconds`
       );
@@ -75,119 +99,171 @@ export async function deleteScheduledPost(
       };
     }
     console.log(
-      `[deleteScheduledPost]: Rate limit check passed for user: ${userId}`
+      `[deleteScheduledPostBatch]: Rate limit check passed for user: ${userId}`
     );
     // Step 3: Fetch post data to verify ownership and get media information
     console.log(
-      `[deleteScheduledPost]: Fetching post data for verification: ${postId}`
+      `[deleteScheduledPostBatch]: Fetching data for ${postIds.length} posts`
     );
-    const { data: post, error: fetchError } = await adminSupabase
+    const { data: posts, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
-      .select("user_id, media_storage_path, status")
-      .eq("id", postId)
-      .single();
+      .select("id, user_id, media_storage_path, platform, status")
+      .in("id", postIds);
 
-    if (fetchError || !post) {
+    if (fetchError) {
       console.error(
-        `[deleteScheduledPost]: Failed to find post with ID ${postId}:`,
-        fetchError?.message || "Post not found"
+        `[deleteScheduledPostBatch]: Database error fetching posts:`,
+        fetchError.message,
+        fetchError.details
+      );
+      return {
+        success: false,
+        message: "Failed to retrieve post information. Please try again.",
+      };
+    }
+
+    // Check if we found any posts
+    if (!posts || posts.length === 0) {
+      console.error(
+        `[deleteScheduledPostBatch]: No posts found with the provided IDs`
       );
       return {
         success: false,
         message:
-          "The post could not be found. It may have been already deleted.",
+          "No posts found to delete. They may have been deleted already.",
       };
     }
-    console.log(
-      `[deleteScheduledPost]: Found post data for platform, status: ${post.status}`
-    );
 
-    // Step 4: Verify post ownership (security check)
-    if (post.user_id !== userId) {
+    if (posts.length !== postIds.length) {
       console.warn(
-        `[Delete Scheduled Post] User ${userId} attempted to delete post ${postId} owned by ${post.user_id}`
+        `[deleteScheduledPostBatch]: Not all requested posts were found. Found ${posts.length} of ${postIds.length}`
+      );
+    }
+
+    // Step 4: Verify post ownership
+    // Check if all posts belong to the user
+    const unauthorizedPosts = posts.filter((post) => post.user_id !== userId);
+    if (unauthorizedPosts.length > 0) {
+      console.warn(
+        `[deleteScheduledPostBatch]: Security violation - User ${userId} attempted to delete ${unauthorizedPosts.length} posts owned by others`
       );
       return {
         success: false,
-        message: "You are not authorized to delete this post.",
+        message:
+          "You don't have permission to delete some or all of these posts.",
       };
     }
+
     console.log(
-      `[deleteScheduledPost]: Post ownership verified for user: ${userId}`
+      `[deleteScheduledPostBatch]: ${posts.length} posts verified and eligible for deletion`
+    );
+    // Step 5: Delete all posts in a single batch operation
+    console.log(
+      `[deleteScheduledPostBatch]: Performing batch deletion of ${posts.length} posts`
     );
 
-    // Step 5: Delete the post record from the database
-    // This ensures that our reference check won't count this post when checking media usage
-    console.log(
-      `[deleteScheduledPost]: Deleting post record from database: ${postId}`
-    );
+    const postIdsToDelete = posts.map((post) => post.id);
     const { error: deleteError } = await adminSupabase
       .from("scheduled_posts")
       .delete()
-      .eq("id", postId);
+      .in("id", postIdsToDelete);
 
     if (deleteError) {
       console.error(
-        `[deleteScheduledPost]: Database error deleting post:`,
+        `[deleteScheduledPostBatch]: Database error deleting posts:`,
         deleteError.message,
         deleteError.details
       );
       return {
         success: false,
         message:
-          "Failed to delete the post due to a database error. Please try again.",
+          "Failed to delete the posts due to a database error. Please try again.",
       };
     }
+
     console.log(
-      `[deleteScheduledPost]: Post record successfully deleted from database: ${postId}`
+      `[deleteScheduledPostBatch]: Successfully deleted ${posts.length} posts from database`
     );
 
-    // Step 6: Attempt to delete the associated media file if it exists
-    if (post.media_storage_path) {
+    // Step 6: Handle media file deletion - simplified approach
+    console.log(`[deleteScheduledPostBatch]: Processing media file deletion`);
+
+    // All posts in a batch share the same media file, so we can just use the first post's media path
+    const mediaPath = posts[0]?.media_storage_path;
+    let mediaDeletedCount = 0;
+
+    if (!mediaPath) {
       console.log(
-        `[deleteScheduledPost]: Attempting to delete associated media file: ${post.media_storage_path}`
+        `[deleteScheduledPostBatch]: No media file found for these posts`
       );
+    } else {
       try {
-        // The deleteSupabaseFileAction automatically checks if the file
+        console.log(
+          `[deleteScheduledPostBatch]: Checking if media can be deleted: ${mediaPath}`
+        );
+
+        // The deleteSupabaseFileAction already checks if the file
         // is still being used by other posts before deletion
         const deleteFileResult = await deleteSupabaseFileAction(
           userId,
-          post.media_storage_path
+          mediaPath
         );
 
         if (deleteFileResult.success) {
+          mediaDeletedCount = 1;
           console.log(
-            `[deleteScheduledPost]: Media file successfully deleted: ${post.media_storage_path}`
+            `[deleteScheduledPostBatch]: Media file successfully deleted: ${mediaPath}`
           );
         } else {
           console.log(
-            `[deleteScheduledPost]: Media file not deleted: ${deleteFileResult.message}`
+            `[deleteScheduledPostBatch]: Media file not deleted: ${deleteFileResult.message}`
           );
         }
       } catch (fileError) {
-        // We continue even if file deletion fails - post is already deleted
+        // We continue even if file deletion fails - posts are already deleted
         console.error(
-          `[deleteScheduledPost]: Error during file deletion attempt:`,
+          `[deleteScheduledPostBatch]: Error during file deletion attempt:`,
           fileError instanceof Error ? fileError.message : fileError
         );
       }
-    } else {
-      console.log(
-        `[deleteScheduledPost]: No media file associated with this post`
-      );
     }
 
     console.log(
-      `[deleteScheduledPost]: Successfully completed deletion process for  post: ${postId}`
+      `[deleteScheduledPostBatch]: Media processing complete. ${mediaDeletedCount} media files deleted`
     );
+
+    // Step 7: Return success response with details
+    // Get unique platforms for better messaging
+    const platforms = [...new Set(posts.map((post) => post.platform))];
+    const platformText =
+      platforms.length === 1
+        ? platforms[0].charAt(0).toUpperCase() + platforms[0].slice(1)
+        : "Social media";
+
+    // Create appropriate success message based on the number of posts
+    let successMessage = "";
+    if (posts.length === 1) {
+      successMessage = `Your ${platformText} post has been successfully deleted.`;
+    } else {
+      // Since we're processing posts from one batch at a time in BatchedPostCard,
+      // these will all be from the same batch
+      successMessage = `Your batch of ${posts.length} posts has been successfully deleted.`;
+    }
+
     return {
       success: true,
-      message: `Your post has been successfully deleted.`,
+      message: successMessage,
+      details: {
+        total: postIds.length,
+        succeeded: posts.length,
+        failed: postIds.length - posts.length,
+        mediaDeleted: mediaDeletedCount,
+      },
     };
   } catch (err) {
     // Step 8: Handle unexpected errors
     console.error(
-      `[deleteScheduledPost]: Unexpected error during post deletion:`,
+      `[deleteScheduledPostBatch]: Unexpected error during post deletion:`,
       err instanceof Error ? err.message : err
     );
     return {

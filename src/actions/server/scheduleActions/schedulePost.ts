@@ -29,6 +29,41 @@ export async function schedulePost(
   resetIn?: number;
 }> {
   try {
+    // Early validation for all required fields
+    if (
+      !data ||
+      !data.socialAccountId ||
+      !data.platform ||
+      !data.scheduledAt ||
+      !data.postType
+    ) {
+      console.error(
+        `[schedulePost]: Missing required fields in scheduling data`,
+        {
+          hasData: !!data,
+          hasSocialAccountId: !!data?.socialAccountId,
+          hasPlatform: !!data?.platform,
+          hasScheduledAt: !!data?.scheduledAt,
+          hasPostType: !!data?.postType,
+        }
+      );
+      return {
+        success: false,
+        message:
+          "Missing required post information. Please fill in all required fields.",
+      };
+    }
+
+    // Media-specific validation can then be done separately
+    if (data.postType !== "text" && !data.mediaStoragePath) {
+      console.error(
+        `[schedulePost]: Media path missing for ${data.postType} post`
+      );
+      return {
+        success: false,
+        message: `Media file is required for ${data.postType} posts.`,
+      };
+    }
     console.log(
       `[schedulePost]: Starting post scheduling process for user: ${userId}`
     );

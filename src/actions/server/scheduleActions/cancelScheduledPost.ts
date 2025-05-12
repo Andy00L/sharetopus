@@ -5,26 +5,48 @@ import { authCheck } from "@/actions/authCheck";
 import { checkRateLimit } from "../reddis/rate-limit";
 
 /**
- * Cancels a scheduled post that hasn't been published yet
+ * Cancels multiple scheduled posts at once
  *
  * This function:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse
- * 3. Validates post ownership and eligibility for cancellation
- * 4. Updates the post status to "cancelled" in the database
- * 5. Returns a structured response with the operation result
+ * 1. Performs a single authentication and rate limit check
+ * 2. Validates and updates multiple posts in a batch operation
+ * 3. Returns aggregate results of the operation
  *
- * @param postId - ID of the scheduled post to cancel
+ * @param postIds - Array of post IDs to cancel
  * @param userId - ID of the authenticated user attempting the cancellation
- * @returns Object with success status, message, and optional reset time
+ * @returns Object with success status, message, and details about the operation
  */
-export async function cancelScheduledPost(
-  postId: string,
+export async function cancelScheduledPostBatch(
+  postIds: string[],
   userId: string | null
-): Promise<{ success: boolean; message: string; resetIn?: number }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  resetIn?: number;
+  details?: {
+    total: number;
+    succeeded: number;
+    failed: number;
+  };
+}> {
   try {
+    // Early validation: Check if postIds array is empty
+    if (!postIds || postIds.length === 0) {
+      console.error(
+        `[cancelScheduledPostBatch]: No post IDs provided for cancellation`
+      );
+      return {
+        success: false,
+        message: "No posts specified for cancellation.",
+        details: {
+          total: 0,
+          succeeded: 0,
+          failed: 0,
+        },
+      };
+    }
     console.log(
-      `[cancelScheduledPost]: Starting cancellation process for post ID: ${postId}`
+      `[cancelScheduledPostBatch]: Starting batch cancellation for ${postIds.length} posts`
     );
 
     // Step 1: Verify user is properly authenticated
@@ -48,6 +70,7 @@ export async function cancelScheduledPost(
     console.log(
       `[cancelScheduledPost]: Authentication validated for user: ${userId}`
     );
+
     // Step 2: Check rate limits to prevent abuse
     console.log(
       `[cancelScheduledPost]: Checking rate limits for user: ${userId}`
@@ -77,94 +100,149 @@ export async function cancelScheduledPost(
 
     // Step 3: Retrieve the post to verify ownership and status
     console.log(
-      `[cancelScheduledPost]: Fetching post data to verify ownership: ${postId}`
+      `[cancelScheduledPostBatch]: Fetching data for ${postIds.length} posts`
     );
-    const { data: post, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("user_id, media_storage_path, status")
-      .eq("id", postId)
-      .single();
 
-    if (fetchError || !post) {
+    const { data: posts, error: fetchError } = await adminSupabase
+      .from("scheduled_posts")
+      .select("id,user_id, status, platform")
+      .in("id", postIds);
+
+    if (fetchError) {
       console.error(
-        `[cancelScheduledPost]: Failed to find post with ID ${postId}:`,
-        fetchError?.message || "Post not found"
+        `[cancelScheduledPostBatch]: Database error fetching posts:`,
+        fetchError.message,
+        fetchError.details
+      );
+      return {
+        success: false,
+        message: "Failed to retrieve post information. Please try again.",
+      };
+    }
+
+    // Check if we found any posts
+    if (!posts || posts.length === 0) {
+      console.error(
+        `[cancelScheduledPostBatch]: No posts found with the provided IDs`
+      );
+      return {
+        success: false,
+        message: "No posts found to cancel. They may have been deleted.",
+      };
+    }
+
+    if (posts.length !== postIds.length) {
+      console.warn(
+        `[cancelScheduledPostBatch]: Not all requested posts were found. Found ${posts.length} of ${postIds.length}`
+      );
+    }
+
+    // Step 4: Verify post ownership and eligibility for cancellation
+    console.log(
+      `[cancelScheduledPostBatch]: Verifying post ownership and eligibility`
+    );
+    // Check if all posts belong to the user
+    const unauthorizedPosts = posts.filter((post) => post.user_id !== userId);
+    if (unauthorizedPosts.length > 0) {
+      console.warn(
+        `[cancelScheduledPostBatch]: Security violation - User ${userId} attempted to cancel ${unauthorizedPosts.length} posts owned by others`
       );
       return {
         success: false,
         message:
-          "The scheduled post could not be found. It may have been already deleted.",
+          "You don't have permission to cancel some or all of these posts.",
       };
     }
+    // Filter posts to only those in "scheduled" status that can be cancelled
+    const cancellablePosts = posts.filter(
+      (post) => post.status === "scheduled"
+    );
 
-    // Step 4: Verify post ownership (security check)
-    if (post.user_id !== userId) {
+    if (cancellablePosts.length === 0) {
       console.warn(
-        `[cancelScheduledPost]: Security violation - User ${userId} attempted to cancel post ${postId} owned by ${post.user_id}`
+        `[cancelScheduledPostBatch]: No posts are in a cancellable state`
       );
       return {
         success: false,
-        message: "You don't have permission to cancel this post.",
+        message:
+          "None of the selected posts can be cancelled. They may already be cancelled, processed, or posted.",
       };
     }
-    console.log(
-      `[cancelScheduledPost]: Post ownership verified for user: ${userId}`
-    );
 
-    // Step 5: Check if post is in a cancellable state
-    if (post.status !== "scheduled") {
+    if (cancellablePosts.length !== posts.length) {
       console.warn(
-        `[cancelScheduledPost]: Cannot cancel post in "${post.status}" status: ${postId}`
+        `[cancelScheduledPostBatch]: Not all posts can be cancelled. Only ${cancellablePosts.length} of ${posts.length} are eligible`
       );
-      return {
-        success: false,
-        message: `This post cannot be cancelled because it is already in "${post.status}" status.`,
-      };
     }
     console.log(
-      `[cancelScheduledPost]: Post is eligible for cancellation: ${postId}`
+      `[cancelScheduledPostBatch]: ${cancellablePosts.length} posts verified and eligible for cancellation`
     );
 
-    // Step 6: Update post status to "cancelled"
+    // Step 5: Update all eligible posts to "cancelled" in a single operation
+    const postIdsToCancel = cancellablePosts.map((post) => post.id);
     console.log(
-      `[cancelScheduledPost]: Updating post status to "cancelled": ${postId}`
+      `[cancelScheduledPostBatch]: Cancelling ${postIdsToCancel.length} posts`
     );
     const { error: updateError } = await adminSupabase
       .from("scheduled_posts")
       .update({ status: "cancelled" })
-      .eq("id", postId);
+      .in("id", postIdsToCancel);
 
     if (updateError) {
       console.error(
-        `[cancelScheduledPost]: Database error updating post status:`,
+        `[cancelScheduledPostBatch]: Database error cancelling posts:`,
         updateError.message,
         updateError.details
       );
       return {
         success: false,
-        message:
-          "Failed to cancel the post due to a database error. Please try again.",
+        message: "Failed to cancel posts due to a database error.",
+        details: {
+          total: postIds.length,
+          succeeded: 0,
+          failed: cancellablePosts.length,
+        },
       };
     }
-
-    // Step 7: Return success response
+    // Step 6: Return success response with details
     console.log(
-      `[cancelScheduledPost]: Successfully cancelled post: ${postId}`
+      `[cancelScheduledPostBatch]: Successfully cancelled ${cancellablePosts.length} posts`
     );
+
+    // Get unique platforms for better messaging
+    const platforms = [
+      ...new Set(cancellablePosts.map((post) => post.platform)),
+    ];
+    const platformText =
+      platforms.length === 1
+        ? platforms[0].charAt(0).toUpperCase() + platforms[0].slice(1)
+        : "Social media";
+
+    // Create appropriate success message based on the number of posts
+    const successMessage =
+      cancellablePosts.length === 1
+        ? `Your ${platformText} post has been successfully cancelled.`
+        : `${cancellablePosts.length} posts have been successfully cancelled.`;
+
     return {
       success: true,
-      message: `Your post has been successfully cancelled.`,
+      message: successMessage,
+      details: {
+        total: postIds.length,
+        succeeded: cancellablePosts.length,
+        failed: postIds.length - cancellablePosts.length,
+      },
     };
   } catch (err) {
-    // Step 8: Handle unexpected errors
+    // Step 7: Handle unexpected errors
     console.error(
-      `[cancelScheduledPost]: Unexpected error cancelling post:`,
+      `[cancelScheduledPostBatch]: Unexpected error during batch cancellation:`,
       err instanceof Error ? err.message : err
     );
     return {
       success: false,
       message:
-        "An unexpected error occurred while cancelling the post. Please try again later.",
+        "An unexpected error occurred while cancelling the posts. Please try again later.",
     };
   }
 }
