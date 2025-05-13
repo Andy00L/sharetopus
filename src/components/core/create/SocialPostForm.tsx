@@ -34,16 +34,8 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import FilePreview from "../../renderFilePreview";
-import { directPostForLinkedInAccounts } from "./action/Direct/directPostForLinkedInAccounts";
-import { directPostForPinterestAccounts } from "./action/Direct/directPostForPinterestAccounts";
-import { directPostForTikTokAccounts } from "./action/Direct/directPostForTikTokAccounts";
+import { handleSocialMediaPost } from "./action/handleSocialMediaPost";
 import { uploadMedia } from "./action/media/uploadMedia";
-import { scheduleForLinkedInAccounts } from "./action/Scheduled/scheduledForLinkedinAccounts";
-import {
-  scheduleForPinterestAccounts,
-  ScheduleResult,
-} from "./action/Scheduled/scheduleForPinterestAccounts";
-import { scheduleForTikTokAccounts } from "./action/Scheduled/scheduleForTikTokAccounts";
 import {
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,
@@ -347,76 +339,149 @@ export default function SocialPostForm({
   }, [selectedFile]);
 
   const checksBeforeSubmission = () => {
-    // Basic validation
+    // Check user authentication
     if (!userId) {
-      toast.error("User not authenticated.");
-      resetForm();
-      setError("User not authenticated. Please log in again.");
-      return false;
+      console.error("[checksBeforeSubmission]: User not authenticated");
+      return {
+        valid: false,
+        message: "User not authenticated. Please sign in to continue.",
+      };
     }
 
     // Check if there's at least one account selected
-    if (Object.values(selectedAccounts).filter(Boolean).length === 0) {
-      setError("Please select at least one account");
-      return false;
+    const selectedAccountCount =
+      Object.values(selectedAccounts).filter(Boolean).length;
+    if (selectedAccountCount === 0) {
+      console.error("[checksBeforeSubmission]: No accounts selected");
+      return { valid: false, message: "Please select at least one account" };
     }
 
-    // Media validation
+    // Media validation for image/video posts
     if (postType === "video" || postType === "image") {
       if (!selectedFile) {
-        setError("Please select a file to upload");
-        return false;
+        console.error("[checksBeforeSubmission]: Missing required media file");
+        return {
+          valid: false,
+          message: `Please select a ${postType} file to upload`,
+        };
+      }
+
+      // Additional type-specific validations
+      if (postType === "image") {
+        if (!ALLOWED_IMAGE_TYPES.includes(selectedFile.type)) {
+          console.error(
+            "[checksBeforeSubmission]: Invalid image format:",
+            selectedFile.type
+          );
+          return {
+            valid: false,
+            message: "Please select a valid image file format (JPEG, PNG)",
+          };
+        }
+
+        if (selectedFile.size > MAX_IMAGE_SIZE_BYTES) {
+          console.error(
+            "[checksBeforeSubmission]: Image exceeds size limit:",
+            selectedFile.size
+          );
+          return {
+            valid: false,
+            message: `Image size exceeds the maximum limit of ${
+              uploadLimits?.image || 50
+            }MB`,
+          };
+        }
+      } else if (postType === "video") {
+        if (!ALLOWED_VIDEO_TYPES.includes(selectedFile.type)) {
+          console.error(
+            "[checksBeforeSubmission]: Invalid video format:",
+            selectedFile.type
+          );
+          return {
+            valid: false,
+            message: "Please select a valid video file format (MP4, MOV)",
+          };
+        }
+
+        if (selectedFile.size > MAX_VIDEO_SIZE_BYTES) {
+          console.error(
+            "[checksBeforeSubmission]: Video exceeds size limit:",
+            selectedFile.size
+          );
+          return {
+            valid: false,
+            message: `Video size exceeds the maximum limit of ${
+              uploadLimits?.video || 50
+            }MB`,
+          };
+        }
       }
     }
 
-    // Check if captions are provided (required for images only)
-    if (postType === "text") {
-      // Text post validation - we already have content from step 1
-      const missingTitle = accountContent.some(
-        (item) => !item.description.trim()
-      );
-      if (missingTitle) {
-        setError("Please enter a caption");
-        return false;
+    // Scheduled date validation
+    if (isScheduled) {
+      if (!scheduledDate || !scheduledTime) {
+        console.error("[checksBeforeSubmission]: Missing scheduled date/time");
+        return {
+          valid: false,
+          message: "Please select both date and time for scheduling",
+        };
+      }
+
+      const scheduledDateTime = new Date(`${scheduledDate}T${scheduledTime}`);
+      if (scheduledDateTime < new Date()) {
+        console.error(
+          "[checksBeforeSubmission]: Scheduled time is in the past"
+        );
+        return {
+          valid: false,
+          message: "The scheduled date cannot be in the past",
+        };
       }
     }
 
-    if (!postType) {
-      return false;
-    }
-    if (
-      isScheduled &&
-      new Date(`${scheduledDate}T${scheduledTime}`) < new Date()
-    ) {
-      setError("The scheduled date cannot be in the past");
-      return false;
-    }
-
-    // Pinterest-specific validation
+    // Pinterest-specific validation for board selection
     if (
       selectedPinterestAccount.length > 0 &&
       (postType === "video" || postType === "image")
     ) {
-      const unselectedAccount = selectedPinterestAccount.find(
+      const missingBoardAccount = selectedPinterestAccount.find(
         (account) =>
           !boards.some(
             (board) => board.accountId === account.id && board.isSelected
           )
       );
 
-      if (unselectedAccount) {
-        setError(
-          `Please select a Pinterest board for ${
-            unselectedAccount.display_name ?? unselectedAccount.username
-          }`
+      if (missingBoardAccount) {
+        console.error(
+          "[checksBeforeSubmission]: Missing Pinterest board selection"
         );
-        return false;
+        return {
+          valid: false,
+          message: `Please select a Pinterest board for ${
+            missingBoardAccount.display_name ??
+            missingBoardAccount.username ??
+            "your account"
+          }`,
+        };
       }
     }
 
-    return true;
-  };
+    // Additional cross-platform validation
+    if (postType === "image" && selectedTikTokAccount.length > 0) {
+      console.warn(
+        "[checksBeforeSubmission]: TikTok doesn't support image posts"
+      );
+      return {
+        valid: false,
+        message:
+          "TikTok doesn't support image posts. Please choose a different post type or unselect TikTok accounts.",
+      };
+    }
 
+    return { valid: true };
+  };
+  /** 
   const handleSchedueleSubmit = async () => {
     if (!checksBeforeSubmission()) return;
     setIsLoading(true);
@@ -675,6 +740,257 @@ export default function SocialPostForm({
     }
 
     setIsLoading(false);
+  };
+*/
+  // Unified submit function with enhanced security and error handling
+  const handleSubmit = async () => {
+    // Step 1: Skip if already loading to prevent double submissions
+    if (isLoading) {
+      console.log("[handleSubmit]: Operation already in progress, skipping");
+      return;
+    }
+
+    // Step 2: Pre-submission validation
+    const validationResult = checksBeforeSubmission();
+    if (!validationResult.valid) {
+      setError(
+        validationResult.message || "Please fix the errors before continuing."
+      );
+      toast.error(
+        validationResult.message || "Please fix the errors before continuing."
+      );
+      return;
+    }
+
+    // Step 3: Set loading state and reset errors/progress
+    setIsLoading(true);
+    setError(null);
+    setUploadProgress(0);
+
+    // Create a unique batch ID for this submission
+    const batchId = nanoid(32);
+    let mediaStoragePath = "";
+
+    try {
+      console.log(
+        "[handleSubmit]: Starting post process with batch ID:",
+        batchId
+      );
+
+      // Step 4: Handle media upload if needed
+      if ((postType === "video" || postType === "image") && selectedFile) {
+        console.log(
+          `[handleSubmit]: Uploading ${postType} file:`,
+          selectedFile.name
+        );
+
+        // Validate file size again (security)
+        const maxSize =
+          postType === "image" ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
+        if (selectedFile.size > maxSize) {
+          setError(
+            `File exceeds maximum size limit of ${maxSize / (1024 * 1024)}MB.`
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // Start upload with progress tracking
+        try {
+          const uploadResult = await uploadMedia(selectedFile, (progress) => {
+            setUploadProgress(progress);
+          });
+
+          if (!uploadResult.success) {
+            toast.error(uploadResult.message || "Failed to upload media");
+            setError(uploadResult.message || "Failed to upload media");
+            setIsLoading(false);
+            return;
+          }
+
+          mediaStoragePath = uploadResult.path ?? "";
+          console.log(
+            `[handleSubmit]: Media upload completed: ${mediaStoragePath}`
+          );
+        } catch (uploadError) {
+          console.error("[handleSubmit]: Media upload error:", uploadError);
+          setError("Failed to upload media file. Please try again.");
+          toast.error("Failed to upload media file. Please try again.");
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Step 5: Ensure account content is properly set before submission
+      if (accountContent.length === 0) {
+        console.error("[handleSubmit]: No account content found");
+        setError("No content found for selected accounts.");
+        toast.error("No content found for selected accounts.");
+        setIsLoading(false);
+
+        // Clean up media file if upload was successful but submission failed
+        if (mediaStoragePath) {
+          try {
+            await deleteSupabaseFileAction(userId, mediaStoragePath);
+            console.log(
+              "[handleSubmit]: Cleaned up media file after account content error"
+            );
+          } catch (cleanupError) {
+            console.error(
+              "[handleSubmit]: Failed to clean up media file:",
+              cleanupError
+            );
+          }
+        }
+        return;
+      }
+
+      // Step 6: Call the unified server function for posting/scheduling
+      console.log(
+        `[handleSubmit]: Sending request to ${
+          isScheduled ? "schedule" : "publish"
+        } content`
+      );
+      const result = await handleSocialMediaPost({
+        // Platform-specific accounts
+        pinterestAccounts: selectedPinterestAccount,
+        linkedinAccounts: selectedLinkedinAccount,
+        tiktokAccounts: selectedTikTokAccount,
+
+        // Media info
+        mediaPath: mediaStoragePath,
+        fileName: selectedFile?.name,
+
+        // Content details
+        boards,
+        platformOptions,
+        accountContent,
+
+        // Post configuration
+        isScheduled,
+        scheduledDate: isScheduled ? scheduledDate : undefined,
+        scheduledTime: isScheduled ? scheduledTime : undefined,
+        postType,
+
+        // Identifiers
+        userId,
+        batchId,
+
+        // Clean up files after processing (for direct posts only)
+        cleanupFiles: !isScheduled,
+      });
+
+      // Step 7: Handle response with detailed error processing
+      console.log(`[handleSubmit]: Server response:`, result);
+
+      if (result.success) {
+        // Success case - all or some accounts succeeded
+        toast.success(
+          result.message ||
+            `Successfully ${
+              isScheduled ? "scheduled" : "published"
+            } your content!`
+        );
+
+        // If there were partial failures, show additional warning
+        if (result.errors && result.errors.length > 0) {
+          setTimeout(() => {
+            toast.warning(
+              `Note: ${result.errors?.length} account(s) had issues. See console for details.`
+            );
+          }, 500);
+
+          // Log detailed errors to console for debugging
+          console.warn(
+            "[handleSubmit]: Some accounts had failures:",
+            result.errors
+          );
+        }
+
+        // Reset the form to initial state on success
+        resetForm();
+      } else if (result.resetIn) {
+        // Rate limit exceeded
+        setError(
+          `Rate limit exceeded. Please try again in ${result.resetIn} seconds.`
+        );
+        toast.error(
+          `Rate limit exceeded. Please try again in ${result.resetIn} seconds.`
+        );
+
+        // Clean up unused media on complete failure
+        if (mediaStoragePath && (!result.counts || result.counts.total === 0)) {
+          try {
+            await deleteSupabaseFileAction(userId, mediaStoragePath);
+            console.log(
+              "[handleSubmit]: Cleaned up unused media after rate limit error"
+            );
+          } catch (cleanupError) {
+            console.error(
+              "[handleSubmit]: Failed to clean up media file:",
+              cleanupError
+            );
+          }
+        }
+      } else {
+        // General error case
+        setError(result.message || "Failed to process your request");
+        toast.error(result.message || "Failed to process your request");
+
+        // Show detailed errors if available
+        if (result.errors && result.errors.length > 0) {
+          const errorSummary = result.errors
+            .map((e) => `${e.platform}/${e.displayName}: ${e.error}`)
+            .join("; ");
+          console.error("[handleSubmit]: Detailed errors:", errorSummary);
+
+          // Show first error for user context if not shown in the main message
+          if (!result.message && result.errors[0]) {
+            toast.error(result.errors[0].error);
+          }
+        }
+
+        // Clean up media on complete failure
+        if (mediaStoragePath && (!result.counts || result.counts.total === 0)) {
+          try {
+            await deleteSupabaseFileAction(userId, mediaStoragePath);
+            console.log("[handleSubmit]: Cleaned up unused media after error");
+          } catch (cleanupError) {
+            console.error(
+              "[handleSubmit]: Failed to clean up media file:",
+              cleanupError
+            );
+          }
+        }
+      }
+    } catch (error) {
+      // Step 8: Handle unexpected errors with detailed logging
+      console.error("[handleSubmit]: Unhandled exception:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unexpected error occurred";
+
+      setError(`Failed to process your request: ${errorMessage}`);
+      toast.error(`Failed to process your request: ${errorMessage}`);
+
+      // Clean up media file on error
+      if (mediaStoragePath) {
+        try {
+          await deleteSupabaseFileAction(userId, mediaStoragePath);
+          console.log(
+            "[handleSubmit]: Cleaned up media after unhandled exception"
+          );
+        } catch (cleanupError) {
+          console.error(
+            "[handleSubmit]: Failed to clean up media file:",
+            cleanupError
+          );
+        }
+      }
+    } finally {
+      // Step 9: Always reset loading state
+      setIsLoading(false);
+      console.log("[handleSubmit]: Submission process completed");
+    }
   };
 
   // New state for tracking which accounts are in edit mode
@@ -1234,11 +1550,13 @@ export default function SocialPostForm({
               {!isLoading && (
                 <div className="pt-4 flex justify-between">
                   <Button
-                    onClick={() =>
-                      isScheduled
-                        ? handleSchedueleSubmit()
-                        : handleDirectPostSubmit()
+                    onClick={handleSubmit}
+                    disabled={
+                      isLoading ||
+                      Object.values(selectedAccounts).filter(Boolean).length ===
+                        0
                     }
+                    className="w-full"
                   >
                     {isLoading ? (
                       <>

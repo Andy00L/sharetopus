@@ -1,9 +1,7 @@
-"use server";
-
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { authCheck } from "@/actions/authCheck";
 import { SchedulePostData } from "@/lib/types/SchedulePostData";
-import { checkRateLimit } from "../reddis/rate-limit";
+import "server-only";
 
 /**
  * Schedules a post for publishing at a specified future time
@@ -90,27 +88,6 @@ export async function schedulePost(
     console.log(`[schedulePost]: Authentication validated for user: ${userId}`);
 
     // Step 2: Check rate limits to prevent abuse
-    console.log(`[schedulePost]: Checking rate limits for user: ${userId}`);
-    const rateCheck = await checkRateLimit(
-      "schedulePost", // Unique identifier for this operation
-      userId, // User identifier
-      60, // Limit (60 requests)
-      60 // Window (60 seconds)
-    );
-
-    if (!rateCheck.success) {
-      console.warn(
-        `[schedulePost]: Rate limit exceeded for user: ${userId}. Reset in: ${
-          rateCheck.resetIn ?? "unknown"
-        } seconds`
-      );
-      return {
-        success: false,
-        message: "Too many scheduling requests. Please try again later.",
-        resetIn: rateCheck.resetIn,
-      };
-    }
-    console.log(`[schedulePost]: Rate limit check passed for user: ${userId}`);
 
     // Step 3: Validate post data
     console.log(
