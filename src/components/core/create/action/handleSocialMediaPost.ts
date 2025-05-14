@@ -373,7 +373,7 @@ export async function handleSocialMediaPost(config: {
     );
     let responseBuffer;
 
-    if (mediaType === " video" || mediaType === "image") {
+    if (mediaPath && (postType === "video" || postType === "image")) {
       // Download the file for direct upload
       responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
       if (!responseBuffer.success) {
@@ -424,6 +424,7 @@ export async function handleSocialMediaPost(config: {
             isScheduled,
             scheduledDate: scheduledDate || "",
             scheduledTime: scheduledTime || "",
+            buffer: responseBuffer?.buffer,
             postType,
             userId,
             batchId,
