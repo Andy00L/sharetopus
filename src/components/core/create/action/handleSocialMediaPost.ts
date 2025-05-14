@@ -371,17 +371,21 @@ export async function handleSocialMediaPost(config: {
     console.log(
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
+    let responseBuffer;
 
-    // Download the file for direct upload
-    const responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
-    if (!responseBuffer.success) {
-      return {
-        success: false,
-        counts: results.counts,
-        message: responseBuffer.message,
-        errors: [],
-      };
+    if (mediaType === " video" || mediaType === "image") {
+      // Download the file for direct upload
+      responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
+      if (!responseBuffer.success) {
+        return {
+          success: false,
+          counts: results.counts,
+          message: responseBuffer.message,
+          errors: [],
+        };
+      }
     }
+
     // Process each platform in parallel for maximum performance
     const [
       tiktokAccountResults,
@@ -401,7 +405,7 @@ export async function handleSocialMediaPost(config: {
             scheduledDate: scheduledDate || "",
             scheduledTime: scheduledTime || "",
             postType,
-            buffer: responseBuffer.buffer,
+            buffer: responseBuffer?.buffer,
             userId,
             batchId,
           })
@@ -440,7 +444,7 @@ export async function handleSocialMediaPost(config: {
             postType,
             userId,
             batchId,
-            buffer: responseBuffer.buffer,
+            buffer: responseBuffer?.buffer,
             mediaType,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
