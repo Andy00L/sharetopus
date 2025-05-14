@@ -2,6 +2,7 @@
 
 import { authCheck } from "@/actions/authCheck";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { directPostForLinkedInAccounts } from "./Direct/directPostForLinkedInAccounts";
@@ -116,6 +117,7 @@ export async function handleSocialMediaPost(config: {
       pinterestAccounts.length +
       linkedinAccounts.length +
       tiktokAccounts.length;
+
     if (totalAccounts === 0) {
       console.error(
         `[handleSocialMediaPost]: No accounts provided for processing`
@@ -193,7 +195,7 @@ export async function handleSocialMediaPost(config: {
     );
 
     // Step 3: Pre-process media if needed - do this ONCE instead of in each platform handler
-    let mediaType: string | undefined;
+    let mediaType: string = "";
 
     if (mediaPath && fileName) {
       try {
@@ -370,6 +372,16 @@ export async function handleSocialMediaPost(config: {
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
 
+    // Download the file for direct upload
+    const responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
+    if (!responseBuffer.success) {
+      return {
+        success: false,
+        counts: results.counts,
+        message: responseBuffer.message,
+        errors: [],
+      };
+    }
     // Process each platform in parallel for maximum performance
     const [
       tiktokAccountResults,
@@ -381,6 +393,7 @@ export async function handleSocialMediaPost(config: {
         ? processTiktokAccounts({
             accounts: tiktokAccounts,
             mediaPath,
+            mediaType,
             fileName: fileName || "",
             platformOptions,
             accountContent,
@@ -388,6 +401,7 @@ export async function handleSocialMediaPost(config: {
             scheduledDate: scheduledDate || "",
             scheduledTime: scheduledTime || "",
             postType,
+            buffer: responseBuffer.buffer,
             userId,
             batchId,
           })
@@ -398,6 +412,7 @@ export async function handleSocialMediaPost(config: {
         ? processPinterestAccounts({
             accounts: pinterestAccounts,
             mediaPath,
+            mediaType,
             fileName: fileName || "",
             boards: boards || [],
             platformOptions,
@@ -425,6 +440,8 @@ export async function handleSocialMediaPost(config: {
             postType,
             userId,
             batchId,
+            buffer: responseBuffer.buffer,
+            mediaType,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
     ]);
@@ -559,6 +576,7 @@ export async function handleSocialMediaPost(config: {
 async function processTiktokAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  mediaType: string;
   fileName: string;
   platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
@@ -568,6 +586,7 @@ async function processTiktokAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
+  buffer?: Buffer;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -592,11 +611,13 @@ async function processTiktokAccounts(config: {
       );
 
       // Find content for this account
+
       const accountContent = config.accountContent.find(
         (c) => c.accountId === account.id
       );
       if (!accountContent) {
-        throw new Error("No content configured for this account");
+        console.error("No content configured for this account");
+        throw "error";
       }
 
       // Process single account with detailed timing
@@ -614,8 +635,10 @@ async function processTiktokAccounts(config: {
             batchId: config.batchId,
           })
         : await directPostForTikTokAccounts({
-            accounts: [account],
+            account: account,
             mediaPath: config.mediaPath,
+            mediaType: config.mediaType,
+            buffer: config.buffer,
             platformOptions: config.platformOptions,
             accountContent: [accountContent],
             userId: config.userId,
@@ -689,6 +712,7 @@ async function processTiktokAccounts(config: {
 async function processPinterestAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  mediaType: string;
   fileName: string;
   boards: BoardInfo[];
   platformOptions: PlatformOptions;
@@ -699,6 +723,7 @@ async function processPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
+  buffer?: Buffer;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -756,6 +781,7 @@ async function processPinterestAccounts(config: {
         : await directPostForPinterestAccounts({
             accounts: [account],
             mediaPath: config.mediaPath,
+            mediaType: config.mediaType,
             boards: accountBoards,
             platformOptions: config.platformOptions,
             accountContent: [accountContent],
@@ -763,6 +789,7 @@ async function processPinterestAccounts(config: {
             fileName: config.fileName,
             batchId: config.batchId,
             cleanupFiles: false,
+            buffer: config.buffer,
           });
 
       const accountProcessingTime = performance.now() - accountStartTime;
@@ -830,6 +857,7 @@ async function processPinterestAccounts(config: {
 async function processLinkedinAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  mediaType: string;
   fileName: string;
   platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
@@ -839,6 +867,7 @@ async function processLinkedinAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
+  buffer?: Buffer;
 }) {
   const { accounts, isScheduled } = config;
   const errors: AccountError[] = [];
@@ -892,11 +921,13 @@ async function processLinkedinAccounts(config: {
         : await directPostForLinkedInAccounts({
             accounts: [account],
             mediaPath: config.mediaPath,
+            mediaType: config.mediaType,
             platformOptions: config.platformOptions,
             accountContent: [accountContent],
             userId: config.userId,
             fileName: config.fileName,
             batchId: config.batchId,
+            buffer: config.buffer,
             cleanupFiles: false,
           });
 

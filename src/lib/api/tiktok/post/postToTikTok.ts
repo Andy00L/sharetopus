@@ -1,10 +1,8 @@
 // lib/api/tiktok/post/postToTikTok.ts
-import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
-import { auth } from "@clerk/nextjs/server";
 import fetch from "node-fetch";
+import "server-only";
 
 // Define return type for TikTok posts
 export interface TikTokPostResult {
@@ -77,28 +75,20 @@ export async function postToTikTok({
   mediaPath,
   mediaType,
   userId,
+  buffer,
   autoAddMusic = true,
 }: {
   accessToken: string;
   title?: string;
   description?: string;
   tikTokOptions?: TikTokOptions;
+  buffer?: Buffer;
   mediaPath: string;
   mediaType: string;
   userId: string;
   autoAddMusic?: boolean;
 }): Promise<TikTokPostResult> {
   try {
-    // Authenticate the user
-    const { userId: clerkUserId } = await auth();
-
-    if (!clerkUserId || clerkUserId !== userId) {
-      return {
-        success: false,
-        error: "Unauthorized - Authentication required",
-      };
-    }
-
     // Verify required parameters
     if (!accessToken || !mediaPath) {
       return {
@@ -159,7 +149,8 @@ export async function postToTikTok({
       // For videos, we'll use FILE_UPLOAD as specified
       return await handleVideoPost({
         accessToken,
-        title,
+        description,
+        buffer,
         tikTokOptions,
         mediaPath,
         mediaType,
@@ -181,39 +172,34 @@ export async function postToTikTok({
  */
 async function handleVideoPost({
   accessToken,
-  title,
+  description,
   tikTokOptions,
-  mediaPath,
+  buffer,
   mediaType,
-  userId,
   creatorInfo,
 }: {
   accessToken: string;
-  title?: string;
+  description?: string;
   tikTokOptions?: TikTokOptions;
   mediaPath: string;
   mediaType: string;
+  buffer?: Buffer;
   userId: string;
   creatorInfo: CreatorInfoResponse;
 }): Promise<TikTokPostResult> {
   try {
-    // Download the file for direct upload
-    const responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
-    if (!responseBuffer.success) {
+    if (!buffer) {
       return {
         success: false,
-        error: responseBuffer.message,
+        error: "No Buffer",
       };
     }
-
-    const buffer = responseBuffer.buffer!;
-
     const fileSize = buffer?.length;
 
     // Calculate optimal chunk size based on file size
     let chunkSize: number;
     // Calculate optimal chunk size for chunked upload
-    const MAX_CHUNK_SIZE = 64 * 1024 * 1024; // 64MB maximum per TikTok docs
+    const MAX_CHUNK_SIZE = 250 * 1024 * 1024; // 64MB maximum per TikTok docs
     // Adaptive chunk sizing based on file size
     if (fileSize <= MAX_CHUNK_SIZE) {
       // Small videos: use a single chunk
@@ -246,7 +232,7 @@ async function handleVideoPost({
         },
         body: JSON.stringify({
           post_info: {
-            title: title || "",
+            title: description || "",
             privacy_level: tikTokOptions?.privacyLevel || "PUBLIC_TO_EVERYONE",
             disable_duet: tikTokOptions?.disableDuet || false,
             disable_comment: tikTokOptions?.disableComment || false,
@@ -471,14 +457,6 @@ async function handleImagePost({
       status: "posted",
       content_id: publishId,
     };
-    // STEP 3: Poll for post status
-    // return await checkPostStatus(
-    //   accessToken,
-    //   publishId,
-    //   creatorInfo,
-    //   "image",
-    //   "DIRECT_POST"
-    // );
   } catch (error) {
     return {
       success: false,
@@ -487,118 +465,3 @@ async function handleImagePost({
     };
   }
 }
-
-/**
- * Helper function to check post status until completion
- */
-/**async function checkPostStatus(
-  accessToken: string,
-  publishId: string,
-  creatorInfo: CreatorInfoResponse,
-  mediaType: "image" | "video",
-  postMode: string
-): Promise<TikTokPostResult> {
-  let maxRetries = 30;
-  let isCompleted = false;
-  let statusData: PostStatusResponse | null = null;
-
-  while (maxRetries > 0 && !isCompleted) {
-    // Wait 2 seconds between status checks
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-
-    const statusResponse = await fetch(
-      "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json; charset=UTF-8",
-        },
-        body: JSON.stringify({ publish_id: publishId }),
-      }
-    );
-
-    if (!statusResponse.ok) {
-      maxRetries--;
-      continue;
-    }
-
-    statusData = (await statusResponse.json()) as PostStatusResponse;
-    console.log(
-      `[TikTok Status] Current status: ${statusData.data.status}, retries left: ${maxRetries}`
-    );
-
-    // Check if posting is complete or failed
-    if (
-      statusData.data.status === "PUBLISH_COMPLETE" ||
-      statusData.data.status === "FAILED" ||
-      (postMode === "MEDIA_UPLOAD" &&
-        statusData.data.status === "SEND_TO_USER_INBOX")
-    ) {
-      isCompleted = true;
-    } else {
-      maxRetries--;
-    }
-  }
-
-  // Check the final status
-  if (!statusData) {
-    return {
-      success: false,
-      error: "Failed to get post status after multiple attempts",
-      status: "failed",
-      content_id: publishId,
-    };
-  }
-
-  if (statusData.data.status === "FAILED") {
-    return {
-      success: false,
-      error: `Post failed: ${statusData.data.fail_reason || "unknown reason"}`,
-      details: statusData.data,
-      status: "failed",
-      content_id: publishId,
-    };
-  }
-
-  // Handle successful states based on post mode
-  if (statusData.data.status === "PUBLISH_COMPLETE") {
-    // Get post ID if available
-    const postId = statusData.data.publicaly_available_post_id?.[0] || "";
-    const postUrl = "https://www.tiktok.com/@fusion_fight0";
-
-    return {
-      success: true,
-      publishId,
-      postId,
-      postUrl,
-      data: statusData.data,
-      message: `Successfully posted ${mediaType} to TikTok`,
-      status: "posted",
-      content_id: publishId,
-    };
-  } else if (
-    postMode === "MEDIA_UPLOAD" &&
-    statusData.data.status === "SEND_TO_USER_INBOX"
-  ) {
-    // For upload mode, this is the expected successful state
-    return {
-      success: true,
-      publishId,
-      message: `Media successfully uploaded to TikTok. User needs to complete the post via TikTok app notification.`,
-      data: statusData.data,
-      status: "posted",
-      content_id: publishId,
-    };
-  }
-
-  // If we reach here, the process is still ongoing
-  return {
-    success: false,
-    publishId,
-    message: `Post initiated successfully but still processing (status: ${statusData.data.status})`,
-    data: statusData.data,
-    status: "failed",
-    content_id: publishId,
-  };
-}*/

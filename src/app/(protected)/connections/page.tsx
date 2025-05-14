@@ -11,7 +11,7 @@ import PinterestSVGIcon, {
   TiktokSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
 import RateLimitError from "@/components/RateLimitError";
-import { SimpleSubscriptionPrompt } from "@/components/SubscriptionPrompt";
+import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -22,7 +22,7 @@ const AccountsPageWithData = async () => {
   const { userId } = await auth();
   const subscriptionCheck = await checkActiveSubscription(userId);
   if (!subscriptionCheck.isActive || !subscriptionCheck.success) {
-    return <SimpleSubscriptionPrompt />;
+    return <SubscriptionPrompt />;
   }
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;

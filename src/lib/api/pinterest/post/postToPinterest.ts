@@ -1,8 +1,6 @@
 // lib/api/pinterest/post/postToPinterest.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import { auth } from "@clerk/nextjs/server";
 import FormData from "form-data";
 import fetch from "node-fetch";
 
@@ -37,8 +35,7 @@ export async function postToPinterest({
   mediaPath,
   mediaType,
   fileName, // Added filename parameter
-  userId,
-  supabaseBucket,
+  buffer,
 }: {
   accessToken: string;
   boardId: string;
@@ -49,19 +46,24 @@ export async function postToPinterest({
   mediaType: string;
   fileName: string;
   userId: string;
+  buffer?: Buffer;
   supabaseBucket: string;
 }): Promise<PinterestPostResult> {
   try {
-    // Authenticate the user
-    const { userId: clerkUserId } = await auth();
-
-    if (!clerkUserId || clerkUserId !== userId) {
+    // Verify required parameters
+    if (!accessToken || !boardId) {
       return {
         success: false,
-        error: "Unauthorized - Authentication required",
+        error:
+          "Missing required parameters (accessToken and boardId are required)",
       };
     }
-
+    if (!buffer) {
+      return {
+        success: false,
+        error: "Buffer is required for video uploads to Pinterest",
+      };
+    }
     // Log the received parameters (truncating sensitive data)
     console.log("[Pinterest Post Function] Received parameters:");
     console.log("[Pinterest Post Function] boardId:", boardId);
@@ -108,26 +110,12 @@ export async function postToPinterest({
     }
 
     if (isImage) {
-      // FOR IMAGES: Use direct base64 encoding (original approach)
-      console.log(
-        "[Pinterest Post Function] Retrieving image for base64 encoding"
-      );
-
-      const { data: fileData, error: fileError } = await adminSupabase.storage
-        .from(supabaseBucket)
-        .download(mediaPath);
-
-      if (fileError || !fileData) {
-        console.error(
-          "[Pinterest Post Function] Error retrieving image:",
-          fileError
-        );
+      if (!buffer) {
         return {
           success: false,
-          error: "Failed to retrieve image for uploading",
+          error: "Buffer is required for image uploads",
         };
       }
-      const buffer = Buffer.from(await fileData.arrayBuffer());
       const base64Media = buffer.toString("base64");
       // Create pin with embedded media
       const requestBody = {
@@ -223,23 +211,6 @@ export async function postToPinterest({
     Object.entries(upload_parameters).forEach(([key, value]) => {
       formData.append(key, value);
     });
-
-    const { data: fileStream, error: streamError } = await adminSupabase.storage
-      .from(supabaseBucket)
-      .download(mediaPath);
-
-    if (streamError || !fileStream) {
-      console.error(
-        "[Pinterest Post Function] Error creating stream:",
-        streamError
-      );
-      return {
-        success: false,
-        error: "Failed to create stream for uploading",
-      };
-    }
-
-    const buffer = Buffer.from(await fileStream.arrayBuffer());
 
     // Then use the buffer with FormData
     formData.append("file", buffer, {

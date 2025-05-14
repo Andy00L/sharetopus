@@ -6,7 +6,6 @@ import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
-import { getMimeTypeFromFileName } from "./getMimeTypeFromFileName";
 
 /**
  * Directly posts content to Pinterest accounts without scheduling
@@ -33,6 +32,8 @@ export async function directPostForPinterestAccounts(config: {
   cleanupFiles?: boolean;
   fileName: string;
   batchId: string;
+  mediaType: string;
+  buffer?: Buffer;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -42,16 +43,13 @@ export async function directPostForPinterestAccounts(config: {
     userId,
     cleanupFiles = true,
     batchId,
+    buffer,
+    mediaType,
     fileName,
   } = config;
 
   if (!accounts || accounts.length === 0) {
     console.error("[Pinterest Direct Post] Error fetching accounts:");
-
-    // New cleanup code
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-    }
 
     return {
       success: false,
@@ -66,42 +64,6 @@ export async function directPostForPinterestAccounts(config: {
     console.log(
       "[Pinterest Direct Post] Starting to post directly to Pinterest"
     );
-
-    // Convert the file to base64 (only if provided)
-    let mediaType: string | undefined;
-
-    if (mediaPath) {
-      try {
-        mediaType = getMimeTypeFromFileName(fileName);
-
-        console.log(
-          "[Pinterest Direct Post]  Verified file exists, preparing for streaming upload"
-        );
-      } catch (fileProcessingError) {
-        console.error(
-          "[Pinterest Direct Post] Error processing file:",
-          fileProcessingError
-        );
-
-        // Clean up the file if processing failed
-        if (cleanupFiles) {
-          await deleteSupabaseFileAction(userId, mediaPath, true);
-        }
-
-        return {
-          success: false,
-          count: 0,
-          message: `Failed to process media file`,
-        };
-      }
-    } else {
-      // Pinterest requires media
-      return {
-        success: false,
-        count: 0,
-        message: "Pinterest posts require media (image or video)",
-      };
-    }
 
     for (const account of accounts) {
       // Find content specific to this account
@@ -156,6 +118,7 @@ export async function directPostForPinterestAccounts(config: {
           mediaType: mediaType,
           fileName: fileName,
           userId: userId ?? "",
+          buffer,
           supabaseBucket: "scheduled-videos",
         });
         // Add detailed console logging
@@ -233,15 +196,6 @@ export async function directPostForPinterestAccounts(config: {
     };
   } catch (error) {
     console.error("[Pinterest Direct Post] Error:", error);
-
-    // Clean up the media file in case of error
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-
-      console.log(
-        "[Pinterest Direct Post] Cleaned up temporary media file after error"
-      );
-    }
 
     return {
       success: false,

@@ -1,7 +1,5 @@
-import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ContentHistory } from "@/lib/types/dbTypes";
-import { auth } from "@clerk/nextjs/server";
+import "server-only";
 
 // Définir un type pour les éléments de média
 interface MediaContent {
@@ -29,8 +27,8 @@ export async function postToLinkedIn({
   link,
   mediaPath,
   mediaType,
-  userId,
   fileName,
+  buffer,
 }: {
   accessToken: string;
   memberUrn: string;
@@ -41,17 +39,9 @@ export async function postToLinkedIn({
   mediaType?: string;
   userId: string;
   fileName?: string;
+  buffer?: Buffer;
 }) {
   try {
-    const { userId: clerkUserId } = await auth();
-
-    if (!clerkUserId || clerkUserId !== userId) {
-      return {
-        success: false,
-        error: "Unauthorized - Authentication required",
-      };
-    }
-
     // Log the received parameters (truncating sensitive data)
     console.log("[LinkedIn Post Routes] Received parameters:");
     console.log("[LinkedIn Post Routes] memberUrn:", memberUrn);
@@ -209,26 +199,15 @@ export async function postToLinkedIn({
 
         // 2. Stream the file directly from Supabase to LinkedIn
         try {
-          // Get file as a stream from Supabase
-          const { data: fileStream, error: fileError } =
-            await adminSupabase.storage
-              .from("scheduled-videos")
-              .download(mediaPath);
-
-          if (fileError || !fileStream) {
+          if (!buffer) {
             console.error(
-              "[LinkedIn Post Routes] Error retrieving file from Supabase:",
-              fileError
+              "[LinkedIn Post Routes] Error retrieving file from buffer:"
             );
             return {
               success: false,
               error: "Failed to retrieve media file from storage",
-              details: fileError,
             };
           }
-
-          // Convert Blob to Buffer for upload
-          const binaryData = Buffer.from(await fileStream.arrayBuffer());
 
           // 3. Uploader le média
           const uploadMethod = isVideo ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
@@ -238,7 +217,7 @@ export async function postToLinkedIn({
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": mediaType,
             },
-            body: binaryData,
+            body: buffer,
           });
 
           if (!uploadResponse.ok) {

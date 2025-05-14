@@ -7,7 +7,7 @@ import PinterestSVGIcon, {
   TiktokSVGIcon,
   TwitterVGIcon,
 } from "@/components/icons/allPlatformsIcons";
-import { SimpleSubscriptionPrompt } from "@/components/SubscriptionPrompt";
+import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import { Card } from "@/components/ui/card";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -19,7 +19,7 @@ export default async function CreatePostPage() {
   const { userId } = await auth();
   const isPaid = await checkActiveSubscription(userId);
   if (!isPaid.isActive) {
-    return <SimpleSubscriptionPrompt />;
+    return <SubscriptionPrompt />;
   }
   // Define the post types with their supported platforms
   const postTypes = [

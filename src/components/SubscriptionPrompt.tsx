@@ -9,7 +9,7 @@ import {
 import { CheckCircle, SparklesIcon } from "lucide-react";
 import Link from "next/link";
 
-export function SimpleSubscriptionPrompt() {
+export function SubscriptionPrompt() {
   return (
     <Card className="border-primary/20 mt-6 shadow-lg max-w-2xl mx-auto animate-in fade-in-50 duration-500">
       <CardHeader className="pb-2 relative overflow-hidden">

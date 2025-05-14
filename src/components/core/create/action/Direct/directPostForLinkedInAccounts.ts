@@ -1,16 +1,15 @@
 "use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
-import { getMimeTypeFromFileName } from "./getMimeTypeFromFileName";
 
 export async function directPostForLinkedInAccounts(config: {
   accounts: SocialAccount[]; // Changed from accounts to accountIds
   mediaPath: string;
+  mediaType?: string;
   platformOptions: PlatformOptions;
   accountContent: Array<{
     accountId: string;
@@ -23,24 +22,20 @@ export async function directPostForLinkedInAccounts(config: {
   cleanupFiles?: boolean;
   fileName?: string;
   batchId: string;
+  buffer?: Buffer;
 }): Promise<ScheduleResult> {
   const {
     accounts,
     mediaPath,
+    mediaType,
     accountContent,
     userId,
-    cleanupFiles = true,
     batchId,
     fileName,
   } = config;
 
   if (!accounts || accounts.length === 0) {
     console.error("[LinkedIn Direct Post] Error fetching accounts:");
-
-    // New cleanup code
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-    }
 
     return {
       success: false,
@@ -53,36 +48,6 @@ export async function directPostForLinkedInAccounts(config: {
 
   try {
     console.log("[LinkedIn Direct Post] Starting to post directly to LinkedIn");
-
-    // Convert the file to base64 (only if provided)
-    let mediaType: string | undefined;
-
-    if (mediaPath && mediaPath.trim() !== "") {
-      try {
-        console.log(fileName);
-        mediaType = getMimeTypeFromFileName(fileName);
-        console.log("[LinkedIn Direct Post] Detected MIME type:", mediaType); // Add this log
-
-        console.log(
-          "[LinkedIn Direct Post] Verified file exists, will stream for upload"
-        );
-      } catch (fileProcessingError) {
-        console.error(
-          "[LinkedIn Direct Post] Error processing file:",
-          fileProcessingError
-        );
-        // Clean up the file if processing failed
-        if (cleanupFiles) {
-          await deleteSupabaseFileAction(userId, mediaPath, true);
-        }
-
-        return {
-          success: false,
-          count: 0,
-          message: `Failed to process media file`,
-        };
-      }
-    }
 
     // Loop through accounts (keeping similar structure to your original code)
     for (const account of accounts) {
@@ -139,6 +104,7 @@ export async function directPostForLinkedInAccounts(config: {
           mediaType: mediaType,
           fileName: fileName,
           userId: userId ?? "",
+          buffer: config.buffer,
         });
 
         // Add detailed console logging to examine the response structure
@@ -201,14 +167,6 @@ export async function directPostForLinkedInAccounts(config: {
       }
     }
 
-    if (cleanupFiles && mediaPath && successCount > 0) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-
-      console.log(
-        "[LinkedIn Direct Post] Cleaned up temporary media file after successful posting"
-      );
-    }
-
     return {
       success: true,
       count: successCount,
@@ -216,14 +174,7 @@ export async function directPostForLinkedInAccounts(config: {
     };
   } catch (error) {
     console.error("[LinkedIn Direct Post] Error:", error);
-    // New cleanup code
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
 
-      console.log(
-        "[LinkedIn Direct Post] Cleaned up temporary media file after error"
-      );
-    }
     return {
       success: false,
       count: 0,
