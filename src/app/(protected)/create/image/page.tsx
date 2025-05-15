@@ -19,9 +19,9 @@ const SocialPostFormWithData = async () => {
   if (!accounts.success) {
     return <RateLimitError resetIn={accounts.resetIn} />;
   }
-  const planId = subscriptionInfo.plan;
+  const planId = subscriptionInfo.plan!;
 
-  const uploadLimits = PRICE_ID_UPLOAD_LIMITS[planId!];
+  const uploadLimits = PRICE_ID_UPLOAD_LIMITS[planId];
   return (
     <SocialPostForm
       accounts={accounts.data!}

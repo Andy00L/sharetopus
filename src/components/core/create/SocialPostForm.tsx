@@ -63,7 +63,7 @@ export default function SocialPostForm({
   const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
-  const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
+  const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 50) * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Add new single state for all account content

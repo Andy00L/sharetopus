@@ -5,14 +5,14 @@ export const PRICE_ID_UPLOAD_LIMITS: Record<
   { image: number; video: number }
 > = {
   // Starter plan
-  price_1RKr9JCZd1WOWtsDVHl5MsP6: { image: 250, video: 250 },
-  price_1RKrGNCZd1WOWtsDcU2r7iNf: { image: 250, video: 250 },
+  price_1RNMXJCyG8V2WH2FUpSI7VJt: { image: 250, video: 250 },
+  price_1RNMXJCyG8V2WH2FLLApU9iL: { image: 250, video: 250 },
 
   // Creator plan
-  price_1RKrAsCZd1WOWtsDt1phjbgI: { image: 750, video: 750 },
-  price_1RKrGiCZd1WOWtsDOOQ4l3wH: { image: 750, video: 750 },
+  price_1RNMXHCyG8V2WH2Fq3TC2YwY: { image: 750, video: 750 },
+  price_1RNMXHCyG8V2WH2FJJWCcCk4: { image: 750, video: 750 },
 
   // Pro plan
-  price_1RKrCRCZd1WOWtsDRzjqHluX: { image: 1500, video: 1500 },
-  price_1RKrGyCZd1WOWtsD2avrk52o: { image: 1500, video: 1500 },
+  price_1RNMXECyG8V2WH2FxDDhYNy8: { image: 1500, video: 1500 },
+  price_1RNMXDCyG8V2WH2Fz1ae60z4: { image: 1500, video: 1500 },
 };
