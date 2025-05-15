@@ -5,23 +5,20 @@ import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFi
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { directPostForLinkedInAccounts } from "./Direct/directPostForLinkedInAccounts";
-import { directPostForPinterestAccounts } from "./Direct/directPostForPinterestAccounts";
-import { directPostForTikTokAccounts } from "./Direct/directPostForTikTokAccounts";
 import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
-import { scheduleForLinkedInAccounts } from "./Scheduled/scheduledForLinkedinAccounts";
-import { scheduleForPinterestAccounts } from "./Scheduled/scheduleForPinterestAccounts";
-import { scheduleForTikTokAccounts } from "./Scheduled/scheduleForTikTokAccounts";
+import { processLinkedinAccounts } from "./processAccounts/processLinkedinAccounts";
+import { processPinterestAccounts } from "./processAccounts/processPinterestAccounts";
+import { processTiktokAccounts } from "./processAccounts/processTiktokAccounts";
 
 // Shared types for better code organization
-type BoardInfo = {
+export type BoardInfo = {
   boardID: string;
   boardName: string;
   accountId: string;
   isSelected: boolean;
 };
 
-type ContentInfo = {
+export type ContentInfo = {
   accountId: string;
   title: string;
   description: string;
@@ -37,7 +34,7 @@ type PlatformCounts = {
 };
 
 // Add a type for account-level errors
-type AccountError = {
+export type AccountError = {
   accountId: string;
   platform: string;
   displayName: string;
@@ -79,7 +76,6 @@ export async function handleSocialMediaPost(config: {
 }): Promise<PostResult> {
   // Start tracking execution time
   const startTime = performance.now();
-
   const {
     pinterestAccounts,
     linkedinAccounts,
@@ -138,15 +134,6 @@ export async function handleSocialMediaPost(config: {
     );
 
     // Step 1: Verify user is properly authenticated
-    if (!userId) {
-      console.error(`[handleSocialMediaPost]: Missing user ID in request`);
-      return {
-        success: false,
-        counts: results.counts,
-        message: "User authentication required. Please sign in to continue.",
-        errors: [],
-      };
-    }
 
     // Verify user is properly authenticated
     const authResult = await authCheck(userId);
@@ -162,20 +149,14 @@ export async function handleSocialMediaPost(config: {
       };
     }
 
-    console.log(
-      `[handleSocialMediaPost]: Authentication validated for user: ${userId}`
-    );
-
     // Step 2: Check rate limits to prevent abuse
-    console.log(
-      `[handleSocialMediaPost]: Checking rate limits for user: ${userId}`
-    );
     const rateCheck = await checkRateLimit(
       "handleSocialMediaPost", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
       60 // Window (60 seconds)
     );
+
     if (!rateCheck.success) {
       console.warn(
         `[handleSocialMediaPost]: Rate limit exceeded for user: ${userId}. Reset in: ${
@@ -190,9 +171,6 @@ export async function handleSocialMediaPost(config: {
         errors: [],
       };
     }
-    console.log(
-      `[handleSocialMediaPost]: Rate limit check passed for user: ${userId}`
-    );
 
     // Step 3: Pre-process media if needed - do this ONCE instead of in each platform handler
     let mediaType: string = "";
@@ -201,9 +179,6 @@ export async function handleSocialMediaPost(config: {
       try {
         // Get media type and validate for all platforms at once
         mediaType = getMimeTypeFromFileName(fileName);
-        console.log(
-          `[handleSocialMediaPost]: Media type detected: ${mediaType}`
-        );
 
         // Verify file type compatibility with platforms
         if (postType === "image" && tiktokAccounts.length > 0) {
@@ -287,7 +262,7 @@ export async function handleSocialMediaPost(config: {
         missingContentAccounts.push({
           accountId: account.id,
           platform: "pinterest",
-          displayName: account.display_name || account.username || account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: "No content configured for this account",
         });
       }
@@ -301,7 +276,7 @@ export async function handleSocialMediaPost(config: {
           missingContentAccounts.push({
             accountId: account.id,
             platform: "pinterest",
-            displayName: account.display_name || account.username || account.id,
+            displayName: account.display_name ?? account.username ?? account.id,
             error: "No board selected for this account",
           });
         }
@@ -315,7 +290,7 @@ export async function handleSocialMediaPost(config: {
         missingContentAccounts.push({
           accountId: account.id,
           platform: "linkedin",
-          displayName: account.display_name || account.username || account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: "No content configured for this account",
         });
       }
@@ -325,7 +300,7 @@ export async function handleSocialMediaPost(config: {
         missingContentAccounts.push({
           accountId: account.id,
           platform: "linkedin",
-          displayName: account.display_name || account.username || account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: "No LinkedIn identifier found for this account",
         });
       }
@@ -343,7 +318,7 @@ export async function handleSocialMediaPost(config: {
         missingContentAccounts.push({
           accountId: account.id,
           platform: "tiktok",
-          displayName: account.display_name || account.username || account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: "No content configured for this account",
         });
       }
@@ -398,12 +373,12 @@ export async function handleSocialMediaPost(config: {
             accounts: tiktokAccounts,
             mediaPath,
             mediaType,
-            fileName: fileName || "",
+            fileName: fileName ?? "",
             platformOptions,
             accountContent,
             isScheduled,
-            scheduledDate: scheduledDate || "",
-            scheduledTime: scheduledTime || "",
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
             postType,
             buffer: responseBuffer?.buffer,
             userId,
@@ -417,13 +392,13 @@ export async function handleSocialMediaPost(config: {
             accounts: pinterestAccounts,
             mediaPath,
             mediaType,
-            fileName: fileName || "",
+            fileName: fileName ?? "",
             boards: boards || [],
             platformOptions,
             accountContent,
             isScheduled,
-            scheduledDate: scheduledDate || "",
-            scheduledTime: scheduledTime || "",
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
             buffer: responseBuffer?.buffer,
             postType,
             userId,
@@ -436,12 +411,12 @@ export async function handleSocialMediaPost(config: {
         ? processLinkedinAccounts({
             accounts: linkedinAccounts,
             mediaPath,
-            fileName: fileName || "",
+            fileName: fileName ?? "",
             platformOptions,
             accountContent,
             isScheduled,
-            scheduledDate: scheduledDate || "",
-            scheduledTime: scheduledTime || "",
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
             postType,
             userId,
             batchId,
@@ -573,426 +548,6 @@ export async function handleSocialMediaPost(config: {
       ],
     };
   }
-}
-
-/**
- * Process TikTok accounts individually with robust error handling for each account
- */
-async function processTiktokAccounts(config: {
-  accounts: SocialAccount[];
-  mediaPath: string;
-  mediaType: string;
-  fileName: string;
-  platformOptions: PlatformOptions;
-  accountContent: ContentInfo[];
-  isScheduled: boolean;
-  scheduledDate: string;
-  scheduledTime: string;
-  postType: "image" | "video" | "text";
-  userId: string | null;
-  batchId: string;
-  buffer?: Buffer;
-}) {
-  const { accounts, isScheduled, postType } = config;
-  const errors: AccountError[] = [];
-  let successCount = 0;
-
-  // Skip if no accounts or incompatible post type
-  if (accounts.length === 0 || postType === "image") {
-    return { successCount, errors };
-  }
-
-  console.log(
-    `[processTiktokAccounts]: Processing ${accounts.length} TikTok accounts`
-  );
-
-  // Process accounts in parallel for maximum performance
-  const accountPromises = accounts.map(async (account) => {
-    try {
-      console.log(
-        `[processTiktokAccounts]: Processing account: ${
-          account.display_name || account.username || account.id
-        }`
-      );
-
-      // Find content for this account
-
-      const accountContent = config.accountContent.find(
-        (c) => c.accountId === account.id
-      );
-      if (!accountContent) {
-        console.error("No content configured for this account");
-        throw "error";
-      }
-
-      // Process single account with detailed timing
-      const accountStartTime = performance.now();
-      const result = isScheduled
-        ? await scheduleForTikTokAccounts({
-            accounts: [account],
-            mediaPath: config.mediaPath,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            scheduledDate: config.scheduledDate,
-            scheduledTime: config.scheduledTime,
-            postType: config.postType,
-            userId: config.userId,
-            batchId: config.batchId,
-          })
-        : await directPostForTikTokAccounts({
-            account: account,
-            mediaPath: config.mediaPath,
-            mediaType: config.mediaType,
-            buffer: config.buffer,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            cleanupFiles: false,
-          });
-
-      const accountProcessingTime = performance.now() - accountStartTime;
-      console.log(
-        `[processTiktokAccounts]: Processed account ${
-          account.id
-        } in ${accountProcessingTime.toFixed(2)}ms: ${
-          result.success ? "Success" : "Failed"
-        }`
-      );
-
-      // Add to success count if successful
-      if (result.success && result.count > 0) {
-        return { success: true };
-      } else {
-        return {
-          success: false,
-          error: {
-            accountId: account.id,
-            platform: "Tiktok",
-            displayName: account.display_name || account.username || account.id,
-            error: result.message || "Failed to process account",
-          },
-        };
-      }
-    } catch (error) {
-      // Record account-level error but don't stop other accounts
-      console.error(
-        `[processTiktokAccounts]: Error processing account ${account.id}:`,
-        error
-      );
-      return {
-        success: false,
-        error: {
-          accountId: account.id,
-          platform: "tiktok",
-          displayName: account.display_name || account.username || account.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  });
-
-  // Wait for all account processing to complete
-  const results = await Promise.all(accountPromises);
-
-  // Count successes and collect errors
-  results.forEach((result) => {
-    if (result.success) {
-      successCount++;
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  });
-
-  console.log(
-    `[processTiktokAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
-  );
-  return { successCount, errors };
-}
-
-/**
- * Process Pinterest accounts individually with robust error handling for each account
- */
-async function processPinterestAccounts(config: {
-  accounts: SocialAccount[];
-  mediaPath: string;
-  mediaType: string;
-  fileName: string;
-  boards: BoardInfo[];
-  platformOptions: PlatformOptions;
-  accountContent: ContentInfo[];
-  isScheduled: boolean;
-  scheduledDate: string;
-  scheduledTime: string;
-  postType: "image" | "video" | "text";
-  userId: string | null;
-  batchId: string;
-  buffer?: Buffer;
-}) {
-  const { accounts, isScheduled, postType } = config;
-  const errors: AccountError[] = [];
-  let successCount = 0;
-
-  // Skip if no accounts or incompatible post type
-  if (accounts.length === 0 || postType === "text") {
-    return { successCount, errors };
-  }
-
-  console.log(
-    `[processPinterestAccounts]: Processing ${accounts.length} Pinterest accounts`
-  );
-
-  // Process accounts in parallel for maximum performance
-  const accountPromises = accounts.map(async (account) => {
-    try {
-      console.log(
-        `[processPinterestAccounts]: Processing account: ${
-          account.display_name || account.username || account.id
-        }`
-      );
-
-      // Find content for this account
-      const accountContent = config.accountContent.find(
-        (c) => c.accountId === account.id
-      );
-      if (!accountContent) {
-        throw new Error("No content configured for this account");
-      }
-
-      // Find board for this account
-      const accountBoards = config.boards.filter(
-        (b) => b.accountId === account.id && b.isSelected
-      );
-      if (accountBoards.length === 0) {
-        throw new Error("No board selected for this account");
-      }
-
-      // Process single account with detailed timing
-      const accountStartTime = performance.now();
-      const result = isScheduled
-        ? await scheduleForPinterestAccounts({
-            accounts: [account],
-            mediaPath: config.mediaPath,
-            boards: accountBoards,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            scheduledDate: config.scheduledDate,
-            scheduledTime: config.scheduledTime,
-            postType: config.postType,
-            userId: config.userId,
-            batchId: config.batchId,
-          })
-        : await directPostForPinterestAccounts({
-            accounts: [account],
-            mediaPath: config.mediaPath,
-            mediaType: config.mediaType,
-            boards: accountBoards,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            cleanupFiles: false,
-            buffer: config.buffer,
-          });
-
-      const accountProcessingTime = performance.now() - accountStartTime;
-      console.log(
-        `[processPinterestAccounts]: Processed account ${
-          account.id
-        } in ${accountProcessingTime.toFixed(2)}ms: ${
-          result.success ? "Success" : "Failed"
-        }`
-      );
-
-      // Add to success count if successful
-      if (result.success && result.count > 0) {
-        return { success: true };
-      } else {
-        return {
-          success: false,
-          error: {
-            accountId: account.id,
-            platform: "Pinterest",
-            displayName: account.display_name || account.username || account.id,
-            error: result.message || "Failed to process account",
-          },
-        };
-      }
-    } catch (error) {
-      // Record account-level error but don't stop other accounts
-      console.error(
-        `[processPinterestAccounts]: Error processing account ${account.id}:`,
-        error
-      );
-      return {
-        success: false,
-        error: {
-          accountId: account.id,
-          platform: "pinterest",
-          displayName: account.display_name || account.username || account.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  });
-
-  // Wait for all account processing to complete
-  const results = await Promise.all(accountPromises);
-
-  // Count successes and collect errors
-  results.forEach((result) => {
-    if (result.success) {
-      successCount++;
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  });
-
-  console.log(
-    `[processPinterestAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
-  );
-  return { successCount, errors };
-}
-
-/**
- * Process LinkedIn accounts individually with robust error handling for each account
- */
-async function processLinkedinAccounts(config: {
-  accounts: SocialAccount[];
-  mediaPath: string;
-  mediaType: string;
-  fileName: string;
-  platformOptions: PlatformOptions;
-  accountContent: ContentInfo[];
-  isScheduled: boolean;
-  scheduledDate: string;
-  scheduledTime: string;
-  postType: "image" | "video" | "text";
-  userId: string | null;
-  batchId: string;
-  buffer?: Buffer;
-}) {
-  const { accounts, isScheduled } = config;
-  const errors: AccountError[] = [];
-  let successCount = 0;
-
-  // Skip if no accounts
-  if (accounts.length === 0) {
-    return { successCount, errors };
-  }
-
-  console.log(
-    `[processLinkedinAccounts]: Processing ${accounts.length} LinkedIn accounts`
-  );
-
-  // Process accounts in parallel for maximum performance
-  const accountPromises = accounts.map(async (account) => {
-    try {
-      console.log(
-        `[processLinkedinAccounts]: Processing account: ${
-          account.display_name || account.username || account.id
-        }`
-      );
-
-      // Find content for this account
-      const accountContent = config.accountContent.find(
-        (c) => c.accountId === account.id
-      );
-      if (!accountContent) {
-        throw new Error("No content configured for this account");
-      }
-
-      // Verify LinkedIn account has identifier
-      if (!account.account_identifier) {
-        throw new Error("No LinkedIn identifier found for this account");
-      }
-
-      // Process single account with detailed timing
-      const accountStartTime = performance.now();
-      const result = isScheduled
-        ? await scheduleForLinkedInAccounts({
-            accounts: [account],
-            mediaPath: config.mediaPath,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            scheduledDate: config.scheduledDate,
-            scheduledTime: config.scheduledTime,
-            postType: config.postType,
-            userId: config.userId,
-            batchId: config.batchId,
-          })
-        : await directPostForLinkedInAccounts({
-            accounts: [account],
-            mediaPath: config.mediaPath,
-            mediaType: config.mediaType,
-            platformOptions: config.platformOptions,
-            accountContent: [accountContent],
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            buffer: config.buffer,
-            cleanupFiles: false,
-          });
-
-      const accountProcessingTime = performance.now() - accountStartTime;
-      console.log(
-        `[processLinkedinAccounts]: Processed account ${
-          account.id
-        } in ${accountProcessingTime.toFixed(2)}ms: ${
-          result.success ? "Success" : "Failed"
-        }`
-      );
-
-      // Add to success count if successful
-      if (result.success && result.count > 0) {
-        return { success: true };
-      } else {
-        return {
-          success: false,
-          error: {
-            accountId: account.id,
-            platform: "Linkedin",
-            displayName: account.display_name || account.username || account.id,
-            error: result.message || "Failed to process account",
-          },
-        };
-      }
-    } catch (error) {
-      // Record account-level error but don't stop other accounts
-      console.error(
-        `[processLinkedinAccounts]: Error processing account ${account.id}:`,
-        error
-      );
-      return {
-        success: false,
-        error: {
-          accountId: account.id,
-          platform: "linkedin",
-          displayName: account.display_name || account.username || account.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      };
-    }
-  });
-
-  // Wait for all account processing to complete
-  const results = await Promise.all(accountPromises);
-
-  // Count successes and collect errors
-  results.forEach((result) => {
-    if (result.success) {
-      successCount++;
-    } else if (result.error) {
-      errors.push(result.error);
-    }
-  });
-
-  console.log(
-    `[processLinkedinAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
-  );
-  return { successCount, errors };
 }
 
 /**

@@ -42,22 +42,6 @@ export async function postToLinkedIn({
   buffer?: Buffer;
 }) {
   try {
-    // Log the received parameters (truncating sensitive data)
-    console.log("[LinkedIn Post Routes] Received parameters:");
-    console.log("[LinkedIn Post Routes] memberUrn:", memberUrn);
-    console.log("[LinkedIn Post Routes] text length:", text?.length ?? 0);
-    console.log("[LinkedIn Post Routes] title:", title);
-    console.log("[LinkedIn Post Routes] link:", link);
-    console.log("[LinkedIn Post Routes] mediaType:", mediaType);
-    console.log(
-      "[LinkedIn Post Routes] accessToken:",
-      accessToken ? `${accessToken.substring(0, 6)}...` : "missing"
-    );
-    console.log(
-      "[LinkedIn Post Routes] base64Media length:",
-      mediaPath ? mediaPath.length : 0
-    );
-
     // Vérification des paramètres requis
     if (!accessToken || !memberUrn) {
       console.log("[LinkedIn Post route] Missing required parameters");

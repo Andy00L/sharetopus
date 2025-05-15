@@ -49,20 +49,6 @@ interface PostInitResponse {
   };
 }
 
-//interface PostStatusResponse {
-//  data: {
-//    status: string;
-//    fail_reason?: string;
-//    publicaly_available_post_id?: string[];
-//    uploaded_bytes?: number;
-//  };
-//  error: {
-//    code: string;
-//    message: string;
-//    log_id: string;
-//  };
-//}
-
 /**
  * Posts content directly to TikTok using their Content Posting API
  * Main function that handles authentication and routes to specific handlers
@@ -354,14 +340,6 @@ async function handleVideoPost({
       status: "posted",
       content_id: publishId,
     };
-    // // STEP 4: Poll for post status
-    // return await checkPostStatus(
-    //   accessToken,
-    //   publishId,
-    //   creatorInfo,
-    //   "video",
-    //   "DIRECT_POST"
-    // );
   } catch (error) {
     return {
       success: false,

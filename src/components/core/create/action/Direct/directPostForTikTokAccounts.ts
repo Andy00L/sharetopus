@@ -1,6 +1,5 @@
 // createPostForm/action/directPostForTikTokAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -17,15 +16,14 @@ export async function directPostForTikTokAccounts(config: {
   mediaPath: string;
   mediaType: string;
   platformOptions: PlatformOptions;
-  accountContent: Array<{
+  accountContent: {
     accountId: string;
     title?: string;
     description?: string;
     isCustomized: boolean;
-  }>;
+  };
   userId: string | null;
   buffer?: Buffer;
-  cleanupFiles?: boolean;
   fileName: string;
   batchId: string;
 }): Promise<ScheduleResult> {
@@ -37,24 +35,8 @@ export async function directPostForTikTokAccounts(config: {
     accountContent,
     userId,
     buffer,
-    cleanupFiles = true,
     batchId,
-    fileName,
   } = config;
-  if (!account) {
-    console.error("[TikTok Direct Post] No account provided");
-
-    // Cleanup code if no accounts found
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-    }
-
-    return {
-      success: false,
-      count: 0,
-      message: "No TikTok account provided",
-    };
-  }
 
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
@@ -64,13 +46,14 @@ export async function directPostForTikTokAccounts(config: {
     const isVideo = mediaType?.startsWith("video/");
     //Implementation temporaire
     if (isImage) {
-      console.error("[TikTok Direct Post] We don't support image uploaf");
+      console.error("[TikTok Direct Post] We don't support image upload");
       return {
         success: false,
         count: 0,
         message: " We don't support image uploaf",
       };
     }
+
     if (!isVideo && !isImage) {
       console.error("[TikTok Direct Post] Unsupported media type:", mediaType);
       return {
@@ -80,8 +63,7 @@ export async function directPostForTikTokAccounts(config: {
       };
     }
 
-    const content = accountContent[0];
-    if (!content || content.accountId !== account.id) {
+    if (!accountContent || accountContent.accountId !== account.id) {
       console.error(
         `[TikTok Direct Post] No or mismatched content for account ${account.id}`
       );
@@ -109,19 +91,17 @@ export async function directPostForTikTokAccounts(config: {
         account.username ?? account.id
       }`
     );
-    console.log(`[TikTok Direct Post] Media path: ${mediaPath}`);
-    console.log(`[TikTok Direct Post] Media type: ${mediaType}`);
-    console.log(`[TikTok Direct Post] File name: ${fileName}`);
+
     // Call our TikTok posting function
     const postResult = await postToTikTok({
       accessToken: validToken,
-      title: content.title || "",
-      description: content.description || "",
+      title: accountContent.title ?? "",
+      description: accountContent.description ?? "",
       tikTokOptions: platformOptions.tiktok,
       mediaPath: mediaPath,
       buffer,
-      mediaType: mediaType || "",
-      userId: userId || "",
+      mediaType: mediaType ?? "",
+      userId: userId ?? "",
     });
 
     // Add detailed console logging
@@ -143,9 +123,9 @@ export async function directPostForTikTokAccounts(config: {
           {
             platform: "tiktok",
             content_id: postResult.postId || postResult.publishId || "",
-            social_account_id: content.accountId,
-            title: content.title || null,
-            description: content.description || null,
+            social_account_id: accountContent.accountId,
+            title: accountContent.title || null,
+            description: accountContent.description || null,
             media_url: postResult.postUrl || null,
             batch_id: batchId,
             status: postResult.status,
@@ -179,14 +159,11 @@ export async function directPostForTikTokAccounts(config: {
 
       console.error("[TikTok Direct Post] Error details:", postResult.details);
       console.error("[TikTok Direct Post] Error message:", postResult.message);
-    }
-
-    // Clean up the media file if posting was successful
-    if (cleanupFiles) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-      console.log(
-        "[TikTok Direct Post] Cleaned up temporary media file after successful posting"
-      );
+      return {
+        success: false,
+        count: 0,
+        message: postResult.message || "Failed to post to TikTok",
+      };
     }
 
     return {
@@ -198,14 +175,6 @@ export async function directPostForTikTokAccounts(config: {
     };
   } catch (error) {
     console.error("[TikTok Direct Post] Error:", error);
-
-    // Clean up the media file in case of error
-    if (cleanupFiles && mediaPath) {
-      await deleteSupabaseFileAction(userId, mediaPath, true);
-      console.log(
-        "[TikTok Direct Post] Cleaned up temporary media file after error"
-      );
-    }
 
     return {
       success: false,
