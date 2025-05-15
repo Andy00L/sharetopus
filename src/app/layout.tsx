@@ -83,9 +83,9 @@ export const metadata: Metadata = {
   // Additional useful metadata
   applicationName: "Sharetopus", // For homescreen icons on mobile
   icons: {
-    icon: "/logo_16x16.ico", // Ensure this exists in public/
-    shortcut: "/logo_16x16.ico",
-    apple: "/logo_16x16.ico", // For Apple devices
+    icon: "@/../public/logo_16x16.ico", // Ensure this exists in public/
+    shortcut: "@/../public/logo_16x16.ico",
+    apple: "@/../public/logo_16x16.ico", // For Apple devices
   },
   referrer: "strict-origin-when-cross-origin", // Security for referrer data
 };
