@@ -3,27 +3,23 @@ import Link from "next/link";
 export default function page() {
   return (
     <div className="container mx-auto px-4 py-6">
-      {/* Bouton Retour */}
+      {/* Back Button */}
       <Link
         href="/"
         className="inline-block mb-4 text-blue-500 hover:underline"
       >
-        &larr; Retour
+        &larr; Back
       </Link>
 
-      <h1 className="text-3xl font-bold mb-2">
-        Politique de Confidentialité de Sharetopus
-      </h1>
-      <p className="text-sm text-gray-600 mb-6">
-        Dernière mise à jour : 05/04/2025
-      </p>
+      <h1 className="text-3xl font-bold mb-2">Sharetopus Privacy Policy</h1>
+      <p className="text-sm text-gray-600 mb-6">Last updated: 05/04/2025</p>
 
       <div className="prose max-w-none">
         <p>
-          Merci d&apos;utiliser Sharetopus (&quot;nous&quot;, &quot;notre&quot;
-          ou &quot;nos&quot;). Cette Politique de Confidentialité décrit comment
-          nous collectons, utilisons et protégeons vos informations personnelles
-          et non personnelles lorsque vous utilisez notre site web situé à{" "}
+          Thank you for using Sharetopus (&quot;we&quot;, &quot;our&quot; or
+          &quot;us&quot;). This Privacy Policy describes how we collect, use and
+          protect your personal and non-personal information when you use our
+          website located at{" "}
           <a
             href="https://sharetopus.com"
             target="_blank"
@@ -32,77 +28,67 @@ export default function page() {
           >
             https://sharetopus.com
           </a>{" "}
-          (le &quot;Site Web&quot;).
+          (the &quot;Website&quot;).
         </p>
 
         <p>
-          En accédant ou en utilisant le Site Web, vous acceptez les termes de
-          cette Politique de Confidentialité. Si vous n&apos;êtes pas
-          d&apos;accord avec les pratiques décrites dans cette politique,
-          veuillez ne pas utiliser le Site Web.
+          By accessing or using the Website, you agree to the terms of this
+          Privacy Policy. If you do not agree with the practices described in
+          this policy, please do not use the Website.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          1. Informations que nous collectons
+          1. Information we collect
         </h2>
-        <h3 className="text-xl font-medium mt-6 mb-3">
-          1.1 Données personnelles
-        </h3>
-        <p>Nous collectons les informations personnelles suivantes :</p>
+        <h3 className="text-xl font-medium mt-6 mb-3">1.1 Personal data</h3>
+        <p>We collect the following personal information:</p>
         <ul className="list-disc pl-6 mb-4">
           <li className="mb-2">
-            <strong>Nom :</strong> Nous collectons votre nom pour personnaliser
-            votre expérience et communiquer efficacement avec vous.
+            <strong>Name:</strong> We collect your name to personalize your
+            experience and communicate effectively with you.
           </li>
           <li className="mb-2">
-            <strong>Email :</strong> Nous collectons votre adresse email pour
-            vous envoyer des informations importantes concernant votre compte,
-            des mises à jour et des communications.
+            <strong>Email:</strong> We collect your email address to send you
+            important information regarding your account, updates and
+            communications.
           </li>
           <li className="mb-2">
-            <strong>Informations de paiement :</strong> Nous collectons les
-            détails de paiement pour traiter vos commandes en toute sécurité.
+            <strong>Payment information:</strong> We collect payment details to
+            process your orders securely.
           </li>
           <li className="mb-2">
-            <strong>
-              Clés d&apos;accès d&apos;authentification aux réseaux sociaux :
-            </strong>{" "}
-            Nous collectons ces informations pour permettre la fonctionnalité de
-            publication croisée sur vos comptes de réseaux sociaux.
+            <strong>Authentication access keys to social networks:</strong> We
+            collect this information to enable cross-posting functionality on
+            your social media accounts.
           </li>
         </ul>
 
-        <h3 className="text-xl font-medium mt-6 mb-3">
-          1.2 Données non personnelles
-        </h3>
+        <h3 className="text-xl font-medium mt-6 mb-3">1.2 Non-personal data</h3>
         <p>
-          Nous utilisons des cookies web pour collecter des informations non
-          personnelles telles que votre adresse IP, type de navigateur,
-          informations sur l&apos;appareil et habitudes de navigation. Ces
-          informations nous aident à améliorer votre expérience de navigation,
-          analyser les tendances et améliorer nos services.
+          We use web cookies to collect non-personal information such as your IP
+          address, browser type, device information and browsing habits. This
+          information helps us improve your browsing experience, analyze trends
+          and improve our services.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          2. Objectif de la collecte de données
+          2. Purpose of data collection
         </h2>
         <p>
-          Nous collectons et utilisons vos données personnelles pour le
-          traitement des commandes et la publication sur les réseaux sociaux.
-          Cela comprend le traitement de vos commandes, l&apos;activation de la
-          fonctionnalité de publication croisée, l&apos;envoi de confirmations,
-          la fourniture d&apos;assistance client et la tenue à jour concernant
-          l&apos;état de votre compte et de vos publications.
+          We collect and use your personal data for order processing and social
+          media publishing. This includes processing your orders, enabling
+          cross-posting functionality, sending confirmations, providing customer
+          support and keeping you updated regarding the status of your account
+          and your publications.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          3. Services API YouTube
+          3. YouTube API Services
         </h2>
         <p>
-          Sharetopus utilise les services API YouTube pour permettre la
-          fonctionnalité de publication croisée sur YouTube. En utilisant notre
-          service pour interagir avec YouTube, vous êtes également soumis aux
-          Conditions d&apos;utilisation de YouTube (
+          Sharetopus uses YouTube API Services to enable cross-posting
+          functionality on YouTube. By using our service to interact with
+          YouTube, you are also subject to YouTube&apos;s Terms of Service (
           <Link
             href="https://www.youtube.com/t/terms"
             target="_blank"
@@ -115,14 +101,13 @@ export default function page() {
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          4. Politique de confidentialité de Google
+          4. Google Privacy Policy
         </h2>
         <p>
-          Comme nous utilisons les services API YouTube, vos données peuvent
-          également être soumises à la Politique de confidentialité de Google.
-          Pour plus d&apos;informations sur la façon dont Google collecte et
-          traite les données, veuillez consulter la Politique de confidentialité
-          de Google à{" "}
+          As we use YouTube API Services, your data may also be subject to
+          Google&apos;s Privacy Policy. For more information on how Google
+          collects and processes data, please refer to Google&apos;s Privacy
+          Policy at{" "}
           <Link
             href="http://www.google.com/policies/privacy"
             target="_blank"
@@ -134,69 +119,63 @@ export default function page() {
           .
         </p>
 
-        <h2 className="text-2xl font-semibold mt-8 mb-4">
-          5. Partage de données
-        </h2>
+        <h2 className="text-2xl font-semibold mt-8 mb-4">5. Data sharing</h2>
         <p>
-          Nous ne partageons pas vos données personnelles avec d&apos;autres
-          parties, sauf si nécessaire pour le traitement des commandes et la
-          fonctionnalité de publication sur les réseaux sociaux. Cela peut
-          inclure le partage des données nécessaires avec les plateformes de
-          réseaux sociaux sur lesquelles vous choisissez de publier, y compris
-          YouTube via les services API YouTube.
+          We do not share your personal data with other parties, except when
+          necessary for order processing and social media publishing
+          functionality. This may include sharing necessary data with social
+          media platforms on which you choose to publish, including YouTube via
+          YouTube API Services.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          6. Confidentialité des enfants
+          6. Children&apos;s privacy
         </h2>
         <p>
-          Sharetopus n&apos;est pas destiné aux enfants, et nous ne collectons
-          aucune donnée d&apos;enfants.
+          Sharetopus is not intended for children, and we do not collect any
+          data from children.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          7. Mises à jour de la politique de confidentialité
+          7. Privacy policy updates
         </h2>
         <p>
-          Nous pouvons mettre à jour cette Politique de confidentialité de temps
-          à autre. Les utilisateurs seront informés de tout changement par
-          email.
+          We may update this Privacy Policy from time to time. Users will be
+          informed of any changes by email.
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          8. Informations de contact
+          8. Contact information
         </h2>
         <p>
-          Si vous avez des questions, préoccupations ou demandes concernant
-          cette Politique de confidentialité, vous pouvez nous contacter à :
+          If you have any questions, concerns or requests regarding this Privacy
+          Policy, you can contact us at:
         </p>
         <p>
-          <strong>Email :</strong> jack@frikit.net
+          <strong>Email:</strong> sharetopusInc@gmail.com
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">
-          9. Mécanismes de protection des données
+          9. Data protection mechanisms
         </h2>
         <p>
-          Nous prenons la protection de vos données sensibles au sérieux et
-          avons mis en place la mesure de sécurité suivante :
+          We take the protection of your sensitive data seriously and have
+          implemented the following security measure:
         </p>
         <p>
-          <strong>a) Chiffrement :</strong> Vos clés d&apos;accès OAuth Google
-          sont chiffrées à l&apos;aide de protocoles de chiffrement standards de
-          l&apos;industrie, tant en transit qu&apos;au repos.
+          <strong>a) Encryption:</strong> Your Google OAuth access keys are
+          encrypted using industry-standard encryption protocols, both in
+          transit and at rest.
         </p>
         <p>
-          Bien que nous mettions en œuvre cette mesure de sécurité pour protéger
-          vos informations sensibles, veuillez noter qu&apos;aucune méthode de
-          transmission sur Internet ou méthode de stockage électronique
-          n&apos;est sécurisée à 100%. Nous nous efforçons d&apos;utiliser des
-          moyens commercialement acceptables pour protéger vos informations
-          personnelles, mais nous ne pouvons garantir leur sécurité absolue.
+          While we implement this security measure to protect your sensitive
+          information, please note that no method of transmission over the
+          Internet or method of electronic storage is 100% secure. We strive to
+          use commercially acceptable means to protect your personal
+          information, but we cannot guarantee its absolute security.
         </p>
         <p>
-          En utilisant Sharetopus, vous consentez aux termes de cette Politique
-          de confidentialité.
+          By using Sharetopus, you consent to the terms of this Privacy Policy.
         </p>
       </div>
     </div>

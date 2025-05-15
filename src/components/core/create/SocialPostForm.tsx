@@ -481,274 +481,21 @@ export default function SocialPostForm({
 
     return { valid: true };
   };
-  /** 
-  const handleSchedueleSubmit = async () => {
-    if (!checksBeforeSubmission()) return;
-    setIsLoading(true);
-    setError(null);
-    setUploadProgress(0);
 
-    let mediaStoragePath = "";
-    let batchId = "";
-
-    try {
-      batchId = nanoid(32);
-      // 2. Téléchargement du média (si nécessaire)
-      if ((postType === "video" || postType === "image") && selectedFile) {
-        const uploadResult = await uploadMedia(selectedFile, (progress) => {
-          setUploadProgress(progress); // Update progress state
-        });
-
-        if (!uploadResult.success) {
-          toast(uploadResult.message);
-        }
-
-        mediaStoragePath = uploadResult.path ?? "";
-      }
-
-      // 3. Traitement des comptes Pinterest
-      const pinterestResult = await scheduleForPinterestAccounts({
-        accounts: selectedPinterestAccount,
-        mediaPath: mediaStoragePath,
-        boards,
-        platformOptions,
-        scheduledDate,
-        scheduledTime,
-        // Just filter accountContent to only include Pinterest accounts
-        accountContent: accountContent.filter((item) =>
-          selectedPinterestAccount.some((acc) => acc.id === item.accountId)
-        ),
-        batchId,
-        postType,
-        userId,
-      });
-
-      if (!pinterestResult.success) {
-        toast(pinterestResult.message);
-      }
-
-      const tiktokResult = await scheduleForTikTokAccounts({
-        accounts: selectedTikTokAccount,
-        mediaPath: mediaStoragePath,
-        platformOptions,
-        scheduledDate,
-        scheduledTime,
-        // Just filter accountContent to only include Pinterest accounts
-        accountContent: accountContent.filter((item) =>
-          selectedTikTokAccount.some((acc) => acc.id === item.accountId)
-        ),
-        postType,
-        batchId,
-        userId,
-      });
-      if (!tiktokResult.success) {
-        toast(tiktokResult.message);
-      }
-
-      const linkedinResult = await scheduleForLinkedInAccounts({
-        accounts: selectedLinkedinAccount,
-        mediaPath: mediaStoragePath,
-        platformOptions,
-        scheduledDate,
-        scheduledTime,
-        // Just filter accountContent to only include Pinterest accounts
-        accountContent: accountContent.filter((item) =>
-          selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
-        ),
-        batchId,
-        postType,
-        userId,
-      });
-
-      if (!linkedinResult.success) {
-        toast(linkedinResult.message);
-      }
-
-      const totalSuccessCount =
-        pinterestResult.count + tiktokResult.count + linkedinResult.count;
-
-      // 4. Notification de succès
-      if (totalSuccessCount > 0) {
-        toast.success(`${totalSuccessCount} post(s) scheduled successfully!`);
-        resetForm();
-      } else {
-        toast.info("No posts were scheduled.");
-      }
-    } catch (error) {
-      console.error("Form submission error:", error);
-      setError("Failed to publish post");
-
-      // Nettoyage des fichiers si nécessaire
-      if (mediaStoragePath && (postType === "video" || postType === "image")) {
-        try {
-          await deleteSupabaseFileAction(mediaStoragePath, userId);
-        } catch (deleteError) {
-          console.error("Failed to clean up file:", deleteError);
-        }
-      }
-    }
-
-    setIsLoading(false);
-  };
-
-  const handleDirectPostSubmit = async () => {
-    // Initial validation of form fields
-    if (!checksBeforeSubmission()) return;
-
-    setIsLoading(true);
-    setError(null);
-    setUploadProgress(0);
-
-    // Declare result variables at function scope
-    let pinterestResult: ScheduleResult = {
-      success: false,
-      count: 0,
-      message: "",
-    };
-    let linkedinResult: ScheduleResult = {
-      success: false,
-      count: 0,
-      message: "",
-    };
-    let tiktokResult: ScheduleResult = {
-      success: false,
-      count: 0,
-      message: "",
-    };
-
-    let mediaPath = "";
-    let batchId = "";
-    try {
-      batchId = nanoid(32);
-
-      // Upload media file if needed (only for media tab)
-      if ((postType === "video" || postType === "image") && selectedFile) {
-        const uploadResult = await uploadMedia(selectedFile, (progress) => {
-          setUploadProgress(progress);
-        });
-
-        if (!uploadResult.success) {
-          toast(uploadResult.message ?? "Failed to upload media");
-        }
-
-        mediaPath = uploadResult.path ?? "";
-        if (selectedPinterestAccount.length > 0) {
-          // ───────────────── Pinterest ─────────────────
-          pinterestResult = await directPostForPinterestAccounts({
-            accounts: selectedPinterestAccount,
-            mediaPath: mediaPath,
-            boards,
-            platformOptions,
-            accountContent: accountContent.filter((item) =>
-              selectedPinterestAccount.some((acc) => acc.id === item.accountId)
-            ),
-            batchId: batchId,
-            userId, // Added userId parameter which is required
-            fileName: selectedFile.name,
-          });
-
-          if (!pinterestResult.success) {
-            toast.error(
-              pinterestResult.message ?? "Failed to post to Pinterest"
-            );
-          }
-        }
-        if (selectedTikTokAccount.length > 0) {
-          // ───────────────── TikTok ───────────────────
-          tiktokResult = await directPostForTikTokAccounts({
-            accounts: selectedTikTokAccount,
-            mediaPath: mediaPath,
-            platformOptions,
-            accountContent: accountContent.filter((item) =>
-              selectedTikTokAccount.some((acc) => acc.id === item.accountId)
-            ),
-            batchId: batchId,
-            userId,
-            fileName: selectedFile.name,
-          });
-
-          if (!tiktokResult.success) {
-            toast.error(tiktokResult.message ?? "Failed to post to TikTok");
-          }
-        }
-      }
-
-      // Process LinkedIn posts (for both media and text tabs)
-      if (selectedLinkedinAccount.length > 0) {
-        // ───────────────── Linkedin ────────────────────
-        linkedinResult = await directPostForLinkedInAccounts({
-          accounts: selectedLinkedinAccount,
-          mediaPath:
-            (postType === "video" || postType === "image") && mediaPath
-              ? mediaPath
-              : "",
-          platformOptions,
-          accountContent: accountContent.filter((item) =>
-            selectedLinkedinAccount.some((acc) => acc.id === item.accountId)
-          ),
-          batchId: batchId,
-          userId,
-          fileName: selectedFile?.name,
-        });
-
-        if (!linkedinResult.success) {
-          toast.error(linkedinResult.message ?? "Failed to post to LinkedIn");
-        }
-      }
-
-      // Remove the complex separator code and replace with this simpler approach
-      const totalSuccessCount =
-        (pinterestResult.success ? pinterestResult.count : 0) +
-        (linkedinResult.success ? linkedinResult.count : 0) +
-        (tiktokResult.success ? tiktokResult.count : 0);
-
-      // Show success notification only if we had successful posts
-      if (totalSuccessCount > 0) {
-        const successMessages = [];
-
-        if (pinterestResult.success && pinterestResult.count > 0) {
-          successMessages.push(`${pinterestResult.count} post(s) on Pinterest`);
-        }
-
-        if (linkedinResult.success && linkedinResult.count > 0) {
-          successMessages.push(`${linkedinResult.count} post(s) on LinkedIn`);
-        }
-
-        if (tiktokResult.success && tiktokResult.count > 0) {
-          successMessages.push(`${tiktokResult.count} post(s) on TikTok`);
-        }
-
-        // Join with commas and 'and' for the last item
-        let successMsg = "";
-        if (successMessages.length === 1) {
-          successMsg = successMessages[0];
-        } else if (successMessages.length === 2) {
-          successMsg = successMessages.join(" and ");
-        } else if (successMessages.length > 2) {
-          const lastItem = successMessages.pop();
-          successMsg = successMessages.join(", ") + ", and " + lastItem;
-        }
-
-        toast.success(`${successMsg} published successfully!`);
-        resetForm();
-      } else if (totalSuccessCount === 0) {
-        toast.info("No posts were published.");
-      }
-    } catch (error) {
-      console.error("Direct post submission error:", error);
-      setError("Failed to publish post");
-    }
-
-    setIsLoading(false);
-  };
-*/
   // Unified submit function with enhanced security and error handling
   const handleSubmit = async () => {
+    // Helper function to clean up media on error cases
+    const cleanupMediaOnError = async (path: string) => {
+      if (path && userId) {
+        try {
+          await deleteSupabaseFileAction(userId, path);
+        } catch {
+          // Intentionally empty - cleanup failures shouldn't disrupt main flow
+        }
+      }
+    };
     // Step 1: Skip if already loading to prevent double submissions
-    if (isLoading) {
-      console.log("[handleSubmit]: Operation already in progress, skipping");
-      return;
-    }
+    if (isLoading) return;
 
     // Step 2: Pre-submission validation
     const validationResult = checksBeforeSubmission();
@@ -772,18 +519,8 @@ export default function SocialPostForm({
     let mediaStoragePath = "";
 
     try {
-      console.log(
-        "[handleSubmit]: Starting post process with batch ID:",
-        batchId
-      );
-
       // Step 4: Handle media upload if needed
       if ((postType === "video" || postType === "image") && selectedFile) {
-        console.log(
-          `[handleSubmit]: Uploading ${postType} file:`,
-          selectedFile.name
-        );
-
         // Validate file size again (security)
         const maxSize =
           postType === "image" ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
@@ -809,13 +546,11 @@ export default function SocialPostForm({
           }
 
           mediaStoragePath = uploadResult.path ?? "";
-          console.log(
-            `[handleSubmit]: Media upload completed: ${mediaStoragePath}`
+        } catch {
+          setError(
+            "We had trouble uploading your file. Please try again later."
           );
-        } catch (uploadError) {
-          console.error("[handleSubmit]: Media upload error:", uploadError);
-          setError("Failed to upload media file. Please try again.");
-          toast.error("Failed to upload media file. Please try again.");
+
           setIsLoading(false);
           return;
         }
@@ -823,34 +558,15 @@ export default function SocialPostForm({
 
       // Step 5: Ensure account content is properly set before submission
       if (accountContent.length === 0) {
-        console.error("[handleSubmit]: No account content found");
         setError("No content found for selected accounts.");
-        toast.error("No content found for selected accounts.");
         setIsLoading(false);
 
-        // Clean up media file if upload was successful but submission failed
-        if (mediaStoragePath) {
-          try {
-            await deleteSupabaseFileAction(userId, mediaStoragePath);
-            console.log(
-              "[handleSubmit]: Cleaned up media file after account content error"
-            );
-          } catch (cleanupError) {
-            console.error(
-              "[handleSubmit]: Failed to clean up media file:",
-              cleanupError
-            );
-          }
-        }
+        await cleanupMediaOnError(mediaStoragePath);
         return;
       }
 
       // Step 6: Call the unified server function for posting/scheduling
-      console.log(
-        `[handleSubmit]: Sending request to ${
-          isScheduled ? "schedule" : "publish"
-        } content`
-      );
+
       const result = await handleSocialMediaPost({
         // Platform-specific accounts
         pinterestAccounts: selectedPinterestAccount,
@@ -881,7 +597,6 @@ export default function SocialPostForm({
       });
 
       // Step 7: Handle response with detailed error processing
-      console.log(`[handleSubmit]: Server response:`, result);
 
       if (result.success) {
         // Success case - all or some accounts succeeded
@@ -896,100 +611,56 @@ export default function SocialPostForm({
         if (result.errors && result.errors.length > 0) {
           setTimeout(() => {
             toast.warning(
-              `Note: ${result.errors?.length} account(s) had issues. See console for details.`
+              `Note: ${result.errors?.length} account(s) had issues.  See details for more information.`
             );
           }, 500);
-
-          // Log detailed errors to console for debugging
-          console.warn(
-            "[handleSubmit]: Some accounts had failures:",
-            result.errors
-          );
         }
 
         // Reset the form to initial state on success
         resetForm();
       } else if (result.resetIn) {
-        // Rate limit exceeded
-        setError(
-          `Rate limit exceeded. Please try again in ${result.resetIn} seconds.`
-        );
         toast.error(
-          `Rate limit exceeded. Please try again in ${result.resetIn} seconds.`
+          `You've reached the posting limit. Please try again in ${result.resetIn} seconds.`
         );
 
         // Clean up unused media on complete failure
-        if (mediaStoragePath && (!result.counts || result.counts.total === 0)) {
-          try {
-            await deleteSupabaseFileAction(userId, mediaStoragePath);
-            console.log(
-              "[handleSubmit]: Cleaned up unused media after rate limit error"
-            );
-          } catch (cleanupError) {
-            console.error(
-              "[handleSubmit]: Failed to clean up media file:",
-              cleanupError
-            );
-          }
+        if (!result.counts || result.counts.total === 0) {
+          await cleanupMediaOnError(mediaStoragePath);
         }
       } else {
         // General error case
-        setError(result.message || "Failed to process your request");
-        toast.error(result.message || "Failed to process your request");
+        setError(result.message);
+        toast.error(result.message);
 
         // Show detailed errors if available
         if (result.errors && result.errors.length > 0) {
-          const errorSummary = result.errors
-            .map((e) => `${e.platform}/${e.displayName}: ${e.error}`)
-            .join("; ");
-          console.error("[handleSubmit]: Detailed errors:", errorSummary);
-
           // Show first error for user context if not shown in the main message
-          if (!result.message && result.errors[0]) {
-            toast.error(result.errors[0].error);
+          if (!result.message) {
+            // Extract just the error message without technical details
+            const firstError = result.errors[0];
+            const friendlyError = firstError.error.includes(":")
+              ? firstError.error.split(":")[0].trim()
+              : firstError.error;
+
+            toast.error(
+              `Problem with ${firstError.platform}: ${friendlyError}`
+            );
           }
         }
 
         // Clean up media on complete failure
-        if (mediaStoragePath && (!result.counts || result.counts.total === 0)) {
-          try {
-            await deleteSupabaseFileAction(userId, mediaStoragePath);
-            console.log("[handleSubmit]: Cleaned up unused media after error");
-          } catch (cleanupError) {
-            console.error(
-              "[handleSubmit]: Failed to clean up media file:",
-              cleanupError
-            );
-          }
+        if (!result.counts || result.counts.total === 0) {
+          await cleanupMediaOnError(mediaStoragePath);
         }
       }
-    } catch (error) {
-      // Step 8: Handle unexpected errors with detailed logging
-      console.error("[handleSubmit]: Unhandled exception:", error);
-      const errorMessage =
-        error instanceof Error ? error.message : "Unexpected error occurred";
-
-      setError(`Failed to process your request: ${errorMessage}`);
-      toast.error(`Failed to process your request: ${errorMessage}`);
+    } catch {
+      setError("Something went wrong. Please try again later.");
 
       // Clean up media file on error
-      if (mediaStoragePath) {
-        try {
-          await deleteSupabaseFileAction(userId, mediaStoragePath);
-          console.log(
-            "[handleSubmit]: Cleaned up media after unhandled exception"
-          );
-        } catch (cleanupError) {
-          console.error(
-            "[handleSubmit]: Failed to clean up media file:",
-            cleanupError
-          );
-        }
-      }
+      await cleanupMediaOnError(mediaStoragePath);
     } finally {
       // Step 9: Always reset loading state
       setIsLoading(false);
-      console.log("[handleSubmit]: Submission process completed");
     }
   };
 

@@ -1,5 +1,4 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
 import { SchedulePostData } from "@/lib/types/SchedulePostData";
 import "server-only";
 
@@ -65,29 +64,6 @@ export async function schedulePost(
     console.log(
       `[schedulePost]: Starting post scheduling process for user: ${userId}`
     );
-
-    // Step 1: Verify user is properly authenticated
-    if (!userId) {
-      console.error(`[schedulePost]: Missing user ID in request`);
-      return {
-        success: false,
-        message: "User authentication required. Please sign in to continue.",
-      };
-    }
-
-    const authResult = await authCheck(userId);
-    if (!authResult) {
-      console.error(
-        `[schedulePost]: Authentication check failed for user ID: ${userId}`
-      );
-      return {
-        success: false,
-        message: "Authentication validation failed. Please sign in again.",
-      };
-    }
-    console.log(`[schedulePost]: Authentication validated for user: ${userId}`);
-
-    // Step 2: Check rate limits to prevent abuse
 
     // Step 3: Validate post data
     console.log(

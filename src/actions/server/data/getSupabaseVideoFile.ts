@@ -1,5 +1,4 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
 import "server-only";
 
 /**
@@ -13,13 +12,6 @@ export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string; buffer?: Buffer }> {
-  const isAuth = await authCheck(userId);
-  if (!isAuth) {
-    return {
-      success: false,
-      message: "You are not authorized to disconnect this account.",
-    };
-  }
   // Security Check: Ensure the file path starts with the user's ID
   if (!filePath?.startsWith(`${userId}/`)) {
     console.warn(
