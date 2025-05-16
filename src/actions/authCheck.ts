@@ -6,7 +6,23 @@ import { auth } from "@clerk/nextjs/server";
  * @returns {Error} Throws an error if validation fails
  * @returns {Promise<boolean>} Returns true if validation succeeds
  */
-export async function authCheck(userId: string | null) {
+export async function authCheck(
+  userId: string | null,
+  options?: {
+    isCronJob?: boolean;
+    cronSecret?: string;
+  }
+) {
+  // If this is a cron job request and it has the correct secret, bypass Clerk auth
+  if (
+    options?.isCronJob &&
+    options.cronSecret === process.env.CRON_SECRET_KEY
+  ) {
+    console.log(
+      `[authCheck] Bypassing Clerk auth for cron job request for user ${userId}`
+    );
+    return true;
+  }
   // Get the authenticated user ID from Clerk
   const { userId: clerkAuth } = await auth();
 

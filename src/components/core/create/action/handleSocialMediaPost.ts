@@ -73,6 +73,7 @@ export async function handleSocialMediaPost(config: {
   userId: string | null;
   batchId: string;
   cleanupFiles?: boolean;
+  isCronJob?: boolean;
 }): Promise<PostResult> {
   // Start tracking execution time
   const startTime = performance.now();
@@ -136,7 +137,10 @@ export async function handleSocialMediaPost(config: {
     // Step 1: Verify user is properly authenticated
 
     // Verify user is properly authenticated
-    const authResult = await authCheck(userId);
+    const authResult = await authCheck(userId, {
+      isCronJob: config.isCronJob,
+      cronSecret: process.env.CRON_SECRET_KEY,
+    });
     if (!authResult) {
       console.error(
         `[handleSocialMediaPost]: Authentication check failed for user ID: ${userId}`

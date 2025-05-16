@@ -1,13 +1,13 @@
 // app/api/cron/process-batch/route.ts
 import { NextRequest, NextResponse } from "next/server";
 
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import {
   BoardInfo,
   ContentInfo,
   handleSocialMediaPost,
 } from "@/components/core/create/action/handleSocialMediaPost";
+import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 export async function POST(request: NextRequest) {
   console.log("[BATCH] Processing request started");
@@ -221,6 +221,7 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       batchId: batch_id,
       cleanupFiles: false, // Don't delete the files after posting
+      isCronJob: true,
     };
 
     const result = await handleSocialMediaPost(config);
