@@ -38,9 +38,26 @@ export async function checkRateLimit(
   operationName: string,
   userId?: string | null,
   limit: number = 20,
-  window: number = 60
+  window: number = 60,
+  options?: {
+    isCronJob?: boolean;
+    cronSecret?: string;
+  }
 ): Promise<{ success: boolean; message?: string; resetIn?: number }> {
   try {
+    // If this is a cron job request and it has the correct secret, bypass Clerk auth
+    if (
+      options?.isCronJob &&
+      options.cronSecret === process.env.CRON_SECRET_KEY
+    ) {
+      console.log(
+        `[Rate-limit] Bypassing Rate Limitfor cron job request for user ${userId}`
+      );
+      return {
+        success: false,
+        message: " Bypassing Rate Limitfor cron job request for user ${userId}",
+      };
+    }
     console.log(
       `[Rate-limit] Starting rate limit verification for operation: "${operationName}" (${limit} requests per ${window}s)`
     );

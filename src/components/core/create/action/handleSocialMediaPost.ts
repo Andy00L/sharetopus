@@ -158,7 +158,11 @@ export async function handleSocialMediaPost(config: {
       "handleSocialMediaPost", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
-      60 // Window (60 seconds)
+      60, // Window (60 seconds),
+      {
+        isCronJob: config.isCronJob,
+        cronSecret: process.env.CRON_SECRET_KEY,
+      }
     );
 
     if (!rateCheck.success) {
