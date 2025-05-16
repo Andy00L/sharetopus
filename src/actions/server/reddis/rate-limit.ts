@@ -54,7 +54,7 @@ export async function checkRateLimit(
         `[Rate-limit] Bypassing Rate Limitfor cron job request for user ${userId}`
       );
       return {
-        success: false,
+        success: true,
         message: " Bypassing Rate Limitfor cron job request for user ${userId}",
       };
     }
