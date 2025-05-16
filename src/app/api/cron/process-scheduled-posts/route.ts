@@ -129,8 +129,10 @@ export async function POST(request: NextRequest) {
 
     for (const post of postsData) {
       try {
-        const options = JSON.parse(post.post_options || "{}");
-
+        const options =
+          typeof post.post_options === "string"
+            ? JSON.parse(post.post_options || "{}")
+            : post.post_options || {};
         // Add content
         accountContent.push({
           accountId: post.social_account_id,
@@ -177,8 +179,10 @@ export async function POST(request: NextRequest) {
     // Then override with specific options from posts
     postsData.forEach((post) => {
       try {
-        const options = JSON.parse(post.post_options || "{}");
-
+        const options =
+          typeof post.post_options === "string"
+            ? JSON.parse(post.post_options || "{}")
+            : post.post_options || {};
         if (post.platform === "pinterest") {
           if (options.privacyLevel)
             platformOptions.pinterest!.privacyLevel = options.privacyLevel;
