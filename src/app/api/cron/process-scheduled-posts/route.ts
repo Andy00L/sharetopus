@@ -44,8 +44,7 @@ export async function POST(request: NextRequest) {
     const { data: postsData, error: postsError } = await adminSupabase
       .from("scheduled_posts")
       .select("*")
-      .eq("batch_id", batch_id)
-      .eq("status", "processing");
+      .eq("batch_id", batch_id);
 
     if (postsError) {
       console.error(`[BATCH] Error fetching posts: ${postsError.message}`);
