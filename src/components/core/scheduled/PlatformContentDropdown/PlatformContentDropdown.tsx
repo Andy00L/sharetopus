@@ -45,7 +45,7 @@ export default function PlatformContentDropdown({
 
       {/* Content dropdown - visible when expanded */}
       {expanded && (
-        <div className="p-3 pt-0 border-t bg-muted/30">
+        <div className="p-3 pt-0 border-t bg-muted/30 max-h-[150px] overflow-y-auto">
           {post.post_title && (
             <div className="mt-2">
               <p className="text-sm font-medium">Title:</p>
@@ -56,7 +56,7 @@ export default function PlatformContentDropdown({
           {post.post_description && (
             <div className="mt-2">
               <p className="text-sm font-medium">Description:</p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-muted-foreground  max-h-[60px] overflow-y-auto">
                 {post.post_description}
               </p>
             </div>
