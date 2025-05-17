@@ -476,7 +476,7 @@ export async function handleSocialMediaPost(config: {
     // Step 7: Clean up media file if direct posting and cleanup is requested
     if (!isScheduled && cleanupFiles && mediaPath) {
       try {
-        await deleteSupabaseFileAction(userId, mediaPath, true);
+        await deleteSupabaseFileAction(userId, mediaPath);
         console.log(
           `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
         );
