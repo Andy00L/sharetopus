@@ -72,8 +72,7 @@ export async function storeFailedPost(
     console.error("[storeFailedPost] Unexpected error:", err);
     return {
       success: false,
-      message:
-        err instanceof Error ? err.message : "An unexpected error occurred",
+      message: "An unexpected error occurred",
     };
   }
 }

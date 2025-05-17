@@ -88,11 +88,12 @@ export async function deleteSupabaseFileAction(
 
         for (const path of filesToDelete) {
           // Check if file is still referenced by any scheduled posts
-          const { count, error: checkError } = await adminSupabase
-            .from("scheduled_posts")
-            .select("id", { count: "exact", head: true })
-            .eq("media_storage_path", path)
-            .in("status", ["scheduled", "pending", "processing"]);
+          const { count: scheduledCount, error: checkError } =
+            await adminSupabase
+              .from("scheduled_posts")
+              .select("id", { count: "exact", head: true })
+              .eq("media_storage_path", path)
+              .in("status", ["scheduled", "pending", "processing"]);
 
           if (checkError) {
             console.error(
@@ -101,7 +102,21 @@ export async function deleteSupabaseFileAction(
             );
             continue;
           }
-          const referenceCount = count ?? 0; // Handle null case
+
+          // Check if file is referenced in failed_posts
+          const { count: failedCount, error: failedCheckError } =
+            await adminSupabase
+              .from("failed_posts")
+              .select("id", { count: "exact", head: true })
+              .eq("media_storage_path", path);
+          if (failedCheckError) {
+            console.error(
+              `[deleteSupabaseFile]: Error checking failed references for file ${path}:`,
+              failedCheckError.message
+            );
+            continue;
+          }
+          const referenceCount = (scheduledCount ?? 0) + (failedCount ?? 0); // Handle null cases
 
           // If count is 0, no posts reference this file
           if (referenceCount === 0) {
@@ -195,7 +210,7 @@ export async function deleteSupabaseFileAction(
       console.log(
         `[deleteSupabaseFile]: Checking file references before deletion: ${filePath}`
       );
-      const { count, error: checkError } = await adminSupabase
+      const { count: scheduledCount, error: checkError } = await adminSupabase
         .from("scheduled_posts")
         .select("id", { count: "exact", head: true })
         .eq("media_storage_path", filePath)
@@ -211,7 +226,24 @@ export async function deleteSupabaseFileAction(
           message: `Unable to verify if the file can be safely deleted. Please try again.`,
         };
       }
-      const referenceCount = count ?? 0; // Handle null case
+      // Check if file is referenced in failed_posts
+      const { count: failedCount, error: failedCheckError } =
+        await adminSupabase
+          .from("failed_posts")
+          .select("id", { count: "exact", head: true })
+          .eq("media_storage_path", filePath);
+
+      if (failedCheckError) {
+        console.error(
+          `[deleteSupabaseFile]: Failed to check failed file references:`,
+          failedCheckError.message
+        );
+        return {
+          success: false,
+          message: `Unable to verify if the file can be safely deleted. Please try again.`,
+        };
+      }
+      const referenceCount = (scheduledCount ?? 0) + (failedCount ?? 0); // Combine both reference counts
 
       // If count is > 0, posts still reference this file
       if (referenceCount > 0) {

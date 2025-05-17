@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
 import {
   BoardInfo,
@@ -90,8 +91,7 @@ export async function POST(request: NextRequest) {
           error_message: "Failed to fetch account data",
           updated_at: new Date().toISOString(),
         })
-        .eq("batch_id", batch_id)
-        .eq("status", "processing");
+        .eq("batch_id", batch_id);
 
       return NextResponse.json(
         {
@@ -130,10 +130,7 @@ export async function POST(request: NextRequest) {
 
     for (const post of postsData) {
       try {
-        const options =
-          typeof post.post_options === "string"
-            ? JSON.parse(post.post_options || "{}")
-            : post.post_options || {};
+        const options = post.post_options || {};
         // Add content
         accountContent.push({
           accountId: post.social_account_id,
@@ -180,10 +177,7 @@ export async function POST(request: NextRequest) {
     // Then override with specific options from posts
     postsData.forEach((post) => {
       try {
-        const options =
-          typeof post.post_options === "string"
-            ? JSON.parse(post.post_options || "{}")
-            : post.post_options || {};
+        const options = post.post_options || {};
         if (post.platform === "pinterest") {
           if (options.privacyLevel)
             platformOptions.pinterest!.privacyLevel = options.privacyLevel;
@@ -260,7 +254,7 @@ export async function POST(request: NextRequest) {
         } else {
           console.log(
             `[BATCH] Successfully deleted ${
-              deleteResult.details?.succeeded || 0
+              deleteResult.details?.succeeded ?? 0
             } posts from scheduled_posts`
           );
         }
@@ -281,29 +275,55 @@ export async function POST(request: NextRequest) {
       result: {
         success: result.success,
         counts: result.counts,
-        errors: result.errors?.length || 0,
+        errors: result.errors?.length ?? 0,
       },
     });
   } catch (error) {
     console.error("[BATCH] Unexpected error:", error);
 
-    // Try to update batch status if we have batch_id
+    // Try to store in failed_posts and delete from scheduled_posts if we have batch_id
     try {
-      const { batch_id } = await request.json();
-      if (batch_id) {
-        await adminSupabase
+      const { batch_id, user_id } = await request.json();
+      if (batch_id && user_id) {
+        // 1. Get the posts for this batch
+        const { data: postsData } = await adminSupabase
           .from("scheduled_posts")
-          .update({
-            status: "failed",
-            error_message:
-              error instanceof Error ? error.message : String(error),
-            updated_at: new Date().toISOString(),
-          })
-          .eq("batch_id", batch_id)
-          .eq("status", "processing");
+          .select("*")
+          .eq("batch_id", batch_id);
+
+        if (postsData && postsData.length > 0) {
+          // 2. Store each post as a failed post
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+
+          for (const post of postsData) {
+            await storeFailedPost({
+              user_id,
+              social_account_id: post.social_account_id,
+              platform: post.platform,
+              post_title: post.post_title,
+              post_description: post.post_description,
+              post_options: post.post_options,
+              media_type: post.media_type,
+              media_storage_path: post.media_storage_path ?? "",
+              batch_id,
+              scheduled_at: post.scheduled_at,
+              extra_data: { message: errorMessage },
+            });
+          }
+
+          // 3. Delete all posts from scheduled_posts
+          const postIds = postsData.map((post) => post.id);
+          await deleteScheduledPostBatch(postIds, user_id, true);
+
+          console.log(
+            `[BATCH] Stored ${postsData.length} failed posts and deleted from scheduled_posts`
+          );
+        }
       }
-    } catch {
-      // Ignore error when trying to parse request body again
+    } catch (fallbackError) {
+      console.error("[BATCH] Error in fallback error handling:", fallbackError);
+      // Continue to return the original error
     }
 
     return NextResponse.json(
