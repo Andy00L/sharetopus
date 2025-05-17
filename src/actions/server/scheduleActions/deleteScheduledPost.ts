@@ -53,14 +53,6 @@ export async function deleteScheduledPostBatch(
     console.log(
       `[deleteScheduledPostBatch]: Starting batch deletion for ${postIds.length} posts`
     );
-    // Step 1: Verify user is properly authenticated
-    if (!userId) {
-      console.error(`[deleteScheduledPostBatch]: Missing user ID in request`);
-      return {
-        success: false,
-        message: "User authentication required. Please sign in to continue.",
-      };
-    }
 
     // Verify user is properly authenticated
     const authResult = await authCheck(userId, {

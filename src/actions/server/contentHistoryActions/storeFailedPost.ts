@@ -49,8 +49,7 @@ export async function storeFailedPost(
       media_type: data.media_type,
       media_storage_path: data.media_storage_path,
       batch_id: data.batch_id,
-      error_message: "Failed to post", // Default generic message
-      extra_data: data.extra_data ? JSON.stringify(data.extra_data) : null,
+      error_message: data.extra_data?.message || "Failed to post", // Default generic message
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
