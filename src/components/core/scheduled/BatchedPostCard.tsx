@@ -3,7 +3,7 @@
 
 import { format } from "date-fns";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -35,6 +35,7 @@ import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resum
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { ScheduledPost } from "@/lib/types/dbTypes";
 import RescheduleDialog from "./RescheduleDialog";
+import PlatformContentDropdown from "./PlatformContentDropdown/PlatformContentDropdown";
 
 interface BatchedPostCardProps {
   readonly posts: ScheduledPost[];
@@ -155,10 +156,8 @@ export default function BatchedPostCard({
       } else {
         toast.error(res.message);
       }
-    } catch (e) {
-      toast.error(
-        `Unexpected error: ${e instanceof Error ? e.message : String(e)}`
-      );
+    } catch {
+      toast.error(`Unexpected error`);
     } finally {
       setLoading(false);
     }
@@ -277,6 +276,12 @@ export default function BatchedPostCard({
       };
     }
   };
+  useEffect(() => {
+    if (!rescheduleOpen && !cancelOpen && !deleteOpen && !isOpen) {
+      // Reset all states to ensure clean state after dialogs close
+      setLoading(false);
+    }
+  }, [rescheduleOpen, cancelOpen, deleteOpen, isOpen]);
 
   return (
     <>
@@ -342,7 +347,8 @@ export default function BatchedPostCard({
                     size="sm"
                     variant="outline"
                     className="mr-2"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setRescheduleOpen(true);
                       setIsOpen(false);
                     }}
@@ -356,7 +362,8 @@ export default function BatchedPostCard({
                     size="sm"
                     variant="outline"
                     className="mr-2"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setCancelOpen(true);
                       setIsOpen(false);
                     }}
@@ -369,7 +376,8 @@ export default function BatchedPostCard({
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       runAction(resumeAllPosts);
                       setIsOpen(false);
                     }}
@@ -389,41 +397,8 @@ export default function BatchedPostCard({
             <h4 className="text-sm font-medium mb-2">Platforms</h4>
             <div className="flex flex-col gap-4">
               {posts.map((post) => (
-                <div key={post.id} className="flex items-center gap-3">
-                  <SocialAvatarWrapper
-                    src={post.social_accounts?.avatar_url}
-                    alt={`${post.platform} Account`}
-                    platform={post.platform}
-                    className="h-12 w-12"
-                    size={48}
-                  />
-                  <div>
-                    <p className="font-medium">
-                      {post.social_accounts?.display_name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Status: <span className="font-medium">{post.status}</span>
-                    </p>
-                  </div>
-                </div>
+                <PlatformContentDropdown key={post.id} post={post} />
               ))}
-            </div>
-
-            <div className="mt-4">
-              <h4 className="text-sm font-medium mb-2">Content</h4>
-
-              {firstPost.post_title && (
-                <p className="text-sm mb-2">
-                  <span className="font-medium">Title:</span>{" "}
-                  {firstPost.post_title}
-                </p>
-              )}
-              {firstPost.post_description && (
-                <p className="text-sm">
-                  <span className="font-medium">Description:</span>{" "}
-                  {firstPost.post_description}
-                </p>
-              )}
             </div>
           </div>
 
@@ -450,7 +425,10 @@ export default function BatchedPostCard({
         isOpen={rescheduleOpen}
         onClose={() => setRescheduleOpen(false)}
         userId={userId}
-        onSuccess={() => router.refresh()}
+        onSuccess={() => {
+          router.refresh();
+          setRescheduleOpen(false);
+        }}
         postIds={posts.map((post) => post.id)}
       />
 
