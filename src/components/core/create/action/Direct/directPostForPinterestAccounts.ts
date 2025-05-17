@@ -34,6 +34,7 @@ export async function directPostForPinterestAccounts(config: {
   mediaType: string;
   postType: "image" | "video" | "text";
   buffer?: Buffer;
+  isCronJob?: boolean;
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -46,6 +47,7 @@ export async function directPostForPinterestAccounts(config: {
     mediaType,
     postType,
     fileName,
+    isCronJob,
   } = config;
 
   if (!account) {
@@ -169,42 +171,46 @@ export async function directPostForPinterestAccounts(config: {
           "[Pinterest Direct Post] Error message:",
           postResult.message
         );
+        if (isCronJob) {
+          try {
+            await storeFailedPost({
+              user_id: userId,
+              social_account_id: account.id,
+              platform: "pinterest",
+              post_title: accountContent.title || null,
+              post_description: accountContent.description || null,
+              post_options: {
+                boardId: boards.boardID,
+                boardName: boards.boardName,
+                link: accountContent.link,
+                ...config.platformOptions.pinterest,
+              },
+              media_type: postType,
+              media_storage_path: mediaPath,
+              batch_id: batchId,
+              extra_data: {
+                message: postResult.message,
+                error: postResult.error,
+                timestamp: new Date().toISOString(),
+                board_id: boards.boardID,
+                board_name: boards.boardName,
+              },
+            });
 
-        try {
-          await storeFailedPost({
-            user_id: userId,
-            social_account_id: account.id,
-            platform: "pinterest",
-            post_title: accountContent.title || null,
-            post_description: accountContent.description || null,
-            post_options: {
-              boardId: boards.boardID,
-              boardName: boards.boardName,
-              link: accountContent.link,
-              ...config.platformOptions.pinterest,
-            },
-            media_type: postType,
-            media_storage_path: mediaPath,
-            batch_id: batchId,
-            extra_data: {
-              message: postResult.message,
-              error: postResult.error,
-              timestamp: new Date().toISOString(),
-              board_id: boards.boardID,
-              board_name: boards.boardName,
-            },
-          });
-
+            console.log(
+              "[Pinterest Direct Post] Failed post stored in failed_posts table"
+            );
+          } catch (storeError) {
+            console.error(
+              "[Pinterest Direct Post] Error storing failed post:",
+              storeError
+            );
+          }
+        } else {
           console.log(
-            "[Pinterest Direct Post] Failed post stored in failed_posts table"
-          );
-        } catch (storeError) {
-          console.error(
-            "[Pinterest Direct Post] Error storing failed post:",
-            storeError
+            "[Pinterest Direct Post] Skipping failed post storage (not a cron job)"
           );
         }
-
         return {
           success: false,
           count: 0,

@@ -93,6 +93,7 @@ export async function handleSocialMediaPost(config: {
     userId,
     batchId,
     cleanupFiles = true,
+    isCronJob,
   } = config;
 
   // Initialize results object
@@ -391,6 +392,7 @@ export async function handleSocialMediaPost(config: {
             buffer: responseBuffer?.buffer,
             userId,
             batchId,
+            isCronJob,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
 
@@ -411,6 +413,7 @@ export async function handleSocialMediaPost(config: {
             postType,
             userId,
             batchId,
+            isCronJob,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
 
@@ -430,6 +433,7 @@ export async function handleSocialMediaPost(config: {
             batchId,
             buffer: responseBuffer?.buffer,
             mediaType,
+            isCronJob,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
     ]);
@@ -476,7 +480,7 @@ export async function handleSocialMediaPost(config: {
     // Step 7: Clean up media file if direct posting and cleanup is requested
     if (!isScheduled && cleanupFiles && mediaPath) {
       try {
-        await deleteSupabaseFileAction(userId, mediaPath);
+        await deleteSupabaseFileAction(userId, mediaPath, config.isCronJob);
         console.log(
           `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
         );

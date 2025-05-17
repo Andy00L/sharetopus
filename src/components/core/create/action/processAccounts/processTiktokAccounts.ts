@@ -20,6 +20,7 @@ export async function processTiktokAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
+  isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -85,6 +86,7 @@ export async function processTiktokAccounts(config: {
             userId: config.userId,
             fileName: config.fileName,
             batchId: config.batchId,
+            isCronJob: config.isCronJob,
           });
 
       const accountProcessingTime = performance.now() - accountStartTime;

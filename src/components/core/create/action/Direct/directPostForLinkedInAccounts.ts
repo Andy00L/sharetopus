@@ -24,6 +24,7 @@ export async function directPostForLinkedInAccounts(config: {
   fileName?: string;
   batchId: string;
   postType: "image" | "video" | "text";
+  isCronJob?: boolean;
 
   buffer?: Buffer;
 }): Promise<ScheduleResult> {
@@ -36,6 +37,7 @@ export async function directPostForLinkedInAccounts(config: {
     batchId,
     postType,
     fileName,
+    isCronJob,
   } = config;
 
   if (!account) {
@@ -167,40 +169,44 @@ export async function directPostForLinkedInAccounts(config: {
           "[LinkedIn Direct Post] Error message:",
           postResult.message
         );
+        if (isCronJob) {
+          try {
+            await storeFailedPost({
+              user_id: userId,
+              social_account_id: account.id,
+              platform: "linkedin",
+              post_title: accountContent.title || null,
+              post_description: accountContent.description || null,
+              post_options: {
+                memberUrn: memberUrn,
+                link: accountContent.link,
+                visibility:
+                  config.platformOptions.linkedin?.visibility || "PUBLIC",
+              },
+              media_type: postType,
+              media_storage_path: mediaPath || "",
+              batch_id: batchId,
+              extra_data: {
+                message: postResult.message,
+                error: postResult.error,
+                timestamp: new Date().toISOString(),
+              },
+            });
 
-        try {
-          await storeFailedPost({
-            user_id: userId,
-            social_account_id: account.id,
-            platform: "linkedin",
-            post_title: accountContent.title || null,
-            post_description: accountContent.description || null,
-            post_options: {
-              memberUrn: memberUrn,
-              link: accountContent.link,
-              visibility:
-                config.platformOptions.linkedin?.visibility || "PUBLIC",
-            },
-            media_type: postType,
-            media_storage_path: mediaPath || "",
-            batch_id: batchId,
-            extra_data: {
-              message: postResult.message,
-              error: postResult.error,
-              timestamp: new Date().toISOString(),
-            },
-          });
-
+            console.log(
+              "[LinkedIn Direct Post] Failed post stored in failed_posts table"
+            );
+          } catch (storeError) {
+            console.error(
+              "[LinkedIn Direct Post] Error storing failed post:",
+              storeError
+            );
+          }
+        } else {
           console.log(
-            "[LinkedIn Direct Post] Failed post stored in failed_posts table"
-          );
-        } catch (storeError) {
-          console.error(
-            "[LinkedIn Direct Post] Error storing failed post:",
-            storeError
+            "[LinkedIn Direct Post] Skipping failed post storage (not a cron job)"
           );
         }
-
         return {
           success: false,
           count: 0,

@@ -20,6 +20,7 @@ export async function processLinkedinAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
+  isCronJob?: boolean;
 }) {
   const { accounts, isScheduled } = config;
   const errors: AccountError[] = [];
@@ -98,6 +99,7 @@ export async function processLinkedinAccounts(config: {
             batchId: config.batchId,
             buffer: config.buffer,
             cleanupFiles: false,
+            isCronJob: config.isCronJob,
           });
 
       const accountProcessingTime = performance.now() - accountStartTime;

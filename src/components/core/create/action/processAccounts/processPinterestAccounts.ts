@@ -21,6 +21,7 @@ export async function processPinterestAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
+  isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -103,6 +104,7 @@ export async function processPinterestAccounts(config: {
             batchId: config.batchId,
             buffer: config.buffer,
             postType: config.postType,
+            isCronJob: config.isCronJob,
           });
 
       const accountProcessingTime = performance.now() - accountStartTime;

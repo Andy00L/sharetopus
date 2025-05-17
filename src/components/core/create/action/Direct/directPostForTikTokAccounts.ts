@@ -5,8 +5,8 @@ import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
+import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 
 /**
  * Directly posts content to TikTok accounts without scheduling
@@ -27,6 +27,7 @@ export async function directPostForTikTokAccounts(config: {
   buffer?: Buffer;
   fileName: string;
   batchId: string;
+  isCronJob?: boolean;
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -37,6 +38,7 @@ export async function directPostForTikTokAccounts(config: {
     userId,
     buffer,
     batchId,
+    isCronJob,
   } = config;
 
   try {
@@ -160,33 +162,38 @@ export async function directPostForTikTokAccounts(config: {
 
       console.error("[TikTok Direct Post] Error details:", postResult.details);
       console.error("[TikTok Direct Post] Error message:", postResult.message);
+      if (isCronJob) {
+        try {
+          await storeFailedPost({
+            user_id: userId,
+            social_account_id: account.id,
+            platform: "tiktok",
+            post_title: accountContent.title || null,
+            post_description: accountContent.description || null,
+            post_options: platformOptions.tiktok,
+            media_type: isVideo ? "video" : isImage ? "image" : "text",
+            media_storage_path: mediaPath,
+            batch_id: batchId,
+            extra_data: {
+              message: postResult.message,
+              details: postResult.details,
+              error: postResult.error,
+              timestamp: new Date().toISOString(),
+            },
+          });
 
-      try {
-        await storeFailedPost({
-          user_id: userId,
-          social_account_id: account.id,
-          platform: "tiktok",
-          post_title: accountContent.title || null,
-          post_description: accountContent.description || null,
-          post_options: platformOptions.tiktok,
-          media_type: isVideo ? "video" : isImage ? "image" : "text",
-          media_storage_path: mediaPath,
-          batch_id: batchId,
-          extra_data: {
-            message: postResult.message,
-            details: postResult.details,
-            error: postResult.error,
-            timestamp: new Date().toISOString(),
-          },
-        });
-
+          console.log(
+            "[TikTok Direct Post] Failed post stored in failed_posts table"
+          );
+        } catch (storeError) {
+          console.error(
+            "[TikTok Direct Post] Error storing failed post:",
+            storeError
+          );
+        }
+      } else {
         console.log(
-          "[TikTok Direct Post] Failed post stored in failed_posts table"
-        );
-      } catch (storeError) {
-        console.error(
-          "[TikTok Direct Post] Error storing failed post:",
-          storeError
+          "[TikTok Direct Post] Skipping failed post storage (not a cron job)"
         );
       }
       return {
