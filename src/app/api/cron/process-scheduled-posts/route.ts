@@ -2,13 +2,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
 import {
   BoardInfo,
   ContentInfo,
   handleSocialMediaPost,
 } from "@/components/core/create/action/handleSocialMediaPost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
 
 export async function POST(request: NextRequest) {
   console.log("[BATCH] Processing request started");
@@ -246,7 +246,11 @@ export async function POST(request: NextRequest) {
       if (postIds.length > 0) {
         // Use the deleteScheduledPostBatch function to handle the deletion
         // We're passing the user_id from the request
-        const deleteResult = await deleteScheduledPostBatch(postIds, user_id);
+        const deleteResult = await deleteScheduledPostBatch(
+          postIds,
+          user_id,
+          true
+        );
 
         if (!deleteResult.success) {
           console.warn(

@@ -20,7 +20,8 @@ import { checkRateLimit } from "../reddis/rate-limit";
  */
 export async function deleteScheduledPostBatch(
   postIds: string[],
-  userId: string | null
+  userId: string | null,
+  isCronJob?: boolean
 ): Promise<{
   success: boolean;
   message: string;
@@ -62,7 +63,10 @@ export async function deleteScheduledPostBatch(
     }
 
     // Verify user is properly authenticated
-    const authResult = await authCheck(userId);
+    const authResult = await authCheck(userId, {
+      isCronJob: isCronJob,
+      cronSecret: process.env.CRON_SECRET_KEY,
+    });
     if (!authResult) {
       console.error(
         `[deleteScheduledPostBatch]: Authentication check failed for user ID: ${userId}`
