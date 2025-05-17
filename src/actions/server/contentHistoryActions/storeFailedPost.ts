@@ -43,9 +43,7 @@ export async function storeFailedPost(
       scheduled_at: data.scheduled_at || new Date().toISOString(),
       post_title: data.post_title || null,
       post_description: data.post_description || null,
-      post_options: data.post_options
-        ? JSON.stringify(data.post_options)
-        : null,
+      post_options: data.post_options,
       media_type: data.media_type,
       media_storage_path: data.media_storage_path,
       batch_id: data.batch_id,
