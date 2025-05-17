@@ -1,6 +1,7 @@
 "use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -157,6 +158,54 @@ export async function directPostForLinkedInAccounts(config: {
           // Still increment success since the post succeeded
           successCount = 1;
         }
+      } else {
+        console.error(
+          "[LinkedIn Direct Post] Failed with error:",
+          postResult.error
+        );
+        console.error(
+          "[LinkedIn Direct Post] Error message:",
+          postResult.message
+        );
+
+        try {
+          await storeFailedPost({
+            user_id: userId,
+            social_account_id: account.id,
+            platform: "linkedin",
+            post_title: accountContent.title || null,
+            post_description: accountContent.description || null,
+            post_options: {
+              memberUrn: memberUrn,
+              link: accountContent.link,
+              visibility:
+                config.platformOptions.linkedin?.visibility || "PUBLIC",
+            },
+            media_type: postType,
+            media_storage_path: mediaPath || "",
+            batch_id: batchId,
+            extra_data: {
+              message: postResult.message,
+              error: postResult.error,
+              timestamp: new Date().toISOString(),
+            },
+          });
+
+          console.log(
+            "[LinkedIn Direct Post] Failed post stored in failed_posts table"
+          );
+        } catch (storeError) {
+          console.error(
+            "[LinkedIn Direct Post] Error storing failed post:",
+            storeError
+          );
+        }
+
+        return {
+          success: false,
+          count: 0,
+          message: postResult.message || "Failed to post to LinkedIn",
+        };
       }
     } catch (postError) {
       console.error(

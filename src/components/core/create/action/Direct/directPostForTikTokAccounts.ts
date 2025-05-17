@@ -6,6 +6,7 @@ import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 
 /**
  * Directly posts content to TikTok accounts without scheduling
@@ -159,6 +160,35 @@ export async function directPostForTikTokAccounts(config: {
 
       console.error("[TikTok Direct Post] Error details:", postResult.details);
       console.error("[TikTok Direct Post] Error message:", postResult.message);
+
+      try {
+        await storeFailedPost({
+          user_id: userId,
+          social_account_id: account.id,
+          platform: "tiktok",
+          post_title: accountContent.title || null,
+          post_description: accountContent.description || null,
+          post_options: platformOptions.tiktok,
+          media_type: isVideo ? "video" : isImage ? "image" : "text",
+          media_storage_path: mediaPath,
+          batch_id: batchId,
+          extra_data: {
+            message: postResult.message,
+            details: postResult.details,
+            error: postResult.error,
+            timestamp: new Date().toISOString(),
+          },
+        });
+
+        console.log(
+          "[TikTok Direct Post] Failed post stored in failed_posts table"
+        );
+      } catch (storeError) {
+        console.error(
+          "[TikTok Direct Post] Error storing failed post:",
+          storeError
+        );
+      }
       return {
         success: false,
         count: 0,

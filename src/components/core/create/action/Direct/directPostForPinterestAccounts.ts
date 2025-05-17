@@ -1,6 +1,7 @@
 // createPostForm/action/directPostForPinterestAccounts.ts
 "use server";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -160,6 +161,50 @@ export async function directPostForPinterestAccounts(config: {
           successCount++;
         }
       } else {
+        console.error(
+          "[Pinterest Direct Post] Failed with error:",
+          postResult.error
+        );
+        console.error(
+          "[Pinterest Direct Post] Error message:",
+          postResult.message
+        );
+
+        try {
+          await storeFailedPost({
+            user_id: userId,
+            social_account_id: account.id,
+            platform: "pinterest",
+            post_title: accountContent.title || null,
+            post_description: accountContent.description || null,
+            post_options: {
+              boardId: boards.boardID,
+              boardName: boards.boardName,
+              link: accountContent.link,
+              ...config.platformOptions.pinterest,
+            },
+            media_type: postType,
+            media_storage_path: mediaPath,
+            batch_id: batchId,
+            extra_data: {
+              message: postResult.message,
+              error: postResult.error,
+              timestamp: new Date().toISOString(),
+              board_id: boards.boardID,
+              board_name: boards.boardName,
+            },
+          });
+
+          console.log(
+            "[Pinterest Direct Post] Failed post stored in failed_posts table"
+          );
+        } catch (storeError) {
+          console.error(
+            "[Pinterest Direct Post] Error storing failed post:",
+            storeError
+          );
+        }
+
         return {
           success: false,
           count: 0,

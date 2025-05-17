@@ -8,6 +8,7 @@ import {
   handleSocialMediaPost,
 } from "@/components/core/create/action/handleSocialMediaPost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
 
 export async function POST(request: NextRequest) {
   console.log("[BATCH] Processing request started");
@@ -235,43 +236,38 @@ export async function POST(request: NextRequest) {
       errors: result.errors?.length,
     });
 
-    // 7. Update post statuses based on results
-    const updatePromises = postsData.map((post) => {
-      let newStatus: string;
-      let errorMessage: string | null = null;
+    // 7. Delete processed posts from scheduled_posts table
+    console.log(`[BATCH] Deleting processed posts for batch ${batch_id}`);
 
-      // Check if this post's platform was successful
-      const platformSuccess =
-        (post.platform === "pinterest" && result.counts.pinterest > 0) ||
-        (post.platform === "linkedin" && result.counts.linkedin > 0) ||
-        (post.platform === "tiktok" && result.counts.tiktok > 0);
+    try {
+      // Get all post IDs from this batch
+      const postIds = postsData.map((post) => post.id);
 
-      if (platformSuccess) {
-        newStatus = "posted";
-      } else {
-        newStatus = "failed";
+      if (postIds.length > 0) {
+        // Use the deleteScheduledPostBatch function to handle the deletion
+        // We're passing the user_id from the request
+        const deleteResult = await deleteScheduledPostBatch(postIds, user_id);
 
-        // Find specific error for this account if any
-        const accountError = result.errors?.find(
-          (e) =>
-            e.accountId === post.social_account_id ||
-            e.platform === post.platform
-        );
-        errorMessage = accountError?.error || "Failed to post";
+        if (!deleteResult.success) {
+          console.warn(
+            `[BATCH] Warning: Error cleaning up scheduled posts: ${deleteResult.message}`
+          );
+          // Continue anyway - the posts were processed successfully
+        } else {
+          console.log(
+            `[BATCH] Successfully deleted ${
+              deleteResult.details?.succeeded || 0
+            } posts from scheduled_posts`
+          );
+        }
       }
-
-      return adminSupabase
-        .from("scheduled_posts")
-        .update({
-          status: newStatus,
-          error_message: errorMessage,
-          posted_at: newStatus === "posted" ? new Date().toISOString() : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", post.id);
-    });
-
-    await Promise.all(updatePromises);
+    } catch (deleteError) {
+      console.error(
+        `[BATCH] Error during deletion of processed posts:`,
+        deleteError
+      );
+      // Continue since this is just cleanup and the main process succeeded
+    }
 
     // 8. Return success
     return NextResponse.json({
