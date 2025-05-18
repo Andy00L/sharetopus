@@ -122,8 +122,6 @@ export async function directPostForLinkedInAccounts(config: {
       console.log("Success:", postResult.success);
       console.log("Post ID:", postResult.postId);
       console.log("Message:", postResult.message);
-      console.log("Complete data structure:");
-      console.log(JSON.stringify(postResult.data, null, 2));
 
       if (postResult.success) {
         try {

@@ -67,24 +67,26 @@ export default function ContentHistoryCard({ items }: ContentHistoryCardProps) {
           )}
         </CardContent>
 
-        <CardFooter className="p-3 pt-0 mt-auto o flex flex-wrap gap-2 items-center">
-          {items.map((item) => (
-            <SocialAvatarWrapper
-              key={item.id}
-              src={item.social_accounts?.avatar_url}
-              alt={`${item.platform} Account`}
-              platform={item.platform}
-              className="h-10 w-10"
-              size={40}
-            />
-          ))}
+        <CardFooter className="p-3 pt-0 mt-auto ">
+          <div className="flex gap-2 pt-3 pl-3 items-center overflow-x-auto w-full">
+            {items.map((item) => (
+              <SocialAvatarWrapper
+                key={item.id}
+                src={item.social_accounts?.avatar_url}
+                alt={`${item.platform} Account`}
+                platform={item.platform}
+                className="h-10 w-10"
+                size={40}
+              />
+            ))}
+          </div>
         </CardFooter>
       </Card>
 
       {/* Alert Dialog (wallet-style) */}
       <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
-        <AlertDialogContent className="sm:max-w-[450px]">
-          <AlertDialogHeader>
+        <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
+          <AlertDialogHeader className="flex-shrink-0">
             <div className="flex items-center justify-between gap-2">
               <AlertDialogTitle className="flex-1">
                 Your content was posted to the following platforms
@@ -99,7 +101,7 @@ export default function ContentHistoryCard({ items }: ContentHistoryCardProps) {
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="py-3">
+          <div className="py-3  overflow-y-auto flex-grow">
             <h4 className="text-sm font-medium mb-2">Platform</h4>
             <div className="flex flex-col gap-4">
               {items.map((item) => (

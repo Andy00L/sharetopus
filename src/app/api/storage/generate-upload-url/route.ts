@@ -1,5 +1,6 @@
 // app/api/storage/generate-upload-url/route.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { auth } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +15,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: "User not authenticated" },
         { status: 401 }
+      );
+    }
+
+    // Check subscription status
+    const subscriptionCheck = await checkActiveSubscription(userId);
+    if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
+      return NextResponse.json(
+        { success: false, message: "Abonnement actif requis" },
+        { status: 403 }
       );
     }
 

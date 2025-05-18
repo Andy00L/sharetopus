@@ -75,14 +75,6 @@ export async function postToPinterest({
     console.log("[Pinterest Post Function] link:", link);
     console.log("[Pinterest Post Function] mediaType:", mediaType);
     console.log("[Pinterest Post Function] fileName:", fileName);
-    console.log(
-      "[Pinterest Post Function] accessToken:",
-      accessToken ? `${accessToken.substring(0, 6)}...` : "missing"
-    );
-    console.log(
-      "[Pinterest Post Function] mediaBuffer length:",
-      mediaPath ? mediaPath.length : 0
-    );
 
     // Verify required parameters
     if (!accessToken || !boardId || !mediaPath) {

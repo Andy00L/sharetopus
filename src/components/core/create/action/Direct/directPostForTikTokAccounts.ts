@@ -116,8 +116,6 @@ export async function directPostForTikTokAccounts(config: {
     console.log("Post ID:", postResult.postId);
     console.log("Post URL:", postResult.postUrl);
     console.log("Message:", postResult.message);
-    console.log("Complete data structure:");
-    console.log(JSON.stringify(postResult.data, null, 2));
 
     if (postResult.success) {
       try {

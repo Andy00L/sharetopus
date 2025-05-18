@@ -402,12 +402,8 @@ export default function BatchedPostCard({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-
                     // First close all dialogs
                     setIsOpen(false);
-
-                    // Wait for dialog animations to complete
-
                     // Then open the reschedule dialog separately
                     setRescheduleOpen(true);
                     // Use longer delay for safety
