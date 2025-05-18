@@ -387,75 +387,71 @@ export default function BatchedPostCard({
       <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
         <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
           <AlertDialogHeader className="flex-shrink-0">
-            <div className="flex items-center justify-between gap-2">
-              <AlertDialogTitle>
-                Scheduled Posts ({posts.length})
-              </AlertDialogTitle>
-              <div>
-                {canReschedule && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mr-2 cursor-pointer"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-
-                      // First close all dialogs
-                      setIsOpen(false);
-
-                      // Wait for dialog animations to complete
-
-                      // Then open the reschedule dialog separately
-                      setRescheduleOpen(true);
-                      // Use longer delay for safety
-                    }}
-                  >
-                    <CalendarIcon className="h-4 w-4 mr-1 cursor-pointer" />
-                    Reschedule
-                  </Button>
-                )}
-                {canCancel && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="mr-2 cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCancelOpen(true);
-                      setIsOpen(false);
-                    }}
-                  >
-                    <X className="h-4 w-4 mr-1" />
-                    Cancel
-                  </Button>
-                )}
-                {canResume && (
-                  <Button
-                    size="sm"
-                    className="cursor-pointer"
-                    variant="outline"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      runAction(resumeAllPosts);
-                      setIsOpen(false);
-                    }}
-                  >
-                    <PlayCircle className="h-4 w-4 mr-1" />
-                    Resume
-                  </Button>
-                )}
-              </div>
-            </div>
-            <AlertDialogDescription>
+            <AlertDialogTitle className="mb-2">
+              Scheduled Posts ({posts.length})
+            </AlertDialogTitle>{" "}
+            <AlertDialogDescription className="mb-4">
               Scheduled for {formattedDate}
             </AlertDialogDescription>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {canReschedule && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className=" cursor-pointer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // First close all dialogs
+                    setIsOpen(false);
+
+                    // Wait for dialog animations to complete
+
+                    // Then open the reschedule dialog separately
+                    setRescheduleOpen(true);
+                    // Use longer delay for safety
+                  }}
+                >
+                  <CalendarIcon className="h-4 w-4 mr-1 cursor-pointer" />
+                  Reschedule
+                </Button>
+              )}
+              {canCancel && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mr-2 cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCancelOpen(true);
+                    setIsOpen(false);
+                  }}
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Cancel
+                </Button>
+              )}
+              {canResume && (
+                <Button
+                  size="sm"
+                  className="cursor-pointer"
+                  variant="outline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    runAction(resumeAllPosts);
+                    setIsOpen(false);
+                  }}
+                >
+                  <PlayCircle className="h-4 w-4 mr-1" />
+                  Resume
+                </Button>
+              )}
+            </div>
           </AlertDialogHeader>
 
           <div className="py-3 overflow-y-auto flex-grow">
-            <h4 className="text-sm font-medium mb-2 sticky top-0 bg-background z-10 py-1">
-              Platforms
-            </h4>
+            <h4 className="text-sm font-medium mb-2 ">Platforms</h4>
             <div className="flex flex-col gap-4">
               {posts.map((post) => (
                 <PlatformContentDropdown key={post.id} post={post} />
