@@ -385,8 +385,8 @@ export default function BatchedPostCard({
 
       {/* Detail Dialog */}
       <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
-        <AlertDialogContent className="sm:max-w-[450px]">
-          <AlertDialogHeader>
+        <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
+          <AlertDialogHeader className="flex-shrink-0">
             <div className="flex items-center justify-between gap-2">
               <AlertDialogTitle>
                 Scheduled Posts ({posts.length})
@@ -452,8 +452,10 @@ export default function BatchedPostCard({
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="py-3">
-            <h4 className="text-sm font-medium mb-2">Platforms</h4>
+          <div className="py-3 overflow-y-auto flex-grow">
+            <h4 className="text-sm font-medium mb-2 sticky top-0 bg-background z-10 py-1">
+              Platforms
+            </h4>
             <div className="flex flex-col gap-4">
               {posts.map((post) => (
                 <PlatformContentDropdown key={post.id} post={post} />
@@ -461,7 +463,7 @@ export default function BatchedPostCard({
             </div>
           </div>
 
-          <AlertDialogFooter className="flex justify-between">
+          <AlertDialogFooter className="flex justify-between flex-shrink-0">
             <Button
               variant="destructive"
               className="cursor-pointer"
