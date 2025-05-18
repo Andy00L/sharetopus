@@ -25,6 +25,7 @@ import {
   Check,
   Clock,
   PlayCircle,
+  RefreshCw,
   Trash2,
   X,
 } from "lucide-react";
@@ -32,9 +33,11 @@ import {
 import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancelScheduledPost";
 import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
 import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resumeScheduledPost";
+import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/updateScheduledTime";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScheduledPost } from "@/lib/types/dbTypes";
-import RescheduleDialog from "./RescheduleDialog";
 import PlatformContentDropdown from "./PlatformContentDropdown/PlatformContentDropdown";
 
 interface BatchedPostCardProps {
@@ -70,6 +73,12 @@ export default function BatchedPostCard({
   const canResume = posts.some((post) => post.status === "cancelled");
   const canReschedule = canCancel || canResume;
 
+  const [rescheduleDate, setRescheduleDate] = useState<string>(
+    format(new Date(firstPost.scheduled_at), "yyyy-MM-dd")
+  );
+  const [rescheduleTime, setRescheduleTime] = useState<string>(
+    format(new Date(firstPost.scheduled_at), "HH:mm")
+  );
   // Generate status badge
   const getStatusBadge = () => {
     switch (status) {
@@ -162,7 +171,42 @@ export default function BatchedPostCard({
       setLoading(false);
     }
   };
+  // Add this function to the component
+  const handleRescheduleSubmit = async () => {
+    if (!userId) return;
 
+    const postIds = posts.map((post) => post.id);
+    const scheduledDateTime = new Date(`${rescheduleDate}T${rescheduleTime}`);
+
+    setLoading(true);
+
+    try {
+      const result = await updateScheduledTimeBatch(
+        postIds,
+        scheduledDateTime,
+        userId
+      );
+
+      if (result.success) {
+        toast.success(result.message);
+        setRescheduleOpen(false);
+        setIsOpen(false);
+        setCancelOpen(false);
+        setDeleteOpen(false);
+
+        setTimeout(() => {
+          router.refresh();
+        }, 300);
+        return;
+      } else {
+        toast.error(result.message);
+      }
+    } catch {
+      toast.error("Failed to reschedule posts");
+    } finally {
+      setLoading(false);
+    }
+  };
   // Cancel all posts in batch
   const cancelAllPosts = async () => {
     try {
@@ -278,8 +322,12 @@ export default function BatchedPostCard({
   };
   useEffect(() => {
     if (!rescheduleOpen && !cancelOpen && !deleteOpen && !isOpen) {
-      // Reset all states to ensure clean state after dialogs close
+      // Reset all dialog-related states
       setLoading(false);
+      setIsOpen(false); // Explicitly ensure main dialog is closed
+      setRescheduleOpen(false);
+      setCancelOpen(false);
+      setDeleteOpen(false);
     }
   }, [rescheduleOpen, cancelOpen, deleteOpen, isOpen]);
 
@@ -287,7 +335,7 @@ export default function BatchedPostCard({
     <>
       {/* Main Card */}
       <Card
-        className="overflow-hidden border shadow-sm h-full cursor-pointer transition-all duration-200 hover:shadow-md hover:bg-accent/50"
+        className="overflow-hidden border shadow-sm h-full cursor-pointer transition-all duration-200 hover:shadow-md hover:bg-accent/50 "
         onClick={() => setIsOpen(true)}
       >
         <CardHeader>
@@ -318,18 +366,20 @@ export default function BatchedPostCard({
           </div>
         </CardContent>*/}
 
-        <CardFooter className="p-3 pt-0 mt-auto flex flex-wrap gap-2 items-center">
+        <CardFooter className="p-3 pt-0 mt-auto">
           {/* Show avatars for all social accounts */}
-          {posts.map((post) => (
-            <SocialAvatarWrapper
-              key={post.id}
-              src={post.social_accounts?.avatar_url}
-              alt={`${post.platform} Account`}
-              platform={post.platform}
-              className="h-8 w-8"
-              size={32}
-            />
-          ))}
+          <div className="flex gap-2 pt-3 pl-3 items-center overflow-x-auto  w-full">
+            {posts.map((post) => (
+              <SocialAvatarWrapper
+                key={post.id}
+                src={post.social_accounts?.avatar_url}
+                alt={`${post.platform} Account`}
+                platform={post.platform}
+                className="h-8 w-8 flex-shrink-0"
+                size={32}
+              />
+            ))}
+          </div>
         </CardFooter>
       </Card>
 
@@ -346,14 +396,22 @@ export default function BatchedPostCard({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="mr-2"
+                    className="mr-2 cursor-pointer"
                     onClick={(e) => {
+                      e.preventDefault();
                       e.stopPropagation();
-                      setRescheduleOpen(true);
+
+                      // First close all dialogs
                       setIsOpen(false);
+
+                      // Wait for dialog animations to complete
+
+                      // Then open the reschedule dialog separately
+                      setRescheduleOpen(true);
+                      // Use longer delay for safety
                     }}
                   >
-                    <CalendarIcon className="h-4 w-4 mr-1" />
+                    <CalendarIcon className="h-4 w-4 mr-1 cursor-pointer" />
                     Reschedule
                   </Button>
                 )}
@@ -361,7 +419,7 @@ export default function BatchedPostCard({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="mr-2"
+                    className="mr-2 cursor-pointer"
                     onClick={(e) => {
                       e.stopPropagation();
                       setCancelOpen(true);
@@ -375,6 +433,7 @@ export default function BatchedPostCard({
                 {canResume && (
                   <Button
                     size="sm"
+                    className="cursor-pointer"
                     variant="outline"
                     onClick={(e) => {
                       e.stopPropagation();
@@ -405,6 +464,7 @@ export default function BatchedPostCard({
           <AlertDialogFooter className="flex justify-between">
             <Button
               variant="destructive"
+              className="cursor-pointer"
               size="sm"
               onClick={() => {
                 setDeleteOpen(true);
@@ -414,23 +474,84 @@ export default function BatchedPostCard({
               <Trash2 className="h-4 w-4 mr-1" />
               Delete
             </Button>
-            <AlertDialogCancel>Close</AlertDialogCancel>
+            <AlertDialogCancel className="cursor-pointer">
+              Close
+            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       {/* Reschedule Dialog */}
-      <RescheduleDialog
-        post={firstPost}
-        isOpen={rescheduleOpen}
-        onClose={() => setRescheduleOpen(false)}
-        userId={userId}
-        onSuccess={() => {
-          router.refresh();
-          setRescheduleOpen(false);
-        }}
-        postIds={posts.map((post) => post.id)}
-      />
+      {rescheduleOpen && (
+        <AlertDialog
+          open={rescheduleOpen}
+          onOpenChange={(open) => !open && setRescheduleOpen(false)}
+        >
+          <AlertDialogContent className="sm:max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Reschedule {posts.length} Posts
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Select a new date and time for these posts
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="date">Date</Label>
+                <Input
+                  id="date"
+                  type="date"
+                  value={rescheduleDate}
+                  min={format(new Date(), "yyyy-MM-dd")}
+                  onChange={(e) => setRescheduleDate(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="time">Time</Label>
+                <Input
+                  id="time"
+                  type="time"
+                  value={rescheduleTime}
+                  onChange={(e) => setRescheduleTime(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+            </div>
+
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                className="cursor-pointer"
+                onClick={() => setRescheduleOpen(false)}
+                disabled={loading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleRescheduleSubmit}
+                className="cursor-pointer"
+                disabled={loading}
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  <>
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    Reschedule Posts
+                  </>
+                )}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
 
       {/* Cancel Dialog */}
       <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
@@ -443,9 +564,11 @@ export default function BatchedPostCard({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Posts</AlertDialogCancel>
+            <AlertDialogCancel className="cursor-pointer">
+              Keep Posts
+            </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-yellow-500 hover:bg-yellow-600"
+              className="bg-yellow-500 hover:bg-yellow-600 cursor-pointer"
               onClick={() => runAction(cancelAllPosts)}
             >
               Cancel All Posts
@@ -465,9 +588,11 @@ export default function BatchedPostCard({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep Posts</AlertDialogCancel>
+            <AlertDialogCancel className="cursor-pointer">
+              Keep Posts
+            </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-red-500 hover:bg-red-600"
+              className="bg-red-500 hover:bg-red-600 cursor-pointer"
               onClick={() => runAction(deleteAllPosts)}
             >
               Delete Permanently

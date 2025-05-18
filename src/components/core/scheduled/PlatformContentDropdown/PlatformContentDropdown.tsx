@@ -14,7 +14,10 @@ export default function PlatformContentDropdown({
   post,
 }: PlatformContentDropdownProps) {
   const [expanded, setExpanded] = useState(false);
-
+  const truncateText = (text: string, maxLength: number = 100) => {
+    if (!text || text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + "...";
+  };
   return (
     <div className="border rounded-md overflow-hidden">
       {/* Platform header - always visible */}
@@ -45,7 +48,7 @@ export default function PlatformContentDropdown({
 
       {/* Content dropdown - visible when expanded */}
       {expanded && (
-        <div className="p-3 pt-0 border-t bg-muted/30 max-h-[150px] overflow-y-auto">
+        <div className="p-3 pt-0 border-t bg-muted/30">
           {post.post_title && (
             <div className="mt-2">
               <p className="text-sm font-medium">Title:</p>
@@ -56,8 +59,8 @@ export default function PlatformContentDropdown({
           {post.post_description && (
             <div className="mt-2">
               <p className="text-sm font-medium">Description:</p>
-              <p className="text-sm text-muted-foreground  max-h-[60px] overflow-y-auto">
-                {post.post_description}
+              <p className="text-sm text-muted-foreground ">
+                {truncateText(post.post_description, 120)}{" "}
               </p>
             </div>
           )}
