@@ -669,7 +669,15 @@ export default function SocialPostForm({
     Record<string, boolean>
   >({});
   const [openTab, setOpenTab] = useState<string | undefined>(undefined);
-
+  const CAPTION_LIMITS = {
+    default: 2200,
+    twitter: 280,
+    facebook: 63206,
+    instagram: 2200,
+    linkedin: 3000,
+    pinterest: 500,
+    tiktok: 2200,
+  };
   return (
     <>
       {/**No accounts avaible */}
@@ -814,24 +822,32 @@ export default function SocialPostForm({
             <Label htmlFor="text-content">
               {postType === "text" ? "Content" : "Caption"}
             </Label>
-            <Textarea
-              id="text-content"
-              value={textInputs.description}
-              onChange={(e) =>
-                setTextInputs({
-                  ...textInputs,
-                  description: e.target.value,
-                })
-              }
-              placeholder={
-                postType === "text"
-                  ? "Write your post content here"
-                  : "Write a caption for your post"
-              }
-              rows={6}
-              required
-            />
-
+            <div className="space-y-2">
+              <Textarea
+                id="text-content"
+                value={textInputs.description}
+                onChange={(e) =>
+                  setTextInputs({
+                    ...textInputs,
+                    description: e.target.value.slice(
+                      0,
+                      CAPTION_LIMITS.default
+                    ),
+                  })
+                }
+                placeholder={
+                  postType === "text"
+                    ? "Write your post content here"
+                    : "Write a caption for your post"
+                }
+                rows={6}
+                required
+              />
+              <div className="text-xs text-right text-muted-foreground">
+                {textInputs.description.length} / {CAPTION_LIMITS.default}{" "}
+                characters
+              </div>
+            </div>
             {/* Post details section */}
             {(postType === "video" || postType === "image") && (
               <>
@@ -960,28 +976,56 @@ export default function SocialPostForm({
                                     </Button>
                                   </div>
 
-                                  <Textarea
-                                    value={accountData?.description || ""}
-                                    onChange={(e) => {
-                                      if (isEditing) {
-                                        setAccountContent((prev) =>
-                                          prev.map((item) =>
-                                            item.accountId === account.id
-                                              ? {
-                                                  ...item,
-                                                  description: e.target.value,
-                                                  isCustomized: true,
-                                                }
-                                              : item
-                                          )
-                                        );
+                                  <div className="space-y-2">
+                                    <Textarea
+                                      value={accountData?.description || ""}
+                                      onChange={(e) => {
+                                        if (isEditing) {
+                                          // Apply the platform-specific character limit
+                                          const platformLimit =
+                                            CAPTION_LIMITS[
+                                              account.platform as keyof typeof CAPTION_LIMITS
+                                            ] || CAPTION_LIMITS.default;
+                                          setAccountContent((prev) =>
+                                            prev.map((item) =>
+                                              item.accountId === account.id
+                                                ? {
+                                                    ...item,
+                                                    description:
+                                                      e.target.value.slice(
+                                                        0,
+                                                        platformLimit
+                                                      ),
+                                                    isCustomized: true,
+                                                  }
+                                                : item
+                                            )
+                                          );
+                                        }
+                                      }}
+                                      placeholder="Caption for this account"
+                                      rows={3}
+                                      disabled={!isEditing}
+                                      className={
+                                        !isEditing ? "bg-muted/50" : ""
                                       }
-                                    }}
-                                    placeholder="Caption for this account"
-                                    rows={3}
-                                    disabled={!isEditing}
-                                    className={!isEditing ? "bg-muted/50" : ""}
-                                  />
+                                      maxLength={
+                                        CAPTION_LIMITS[
+                                          account.platform as keyof typeof CAPTION_LIMITS
+                                        ] || CAPTION_LIMITS.default
+                                      }
+                                    />
+                                    {isEditing && (
+                                      <div className="text-xs text-right text-muted-foreground">
+                                        {accountData?.description?.length || 0}{" "}
+                                        /{" "}
+                                        {CAPTION_LIMITS[
+                                          account.platform as keyof typeof CAPTION_LIMITS
+                                        ] || CAPTION_LIMITS.default}{" "}
+                                        characters
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
