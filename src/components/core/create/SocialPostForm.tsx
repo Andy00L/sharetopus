@@ -840,6 +840,8 @@ export default function SocialPostForm({
                     ? "Write your post content here"
                     : "Write a caption for your post"
                 }
+                className="max-h-60 overflow-y-auto"
+                maxLength={CAPTION_LIMITS.default}
                 rows={6}
                 required
               />
@@ -848,6 +850,7 @@ export default function SocialPostForm({
                 characters
               </div>
             </div>
+
             {/* Post details section */}
             {(postType === "video" || postType === "image") && (
               <>
@@ -1006,9 +1009,9 @@ export default function SocialPostForm({
                                       placeholder="Caption for this account"
                                       rows={3}
                                       disabled={!isEditing}
-                                      className={
+                                      className={`max-h-40 overflow-y-auto ${
                                         !isEditing ? "bg-muted/50" : ""
-                                      }
+                                      }`}
                                       maxLength={
                                         CAPTION_LIMITS[
                                           account.platform as keyof typeof CAPTION_LIMITS
