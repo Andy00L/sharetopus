@@ -114,7 +114,7 @@ export async function POST() {
       scopes
     )}&redirect_uri=${encodeURIComponent(
       redirectUri
-    )}&state=${state}&response_type=code&force_login=true&auth_type=reauthenticate`;
+    )}&state=${state}&response_type=code&force_login=true&auth_type=reauthenticate&timestamp=${Date.now()}`;
 
     // Return the authorization URL to the client
     return NextResponse.json({
