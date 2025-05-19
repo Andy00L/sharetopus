@@ -12,9 +12,9 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "p16-pu-sign-no.tiktokcdn-eu.com", // Add the specific hostname
+        hostname: "**.tiktok**.com",
         port: "",
-        pathname: "/tos-no1a-avt-0068c001-no/**", // Allow any path under this prefix
+        pathname: "/**",
       },
       {
         protocol: "https",
