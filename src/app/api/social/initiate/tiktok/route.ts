@@ -105,10 +105,14 @@ export async function POST() {
       );
     }
 
+    const clientKey =
+      process.env.NODE_ENV === "development"
+        ? process.env.TIKTOK_CLIENT_KEY_DEV
+        : process.env.TIKTOK_CLIENT_KEY;
     // Construct TikTok OAuth URL
-    const authUrl = `https://www.tiktok.com/v2/auth/authorize/?client_key=${
-      process.env.TIKTOK_CLIENT_KEY
-    }&scope=${encodeURIComponent(scopes)}&redirect_uri=${encodeURIComponent(
+    const authUrl = `https://www.tiktok.com/v2/auth/authorize/?client_key=${clientKey}&scope=${encodeURIComponent(
+      scopes
+    )}&redirect_uri=${encodeURIComponent(
       redirectUri
     )}&state=${state}&response_type=code&force_login=true&auth_type=reauthenticate`;
 

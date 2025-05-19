@@ -1,13 +1,21 @@
-import "server-only";
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
+import "server-only";
 
 // lib/api/tiktok/auth.ts
 export async function exchangeTikTokCode(
   code: string
 ): Promise<TokenExchangeResponse> {
   // Get configuration from environment variables
-  const client_id = process.env.TIKTOK_CLIENT_KEY;
-  const client_secret = process.env.TIKTOK_CLIENT_SECRET;
+  const client_id =
+    process.env.NODE_ENV === "development"
+      ? process.env.TIKTOK_CLIENT_KEY_DEV
+      : process.env.TIKTOK_CLIENT_KEY;
+
+  const client_secret =
+    process.env.NODE_ENV === "development"
+      ? process.env.TIKTOK_CLIENT_SECRET_DEV
+      : process.env.TIKTOK_CLIENT_SECRET;
+
   const redirect_uri = process.env.TIKTOK_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {

@@ -66,7 +66,7 @@ const AccountsPageWithData = async () => {
               <p className="text-xs text-destructive mt-1">
                 You have reached the account limit for your subscription.
                 <Link
-                  href="/pricing"
+                  href="/#pricing"
                   className="text-primary ml-1 hover:underline"
                 >
                   Upgrade

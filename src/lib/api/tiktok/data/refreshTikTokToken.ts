@@ -1,5 +1,5 @@
-import "server-only";
 import { TokenExchangeResponse } from "@/lib/types/dbTypes";
+import "server-only";
 
 /**
  * Rafraîchit un token TikTok expiré
@@ -7,8 +7,15 @@ import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 export default async function refreshTikTokToken(
   refreshToken: string
 ): Promise<TokenExchangeResponse | null> {
-  const clientKey = process.env.TIKTOK_CLIENT_KEY;
-  const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
+  const clientKey =
+    process.env.NODE_ENV === "development"
+      ? process.env.TIKTOK_CLIENT_KEY_DEV
+      : process.env.TIKTOK_CLIENT_KEY;
+
+  const clientSecret =
+    process.env.NODE_ENV === "development"
+      ? process.env.TIKTOK_CLIENT_SECRET_DEV
+      : process.env.TIKTOK_CLIENT_SECRET;
 
   if (!clientKey || !clientSecret) {
     console.error("[TikTok Refresh Token] Configuration manquante");
