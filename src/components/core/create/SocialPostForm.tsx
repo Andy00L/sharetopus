@@ -331,7 +331,7 @@ export default function SocialPostForm({
           ...prevBoards,
           {
             boardID: `no-boards-${accountId}`,
-            boardName: result.success ? "no-boards" : "error",
+            boardName: "no-boards",
             accountId: accountId,
             isSelected: false,
           },
