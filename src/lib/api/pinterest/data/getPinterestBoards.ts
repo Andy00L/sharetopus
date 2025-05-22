@@ -75,8 +75,11 @@ export async function getPinterestBoards(
       };
     }
     const data = await response.json();
-    console.log("[GetPinterestBoards] : existing");
-    return data.items ?? [];
+    console.log(`[GetPinterestBoards] : ${data.items[0].name}`);
+    return {
+      boards: (data.items ?? []) as PinterestBoard[],
+      success: true,
+    };
   } catch (error) {
     console.error("[GetPinterestBoards] Unexpected error:", error);
     return {

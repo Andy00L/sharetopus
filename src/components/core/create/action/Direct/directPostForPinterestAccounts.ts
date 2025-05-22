@@ -33,6 +33,7 @@ export async function directPostForPinterestAccounts(config: {
   batchId: string;
   mediaType: string;
   postType: "image" | "video" | "text";
+  thumbnailBuffer?: Buffer;
   buffer?: Buffer;
   isCronJob?: boolean;
 }): Promise<ScheduleResult> {
@@ -112,6 +113,7 @@ export async function directPostForPinterestAccounts(config: {
         fileName: fileName,
         userId: userId ?? "",
         buffer,
+        thumbnailBuffer: config.thumbnailBuffer,
         supabaseBucket: "scheduled-videos",
       });
       // Add detailed console logging

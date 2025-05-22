@@ -36,6 +36,7 @@ export async function postToPinterest({
   mediaType,
   fileName, // Added filename parameter
   buffer,
+  thumbnailBuffer,
 }: {
   accessToken: string;
   boardId: string;
@@ -47,6 +48,7 @@ export async function postToPinterest({
   fileName: string;
   userId: string;
   buffer?: Buffer;
+  thumbnailBuffer?: Buffer;
   supabaseBucket: string;
 }): Promise<PinterestPostResult> {
   try {
@@ -234,11 +236,17 @@ export async function postToPinterest({
       `[Pinterest Post Function] Creating pin with media_id: ${media_id}`
     );
 
+    let thumbnailBase64 = null;
+    if (thumbnailBuffer) {
+      console.log("[Pinterest Post Function] Adding custom thumbnail");
+      thumbnailBase64 = thumbnailBuffer.toString("base64");
+    }
     const pinRequestBody = {
       board_id: boardId,
       media_source: {
         media_id: media_id,
         source_type: "video_id", // Add this line
+        cover_image_base64: thumbnailBase64,
       },
       title: title ?? "",
       description: description ?? "",

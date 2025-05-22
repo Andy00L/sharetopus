@@ -200,7 +200,9 @@ export default function SocialPostForm({
     if (postType === "image" && account.platform === "tiktok") {
       return false;
     }
-
+    if (postType === "video" && account.platform === "pinterest") {
+      return false;
+    }
     // Apply search filter
     if (searchQuery.trim()) {
       const searchFields = [
