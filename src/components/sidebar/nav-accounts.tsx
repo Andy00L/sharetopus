@@ -23,7 +23,7 @@ export function NavAccounts() {
             <SidebarMenuButton
               asChild
               className={
-                pathname === "/connections" ? "bg-blue-500 text-white" : ""
+                pathname === "/connections" ? "bg-[#FF4A20] text-white" : ""
               }
             >
               <Link href="/connections">

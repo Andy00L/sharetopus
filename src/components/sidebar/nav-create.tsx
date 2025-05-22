@@ -23,7 +23,7 @@ export function NavCreate() {
             <SidebarMenuButton
               asChild
               className={
-                pathname.startsWith("/create") ? "bg-blue-500 text-white" : ""
+                pathname.startsWith("/create") ? "bg-[#FF4A20] text-white" : ""
               }
             >
               <Link href="/create">
@@ -36,7 +36,9 @@ export function NavCreate() {
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              className={pathname === "/studio" ? "bg-blue-500 text-white" : ""}
+              className={
+                pathname === "/studio" ? "bg-[#FF4A20] text-white" : ""
+              }
             >
               <Link href="/studio">
                 <LayoutDashboard className="h-4 w-4" />

@@ -180,13 +180,13 @@ export default function PricingSection() {
                 )}
 
                 {plan.popular && (
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
+                  <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
                     Most popular
                   </div>
                 )}
 
                 {plan.popular && (
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
+                  <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
                     Best deal
                   </div>
                 )}

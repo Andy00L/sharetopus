@@ -1,5 +1,6 @@
 "use client";
 
+import avatar from "../../../public/trans_logo (1).webp";
 import {
   Sidebar,
   SidebarFooter,
@@ -9,13 +10,13 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { ArrowUpCircleIcon } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { NavAccounts } from "./nav-accounts";
 import { NavCreate } from "./nav-create";
 import NavPost from "./nav-post";
 import { NavUser } from "./nav-user";
+import Image from "next/image";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -28,8 +29,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               asChild
               className="data-[slot=sidebar-menu-button]:!p-1.5"
             >
-              <Link href="/">
-                <ArrowUpCircleIcon className="h-5 w-5" />
+              <Link href="/create">
+                <Image
+                  src={avatar}
+                  alt="Sharetopus logo"
+                  height={42}
+                  width={42}
+                  className="object-cover"
+                />
                 <span className="text-base font-semibold">Sharetopus</span>
               </Link>
             </SidebarMenuButton>

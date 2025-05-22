@@ -18,6 +18,7 @@ import { SidebarGroup } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { createPinterestBoard } from "@/lib/api/pinterest/data/createPinterestBoard";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
@@ -113,6 +114,9 @@ export default function SocialPostForm({
   const [searchQuery, setSearchQuery] = useState("");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
+  const [checkedAccountIds, setCheckedAccountIds] = useState<string[]>([]);
+  const [newBoardName, setNewBoardName] = useState("");
+  const [isCreatingBoard, setIsCreatingBoard] = useState(false);
   // Reset form state
   const resetForm = () => {
     setSelectedFile(null);
@@ -150,6 +154,9 @@ export default function SocialPostForm({
     setBoards([]);
     setEditingAccounts({});
     setOpenTab(undefined);
+    setCheckedAccountIds([]);
+    setNewBoardName("");
+    setIsCreatingBoard(false);
   };
 
   const [selectedAccounts, setSelectedAccounts] = useState<
@@ -221,6 +228,46 @@ export default function SocialPostForm({
     }));
   };
 
+  const handleCreateBoard = async (accountId: string) => {
+    if (!newBoardName.trim()) {
+      toast.error("Please enter a board name");
+      return;
+    }
+
+    const account = accounts.find((acc) => acc.id === accountId);
+    if (!account?.access_token) return;
+
+    setIsCreatingBoard(true);
+
+    try {
+      const result = await createPinterestBoard(
+        account.access_token,
+        newBoardName
+      );
+
+      if (result) {
+        toast.success("Board created successfully!");
+        setNewBoardName("");
+
+        // Remove the "no-boards" placeholder and refetch boards
+        setBoards((prev) =>
+          prev.filter(
+            (b) => !(b.accountId === accountId && b.boardName === "no-boards")
+          )
+        );
+        setCheckedAccountIds((prev) => prev.filter((id) => id !== accountId));
+
+        // Trigger refetch
+        loadPlatformSpecificData();
+      } else {
+        toast.error("Failed to create board");
+      }
+    } catch {
+      toast.error("Error creating board");
+    } finally {
+      setIsCreatingBoard(false);
+    }
+  };
   // Load platform-specific data based on selected accounts
   // Change your loadPlatformSpecificData function to use useCallback
   const loadPlatformSpecificData = useCallback(() => {
@@ -236,7 +283,9 @@ export default function SocialPostForm({
 
     // Filter to only accounts that don't already have boards loaded
     const accountsToFetch = pinterestIds.filter(
-      (accountId) => !boards.some((board) => board.accountId === accountId)
+      (accountId) =>
+        !boards.some((board) => board.accountId === accountId) &&
+        !checkedAccountIds.includes(accountId)
     );
 
     // If no accounts need fetching, just finish loading
@@ -245,36 +294,55 @@ export default function SocialPostForm({
       return;
     }
 
+    // Track how many accounts have completed processing
+    let completedCount = 0;
+
     // Fetch boards only for accounts that don't have boards yet
     accountsToFetch.forEach(async (accountId) => {
       const account = accounts.find((acc) => acc.id === accountId);
-      if (!account?.access_token) return;
+      if (!account?.access_token) {
+        completedCount++;
+        if (completedCount === accountsToFetch.length) {
+          setIsLoadingBoards(false);
+        }
+        return;
+      }
 
-      const fetchedBoards = await getPinterestBoards(account.access_token);
+      // Mark this account as checked BEFORE making the request
+      setCheckedAccountIds((prev) => [...prev, accountId]);
 
-      const formatedBoards = fetchedBoards.map((board) => ({
-        boardID: board.id,
-        boardName: board.name,
-        accountId: accountId,
-        isSelected: false,
-      }));
+      const result = await getPinterestBoards(account.access_token, userId);
 
-      setBoards((prevBoards) => {
-        const existingBoardIds = new Set(
-          prevBoards
-            .filter((board) => board.accountId === accountId)
-            .map((board) => board.boardID)
-        );
+      if (result.success && result.boards.length > 0) {
+        // Account has boards - add them to state
+        const formatedBoards = result.boards.map((board) => ({
+          boardID: board.id,
+          boardName: board.name,
+          accountId: accountId,
+          isSelected: false,
+        }));
 
-        const newBoards = formatedBoards.filter(
-          (board) => !existingBoardIds.has(board.boardID)
-        );
-        // Keep existing boards and add new ones
-        return [...prevBoards, ...newBoards];
-      });
-      setIsLoadingBoards(false);
+        setBoards((prevBoards) => [...prevBoards, ...formatedBoards]);
+      } else {
+        // Account has no boards OR there was an error - add placeholder to prevent re-fetching
+        setBoards((prevBoards) => [
+          ...prevBoards,
+          {
+            boardID: `no-boards-${accountId}`,
+            boardName: result.success ? "no-boards" : "error",
+            accountId: accountId,
+            isSelected: false,
+          },
+        ]);
+      }
+
+      // Mark as completed
+      completedCount++;
+      if (completedCount === accountsToFetch.length) {
+        setIsLoadingBoards(false);
+      }
     });
-  }, [accounts, selectedAccounts, boards]);
+  }, [accounts, selectedAccounts, boards, checkedAccountIds]);
 
   // Add this useEffect to handle account content initialization
   useEffect(() => {
@@ -840,7 +908,7 @@ export default function SocialPostForm({
                     ? "Write your post content here"
                     : "Write a caption for your post"
                 }
-                className="max-h-60 overflow-y-auto"
+                className="max-h-60 overflow-y-auto "
                 maxLength={CAPTION_LIMITS.default}
                 rows={6}
                 required
@@ -1064,11 +1132,47 @@ export default function SocialPostForm({
                                 )}
 
                                 {!isLoadingBoards &&
-                                  boards.filter(
-                                    (board) => board.accountId === account.id
-                                  ).length === 0 && (
-                                    <div className="p-2 border rounded-md text-gray-500">
-                                      No boards available for this account
+                                  boards.some(
+                                    (board) =>
+                                      board.accountId === account.id &&
+                                      board.boardName === "no-boards"
+                                  ) && (
+                                    <div className="flex gap-2">
+                                      <Input
+                                        placeholder="Board name"
+                                        value={newBoardName}
+                                        onChange={(e) =>
+                                          setNewBoardName(e.target.value)
+                                        }
+                                        disabled={isCreatingBoard}
+                                      />
+                                      <Button
+                                        onClick={() =>
+                                          handleCreateBoard(account.id)
+                                        }
+                                        disabled={
+                                          isCreatingBoard ||
+                                          !newBoardName.trim()
+                                        }
+                                      >
+                                        {isCreatingBoard ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          "Create"
+                                        )}
+                                      </Button>
+                                    </div>
+                                  )}
+
+                                {!isLoadingBoards &&
+                                  boards.some(
+                                    (board) =>
+                                      board.accountId === account.id &&
+                                      board.boardName === "error"
+                                  ) && (
+                                    <div className="p-2 border rounded-md text-red-500">
+                                      Error loading boards for this account.
+                                      Please try reconnecting.
                                     </div>
                                   )}
 
@@ -1103,7 +1207,9 @@ export default function SocialPostForm({
                                         {boards
                                           .filter(
                                             (board) =>
-                                              board.accountId === account.id
+                                              board.accountId === account.id &&
+                                              board.boardName !== "no-boards" &&
+                                              board.boardName !== "error"
                                           )
                                           .map((board) => (
                                             <SelectItem

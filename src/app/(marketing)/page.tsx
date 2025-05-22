@@ -1,13 +1,13 @@
 import Cta from "@/components/marketing-page/cta";
 import Features from "@/components/marketing-page/feature";
 import Footer from "@/components/marketing-page/footer";
-import Hero from "@/components/marketing-page/hero";
+import Hero from "@/components/marketing-page/hero/hero";
 import Navbar from "@/components/marketing-page/nav-bar/nav-bar";
 import Pricing from "@/components/marketing-page/pricing";
 
 export default function page() {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col scroll-smooth bg-white">
       <Navbar />
       <div className="flex-1">
         <div>

@@ -22,7 +22,7 @@ export default function NavPost() {
             <SidebarMenuButton
               asChild
               className={
-                pathname === "/scheduled" ? "bg-blue-500 text-white" : ""
+                pathname === "/scheduled" ? "bg-[#FF4A20] text-white" : ""
               }
             >
               <Link href="/scheduled">
@@ -35,7 +35,9 @@ export default function NavPost() {
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
-              className={pathname === "/posted" ? "bg-blue-500 text-white" : ""}
+              className={
+                pathname === "/posted" ? "bg-[#FF4A20] text-white" : ""
+              }
             >
               <Link href="/posted">
                 <CheckCircle className="h-4 w-4" />
