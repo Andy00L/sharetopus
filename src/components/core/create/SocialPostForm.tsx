@@ -1088,7 +1088,7 @@ export default function SocialPostForm({
                                       rows={3}
                                       disabled={!isEditing}
                                       className={`max-h-40 overflow-y-auto ${
-                                        !isEditing ? "bg-muted/50" : "bg-white"
+                                        !isEditing ? "bg-muted/20" : "bg-white"
                                       }`}
                                       maxLength={
                                         CAPTION_LIMITS[
