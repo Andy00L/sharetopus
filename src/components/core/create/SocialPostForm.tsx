@@ -959,7 +959,7 @@ export default function SocialPostForm({
                         ) && (
                           <TabsTrigger
                             value="captions"
-                            className="bg-[#e6e6e1]"
+                            className=" cursor-pointer"
                           >
                             Custom Captions
                           </TabsTrigger>
@@ -967,7 +967,7 @@ export default function SocialPostForm({
                         {selectedPinterestAccount.length > 0 && (
                           <TabsTrigger
                             value="pinterest"
-                            className="bg-[#B8B8B8] "
+                            className=" cursor-pointer "
                           >
                             Pinterest Settings
                           </TabsTrigger>
@@ -1001,7 +1001,7 @@ export default function SocialPostForm({
                                         size={42}
                                         className="h-8 w-8"
                                       />
-                                      <span>
+                                      <span className="font-medium">
                                         {account.display_name ??
                                           account.username}
                                       </span>
@@ -1012,6 +1012,7 @@ export default function SocialPostForm({
                                       )}
                                     </div>
                                     <Button
+                                      className="cursor-pointer"
                                       variant="outline"
                                       size="sm"
                                       onClick={() => {
@@ -1056,7 +1057,7 @@ export default function SocialPostForm({
                                     </Button>
                                   </div>
 
-                                  <div className="space-y-2 bg-[#B8B8B8] ">
+                                  <div className="space-y-2 bg-white border rounded-lg ">
                                     <Textarea
                                       value={accountData?.description || ""}
                                       onChange={(e) => {
