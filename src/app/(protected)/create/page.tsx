@@ -66,18 +66,18 @@ export default async function CreatePostPage() {
             p-6 h-full flex flex-col items-center justify-between bg-card
             border-2 border-dashed border-muted-foreground/25
             transition-all duration-200 cursor-pointer
-            hover:border-solid hover:border-primary
-            hover:shadow-lg hover:shadow-primary/5
+            hover:border-solid hover:border-chart-1
+            hover:shadow-lg hover:shadow-chart-1/5
             hover:-translate-y-1
           "
             >
               {/* Icon section */}
               <div className="mb-6 transition-transform duration-200 group-hover:scale-110">
-                <type.icon className="h-16 w-16 text-muted-foreground transition-colors duration-200 group-hover:text-primary" />
+                <type.icon className="h-16 w-16  text-muted-foreground transition-colors duration-200 group-hover:text-primary " />
               </div>
 
               {/* Title section */}
-              <h2 className="text-xl font-semibold mb-8 transition-colors duration-200 group-hover:text-primary">
+              <h2 className="text-xl font-semibold mb-8  transition-colors duration-200 group-hover:text-primary">
                 {type.title}
               </h2>
 

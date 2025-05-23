@@ -755,7 +755,7 @@ export default function SocialPostForm({
 
       {accounts.length !== 0 && (
         <>
-          <SidebarGroup className="flex-1  lg:w-3/6 space-y-6">
+          <SidebarGroup className="flex-1   lg:w-4/6 space-y-6">
             {/* Account selection section */}
             <div>
               <div className="flex-grow space-y-4">
@@ -763,7 +763,7 @@ export default function SocialPostForm({
                 <div className="relative">
                   {!isSearchExpanded ? (
                     // Collapsed state - compact button
-                    <div className="inline-block">
+                    <div className="inline-block ">
                       <button
                         onClick={() => setIsSearchExpanded(true)}
                         className="flex items-center gap-1.5 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-all duration-300 ease-in-out"
@@ -787,7 +787,7 @@ export default function SocialPostForm({
                         </button>
                       </div>
 
-                      <div className="relative w-full transition-all duration-500 ease-out origin-top transform animate-in fade-in-0 slide-in-from-top-2">
+                      <div className=" bg-white border rounded-lg relative w-full transition-all duration-500 ease-out origin-top transform animate-in fade-in-0 slide-in-from-top-2">
                         <Input
                           placeholder="Search accounts..."
                           value={searchQuery}
@@ -837,6 +837,7 @@ export default function SocialPostForm({
                 </div>
               </div>
             </div>
+
             {/*video content*/}
             {postType === "video" && !selectedFile && (
               <VideoUploads
@@ -892,7 +893,7 @@ export default function SocialPostForm({
             <Label htmlFor="text-content">
               {postType === "text" ? "Content" : "Caption"}
             </Label>
-            <div className="space-y-2">
+            <div>
               <Textarea
                 id="text-content"
                 value={textInputs.description}
@@ -910,7 +911,7 @@ export default function SocialPostForm({
                     ? "Write your post content here"
                     : "Write a caption for your post"
                 }
-                className="max-h-60 overflow-y-auto "
+                className="max-h-60 overflow-y-auto  bg-white"
                 maxLength={CAPTION_LIMITS.default}
                 rows={6}
                 required
@@ -956,12 +957,18 @@ export default function SocialPostForm({
                           Object.values(selectedAccounts).filter(Boolean)
                             .length === 1
                         ) && (
-                          <TabsTrigger value="captions">
+                          <TabsTrigger
+                            value="captions"
+                            className="bg-[#e6e6e1]"
+                          >
                             Custom Captions
                           </TabsTrigger>
                         )}
                         {selectedPinterestAccount.length > 0 && (
-                          <TabsTrigger value="pinterest">
+                          <TabsTrigger
+                            value="pinterest"
+                            className="bg-[#B8B8B8] "
+                          >
                             Pinterest Settings
                           </TabsTrigger>
                         )}
@@ -1049,7 +1056,7 @@ export default function SocialPostForm({
                                     </Button>
                                   </div>
 
-                                  <div className="space-y-2">
+                                  <div className="space-y-2 bg-[#B8B8B8] ">
                                     <Textarea
                                       value={accountData?.description || ""}
                                       onChange={(e) => {
@@ -1080,7 +1087,7 @@ export default function SocialPostForm({
                                       rows={3}
                                       disabled={!isEditing}
                                       className={`max-h-40 overflow-y-auto ${
-                                        !isEditing ? "bg-muted/50" : ""
+                                        !isEditing ? "bg-muted/50" : "bg-white"
                                       }`}
                                       maxLength={
                                         CAPTION_LIMITS[
@@ -1108,12 +1115,12 @@ export default function SocialPostForm({
                       {/* Pinterest Settings Tab */}
                       {selectedPinterestAccount.length > 0 && (
                         <TabsContent value="pinterest" className="mt-4">
-                          <div className="space-y-4">
+                          <div className="space-y-4  ">
                             {/* Board selection for each Pinterest account */}
                             {selectedPinterestAccount.map((account) => (
                               <div
                                 key={`pinterest-${account.id}`}
-                                className="space-y-3 border rounded p-3"
+                                className="space-y-3 border rounded p-3 bg-[#e6e6e1]"
                               >
                                 <div className="flex items-center gap-2">
                                   <AvatarWithFallback
@@ -1139,7 +1146,7 @@ export default function SocialPostForm({
                                       board.accountId === account.id &&
                                       board.boardName === "no-boards"
                                   ) && (
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-2 bg-white">
                                       <Input
                                         placeholder="Board name"
                                         value={newBoardName}
@@ -1172,7 +1179,7 @@ export default function SocialPostForm({
                                       board.accountId === account.id &&
                                       board.boardName === "error"
                                   ) && (
-                                    <div className="p-2 border rounded-md text-red-500">
+                                    <div className="p-2 border rounded-md bg-white text-red-500">
                                       Error loading boards for this account.
                                       Please try reconnecting.
                                     </div>
@@ -1202,7 +1209,7 @@ export default function SocialPostForm({
                                         );
                                       }}
                                     >
-                                      <SelectTrigger>
+                                      <SelectTrigger className="bg-white">
                                         <SelectValue placeholder="Select a board" />
                                       </SelectTrigger>
                                       <SelectContent>
@@ -1227,7 +1234,7 @@ export default function SocialPostForm({
                               </div>
                             ))}
                             {/* Single title field for all Pinterest accounts */}
-                            <div className="space-y-2 mb-4">
+                            <div className="space-y-2 mb-4 ">
                               <Label htmlFor="pinterest-title">
                                 Title (Optional)
                               </Label>
@@ -1252,11 +1259,12 @@ export default function SocialPostForm({
                                     )
                                   );
                                 }}
+                                className="bg-white"
                                 placeholder="Add a title for all Pinterest pins"
                               />
                             </div>
                             {/* Single link field for all Pinterest accounts */}
-                            <div className="space-y-2">
+                            <div className="space-y-2 ">
                               <Label htmlFor="pinterest-link">
                                 Link (Optional)
                               </Label>
@@ -1274,6 +1282,7 @@ export default function SocialPostForm({
                                   }));
                                 }}
                                 placeholder="https://example.com"
+                                className="bg-white"
                               />
                             </div>
                           </div>
@@ -1281,8 +1290,6 @@ export default function SocialPostForm({
                       )}
                     </Tabs>
                   </>
-
-                  /* Single account view - simplified when only one account is selected */
                 )}
               </>
             )}
@@ -1306,7 +1313,7 @@ export default function SocialPostForm({
             )}
 
             {/**Scheduling button */}
-            <div className=" p-2.5 border rounded-2xl">
+            <div className=" p-2.5 border rounded-2xl  bg-white">
               {/* Scheduling toggle */}
               <div className="flex items-center  space-x-2 py-2">
                 <Switch

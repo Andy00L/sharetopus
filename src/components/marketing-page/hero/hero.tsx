@@ -75,7 +75,7 @@ export default function Hero() {
                 </div>
                 Customize content for each platform
               </li>
-              <li className="flex items-center">
+              {/**<li className="flex items-center">
                 <div className="rounded-full bg-green-100 p-1 mr-3">
                   <svg
                     className="h-5 w-5 text-green-600"
@@ -92,7 +92,7 @@ export default function Hero() {
                   </svg>
                 </div>
                 Generate viral videos using our studio templates
-              </li>
+              </li>*/}
             </ul>
             <div className="flex flex-wrap mt-10 rounded-full">
               <Link

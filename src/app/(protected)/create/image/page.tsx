@@ -33,7 +33,7 @@ const SocialPostFormWithData = async () => {
 };
 export default function page() {
   return (
-    <SidebarContent className="px-4 py-6 ">
+    <SidebarContent className="px-4 py-6">
       <h1 className="text-2xl font-bold mb-2">Create a image post</h1>
       <div className="flex flex-col lg:flex-row gap-6">
         <Suspense fallback={<SocialPostFormSkeleton />}>
