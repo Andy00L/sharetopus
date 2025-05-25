@@ -73,7 +73,7 @@ const StarIcon = () => (
 // Reusable testimonial card component
 function TestimonialCard({ testimonial }: { testimonial: Testimonial }) {
   return (
-    <div className="p-4 bg-[#EEEFE8] border border-[#DADBD2] flex items-start text-left rounded-[16px] shadow">
+    <div className="p-4 bg-[#EEEFE8] border border-[#DADBD2] flex items-start text-left rounded-[16px] shadow ">
       <AvatarWithFallback
         src={testimonial.avatar.src}
         alt={`${testimonial.name} ReelFarm`}
@@ -112,7 +112,7 @@ function TestimonialCard({ testimonial }: { testimonial: Testimonial }) {
 // Main component
 export default function TestimonialsSection() {
   return (
-    <div className="flex flex-col items-center justify-center mt-4 mb-4 z-99">
+    <div className="flex flex-col items-center justify-center py-10 px-10  mt-4 mb-4 z-99">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-[900px]">
         {testimonials.map((testimonial, index) => (
           <TestimonialCard key={index} testimonial={testimonial} />

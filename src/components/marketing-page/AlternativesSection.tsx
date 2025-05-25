@@ -98,7 +98,7 @@ export default function AlternativesSection() {
   return (
     <section
       id="product"
-      className="w-full max-w-[900px] text-left mt-8 mx-auto"
+      className="w-full max-w-[900px] text-left mt-8 mx-auto py-10 px-10 "
     >
       <h4 className="text-lg text-[#191919] font-semibold">
         Alternatives are expensive.

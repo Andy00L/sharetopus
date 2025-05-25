@@ -1,12 +1,3 @@
-/**import blueskyIcon from "../../../../public/bluesky.svg";
-import facebookIcon from "../../../../public/facebook.svg";
-import instagramIcon from "../../../../public/instagram.svg";
-import linkedinIcon from "../../../../public/linkedin.svg";
-import pinterestIcon from "../../../../public/pinterest.svg";
-import threadsIcon from "../../../../public/threads.svg";
-import tiktokIcon from "../../../../public/tiktok.svg";
-import xIcon from "../../../../public/x.svg";
-import youtubeIcon from "../../../../public/youtube.svg";*/
 import Image from "next/image";
 const PLATFORMS = [
   { alt: "Twitter/X", src: "/x.svg" },
