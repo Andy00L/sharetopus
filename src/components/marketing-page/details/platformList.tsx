@@ -7,6 +7,7 @@ import threadsIcon from "../../../../public/threads.svg";
 import tiktokIcon from "../../../../public/tiktok.svg";
 import xIcon from "../../../../public/x.svg";
 import youtubeIcon from "../../../../public/youtube.svg";*/
+import Image from "next/image";
 const PLATFORMS = [
   { alt: "Twitter/X", src: "/x.svg" },
   { alt: "Instagram", src: "/instagram.svg" },
@@ -40,7 +41,7 @@ export default function PlatformsListe({
               data-tip={alt}
             >
               {/* version “fill” : 100 % de la div par défaut */}
-              <img
+              <Image
                 src={src}
                 alt={alt}
                 width={24}
