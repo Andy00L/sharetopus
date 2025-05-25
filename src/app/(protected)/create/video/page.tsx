@@ -28,6 +28,7 @@ const SocialPostFormWithData = async () => {
       accounts={accounts.data!}
       uploadLimits={uploadLimits}
       userId={userId}
+      planId={subscriptionInfo.plan!}
       postType="video"
     />
   );

@@ -168,6 +168,41 @@ const prodPriceIdAccountLimits: Record<string, number> = {
   price_1RNMXDCyG8V2WH2Fz1ae60z4: 999, // Yearly
 };
 
+// Storage limits in bytes
+export const PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
+  // Starter plan - 5GB storage
+  price_1RNMXJCyG8V2WH2FUpSI7VJt: 5 * 1024 * 1024 * 1024,
+  price_1RNMXJCyG8V2WH2FLLApU9iL: 5 * 1024 * 1024 * 1024,
+
+  // Creator plan - 15GB storage
+  price_1RNMXHCyG8V2WH2Fq3TC2YwY: 15 * 1024 * 1024 * 1024,
+  price_1RNMXHCyG8V2WH2FJJWCcCk4: 15 * 1024 * 1024 * 1024,
+
+  // Pro plan - 30GB storage
+  price_1RNMXECyG8V2WH2FxDDhYNy8: 30 * 1024 * 1024 * 1024,
+  price_1RNMXDCyG8V2WH2Fz1ae60z4: 30 * 1024 * 1024 * 1024,
+};
+
+// Dev environment storage limits
+const DEV_PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
+  // Dev Starter plan - 5GB storage
+  price_1RKr9JCZd1WOWtsDVHl5MsP6: 5 * 1024 * 1024 * 1024,
+  price_1RKrGNCZd1WOWtsDcU2r7iNf: 5 * 1024 * 1024 * 1024,
+
+  // Dev Creator plan - 15GB storage
+  price_1RKrAsCZd1WOWtsDt1phjbgI: 15 * 1024 * 1024 * 1024,
+  price_1RKrGiCZd1WOWtsDOOQ4l3wH: 15 * 1024 * 1024 * 1024,
+
+  // Dev Pro plan - 30GB storage
+  price_1RKrCRCZd1WOWtsDRzjqHluX: 30 * 1024 * 1024 * 1024,
+  price_1RKrGyCZd1WOWtsD2avrk52o: 30 * 1024 * 1024 * 1024,
+};
+
+// Export based on environment
+export const STORAGE_LIMITS = isProd
+  ? PRICE_ID_STORAGE_LIMITS
+  : DEV_PRICE_ID_STORAGE_LIMITS;
+
 // Export the right account limits based on environment
 export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = isProd
   ? prodPriceIdAccountLimits

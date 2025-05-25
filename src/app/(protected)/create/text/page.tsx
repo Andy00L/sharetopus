@@ -19,7 +19,12 @@ const SocialPostFormWithData = async () => {
     return <RateLimitError resetIn={accounts.resetIn} />;
   }
   return (
-    <SocialPostForm accounts={accounts.data!} userId={userId} postType="text" />
+    <SocialPostForm
+      accounts={accounts.data!}
+      userId={userId}
+      postType="text"
+      planId={subscriptionInfo.plan!}
+    />
   );
 };
 export default function page() {

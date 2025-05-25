@@ -4,10 +4,11 @@
  */
 export interface SignedUrlResponse {
   success: boolean;
-  uploadUrl: string;
-  path: string;
-  token: string;
+  uploadUrl?: string;
+  path?: string;
+  token?: string;
   error?: string;
+  message?: string;
 }
 
 /**
@@ -17,6 +18,7 @@ export interface UploadOptions {
   onProgress?: (progress: number) => void;
   onSuccess?: (path: string) => void;
   onError?: (error: Error) => void;
+  planId?: string;
 }
 
 /**
@@ -24,16 +26,15 @@ export interface UploadOptions {
  */
 export async function getSignedUploadUrl(
   filename: string,
+
   contentType: string,
+  fileSize: number,
+  isScheduled: boolean,
+  planId?: string,
+
   bucketName: string = "scheduled-videos"
 ): Promise<SignedUrlResponse> {
   try {
-    /*console.log("[Signed URL] Requesting URL for:", {
-      filename,
-      contentType,
-      bucketName,
-    });*/
-
     const response = await fetch("/api/storage/generate-upload-url", {
       method: "POST",
       headers: {
@@ -42,21 +43,31 @@ export async function getSignedUploadUrl(
       body: JSON.stringify({
         filename,
         contentType,
+        fileSize,
+        planId,
+        isScheduled,
         bucketName,
       }),
     });
 
     const data = await response.json();
-    //console.log("[Signed URL] API response:", data);
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Failed to generate upload URL");
+      return {
+        success: false,
+        error: data.error ?? "Failed to generate upload URL",
+        message: data.message ?? "Failed to generate upload URL",
+      };
     }
 
     return data;
   } catch (error) {
     console.error("[Signed URL] Error getting signed URL:", error);
-    throw error;
+    return {
+      success: false,
+      error: "Connection error",
+      message: "Failed to connect to upload service. Please try again.",
+    };
   }
 }
 
@@ -65,22 +76,43 @@ export async function getSignedUploadUrl(
  */
 export async function uploadWithSignedUrl(
   file: File,
-  options: UploadOptions = {}
-): Promise<string> {
-  const { onProgress, onSuccess, onError } = options;
+  isScheduled: boolean,
+  options: UploadOptions & { planId?: string } = {}
+): Promise<{ success: boolean; path?: string; message?: string }> {
+  const { onProgress, onSuccess, onError, planId } = options;
 
   try {
     // Step 1: Get a signed upload URL from our API
-    console.log(
-      `[Signed URL] Requesting signed URL for file: ${file.name} (${file.type})`
-    );
-    const { uploadUrl, path } = await getSignedUploadUrl(file.name, file.type);
 
+    const signedUrlResponse = await getSignedUploadUrl(
+      file.name,
+      file.type,
+      file.size,
+      isScheduled,
+      planId
+    );
+    if (!signedUrlResponse.success) {
+      const errorMessage =
+        signedUrlResponse.message ??
+        signedUrlResponse.error ??
+        "Failed to get upload URL";
+      onError?.(new Error(errorMessage));
+      return {
+        success: false,
+        message: errorMessage,
+      };
+    }
+
+    const { uploadUrl, path } = signedUrlResponse;
+    if (!uploadUrl || !path) {
+      const errorMessage = "Invalid upload URL received from server";
+      onError?.(new Error(errorMessage));
+      return { success: false, message: errorMessage };
+    }
     // Step 2: Upload the file directly to Supabase Storage using the signed URL
-    console.log(`[Signed URL] Uploading file using signed URL`);
     //console.log(`[Signed URL] Starting upload to path: ${path}`);
     // Use XMLHttpRequest for progress tracking
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
 
       // Track upload progress
@@ -102,28 +134,30 @@ export async function uploadWithSignedUrl(
 
         if (xhr.status >= 200 && xhr.status < 300) {
           console.log(`[Signed URL] Upload complete: ${path}`);
-          onSuccess?.(path);
-          resolve(path);
+          onSuccess?.(path!);
+          resolve({ success: true, path: path! });
         } else {
-          const error = new Error(
-            `Upload failed with status: ${xhr.status}, ${xhr.response}`
-          );
-          onError?.(error);
-          reject(error);
+          const errorMessage =
+            xhr.status === 413
+              ? "File too large or storage limit exceeded"
+              : "Upload failed. Please try again.";
+          onError?.(new Error(errorMessage));
+          resolve({ success: false, message: errorMessage });
         }
       });
 
       // Handle errors
       xhr.addEventListener("error", () => {
-        const error = new Error("Network error during upload");
-        onError?.(error);
-        reject(error);
+        const errorMessage =
+          "Upload failed due to network error. Please check your connection and try again.";
+        onError?.(new Error(errorMessage));
+        resolve({ success: false, message: errorMessage });
       });
 
       xhr.addEventListener("abort", () => {
-        const error = new Error("Upload aborted");
-        onError?.(error);
-        reject(error);
+        const errorMessage = "Upload was cancelled. Please try again.";
+        onError?.(new Error(errorMessage));
+        resolve({ success: false, message: errorMessage });
       });
 
       // Start the upload
@@ -132,8 +166,8 @@ export async function uploadWithSignedUrl(
       xhr.send(file);
     });
   } catch (error) {
-    // console.error("[Signed URL] Upload error:", error);
-    onError?.(error instanceof Error ? error : new Error(String(error)));
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    onError?.(new Error(errorMessage));
+    return { success: false, message: errorMessage }; // ✅ Consistent
   }
 }

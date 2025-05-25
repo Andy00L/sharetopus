@@ -50,6 +50,7 @@ interface SocialPostFormProps {
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
   readonly uploadLimits?: { image: number; video: number };
+  readonly planId?: string;
 }
 
 export default function SocialPostForm({
@@ -57,6 +58,7 @@ export default function SocialPostForm({
   userId,
   postType,
   uploadLimits,
+  planId,
 }: SocialPostFormProps) {
   // Content step state
   const [isScheduled, setIsScheduled] = useState(false);
@@ -603,27 +605,24 @@ export default function SocialPostForm({
         }
 
         // Start upload with progress tracking
-        try {
-          const uploadResult = await uploadMedia(selectedFile, (progress) => {
+
+        const uploadResult = await uploadMedia(
+          selectedFile,
+          isScheduled,
+          planId,
+          (progress) => {
             setUploadProgress(progress);
-          });
-
-          if (!uploadResult.success) {
-            toast.error(uploadResult.message || "Failed to upload media");
-            setError(uploadResult.message || "Failed to upload media");
-            setIsLoading(false);
-            return;
           }
+        );
 
-          mediaStoragePath = uploadResult.path ?? "";
-        } catch {
-          setError(
-            "We had trouble uploading your file. Please try again later."
-          );
-
+        if (!uploadResult.success) {
+          toast.error(uploadResult.message || "Failed to upload media");
+          setError(uploadResult.message || "Failed to upload media");
           setIsLoading(false);
           return;
         }
+
+        mediaStoragePath = uploadResult.path ?? "";
       }
 
       // Step 5: Ensure account content is properly set before submission

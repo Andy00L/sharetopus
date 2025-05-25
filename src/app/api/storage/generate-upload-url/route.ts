@@ -1,9 +1,33 @@
 // app/api/storage/generate-upload-url/route.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
+import { STORAGE_LIMITS } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+// Helper function to get user's total file size
+async function getUserTotalFileSize(userId: string): Promise<number> {
+  try {
+    const { data: files, error } = await adminSupabase.storage
+      .from("scheduled-videos")
+      .list(userId);
+
+    if (error) {
+      console.error("[Storage Check] Error listing files:", error);
+      return 0;
+    }
+
+    const totalSize =
+      files?.reduce((total, file) => {
+        return total + (file.metadata?.size || 0);
+      }, 0) || 0;
+
+    return totalSize;
+  } catch (error) {
+    console.error("[Storage Check] Error calculating total size:", error);
+    return 0;
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,8 +37,39 @@ export async function POST(req: NextRequest) {
     if (!userId) {
       console.error("[Generate Upload URL] Authentication error: No userId");
       return NextResponse.json(
-        { error: "User not authenticated" },
+        {
+          success: false,
+          error: "Authentication required",
+          message: "Please sign in to upload files.",
+        },
         { status: 401 }
+      );
+    }
+
+    const body = await req.json();
+
+    const {
+      filename,
+      contentType,
+      fileSize,
+      planId,
+      isScheduled,
+
+      bucketName = "scheduled-videos",
+    } = body;
+
+    if (!filename || !contentType || !fileSize) {
+      console.error("[Generate Upload URL] Missing parameters:", {
+        filename,
+        contentType,
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid upload request",
+          message: "Please select a valid file and try again.",
+        },
+        { status: 400 }
       );
     }
 
@@ -27,30 +82,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Get file information from request body
-    let body;
-    try {
-      body = await req.json();
-      console.log("[Generate Upload URL] Request body:", body);
-    } catch (err) {
-      console.error("[Generate Upload URL] Error parsing request body:", err);
-      return NextResponse.json(
-        { error: "Invalid request body" },
-        { status: 400 }
-      );
-    }
+    // Check storage limits only for scheduled posts (files that stay in storage)
+    if (isScheduled && planId && fileSize) {
+      const storageLimit = STORAGE_LIMITS[planId];
+      if (storageLimit) {
+        const currentTotalSize = await getUserTotalFileSize(userId);
 
-    const { filename, contentType, bucketName = "scheduled-videos" } = body;
+        if (currentTotalSize + fileSize > storageLimit) {
+          const limitInGB = storageLimit / (1024 * 1024 * 1024);
 
-    if (!filename || !contentType) {
-      console.error("[Generate Upload URL] Missing parameters:", {
-        filename,
-        contentType,
-      });
-      return NextResponse.json(
-        { error: "Missing required parameters: filename and contentType" },
-        { status: 400 }
-      );
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Storage limit exceeded",
+              message: `This upload would exceed your ${limitInGB}GB storage limit. Please delete some Scheduled Posts or upgrade your plan to continue.`,
+            },
+            { status: 413 }
+          );
+        }
+      }
     }
 
     // Generate a unique filename to avoid collisions
@@ -60,67 +110,56 @@ export async function POST(req: NextRequest) {
     // Construct the path: user_id/unique_filename.ext
     const filePath = `${userId}/${uniqueFilename}`;
 
-    console.log(
-      `[Generate Upload URL] Creating signed URL for '${filePath}' in bucket '${bucketName}'`
-    );
-    console.log(`[Generate Upload URL] Content type: ${contentType}`);
-
     // Verify the bucket exists in Supabase
-    try {
-      const { data: buckets, error: bucketError } =
-        await adminSupabase.storage.listBuckets();
 
-      if (bucketError) {
+    const { data: buckets, error: bucketError } =
+      await adminSupabase.storage.listBuckets();
+
+    if (bucketError) {
+      console.error(
+        "[Generate Upload URL] Error listing buckets:",
+        bucketError
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Upload service temporarily unavailable",
+          message:
+            "Please try again in a few moments. If the problem persists, contact support.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const bucketExists = buckets.some((b) => b.name === bucketName);
+
+    if (!bucketExists) {
+      console.error(`[Generate Upload URL] Bucket '${bucketName}' not found`);
+
+      const { error: createError } = await adminSupabase.storage.createBucket(
+        bucketName,
+        {
+          public: false,
+        }
+      );
+
+      if (createError) {
         console.error(
-          "[Generate Upload URL] Error listing buckets:",
-          bucketError
+          "[Generate Upload URL] Failed to create bucket:",
+          createError
         );
         return NextResponse.json(
-          { error: `Failed to verify bucket: ${bucketError.message}` },
+          {
+            success: false,
+            error: "Upload service setup failed",
+            message:
+              "We're having trouble setting up your upload. Please try again or contact support if this continues.",
+          },
           { status: 500 }
         );
       }
 
-      const bucketExists = buckets.some((b) => b.name === bucketName);
-
-      if (!bucketExists) {
-        console.error(`[Generate Upload URL] Bucket '${bucketName}' not found`);
-
-        // Try to create the bucket
-        try {
-          const { error: createError } =
-            await adminSupabase.storage.createBucket(bucketName, {
-              public: false,
-            });
-
-          if (createError) {
-            console.error(
-              "[Generate Upload URL] Failed to create bucket:",
-              createError
-            );
-            return NextResponse.json(
-              {
-                error: `Bucket does not exist and could not be created: ${createError.message}`,
-              },
-              { status: 500 }
-            );
-          }
-
-          console.log(`[Generate Upload URL] Created bucket '${bucketName}'`);
-        } catch (createErr) {
-          console.error(
-            "[Generate Upload URL] Error creating bucket:",
-            createErr
-          );
-          return NextResponse.json(
-            { error: "Bucket does not exist and could not be created" },
-            { status: 500 }
-          );
-        }
-      }
-    } catch (listErr) {
-      console.error("[Generate Upload URL] Error checking buckets:", listErr);
-      // Continue anyway, since this might be a permissions issue rather than a real problem
+      console.log(`[Generate Upload URL] Created bucket '${bucketName}'`);
     }
 
     // Generate a signed upload URL
@@ -134,7 +173,11 @@ export async function POST(req: NextRequest) {
         error
       );
       return NextResponse.json(
-        { error: `Failed to generate upload URL: ${error.message}` },
+        {
+          success: false,
+          error: "Upload preparation failed",
+          message: "We couldn't prepare your file upload. Please try again.",
+        },
         { status: 500 }
       );
     }
@@ -156,8 +199,10 @@ export async function POST(req: NextRequest) {
     console.error("[Generate Upload URL] Unexpected error:", err);
     return NextResponse.json(
       {
-        error: "Failed to generate upload URL",
-        message: err instanceof Error ? err.message : String(err),
+        success: false,
+        error: "Upload service error",
+        message:
+          "Something went wrong while preparing your upload. Please try again.",
       },
       { status: 500 }
     );
