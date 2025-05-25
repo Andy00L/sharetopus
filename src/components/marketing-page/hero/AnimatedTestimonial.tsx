@@ -31,7 +31,7 @@ export function AnimatedTestimonial() {
   return (
     <div className="flex flex-col items-center justify-center sm:flex-row sm:items-center sm:justify-start">
       {/* Overlapping Profile Pictures */}
-      <div className="flex -space-x-2 mr-3">
+      <div className="flex -space-x-2 mb-4 sm:mb-0 sm:mr-3">
         <Image
           src={user1}
           alt="User"
