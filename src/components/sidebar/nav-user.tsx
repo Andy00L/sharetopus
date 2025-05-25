@@ -37,7 +37,6 @@ export function NavUser() {
   const { isMobile } = useSidebar();
   const { signOut } = useClerk();
   const [isLoading, setIsLoading] = useState(false); // Add loading state
-
   // Show loading state when authentication is being processed
   if (!isLoaded) {
     return (

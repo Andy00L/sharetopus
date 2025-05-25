@@ -17,6 +17,7 @@ import { ArrowRight, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import PlatformsListe from "./details/platformList";
 
 export default function PricingSection() {
   const [isYearly, setIsYearly] = useState(true);
@@ -117,7 +118,7 @@ export default function PricingSection() {
 
   return (
     <section className="py-24 bg-white" id="pricing">
-      <div className="container mx-auto px-6">
+      <div className="container mx-auto px-6 pb-5">
         <div className="text-center mb-16">
           <div className="inline-block px-3 py-1 mb-6 rounded-full bg-primary/10 text-primary text-sm font-medium">
             Simple Pricing
@@ -286,41 +287,8 @@ export default function PricingSection() {
             );
           })}
         </div>
-
-        <div className="mt-16 text-center">
-          <p className="text-muted-foreground mb-4">All plans include:</p>
-          <div className="flex flex-wrap justify-center gap-4 max-w-3xl mx-auto">
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              TikTok Integration
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              Instagram Integration
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              Facebook Integration
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              Threads Integration
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              YouTube Integration
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              Email Support
-            </span>
-            <span className="inline-flex items-center px-3 py-1 rounded-full bg-primary/5 text-sm">
-              <Check size={16} className="mr-1 text-green-500" />
-              Security & Compliance
-            </span>
-          </div>
-        </div>
       </div>
+      {<PlatformsListe message="Post To:" />}
     </section>
   );
 }

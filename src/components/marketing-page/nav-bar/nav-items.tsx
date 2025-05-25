@@ -9,7 +9,7 @@ import {
 
 export function NavigationItems() {
   return (
-    <NavigationMenu>
+    <NavigationMenu className="font-medium flex flex-col gap-8 ">
       <NavigationMenuList>
         <NavigationMenuItem>
           <NavigationMenuLink asChild>
@@ -23,7 +23,7 @@ export function NavigationItems() {
         </NavigationMenuItem>
         <NavigationMenuItem>
           <NavigationMenuLink asChild>
-            <Link href="#pricing">Features </Link>
+            <Link href="#features">Features </Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
         <NavigationMenuItem>

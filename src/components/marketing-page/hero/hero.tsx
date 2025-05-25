@@ -1,8 +1,30 @@
 import Image from "next/image";
 import Link from "next/link";
+import blueskyIcon from "../../../../public/bluesky.svg";
+import facebookIcon from "../../../../public/facebook.svg";
+import instagramIcon from "../../../../public/instagram.svg";
+import linkedinIcon from "../../../../public/linkedin.svg";
+import pinterestIcon from "../../../../public/pinterest.svg";
+import threadsIcon from "../../../../public/threads.svg";
+import tiktokIcon from "../../../../public/tiktok.svg";
+import xIcon from "../../../../public/x.svg";
+import youtubeIcon from "../../../../public/youtube.svg";
 import heroImage from "../../../../public/frontend_logo.webp";
 
 import { AnimatedTestimonial } from "./AnimatedTestimonial";
+
+const PLATFORMS = [
+  { alt: "Twitter/X", src: xIcon },
+  { alt: "Instagram", src: instagramIcon },
+  { alt: "LinkedIn", src: linkedinIcon },
+  { alt: "Facebook", src: facebookIcon },
+  { alt: "TikTok", src: tiktokIcon },
+  { alt: "Bluesky", src: blueskyIcon },
+  { alt: "YouTube", src: youtubeIcon },
+  { alt: "Threads", src: threadsIcon },
+  { alt: "Pinterest", src: pinterestIcon },
+] as const;
+
 export default function Hero() {
   return (
     <section className="max-w-6xl mx-auto bg-base-100 flex flex-col items-center justify-center px-8 py-8 lg:py-20">
@@ -10,9 +32,12 @@ export default function Hero() {
         <div className="flex flex-col md:flex-row items-center gap-8 ">
           {/* Text content column */}
           <div className="md:w-[60%] text-left md:pr-6">
-            <h1 className="text-5xl md:text-6xl font-bold leading-tight tracking-tight mb-6">
-              Share <span>Once</span>,Post
-              <span className="text-[#FF4A20]"> Everywhere</span>
+            <h1 className="text-5xl md:text-6xl font-bold leading-tight  tracking-tight mb-6">
+              Share
+              <span className="ml-4">Once,</span>
+              <br></br>
+              Post
+              <span className="text-[#FF4A20] ml-4">Everywhere</span>
             </h1>
 
             <p className="text-xl text-foreground/80 mb-8 leading-relaxed">
@@ -97,7 +122,7 @@ export default function Hero() {
             <div className="flex flex-wrap mt-10 rounded-full">
               <Link
                 href="/create"
-                className="bg-[#FF4A20] text-white px-10 py-4 rounded-lg text-base font-medium hover:bg-[#FF2A11]"
+                className="bg-[#FF4A20] text-white px-10 py-4 rounded-3xl text-base font-medium hover:bg-[#FF2A11]"
               >
                 Try it for free
               </Link>
@@ -110,7 +135,42 @@ export default function Hero() {
           <div className="md:w-[40%] mt-12 md:mt-0">
             {/* Add your image here */}
             <div className="bg-gray-200 rounded-lg aspect-video w-full flex items-center justify-center">
-              <Image src={heroImage} alt="Hero" />
+              <Image
+                src={heroImage}
+                height={heroImage.height}
+                width={heroImage.width}
+                alt="Hero"
+              />
+            </div>
+            {/**Platforms supported */}
+            <div className="mt-6 md:mt-8 hidden sm:flex flex-col items-center justify-center">
+              <div className="flex flex-col sm:flex-row items-center gap-2 sm:gap-3 text-base-content/80">
+                <span className="text-xs sm:text-sm">
+                  <span className="hidden sm:inline">All platforms:</span>
+                </span>
+
+                {/* grille mobile (3×3) → flex desktop */}
+                <div className="grid grid-cols-9 sm:flex items-center gap-3 sm:gap-4">
+                  {PLATFORMS.map(({ alt, src }) => (
+                    <div
+                      key={alt}
+                      className="relative w-5 h-5 sm:w-6 sm:h-6 tooltip"
+                      data-tip={alt}
+                    >
+                      {/* version “fill” : 100 % de la div par défaut */}
+                      <Image
+                        src={src.src ?? src}
+                        alt={alt}
+                        height={24}
+                        width={24}
+                        className="object-contain opacity-80 hover:opacity-100 transition-opacity"
+                        /* lazy loading implicite */
+                        style={{ width: "24px", height: "24px" }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
