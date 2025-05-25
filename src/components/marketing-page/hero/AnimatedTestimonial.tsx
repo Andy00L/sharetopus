@@ -29,7 +29,7 @@ export function AnimatedTestimonial() {
   }, []);
 
   return (
-    <div className="flex items-center justify-start">
+    <div className="flex flex-col items-center justify-center sm:flex-row sm:items-center sm:justify-start">
       {/* Overlapping Profile Pictures */}
       <div className="flex -space-x-2 mr-3">
         <Image
@@ -70,7 +70,7 @@ export function AnimatedTestimonial() {
       </div>
 
       {/* Stars */}
-      <div className="flex flex-col">
+      <div className="flex flex-col items-center sm:items-start">
         {/* Stars on top */}
         <div className="flex mb-1">
           {[...Array(5)].map((_, i) => (
