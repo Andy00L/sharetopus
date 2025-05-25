@@ -54,7 +54,10 @@ const AccountsPageWithData = async () => {
         </p>
         {/* Account limits display */}
         {limitsCheck.success && (
-          <div className="mt-4 p-3 bg-muted/50 rounded-md">
+          <div
+            className="mt-4 p-3 bg-white
+           rounded-md"
+          >
             <p className="text-sm">
               <span className="font-medium">
                 {limitsCheck.currentCount}{" "}
@@ -67,7 +70,7 @@ const AccountsPageWithData = async () => {
                 You have reached the account limit for your subscription.
                 <Link
                   href="/#pricing"
-                  className="text-primary ml-1 hover:underline"
+                  className="text-primary font-medium ml-1 hover:underline"
                 >
                   Upgrade
                 </Link>

@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useState } from "react";
-import {
-  default as user1,
-  default as user2,
-} from "../../../../public/logo_256x256.ico";
 import Image from "next/image";
+import { useEffect, useState } from "react";
+import user1 from "../../../../public/logo_256x256.ico";
+import user2 from "../../../../public/userdemo2.webp";
+import user3 from "../../../../public/userdemo3.webp";
+import user4 from "../../../../public/userdemo1 .webp";
+import user5 from "../../../../public/userdemo5.webp";
 export function AnimatedTestimonial() {
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -34,37 +35,37 @@ export function AnimatedTestimonial() {
         <Image
           src={user1}
           alt="User"
-          width={32}
-          height={32}
-          className="rounded-full border-2 border-white relative z-10"
+          width={48}
+          height={48}
+          className="rounded-full border-5 border-white relative z-10"
         />
         <Image
           src={user2}
           alt="User"
-          width={32}
-          height={32}
-          className="rounded-full border-2 border-white relative z-9"
+          width={48}
+          height={48}
+          className="rounded-full border-5 border-white relative z-9"
         />
         <Image
-          src={user1}
+          src={user3}
           alt="User"
-          width={32}
-          height={32}
-          className="rounded-full border-2 border-white relative z-8"
+          width={48}
+          height={48}
+          className="rounded-full border-5 border-white relative z-8"
         />
         <Image
-          src={user2}
+          src={user4}
           alt="User"
-          width={32}
-          height={32}
-          className="rounded-full border-2 border-white relative z-7"
+          width={48}
+          height={48}
+          className="rounded-full border-5 border-white relative z-7"
         />
         <Image
-          src={user1}
+          src={user5}
           alt="User"
-          width={32}
-          height={32}
-          className="rounded-full border-2 border-white relative z-6"
+          width={48}
+          height={48}
+          className="rounded-full border-5 border-white relative z-6"
         />
       </div>
 

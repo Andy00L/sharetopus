@@ -10,7 +10,7 @@ export default function Footer() {
           <div>
             <div className="flex items-center mb-4">
               <span className="font-display text-2xl font-semibold tracking-tight">
-                sharetopus
+                Sharetopus
               </span>
             </div>
             <p className="text-muted-foreground mb-6">
@@ -19,7 +19,7 @@ export default function Footer() {
             </p>
             <div className="flex space-x-4">
               <Link
-                href="https://twitter.com"
+                href="https://x.com/sharetopus"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="h-10 w-10 flex items-center justify-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
@@ -71,14 +71,6 @@ export default function Footer() {
                   className="text-muted-foreground hover:text-foreground transition-colors"
                 >
                   Content Scheduling
-                </Link>
-              </li>
-              <li>
-                <Link
-                  href="#features"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Social Analytics
                 </Link>
               </li>
               <li>
