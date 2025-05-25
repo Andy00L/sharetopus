@@ -1,5 +1,4 @@
 /* app/components/AlternativesSection.tsx */
-"use client";
 
 /* ---------- domain types ---------- */
 interface Feature {

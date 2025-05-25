@@ -118,7 +118,7 @@ export default function PricingSection() {
 
   return (
     <section className="py-24 bg-white" id="pricing">
-      <div className="container mx-auto px-6 pb-5">
+      <div className="container mx-auto px-6 pb-5 mb-3  md:mb-8">
         <div className="text-center mb-16">
           <div className="inline-block px-3 py-1 mb-6 rounded-full bg-primary/10 text-primary text-sm font-medium">
             Simple Pricing
