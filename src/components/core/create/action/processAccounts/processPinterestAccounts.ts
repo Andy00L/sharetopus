@@ -22,6 +22,7 @@ export async function processPinterestAccounts(config: {
   batchId: string;
   buffer?: Buffer;
   thumbnailBuffer?: Buffer;
+  coverImagePath?: string;
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -84,6 +85,7 @@ export async function processPinterestAccounts(config: {
         ? await scheduleForPinterestAccounts({
             accounts: [account],
             mediaPath: config.mediaPath,
+            coverImagePath: config.coverImagePath,
             boards: accountBoards,
             platformOptions: config.platformOptions,
             accountContent: [accountContent],
@@ -96,6 +98,7 @@ export async function processPinterestAccounts(config: {
         : await directPostForPinterestAccounts({
             account: account,
             mediaPath: config.mediaPath,
+            coverImagePath: config.coverImagePath,
             mediaType: config.mediaType,
             boards: accountBoards[0],
             platformOptions: config.platformOptions,

@@ -66,17 +66,6 @@ export async function postToPinterest({
         error: "Buffer is required for video uploads to Pinterest",
       };
     }
-    // Log the received parameters (truncating sensitive data)
-    console.log("[Pinterest Post Function] Received parameters:");
-    console.log("[Pinterest Post Function] boardId:", boardId);
-    console.log("[Pinterest Post Function] title:", title);
-    console.log(
-      "[Pinterest Post Function] description length:",
-      description?.length ?? 0
-    );
-    console.log("[Pinterest Post Function] link:", link);
-    console.log("[Pinterest Post Function] mediaType:", mediaType);
-    console.log("[Pinterest Post Function] fileName:", fileName);
 
     // Verify required parameters
     if (!accessToken || !boardId || !mediaPath) {
@@ -230,23 +219,31 @@ export async function postToPinterest({
     }
 
     console.log("[Pinterest Post Function] Media upload successful");
-
+    // STEP 2.5: Wait for Pinterest to process the media
+    console.log(
+      "[Pinterest Post Function] Waiting for media to be processed by Pinterest"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3000)); // Wait 3 seconds
     // STEP 3: Create pin with the uploaded media
     console.log(
       `[Pinterest Post Function] Creating pin with media_id: ${media_id}`
     );
 
-    let thumbnailBase64 = null;
+    let thumbnailBase64 = "";
     if (thumbnailBuffer) {
       console.log("[Pinterest Post Function] Adding custom thumbnail");
       thumbnailBase64 = thumbnailBuffer.toString("base64");
     }
+
     const pinRequestBody = {
       board_id: boardId,
       media_source: {
         media_id: media_id,
-        source_type: "video_id", // Add this line
-        cover_image_base64: thumbnailBase64,
+        source_type: "video_id",
+        ...(thumbnailBase64 && {
+          cover_image_content_type: "image/png",
+          cover_image_data: thumbnailBase64,
+        }),
       },
       title: title ?? "",
       description: description ?? "",

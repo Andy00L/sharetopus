@@ -12,6 +12,7 @@ type FailedPostData = {
   post_options?: object;
   media_type: "image" | "video" | "text";
   media_storage_path: string;
+  cover_storage_path?: string;
   batch_id: string;
   scheduled_at?: string;
   extra_data?: Record<string, unknown>; // Simple extra data field
@@ -46,6 +47,7 @@ export async function storeFailedPost(
       post_options: data.post_options,
       media_type: data.media_type,
       media_storage_path: data.media_storage_path,
+      cover_storage_path: data.cover_storage_path,
       batch_id: data.batch_id,
       error_message: data.extra_data?.message || "Failed to post", // Default generic message
       created_at: new Date().toISOString(),

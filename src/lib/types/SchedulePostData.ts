@@ -9,6 +9,7 @@ export interface SchedulePostData {
   description: string | null;
   postType: "video" | "image" | "text"; // Extended to support images
   mediaStoragePath: string; // Path from Supabase Storage
+  coverStoragePath?: string;
   batch_id: string;
   postOptions: {
     // TikTok-specific options

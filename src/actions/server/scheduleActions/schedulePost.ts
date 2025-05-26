@@ -138,6 +138,7 @@ export async function schedulePost(
       post_options: data.postOptions, // Store the JSONB options
       media_type: data.postType,
       media_storage_path: data.mediaStoragePath,
+      cover_storage_path: data.coverStoragePath,
       batch_id: data.batch_id,
     };
 

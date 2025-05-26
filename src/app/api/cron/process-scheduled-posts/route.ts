@@ -118,11 +118,15 @@ export async function POST(request: NextRequest) {
     // Extract media path from first post (all posts in batch share same media)
     const mediaPost = postsData.find((post) => post.media_storage_path);
     const mediaPath = mediaPost?.media_storage_path || "";
+
     const fileName = mediaPath ? mediaPath.split("/").pop() || "" : "";
     const postType = (mediaPost?.media_type || "text") as
       | "image"
       | "video"
       | "text";
+
+    const coverImagePost = postsData.find((post) => post.cover_storage_path);
+    const coverImagePath = coverImagePost?.cover_storage_path || "";
 
     // Prepare boards and content
     const boards: BoardInfo[] = [];
@@ -211,6 +215,7 @@ export async function POST(request: NextRequest) {
       linkedinAccounts,
       tiktokAccounts,
       mediaPath,
+      coverImagePath,
       fileName,
       boards,
       platformOptions,

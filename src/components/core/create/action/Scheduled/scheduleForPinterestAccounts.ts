@@ -10,6 +10,7 @@ export interface ScheduleResult {
 export async function scheduleForPinterestAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  coverStoragePath?: string;
   boards: Array<{
     boardID: string;
     boardName: string;
@@ -30,6 +31,7 @@ export async function scheduleForPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
+  coverImagePath?: string;
 }): Promise<ScheduleResult> {
   const {
     accounts,
@@ -81,6 +83,7 @@ export async function scheduleForPinterestAccounts(config: {
         description: content.description, // Use account-specific description
         postType: postType,
         mediaStoragePath: mediaPath,
+        coverStoragePath: config.coverImagePath,
         postOptions: postOptions,
         batch_id: batchId,
       };

@@ -44,6 +44,7 @@ import {
 import NoAccountAvaible from "./NoAccountAvaible";
 import { ImageUploads } from "./upload/ImageUpload ";
 import { VideoUploads } from "./upload/VideoUpload";
+import { VideoCoverSelector } from "./upload/VideoCoverSelector";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -68,6 +69,7 @@ export default function SocialPostForm({
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
   const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 50) * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [coverImageFile, setCoverImageFile] = useState<File | null>(null); // ADD THIS LINE
 
   // Add new single state for all account content
   const [accountContent, setAccountContent] = useState<
@@ -202,9 +204,7 @@ export default function SocialPostForm({
     if (postType === "image" && account.platform === "tiktok") {
       return false;
     }
-    if (postType === "video" && account.platform === "pinterest") {
-      return false;
-    }
+
     // Apply search filter
     if (searchQuery.trim()) {
       const searchFields = [
@@ -589,6 +589,7 @@ export default function SocialPostForm({
     // Create a unique batch ID for this submission
     const batchId = nanoid(32);
     let mediaStoragePath = "";
+    let coverImagePath = "";
 
     try {
       // Step 4: Handle media upload if needed
@@ -623,6 +624,19 @@ export default function SocialPostForm({
         }
 
         mediaStoragePath = uploadResult.path ?? "";
+
+        // Cover image
+        if (coverImageFile) {
+          const coverUploadResult = await uploadMedia(
+            coverImageFile,
+            isScheduled,
+            planId
+          );
+
+          if (coverUploadResult.success) {
+            coverImagePath = coverUploadResult.path ?? "";
+          }
+        }
       }
 
       // Step 5: Ensure account content is properly set before submission
@@ -644,6 +658,7 @@ export default function SocialPostForm({
 
         // Media info
         mediaPath: mediaStoragePath,
+        coverImagePath: coverImagePath,
         fileName: selectedFile?.name,
 
         // Content details
@@ -861,7 +876,14 @@ export default function SocialPostForm({
                 }}
               />
             )}
-
+            {/*cover*/}
+            {postType === "video" && selectedFile && (
+              <VideoCoverSelector
+                videoFile={selectedFile}
+                onCoverChange={setCoverImageFile}
+                onError={setError}
+              />
+            )}
             {/*image content*/}
 
             {postType === "image" && !selectedFile && (

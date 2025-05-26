@@ -14,6 +14,7 @@ import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 export async function directPostForPinterestAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
+  coverImagePath?: string;
   boards: {
     boardID: string;
     boardName: string;
@@ -42,6 +43,7 @@ export async function directPostForPinterestAccounts(config: {
     mediaPath,
     boards,
     accountContent,
+    coverImagePath,
     userId,
     batchId,
     buffer,
@@ -187,6 +189,8 @@ export async function directPostForPinterestAccounts(config: {
               },
               media_type: postType,
               media_storage_path: mediaPath,
+              cover_storage_path: coverImagePath,
+
               batch_id: batchId,
               extra_data: {
                 message: postResult.message,

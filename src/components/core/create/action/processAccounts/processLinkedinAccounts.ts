@@ -20,6 +20,7 @@ export async function processLinkedinAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
+  
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled } = config;

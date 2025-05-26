@@ -62,6 +62,7 @@ export async function handleSocialMediaPost(config: {
   linkedinAccounts: SocialAccount[];
   tiktokAccounts: SocialAccount[];
   mediaPath: string;
+  coverImagePath?: string;
   fileName?: string;
   boards?: BoardInfo[];
   platformOptions: PlatformOptions;
@@ -82,6 +83,7 @@ export async function handleSocialMediaPost(config: {
     linkedinAccounts,
     tiktokAccounts,
     mediaPath,
+    coverImagePath,
     fileName,
     boards,
     platformOptions,
@@ -356,7 +358,7 @@ export async function handleSocialMediaPost(config: {
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
     let responseBuffer;
-
+    let coverImageBuffer;
     if (mediaPath && (postType === "video" || postType === "image")) {
       // Download the file for direct upload
       responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
@@ -369,7 +371,17 @@ export async function handleSocialMediaPost(config: {
         };
       }
     }
-
+    // Download cover image if provided
+    if (coverImagePath && postType === "video") {
+      const coverResponse = await getSupabaseVideoFile(coverImagePath, userId);
+      if (coverResponse.success) {
+        coverImageBuffer = coverResponse.buffer;
+      } else {
+        console.warn(
+          `[handleSocialMediaPost]: Failed to download cover image: ${coverResponse.message}`
+        );
+      }
+    }
     // Process each platform in parallel for maximum performance
     const [
       tiktokAccountResults,
@@ -390,6 +402,7 @@ export async function handleSocialMediaPost(config: {
             scheduledTime: scheduledTime ?? "",
             postType,
             buffer: responseBuffer?.buffer,
+
             userId,
             batchId,
             isCronJob,
@@ -410,6 +423,8 @@ export async function handleSocialMediaPost(config: {
             scheduledDate: scheduledDate ?? "",
             scheduledTime: scheduledTime ?? "",
             buffer: responseBuffer?.buffer,
+            thumbnailBuffer: coverImageBuffer,
+            coverImagePath,
             postType,
             userId,
             batchId,
@@ -478,18 +493,39 @@ export async function handleSocialMediaPost(config: {
     }
 
     // Step 7: Clean up media file if direct posting and cleanup is requested
-    if (!isScheduled && cleanupFiles && mediaPath) {
-      try {
-        await deleteSupabaseFileAction(userId, mediaPath, config.isCronJob);
-        console.log(
-          `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
-        );
-      } catch (cleanupError) {
-        console.error(
-          `[handleSocialMediaPost]: Error cleaning up media file:`,
-          cleanupError
-        );
-        // Continue with success response even if cleanup fails
+    if (!isScheduled && cleanupFiles) {
+      // Clean up main media file
+      if (mediaPath) {
+        try {
+          await deleteSupabaseFileAction(userId, mediaPath, config.isCronJob);
+          console.log(
+            `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
+          );
+        } catch (cleanupError) {
+          console.error(
+            `[handleSocialMediaPost]: Error cleaning up media file:`,
+            cleanupError
+          );
+        }
+      }
+
+      // Clean up cover image file
+      if (coverImagePath) {
+        try {
+          await deleteSupabaseFileAction(
+            userId,
+            coverImagePath,
+            config.isCronJob
+          );
+          console.log(
+            `[handleSocialMediaPost]: Cleaned up temporary cover image file: ${coverImagePath}`
+          );
+        } catch (cleanupError) {
+          console.error(
+            `[handleSocialMediaPost]: Error cleaning up cover image file:`,
+            cleanupError
+          );
+        }
       }
     }
 
