@@ -249,10 +249,6 @@ async function handleVideoPost({
     }
 
     const initData = (await initResponse.json()) as PostInitResponse;
-    console.log(
-      "[TikTok Upload] API Response:",
-      JSON.stringify(initData, null, 2)
-    );
 
     const publishId = initData.data.publish_id;
     const uploadUrl = initData.data.upload_url;
