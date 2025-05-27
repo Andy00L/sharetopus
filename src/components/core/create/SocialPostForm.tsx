@@ -349,7 +349,7 @@ export default function SocialPostForm({
     });
   }, [accounts, selectedAccounts, boards, checkedAccountIds]);
 
-  // Add this useEffect to handle account content initialization
+  // Add this useEffect to handle  content initialization
   useEffect(() => {
     const selectedAccountsList = accounts.filter(
       (acc) => selectedAccounts[acc.id]
@@ -391,7 +391,7 @@ export default function SocialPostForm({
     });
 
     setAccountContent(updatedAccountContent);
-  }, [selectedAccounts, textInputs, accounts]);
+  }, [selectedAccounts, textInputs, accounts, platformOptions]);
 
   useEffect(() => {
     const pinterestAccounts = accounts.filter(
