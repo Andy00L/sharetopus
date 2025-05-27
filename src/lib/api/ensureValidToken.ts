@@ -10,15 +10,20 @@ import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
  * @param account Le compte social
  * @returns Un access_token valide ou null en cas d'échec
  */
-export async function ensureValidToken(
-  account: SocialAccount
-): Promise<string | null> {
+export async function ensureValidToken(account: SocialAccount): Promise<{
+  success: boolean;
+  token?: string;
+  error?: string;
+}> {
   // Vérifier si nous avons un token d'accès
   if (!account.access_token) {
     console.error(
       `[ensureValidToken] Pas de token d'accès pour ${account.platform}`
     );
-    return null;
+    return {
+      success: false,
+      error: `Your ${account.platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
+    };
   }
 
   // Vérifier si le token est expiré ou sur le point d'expirer
@@ -26,7 +31,10 @@ export async function ensureValidToken(
 
   // Si le token est valide, on le retourne directement
   if (!isExpired) {
-    return account.access_token;
+    return {
+      success: true,
+      token: account.access_token,
+    };
   }
 
   console.log(
@@ -38,7 +46,10 @@ export async function ensureValidToken(
     console.error(
       `[ensureValidToken. ${account.platform}] Pas de refresh token disponible`
     );
-    return null;
+    return {
+      success: false,
+      error: `Your ${account.platform} account has expired and cannot be automatically renewed. Please reconnect your account.`,
+    };
   }
 
   try {
@@ -59,14 +70,20 @@ export async function ensureValidToken(
         console.error(
           `[ensureValidToken] Plateforme non supportée: ${account.platform}`
         );
-        return null;
+        return {
+          success: false,
+          error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
+        };
     }
 
     if (!newTokens) {
       console.error(
         `[ensureValidToken ${account.platform}] Échec du rafraîchissement`
       );
-      return null;
+      return {
+        success: false,
+        error: `Unable to refresh your ${account.platform} connection. Please try reconnecting your account.`,
+      };
     }
 
     // Mettre à jour les tokens dans la base de données
@@ -81,19 +98,28 @@ export async function ensureValidToken(
         `[ensureValidToken ${account.platform}] Échec de la mise à jour en base de données`
       );
       // On peut retourner le nouveau token même si la mise à jour a échoué
-      return newTokens.access_token;
+      return {
+        success: true,
+        token: newTokens.access_token,
+      };
     }
 
     console.log(
       `[ensureValidToken ${account.platform}] Token rafraîchi avec succès`
     );
-    return newTokens.access_token;
+    return {
+      success: true,
+      token: newTokens.access_token,
+    };
   } catch (error) {
     console.error(
       `[${account.platform}] Erreur lors du rafraîchissement:`,
       error
     );
-    return null;
+    return {
+      success: false,
+      error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
+    };
   }
 }
 
@@ -103,15 +129,26 @@ export async function ensureValidToken(
  * @returns true si expiré ou proche de l'expiration, false sinon
  */
 function isTokenExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) return true;
+  if (!expiresAt) {
+    console.log("[isTokenExpired] No expiry date found - treating as expired");
+    return true;
+  }
+  try {
+    const now = new Date();
+    const expiry = new Date(expiresAt);
 
-  const now = new Date();
-  const expiry = new Date(expiresAt);
+    // Ajouter une marge de 5 minutes pour éviter les problèmes à la limite
+    const bufferTime = 5 * 60 * 1000; // 5 minutes en millisecondes
+    const isExpired = now.getTime() + bufferTime >= expiry.getTime();
+    console.log(
+      `[isTokenExpired] Token expires at: ${expiry.toISOString()}, Current time: ${now.toISOString()}, Expired: ${isExpired}`
+    );
 
-  // Ajouter une marge de 5 minutes pour éviter les problèmes à la limite
-  const bufferTime = 5 * 60 * 1000; // 5 minutes en millisecondes
-
-  return now.getTime() + bufferTime >= expiry.getTime();
+    return isExpired;
+  } catch (error) {
+    console.error("[isTokenExpired] Error parsing expiry date:", error);
+    return true; // Treat parsing errors as expired for safety
+  }
 }
 
 /**

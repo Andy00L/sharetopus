@@ -27,7 +27,7 @@ export async function postToLinkedIn({
   link,
   mediaPath,
   mediaType,
-  fileName,
+  postType,
   buffer,
 }: {
   accessToken: string;
@@ -35,11 +35,14 @@ export async function postToLinkedIn({
   text: string;
   title?: string;
   link?: string;
+  postType: "image" | "video" | "text";
+
   mediaPath: string;
   mediaType?: string;
   userId: string;
   fileName?: string;
   buffer?: Buffer;
+  coverTimestamp?: number;
 }) {
   try {
     // Vérification des paramètres requis
@@ -56,58 +59,16 @@ export async function postToLinkedIn({
     let shareMediaCategory = "NONE"; // Par défaut, partage de texte
     let mediaContent: MediaContent[] = [];
     if (mediaPath) {
-      if (!mediaType && fileName) {
-        if (fileName.endsWith(".jpg") || fileName.endsWith(".jpeg")) {
-          mediaType = "image/jpeg";
-        } else if (fileName.endsWith(".png")) {
-          mediaType = "image/png";
-        } else if (fileName.endsWith(".mp4")) {
-          mediaType = "video/mp4";
-        } else if (fileName.endsWith(".gif")) {
-          mediaType = "image/gif";
-        } else if (fileName.endsWith(".mov")) {
-          mediaType = "image/mov";
-        }
-      }
-      if (!mediaType) {
-        console.log(
-          "[LinkedIn Post Routes] Could not determine media type from file"
-        );
-        return {
-          success: false,
-          error:
-            "Unable to determine media type. Please specify mediaType parameter.",
-        };
-      }
-
-      const isImage = mediaType.startsWith("image/");
-      const isVideo = mediaType.startsWith("video/");
-
-      if (!isImage && !isVideo) {
-        console.log(
-          "[LinkedIn Post Routes] Unsupported media type:",
-          mediaType
-        );
-        return {
-          success: false,
-          error:
-            "Unsupported media type. Only images and videos are supported for LinkedIn.",
-        };
-      }
-
       // Recette et catégorie en fonction du type de média
-      const mediaRecipe = isImage
-        ? "urn:li:digitalmediaRecipe:feedshare-image"
-        : "urn:li:digitalmediaRecipe:feedshare-video";
+      const mediaRecipe =
+        postType === "image"
+          ? "urn:li:digitalmediaRecipe:feedshare-image"
+          : "urn:li:digitalmediaRecipe:feedshare-video";
 
-      shareMediaCategory = isImage ? "IMAGE" : "VIDEO";
+      shareMediaCategory = postType === "image" ? "IMAGE" : "VIDEO";
 
       // Pour LinkedIn, nous devons d'abord uploader le média avant de l'utiliser dans un post
-      console.log(
-        `[LinkedIn Post Routes] Preparing to upload ${
-          isImage ? "image" : "video"
-        }`
-      );
+      console.log(`[LinkedIn Post Routes] Preparing to upload ${postType}`);
 
       // 1. Enregistrer le média pour l'upload
       try {
@@ -137,16 +98,7 @@ export async function postToLinkedIn({
 
         if (!registerResponse.ok) {
           const errorText = await registerResponse.text();
-          let errorDetails;
-          try {
-            errorDetails = JSON.parse(errorText);
-          } catch (parseError) {
-            errorDetails = { rawError: errorText };
-            console.error(
-              "[LinkedIn Post Routes] Error parsing registration response:",
-              parseError
-            );
-          }
+          const errorDetails = JSON.parse(errorText);
 
           console.error(
             "[LinkedIn Post Routes] Failed to register media upload:",
@@ -154,9 +106,7 @@ export async function postToLinkedIn({
           );
           return {
             success: false,
-            error: `Failed to register ${
-              isImage ? "image" : "video"
-            } upload with LinkedIn`,
+            error: `Failed to register ${postType} upload with LinkedIn`,
             details: errorDetails,
           };
         }
@@ -175,9 +125,7 @@ export async function postToLinkedIn({
         const assetUrn = registerData.value.asset;
 
         console.log(
-          `[LinkedIn Post Routes] Media registration successful, uploading ${
-            isImage ? "image" : "video"
-          } to:`,
+          `[LinkedIn Post Routes] Media registration successful, uploading ${postType} to:`,
           uploadUrl
         );
 
@@ -192,9 +140,18 @@ export async function postToLinkedIn({
               error: "Failed to retrieve media file from storage",
             };
           }
+          if (!mediaType) {
+            console.error(
+              "[LinkedIn Post Routes] Missing media type for upload"
+            );
+            return {
+              success: false,
+              error: "Media type is required for media uploads",
+            };
+          }
 
           // 3. Uploader le média
-          const uploadMethod = isVideo ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
+          const uploadMethod = postType === "video" ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
           const uploadResponse = await fetch(uploadUrl, {
             method: uploadMethod,
             headers: {
@@ -218,24 +175,18 @@ export async function postToLinkedIn({
             }
 
             console.error(
-              `[LinkedIn Post Routes] Failed to upload ${
-                isImage ? "image" : "video"
-              }:`,
+              `[LinkedIn Post Routes] Failed to upload ${postType}:`,
               errorDetails
             );
             return {
               success: false,
-              error: `Failed to upload ${
-                isImage ? "image" : "video"
-              } to LinkedIn`,
+              error: `Failed to upload ${postType} to LinkedIn`,
               details: errorDetails,
             };
           }
 
           console.log(
-            `[LinkedIn Post Routes] ${
-              isImage ? "Image" : "Video"
-            } uploaded successfully, creating share with media`
+            `[LinkedIn Post Routes] ${postType} uploaded successfully, creating share with media`
           );
 
           // 4. Créer le média content pour le partage
@@ -261,9 +212,7 @@ export async function postToLinkedIn({
         }
       } catch (mediaError) {
         console.error(
-          `[LinkedIn Post Routes] Error during ${
-            isImage ? "image" : "video"
-          } upload process:`,
+          `[LinkedIn Post Routes] Error during ${postType} upload process:`,
           mediaError
         );
         return {
@@ -412,7 +361,7 @@ export async function postToLinkedIn({
     return {
       success: false,
       error: "Failed to post to LinkedIn",
-      message: error instanceof Error ? error.message : String(error),
+      message: "Unexpected error",
     };
   }
 }

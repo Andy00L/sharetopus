@@ -9,6 +9,7 @@ import { scheduleForTikTokAccounts } from "../Scheduled/scheduleForTikTokAccount
 export async function processTiktokAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  coverTimestamp: number;
   mediaType: string;
   fileName: string;
   platformOptions: PlatformOptions;
@@ -49,6 +50,7 @@ export async function processTiktokAccounts(config: {
       const accountContent = config.accountContent.find(
         (c) => c.accountId === account.id
       );
+
       if (!accountContent) {
         console.error("No content configured for this account");
         return {
@@ -66,10 +68,11 @@ export async function processTiktokAccounts(config: {
       const accountStartTime = performance.now();
       const result = isScheduled
         ? await scheduleForTikTokAccounts({
-            accounts: [account],
+            account: account,
             mediaPath: config.mediaPath,
+            coverTimestamp: config.coverTimestamp,
             platformOptions: config.platformOptions,
-            accountContent: [accountContent],
+            accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
             postType: config.postType,
@@ -79,8 +82,10 @@ export async function processTiktokAccounts(config: {
         : await directPostForTikTokAccounts({
             account: account,
             mediaPath: config.mediaPath,
+            coverTimestamp: config.coverTimestamp,
             mediaType: config.mediaType,
             buffer: config.buffer,
+            postType,
             platformOptions: config.platformOptions,
             accountContent: accountContent,
             userId: config.userId,

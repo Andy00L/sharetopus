@@ -15,16 +15,20 @@ import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 export async function directPostForTikTokAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
+  coverTimestamp: number;
+
   mediaType: string;
   platformOptions: PlatformOptions;
   accountContent: {
     accountId: string;
-    title?: string;
-    description?: string;
+    title: string;
+    description: string;
     isCustomized: boolean;
   };
   userId: string | null;
   buffer?: Buffer;
+  postType: "image" | "video" | "text";
+
   fileName: string;
   batchId: string;
   isCronJob?: boolean;
@@ -32,6 +36,7 @@ export async function directPostForTikTokAccounts(config: {
   const {
     account,
     mediaPath,
+    postType,
     mediaType,
     platformOptions,
     accountContent,
@@ -44,28 +49,6 @@ export async function directPostForTikTokAccounts(config: {
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
 
-    // Determine if we're posting image(s) or video
-    const isImage = mediaType?.startsWith("image/");
-    const isVideo = mediaType?.startsWith("video/");
-    //Implementation temporaire
-    if (isImage) {
-      console.error("[TikTok Direct Post] We don't support image upload");
-      return {
-        success: false,
-        count: 0,
-        message: " We don't support image uploaf",
-      };
-    }
-
-    if (!isVideo && !isImage) {
-      console.error("[TikTok Direct Post] Unsupported media type:", mediaType);
-      return {
-        success: false,
-        count: 0,
-        message: "Unsupported media type. Must be image or video.",
-      };
-    }
-
     if (!accountContent || accountContent.accountId !== account.id) {
       console.error(
         `[TikTok Direct Post] No or mismatched content for account ${account.id}`
@@ -77,15 +60,17 @@ export async function directPostForTikTokAccounts(config: {
       };
     }
 
+    // Vérifier et rafraîchir le token si nécessaire
     const validToken = await ensureValidToken(account);
-    if (!validToken) {
+
+    if (!validToken.success) {
       console.error(
         `[TikTok Direct Post] No valid access token for account ${account.id}`
       );
       return {
         success: false,
         count: 0,
-        message: "Invalid or expired access token",
+        message: validToken.error,
       };
     }
 
@@ -97,7 +82,7 @@ export async function directPostForTikTokAccounts(config: {
 
     // Call our TikTok posting function
     const postResult = await postToTikTok({
-      accessToken: validToken,
+      accessToken: validToken.token!,
       title: accountContent.title ?? "",
       description: accountContent.description ?? "",
       tikTokOptions: platformOptions.tiktok,
@@ -105,6 +90,8 @@ export async function directPostForTikTokAccounts(config: {
       buffer,
       mediaType: mediaType ?? "",
       userId: userId ?? "",
+      coverTimestamp: config.coverTimestamp,
+      postType: postType,
     });
 
     // Add detailed console logging
@@ -130,10 +117,10 @@ export async function directPostForTikTokAccounts(config: {
             media_url: postResult.postUrl || null,
             batch_id: batchId,
             status: postResult.status,
-            media_type: isImage ? "image" : "video",
+            media_type: postType,
             extra: {
               post_data: postResult.data,
-              post_type: isImage ? "image" : "video",
+              post_type: postType,
               posted_at: new Date().toISOString(),
               privacy_level: platformOptions.tiktok,
             },
@@ -169,8 +156,9 @@ export async function directPostForTikTokAccounts(config: {
             post_title: accountContent.title || null,
             post_description: accountContent.description || null,
             post_options: platformOptions.tiktok,
-            media_type: isVideo ? "video" : isImage ? "image" : "text",
+            media_type: postType,
             media_storage_path: mediaPath,
+            coverTimestamp: config.coverTimestamp,
             batch_id: batchId,
             extra_data: {
               message: postResult.message,

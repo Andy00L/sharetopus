@@ -69,7 +69,7 @@ export default function SocialPostForm({
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
   const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 50) * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [coverImageFile, setCoverImageFile] = useState<File | null>(null); // ADD THIS LINE
+  const [coverTimestamp, setCoverTimestamp] = useState<number>(0);
 
   // Add new single state for all account content
   const [accountContent, setAccountContent] = useState<
@@ -124,13 +124,14 @@ export default function SocialPostForm({
   // Reset form state
   const resetForm = () => {
     setSelectedFile(null);
+    setCoverTimestamp(0);
+
     setAccountContent([]);
     setTextInputs({
       title: "",
       description: "",
       link: "",
     });
-    setAccountContent([]);
     setSelectedAccounts({});
 
     setIsScheduled(false);
@@ -589,7 +590,6 @@ export default function SocialPostForm({
     // Create a unique batch ID for this submission
     const batchId = nanoid(32);
     let mediaStoragePath = "";
-    let coverImagePath = "";
 
     try {
       // Step 4: Handle media upload if needed
@@ -624,19 +624,6 @@ export default function SocialPostForm({
         }
 
         mediaStoragePath = uploadResult.path ?? "";
-
-        // Cover image
-        if (coverImageFile) {
-          const coverUploadResult = await uploadMedia(
-            coverImageFile,
-            isScheduled,
-            planId
-          );
-
-          if (coverUploadResult.success) {
-            coverImagePath = coverUploadResult.path ?? "";
-          }
-        }
       }
 
       // Step 5: Ensure account content is properly set before submission
@@ -658,7 +645,7 @@ export default function SocialPostForm({
 
         // Media info
         mediaPath: mediaStoragePath,
-        coverImagePath: coverImagePath,
+        coverTimestamp: coverTimestamp,
         fileName: selectedFile?.name,
 
         // Content details
@@ -880,7 +867,7 @@ export default function SocialPostForm({
             {postType === "video" && selectedFile && (
               <VideoCoverSelector
                 videoFile={selectedFile}
-                onCoverChange={setCoverImageFile}
+                onCoverChange={setCoverTimestamp}
                 onError={setError}
               />
             )}

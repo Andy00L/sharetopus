@@ -62,7 +62,7 @@ export async function handleSocialMediaPost(config: {
   linkedinAccounts: SocialAccount[];
   tiktokAccounts: SocialAccount[];
   mediaPath: string;
-  coverImagePath?: string;
+  coverTimestamp: number;
   fileName?: string;
   boards?: BoardInfo[];
   platformOptions: PlatformOptions;
@@ -83,7 +83,7 @@ export async function handleSocialMediaPost(config: {
     linkedinAccounts,
     tiktokAccounts,
     mediaPath,
-    coverImagePath,
+    coverTimestamp,
     fileName,
     boards,
     platformOptions,
@@ -358,7 +358,7 @@ export async function handleSocialMediaPost(config: {
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
     let responseBuffer;
-    let coverImageBuffer;
+
     if (mediaPath && (postType === "video" || postType === "image")) {
       // Download the file for direct upload
       responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
@@ -371,17 +371,7 @@ export async function handleSocialMediaPost(config: {
         };
       }
     }
-    // Download cover image if provided
-    if (coverImagePath && postType === "video") {
-      const coverResponse = await getSupabaseVideoFile(coverImagePath, userId);
-      if (coverResponse.success) {
-        coverImageBuffer = coverResponse.buffer;
-      } else {
-        console.warn(
-          `[handleSocialMediaPost]: Failed to download cover image: ${coverResponse.message}`
-        );
-      }
-    }
+
     // Process each platform in parallel for maximum performance
     const [
       tiktokAccountResults,
@@ -402,7 +392,7 @@ export async function handleSocialMediaPost(config: {
             scheduledTime: scheduledTime ?? "",
             postType,
             buffer: responseBuffer?.buffer,
-
+            coverTimestamp,
             userId,
             batchId,
             isCronJob,
@@ -414,6 +404,7 @@ export async function handleSocialMediaPost(config: {
         ? processPinterestAccounts({
             accounts: pinterestAccounts,
             mediaPath,
+            coverTimestamp,
             mediaType,
             fileName: fileName ?? "",
             boards: boards || [],
@@ -423,8 +414,6 @@ export async function handleSocialMediaPost(config: {
             scheduledDate: scheduledDate ?? "",
             scheduledTime: scheduledTime ?? "",
             buffer: responseBuffer?.buffer,
-            thumbnailBuffer: coverImageBuffer,
-            coverImagePath,
             postType,
             userId,
             batchId,
@@ -437,6 +426,7 @@ export async function handleSocialMediaPost(config: {
         ? processLinkedinAccounts({
             accounts: linkedinAccounts,
             mediaPath,
+            coverTimestamp,
             fileName: fileName ?? "",
             platformOptions,
             accountContent,
@@ -504,25 +494,6 @@ export async function handleSocialMediaPost(config: {
         } catch (cleanupError) {
           console.error(
             `[handleSocialMediaPost]: Error cleaning up media file:`,
-            cleanupError
-          );
-        }
-      }
-
-      // Clean up cover image file
-      if (coverImagePath) {
-        try {
-          await deleteSupabaseFileAction(
-            userId,
-            coverImagePath,
-            config.isCronJob
-          );
-          console.log(
-            `[handleSocialMediaPost]: Cleaned up temporary cover image file: ${coverImagePath}`
-          );
-        } catch (cleanupError) {
-          console.error(
-            `[handleSocialMediaPost]: Error cleaning up cover image file:`,
             cleanupError
           );
         }

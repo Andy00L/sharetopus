@@ -1,8 +1,7 @@
 // lib/api/pinterest/post/postToPinterest.ts
-import "server-only";
-
 import FormData from "form-data";
 import fetch from "node-fetch";
+import "server-only";
 
 // Define return type for Pinterest posts
 export interface PinterestPostResult {
@@ -20,6 +19,11 @@ interface PinterestMediaRegistrationResponse {
   upload_url: string;
   upload_parameters: Record<string, string>;
 }
+interface PinterestMediaStatusResponse {
+  status: string;
+  media_id: string;
+  media_type?: string;
+}
 /**
  * Posts content directly to Pinterest using the two-step process:
  * 1. Register media upload and get upload URL
@@ -34,9 +38,10 @@ export async function postToPinterest({
   link,
   mediaPath,
   mediaType,
-  fileName, // Added filename parameter
+  fileName,
   buffer,
-  thumbnailBuffer,
+  coverTimestamp,
+  postType,
 }: {
   accessToken: string;
   boardId: string;
@@ -48,25 +53,10 @@ export async function postToPinterest({
   fileName: string;
   userId: string;
   buffer?: Buffer;
-  thumbnailBuffer?: Buffer;
-  supabaseBucket: string;
+  coverTimestamp: number;
+  postType: "image" | "video" | "text";
 }): Promise<PinterestPostResult> {
   try {
-    // Verify required parameters
-    if (!accessToken || !boardId) {
-      return {
-        success: false,
-        error:
-          "Missing required parameters (accessToken and boardId are required)",
-      };
-    }
-    if (!buffer) {
-      return {
-        success: false,
-        error: "Buffer is required for video uploads to Pinterest",
-      };
-    }
-
     // Verify required parameters
     if (!accessToken || !boardId || !mediaPath) {
       console.log("[Pinterest Post Function] Missing required parameters");
@@ -77,28 +67,21 @@ export async function postToPinterest({
       };
     }
 
-    // Determine if we're posting an image or video
-    const isImage = mediaType.startsWith("image/");
-    const isVideo = mediaType.startsWith("video/");
-
-    if (!isVideo && !isImage) {
-      console.log(
-        "[Pinterest Post Function] Unsupported media type:",
-        mediaType
-      );
+    if (!buffer) {
       return {
         success: false,
-        error: "Unsupported media type. Must be image or video.",
+        error: "Buffer is required for video uploads to Pinterest",
       };
     }
 
-    if (isImage) {
-      if (!buffer) {
-        return {
-          success: false,
-          error: "Buffer is required for image uploads",
-        };
-      }
+    if (postType === "text") {
+      return {
+        success: false,
+        error: "Pinterest doesn't support text-only posts.",
+      };
+    }
+
+    if (postType === "image") {
       const base64Media = buffer.toString("base64");
       // Create pin with embedded media
       const requestBody = {
@@ -125,10 +108,9 @@ export async function postToPinterest({
           body: JSON.stringify(requestBody),
         }
       );
-      const data = (await createPinResponse.json()) as Record<string, unknown>; // <— you already need this
+      const data = (await createPinResponse.json()) as Record<string, unknown>;
 
       if (!createPinResponse.ok) {
-        // Error handling
         console.error(
           "[Pinterest Post Function] Media registration error:",
           data
@@ -150,7 +132,6 @@ export async function postToPinterest({
     }
 
     // STEP 1: Register media upload
-    console.log("[Pinterest Post Function] Registering media upload");
 
     const registerResponse = await fetch("https://api.pinterest.com/v5/media", {
       method: "POST",
@@ -176,16 +157,12 @@ export async function postToPinterest({
     }
 
     const registerData = await registerResponse.json();
-    console.log(
-      "[Pinterest Post Function] Media registration successful"
-      // registerData
-    );
+    console.log("[Pinterest Post Function] Media registration successful");
 
     const { media_id, upload_url, upload_parameters } =
       registerData as PinterestMediaRegistrationResponse;
 
     // STEP 2: Upload media to the provided URL
-    console.log("[Pinterest Post Function] Uploading media to provided URL");
 
     // Create form data with all required parameters
     const formData = new FormData();
@@ -219,31 +196,84 @@ export async function postToPinterest({
     }
 
     console.log("[Pinterest Post Function] Media upload successful");
-    // STEP 2.5: Wait for Pinterest to process the media
+
+    // STEP 3: Confirm upload status (MISSING STEP!)
+
+    let uploadStatus = "processing";
+    let attempts = 0;
+    const maxAttempts = 12; // 12 seconds max wait
+
+    while (uploadStatus !== "succeeded" && attempts < maxAttempts) {
+      const statusResponse = await fetch(
+        `https://api.pinterest.com/v5/media/${media_id}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (statusResponse.ok) {
+        const statusData =
+          (await statusResponse.json()) as PinterestMediaStatusResponse;
+        uploadStatus = statusData.status;
+        console.log(`[Pinterest Post Function] Upload status: ${uploadStatus}`);
+
+        if (uploadStatus === "succeeded") {
+          break;
+        } else if (uploadStatus === "failed") {
+          return {
+            success: false,
+            error:
+              "Pinterest couldn't process your video. Please try with a different video file or check that it meets Pinterest's requirements.",
+            message:
+              "Video processing failed on Pinterest's servers. The video format may not be supported.",
+          };
+        }
+      } else {
+        console.error(
+          "[Pinterest Post Function] Status check failed:",
+          statusResponse.status
+        );
+        return {
+          success: false,
+          error:
+            "Unable to verify video upload status with Pinterest. Please try again in a few minutes.",
+          message:
+            "Pinterest's servers are temporarily unavailable. Please try again later.",
+        };
+      }
+
+      attempts++;
+      if (uploadStatus !== "succeeded") {
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second between checks
+      }
+    }
+
+    if (uploadStatus !== "succeeded") {
+      return {
+        success: false,
+        error:
+          "Your video is taking longer than expected to process. Please try again or use a smaller video file.",
+        message:
+          "Pinterest is taking too long to process your video. This may happen with very large files or during high traffic periods.",
+      };
+    }
+
     console.log(
-      "[Pinterest Post Function] Waiting for media to be processed by Pinterest"
-    );
-    await new Promise((resolve) => setTimeout(resolve, 3000)); // Wait 3 seconds
-    // STEP 3: Create pin with the uploaded media
-    console.log(
-      `[Pinterest Post Function] Creating pin with media_id: ${media_id}`
+      "[Pinterest Post Function] Video processing confirmed - ready to create pin"
     );
 
-    let thumbnailBase64 = "";
-    if (thumbnailBuffer) {
-      console.log("[Pinterest Post Function] Adding custom thumbnail");
-      thumbnailBase64 = thumbnailBuffer.toString("base64");
-    }
+    // STEP 4: Create pin with the uploaded media
 
     const pinRequestBody = {
       board_id: boardId,
       media_source: {
         media_id: media_id,
         source_type: "video_id",
-        ...(thumbnailBase64 && {
-          cover_image_content_type: "image/png",
-          cover_image_data: thumbnailBase64,
-        }),
+        cover_image_key_frame_time: coverTimestamp,
       },
       title: title ?? "",
       description: description ?? "",
@@ -286,9 +316,7 @@ export async function postToPinterest({
       postId: data.id as string,
       postUrl: `https://www.pinterest.com/pin/${data.id}/`,
       data: data,
-      message: `Successfully created ${
-        isImage ? "image" : "video"
-      } pin on Pinterest`,
+      message: `Successfully created ${postType} pin on Pinterest`,
     };
   } catch (error) {
     console.error("[Pinterest Post Function] Unexpected error:", error);
@@ -296,7 +324,7 @@ export async function postToPinterest({
     return {
       success: false,
       error: "Failed to post to Pinterest",
-      message: error instanceof Error ? error.message : String(error),
+      message: "Unexpected error",
     };
   }
 }

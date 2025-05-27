@@ -59,6 +59,8 @@ export async function postToTikTok({
   description,
   tikTokOptions,
   mediaPath,
+  postType,
+  coverTimestamp,
   mediaType,
   userId,
   buffer,
@@ -69,30 +71,28 @@ export async function postToTikTok({
   description?: string;
   tikTokOptions?: TikTokOptions;
   buffer?: Buffer;
+  coverTimestamp: number;
+  postType: "image" | "video" | "text";
   mediaPath: string;
   mediaType: string;
   userId: string;
   autoAddMusic?: boolean;
 }): Promise<TikTokPostResult> {
   try {
+    if (!buffer) {
+      return {
+        success: false,
+        error: "Buffer is required for video uploads to Pinterest",
+      };
+    }
     // Verify required parameters
     if (!accessToken || !mediaPath) {
+      console.log("[Tiktok Post Function] Missing required parameters");
+
       return {
         success: false,
         error:
           "Missing required parameters (accessToken and mediaPath are required)",
-      };
-    }
-
-    // Determine if we're posting image or video
-
-    const isImage = mediaType.startsWith("image/");
-    const isVideo = mediaType.startsWith("video/");
-
-    if (!isVideo && !isImage) {
-      return {
-        success: false,
-        error: "Unsupported media type. Must be image or video.",
       };
     }
 
@@ -110,6 +110,11 @@ export async function postToTikTok({
 
     if (!creatorInfoResponse.ok) {
       const errorData = await creatorInfoResponse.json();
+      console.error(
+        "[Tiktok Post Function] Media registration error:",
+        errorData
+      );
+
       return {
         success: false,
         error: "Failed to query creator info",
@@ -121,7 +126,7 @@ export async function postToTikTok({
       (await creatorInfoResponse.json()) as CreatorInfoResponse;
 
     // Call the appropriate handler based on media type
-    if (isImage) {
+    if (postType === "image") {
       return await handleImagePost({
         accessToken,
         title,
@@ -139,16 +144,19 @@ export async function postToTikTok({
         buffer,
         tikTokOptions,
         mediaPath,
+        coverTimestamp,
         mediaType,
         userId,
         creatorInfo,
       });
     }
   } catch (error) {
+    console.error("[Tiktok Post Function] Unexpected error:", error);
+
     return {
       success: false,
       error: "Failed to post to TikTok",
-      message: error instanceof Error ? error.message : String(error),
+      message: "Unexpected error",
     };
   }
 }
@@ -161,6 +169,7 @@ async function handleVideoPost({
   description,
   tikTokOptions,
   buffer,
+  coverTimestamp,
   mediaType,
   creatorInfo,
 }: {
@@ -169,17 +178,12 @@ async function handleVideoPost({
   tikTokOptions?: TikTokOptions;
   mediaPath: string;
   mediaType: string;
-  buffer?: Buffer;
+  buffer: Buffer;
+  coverTimestamp: number;
   userId: string;
   creatorInfo: CreatorInfoResponse;
 }): Promise<TikTokPostResult> {
   try {
-    if (!buffer) {
-      return {
-        success: false,
-        error: "No Buffer",
-      };
-    }
     const fileSize = buffer?.length;
 
     // Calculate optimal chunk size based on file size
@@ -229,6 +233,7 @@ async function handleVideoPost({
             video_size: fileSize,
             chunk_size: chunkSize,
             total_chunk_count: totalChunkCount,
+            cover_timestamp_ms: coverTimestamp,
           },
         }),
       }
@@ -341,10 +346,12 @@ async function handleVideoPost({
       content_id: publishId,
     };
   } catch (error) {
+    console.error("[tiktok Post Function] Unexpected error:", error);
+
     return {
       success: false,
       error: "Failed to post video to TikTok",
-      message: error instanceof Error ? error.message : String(error),
+      message: "Unexpected error",
     };
   }
 }

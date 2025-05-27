@@ -1,7 +1,7 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { directPostForPinterestAccounts } from "../Direct/directPostForPinterestAccounts";
 import { AccountError, BoardInfo, ContentInfo } from "../handleSocialMediaPost";
-import { scheduleForPinterestAccounts } from "../Scheduled/scheduleForPinterestAccounts";
+import { scheduleForPinterestAccount } from "../Scheduled/scheduleForPinterestAccounts";
 
 /**
  * Process Pinterest accounts individually with robust error handling for each account
@@ -9,6 +9,7 @@ import { scheduleForPinterestAccounts } from "../Scheduled/scheduleForPinterestA
 export async function processPinterestAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  coverTimestamp: number;
   mediaType: string;
   fileName: string;
   boards: BoardInfo[];
@@ -21,8 +22,6 @@ export async function processPinterestAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
-  thumbnailBuffer?: Buffer;
-  coverImagePath?: string;
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -67,6 +66,7 @@ export async function processPinterestAccounts(config: {
       const accountBoards = config.boards.filter(
         (b) => b.accountId === account.id && b.isSelected
       );
+
       if (accountBoards.length === 0) {
         return {
           success: false,
@@ -82,13 +82,14 @@ export async function processPinterestAccounts(config: {
       // Process single account with detailed timing
       const accountStartTime = performance.now();
       const result = isScheduled
-        ? await scheduleForPinterestAccounts({
-            accounts: [account],
+        ? await scheduleForPinterestAccount({
+            account: account,
             mediaPath: config.mediaPath,
-            coverImagePath: config.coverImagePath,
-            boards: accountBoards,
+            coverTimestamp: config.coverTimestamp,
+
+            boards: accountBoards[0],
             platformOptions: config.platformOptions,
-            accountContent: [accountContent],
+            accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
             postType: config.postType,
@@ -98,7 +99,8 @@ export async function processPinterestAccounts(config: {
         : await directPostForPinterestAccounts({
             account: account,
             mediaPath: config.mediaPath,
-            coverImagePath: config.coverImagePath,
+            coverTimestamp: config.coverTimestamp,
+
             mediaType: config.mediaType,
             boards: accountBoards[0],
             platformOptions: config.platformOptions,
@@ -107,7 +109,6 @@ export async function processPinterestAccounts(config: {
             fileName: config.fileName,
             batchId: config.batchId,
             buffer: config.buffer,
-            thumbnailBuffer: config.thumbnailBuffer,
             postType: config.postType,
             isCronJob: config.isCronJob,
           });

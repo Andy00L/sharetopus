@@ -1,13 +1,11 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Upload, RotateCcw } from "lucide-react";
 import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 
 interface VideoCoverSelectorProps {
   readonly videoFile: File;
-  readonly onCoverChange: (coverFile: File) => void;
+  readonly onCoverChange: (timestamp: number) => void;
   readonly onError?: (errorMessage: string) => void;
 }
 
@@ -19,11 +17,10 @@ export function VideoCoverSelector({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [coverPreview, setCoverPreview] = useState<string>("");
-  const [isCustomCover, setIsCustomCover] = useState(false);
+  const [pendingTime, setPendingTime] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (videoFile && videoRef.current) {
@@ -37,6 +34,15 @@ export function VideoCoverSelector({
   const handleVideoLoaded = () => {
     if (videoRef.current) {
       const videoDuration = videoRef.current.duration;
+
+      // Add validation for invalid duration
+      if (!videoDuration || videoDuration === 0 || !isFinite(videoDuration)) {
+        onError?.(
+          "Unable to load video duration. Please try a different file."
+        );
+        return;
+      }
+
       setDuration(videoDuration);
 
       // Set initial time to 10% of video duration
@@ -69,60 +75,32 @@ export function VideoCoverSelector({
     // Draw current frame
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert to blob and create preview
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          const previewUrl = URL.createObjectURL(blob);
-          setCoverPreview(previewUrl);
+    // Convert to base64 and create preview
+    const frameData = canvas.toDataURL("image/jpeg", 1);
 
-          // Create File for upload
-          const coverFile = new File([blob], `${videoFile.name}-cover.png`, {
-            type: "image/png",
-          });
-
-          onCoverChange(coverFile);
-        }
-      },
-      "image/png",
-      0.8
-    );
+    // Small delay to ensure smooth transition
+    setTimeout(() => {
+      setCoverPreview(frameData);
+      onCoverChange(time * 1000);
+    }, 50);
   };
 
   const handleSliderChange = (values: number[]) => {
     const newTime = values[0];
     setCurrentTime(newTime);
-    generateThumbnail(newTime);
-    setIsCustomCover(false);
+    setPendingTime(newTime);
   };
+  // Add debounced thumbnail generation
+  useEffect(() => {
+    if (pendingTime === null) return;
 
-  const handleCustomUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const timer = setTimeout(() => {
+      generateThumbnail(pendingTime);
+      setPendingTime(null);
+    }, 150);
 
-    if (file) {
-      // Only allow PNG and JPEG
-      const allowedTypes = ["image/png", "image/jpeg", "image/jpg"];
-
-      if (allowedTypes.includes(file.type)) {
-        setIsCustomCover(true);
-        const previewUrl = URL.createObjectURL(file);
-        setCoverPreview(previewUrl);
-        onCoverChange(file);
-      } else {
-        // Show error for unsupported format
-        onError?.("Please select a PNG or JPEG image file for the cover.");
-        // Reset file input
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-      }
-    }
-  };
-
-  const resetToGenerated = () => {
-    setIsCustomCover(false);
-    generateThumbnail(currentTime);
-  };
+    return () => clearTimeout(timer);
+  }, [pendingTime]);
 
   // Generate initial thumbnail
   useEffect(() => {
@@ -156,23 +134,11 @@ export function VideoCoverSelector({
               alt="Cover preview"
               className="w-full h-48 object-cover rounded-lg border"
             />
-            {isCustomCover && (
-              <div className="absolute top-2 right-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={resetToGenerated}
-                  className="bg-black/50 text-white hover:bg-black/70"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                </Button>
-              </div>
-            )}
           </div>
         )}
       </div>
       {/* Frame Selection Slider */}
-      {!isCustomCover && duration > 0 && (
+      {duration > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium">Select Frame for Cover</label>
           <Slider
@@ -185,33 +151,13 @@ export function VideoCoverSelector({
           />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>0s</span>
+            <span className="font-medium text-primary">
+              {currentTime.toFixed(1)}s
+            </span>
+
             <span>{duration.toFixed(1)}s</span>
           </div>
         </div>
-      )}
-      {/* Custom Upload Button */}
-      <div className="flex justify-center">
-        <Button
-          variant="outline"
-          onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-2"
-        >
-          <Upload className="h-4 w-4" />
-          Upload Custom Cover
-        </Button>
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/jpg"
-          onChange={handleCustomUpload}
-          className="hidden"
-        />
-      </div>
-      {isCustomCover && (
-        <p className="text-sm text-center text-muted-foreground">
-          Using custom cover image (PNG/JPEG)
-        </p>
       )}
     </div>
   );

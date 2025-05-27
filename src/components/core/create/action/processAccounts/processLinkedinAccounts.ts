@@ -8,6 +8,7 @@ import { scheduleForLinkedInAccounts } from "../Scheduled/scheduledForLinkedinAc
  */
 export async function processLinkedinAccounts(config: {
   accounts: SocialAccount[];
+  coverTimestamp?: number;
   mediaPath: string;
   mediaType: string;
   fileName: string;
@@ -20,7 +21,7 @@ export async function processLinkedinAccounts(config: {
   userId: string | null;
   batchId: string;
   buffer?: Buffer;
-  
+
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled } = config;
@@ -78,10 +79,11 @@ export async function processLinkedinAccounts(config: {
       const accountStartTime = performance.now();
       const result = isScheduled
         ? await scheduleForLinkedInAccounts({
-            accounts: [account],
+            account: account,
             mediaPath: config.mediaPath,
+            coverTimestamp: config.coverTimestamp,
             platformOptions: config.platformOptions,
-            accountContent: [accountContent],
+            accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
             postType: config.postType,
@@ -91,6 +93,7 @@ export async function processLinkedinAccounts(config: {
         : await directPostForLinkedInAccounts({
             account: account,
             mediaPath: config.mediaPath,
+            coverTimestamp: config.coverTimestamp,
             mediaType: config.mediaType,
             platformOptions: config.platformOptions,
             accountContent: accountContent,

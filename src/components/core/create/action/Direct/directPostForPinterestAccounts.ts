@@ -1,10 +1,10 @@
 // createPostForm/action/directPostForPinterestAccounts.ts
-"use server";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import "server-only";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 
 /**
@@ -14,7 +14,8 @@ import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 export async function directPostForPinterestAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
-  coverImagePath?: string;
+  coverTimestamp: number;
+
   boards: {
     boardID: string;
     boardName: string;
@@ -34,7 +35,6 @@ export async function directPostForPinterestAccounts(config: {
   batchId: string;
   mediaType: string;
   postType: "image" | "video" | "text";
-  thumbnailBuffer?: Buffer;
   buffer?: Buffer;
   isCronJob?: boolean;
 }): Promise<ScheduleResult> {
@@ -43,7 +43,6 @@ export async function directPostForPinterestAccounts(config: {
     mediaPath,
     boards,
     accountContent,
-    coverImagePath,
     userId,
     batchId,
     buffer,
@@ -52,16 +51,6 @@ export async function directPostForPinterestAccounts(config: {
     fileName,
     isCronJob,
   } = config;
-
-  if (!account) {
-    console.error("[Pinterest Direct Post] Error fetching accounts:");
-
-    return {
-      success: false,
-      count: 0,
-      message: "Failed to fetch social accounts",
-    };
-  }
 
   let successCount = 0;
 
@@ -85,14 +74,14 @@ export async function directPostForPinterestAccounts(config: {
     // Vérifier et rafraîchir le token si nécessaire
     const validToken = await ensureValidToken(account);
 
-    if (!validToken) {
+    if (!validToken.success) {
       console.error(
         `[Pinterest Direct Post] No valid access token for account ${account.id}`
       );
       return {
         success: false,
         count: 0,
-        message: "Invalid or expired access token",
+        message: validToken.error,
       };
     }
 
@@ -105,7 +94,7 @@ export async function directPostForPinterestAccounts(config: {
 
       // Call our new postToPinterest function instead of the API endpoint
       const postResult = await postToPinterest({
-        accessToken: validToken,
+        accessToken: validToken.token!,
         boardId: boards.boardID,
         title: accountContent.title,
         description: accountContent.description,
@@ -115,8 +104,8 @@ export async function directPostForPinterestAccounts(config: {
         fileName: fileName,
         userId: userId ?? "",
         buffer,
-        thumbnailBuffer: config.thumbnailBuffer,
-        supabaseBucket: "scheduled-videos",
+        coverTimestamp: config.coverTimestamp,
+        postType: postType,
       });
       // Add detailed console logging
       console.log(
@@ -129,7 +118,7 @@ export async function directPostForPinterestAccounts(config: {
 
       if (postResult.success) {
         try {
-          // Store content history (similar to Pinterest)
+          // Store content history
           await storeContentHistory(
             {
               platform: "pinterest",
@@ -140,7 +129,7 @@ export async function directPostForPinterestAccounts(config: {
               media_url: postResult.postUrl!,
               batch_id: batchId,
               status: "posted",
-              media_type: postType, // Use the same logic as in your extra.post_type
+              media_type: postType,
               extra: {
                 post_data: postResult.data,
                 post_type: postType,
@@ -173,6 +162,7 @@ export async function directPostForPinterestAccounts(config: {
           "[Pinterest Direct Post] Error message:",
           postResult.message
         );
+
         if (isCronJob) {
           try {
             await storeFailedPost({
@@ -189,7 +179,7 @@ export async function directPostForPinterestAccounts(config: {
               },
               media_type: postType,
               media_storage_path: mediaPath,
-              cover_storage_path: coverImagePath,
+              coverTimestamp: config.coverTimestamp,
 
               batch_id: batchId,
               extra_data: {
@@ -210,11 +200,8 @@ export async function directPostForPinterestAccounts(config: {
               storeError
             );
           }
-        } else {
-          console.log(
-            "[Pinterest Direct Post] Skipping failed post storage (not a cron job)"
-          );
         }
+
         return {
           success: false,
           count: 0,
