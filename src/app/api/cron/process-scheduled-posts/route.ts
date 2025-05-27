@@ -125,8 +125,8 @@ export async function POST(request: NextRequest) {
       | "video"
       | "text";
 
-    const coverImagePost = postsData.find((post) => post.cover_storage_path);
-    const coverImagePath = coverImagePost?.cover_storage_path || "";
+    // Extract cover timestamp from database
+    const coverTimestamp = mediaPost?.cover_Image_Time_stamp || 0;
 
     // Prepare boards and content
     const boards: BoardInfo[] = [];
@@ -215,7 +215,7 @@ export async function POST(request: NextRequest) {
       linkedinAccounts,
       tiktokAccounts,
       mediaPath,
-      coverImagePath,
+      coverTimestamp,
       fileName,
       boards,
       platformOptions,
