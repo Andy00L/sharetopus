@@ -43,8 +43,8 @@ import {
 } from "./constants/constants";
 import NoAccountAvaible from "./NoAccountAvaible";
 import { ImageUploads } from "./upload/ImageUpload ";
-import { VideoUploads } from "./upload/VideoUpload";
 import { VideoCoverSelector } from "./upload/VideoCoverSelector";
+import { VideoUploads } from "./upload/VideoUpload";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -369,7 +369,10 @@ export default function SocialPostForm({
             ...existingContent,
             description: textInputs.description,
             title: textInputs.title,
-            link: textInputs.link,
+            link:
+              account.platform === "pinterest"
+                ? platformOptions.pinterest?.link || ""
+                : textInputs.link,
           };
         }
         return existingContent; // Skip customized accounts
@@ -379,7 +382,10 @@ export default function SocialPostForm({
         accountId: account.id,
         title: textInputs.title,
         description: textInputs.description,
-        link: textInputs.link,
+        link:
+          account.platform === "pinterest"
+            ? platformOptions.pinterest?.link || ""
+            : textInputs.link,
         isCustomized: false,
       };
     });
