@@ -105,38 +105,43 @@ export async function directPostForTikTokAccounts(config: {
     console.log("Message:", postResult.message);
 
     if (postResult.success) {
-      try {
-        // Store content history
-        await storeContentHistory(
-          {
-            platform: "tiktok",
-            content_id: postResult.postId || postResult.publishId || "",
-            social_account_id: accountContent.accountId,
-            title: accountContent.title || null,
-            description: accountContent.description || null,
-            media_url: postResult.postUrl || null,
-            batch_id: batchId,
-            status: postResult.status,
-            media_type: postType,
-            extra: {
-              post_data: postResult.data,
-              post_type: postType,
-              posted_at: new Date().toISOString(),
-              privacy_level: platformOptions.tiktok,
-            },
+      // Store content history
+      const historyResult = await storeContentHistory(
+        {
+          platform: "tiktok",
+          content_id: postResult.postId || postResult.publishId || "",
+          social_account_id: accountContent.accountId,
+          title: accountContent.title || null,
+          description: accountContent.description || null,
+          media_url: postResult.postUrl || null,
+          batch_id: batchId,
+          status: postResult.status,
+          media_type: postType,
+          extra: {
+            post_data: postResult.data,
+            post_type: postType,
+            posted_at: new Date().toISOString(),
+            privacy_level: platformOptions.tiktok,
           },
-          userId
-        );
+        },
+        userId
+      );
 
-        console.log(
-          `[TikTok Direct Post] Successfully posted to account and saved to history`
-        );
-      } catch (historyError) {
+      if (!historyResult.success) {
         console.error(
           `[TikTok Direct Post] Error saving to content history:`,
-          historyError
+          historyResult.message
         );
+        return {
+          success: false,
+          count: 0,
+          message: `Post succeeded but failed to save history: ${historyResult.message}`,
+        };
       }
+
+      console.log(
+        `[TikTok Direct Post] Successfully posted to account and saved to history`
+      );
     }
     // Add more detailed error logging
     if (!postResult.success) {
@@ -148,35 +153,40 @@ export async function directPostForTikTokAccounts(config: {
       console.error("[TikTok Direct Post] Error details:", postResult.details);
       console.error("[TikTok Direct Post] Error message:", postResult.message);
       if (isCronJob) {
-        try {
-          await storeFailedPost({
-            user_id: userId,
-            social_account_id: account.id,
-            platform: "tiktok",
-            post_title: accountContent.title || null,
-            post_description: accountContent.description || null,
-            post_options: platformOptions.tiktok,
-            media_type: postType,
-            media_storage_path: mediaPath,
-            coverTimestamp: config.coverTimestamp,
-            batch_id: batchId,
-            extra_data: {
-              message: postResult.message,
-              details: postResult.details,
-              error: postResult.error,
-              timestamp: new Date().toISOString(),
-            },
-          });
+        const failedPostResult = await storeFailedPost({
+          user_id: userId,
+          social_account_id: account.id,
+          platform: "tiktok",
+          post_title: accountContent.title || null,
+          post_description: accountContent.description || null,
+          post_options: platformOptions.tiktok,
+          media_type: postType,
+          media_storage_path: mediaPath,
+          coverTimestamp: config.coverTimestamp,
+          batch_id: batchId,
+          extra_data: {
+            message: postResult.message,
+            details: postResult.details,
+            error: postResult.error,
+            timestamp: new Date().toISOString(),
+          },
+        });
 
-          console.log(
-            "[TikTok Direct Post] Failed post stored in failed_posts table"
-          );
-        } catch (storeError) {
+        if (!failedPostResult.success) {
           console.error(
             "[TikTok Direct Post] Error storing failed post:",
-            storeError
+            failedPostResult.message
           );
+          return {
+            success: false,
+            count: 0,
+            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
+          };
         }
+
+        console.log(
+          "[TikTok Direct Post] Failed post stored in failed_posts table"
+        );
       } else {
         console.log(
           "[TikTok Direct Post] Skipping failed post storage (not a cron job)"

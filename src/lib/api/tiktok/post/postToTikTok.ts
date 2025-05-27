@@ -227,13 +227,13 @@ async function handleVideoPost({
             disable_duet: tikTokOptions?.disableDuet || false,
             disable_comment: tikTokOptions?.disableComment || false,
             disable_stitch: tikTokOptions?.disableStitch || false,
+            cover_timestamp_ms: coverTimestamp,
           },
           source_info: {
             source: "FILE_UPLOAD",
             video_size: fileSize,
             chunk_size: chunkSize,
             total_chunk_count: totalChunkCount,
-            cover_timestamp_ms: coverTimestamp,
           },
         }),
       }

@@ -52,8 +52,6 @@ export async function directPostForPinterestAccounts(config: {
     isCronJob,
   } = config;
 
-  let successCount = 0;
-
   try {
     console.log(
       "[Pinterest Direct Post] Starting to post directly to Pinterest"
@@ -85,140 +83,140 @@ export async function directPostForPinterestAccounts(config: {
       };
     }
 
-    try {
-      console.log(
-        `[Pinterest Direct Post] Posting to account: ${
-          account.username ?? account.id
-        }`
+    console.log(
+      `[Pinterest Direct Post] Posting to account: ${
+        account.username ?? account.id
+      }`
+    );
+
+    // Call our new postToPinterest function instead of the API endpoint
+    const postResult = await postToPinterest({
+      accessToken: validToken.token!,
+      boardId: boards.boardID,
+      title: accountContent.title,
+      description: accountContent.description,
+      link: accountContent.link,
+      mediaPath: mediaPath,
+      mediaType: mediaType,
+      fileName: fileName,
+      userId: userId ?? "",
+      buffer,
+      coverTimestamp: config.coverTimestamp,
+      postType: postType,
+    });
+    // Add detailed console logging
+    console.log(
+      `========== PINTEREST POST RESPONSE (${account.username}) ==========`
+    );
+    console.log("Success:", postResult.success);
+    console.log("Post ID:", postResult.postId);
+    console.log("Post URL:", postResult.postUrl);
+    console.log("Message:", postResult.message);
+
+    if (postResult.success) {
+      // Store content history
+      const historyResult = await storeContentHistory(
+        {
+          platform: "pinterest",
+          content_id: postResult.postId!,
+          social_account_id: accountContent.accountId,
+          title: accountContent.title ?? null,
+          description: accountContent.description,
+          media_url: postResult.postUrl!,
+          batch_id: batchId,
+          status: "posted",
+          media_type: postType,
+          extra: {
+            post_data: postResult.data,
+            post_type: postType,
+            posted_at: new Date().toISOString(),
+            board_id: boards.boardID,
+            board_name: boards.boardName,
+          },
+        },
+        userId
       );
 
-      // Call our new postToPinterest function instead of the API endpoint
-      const postResult = await postToPinterest({
-        accessToken: validToken.token!,
-        boardId: boards.boardID,
-        title: accountContent.title,
-        description: accountContent.description,
-        link: accountContent.link,
-        mediaPath: mediaPath,
-        mediaType: mediaType,
-        fileName: fileName,
-        userId: userId ?? "",
-        buffer,
-        coverTimestamp: config.coverTimestamp,
-        postType: postType,
-      });
-      // Add detailed console logging
-      console.log(
-        `========== PINTEREST POST RESPONSE (${account.username}) ==========`
-      );
-      console.log("Success:", postResult.success);
-      console.log("Post ID:", postResult.postId);
-      console.log("Post URL:", postResult.postUrl);
-      console.log("Message:", postResult.message);
-
-      if (postResult.success) {
-        try {
-          // Store content history
-          await storeContentHistory(
-            {
-              platform: "pinterest",
-              content_id: postResult.postId!,
-              social_account_id: accountContent.accountId,
-              title: accountContent.title ?? null,
-              description: accountContent.description,
-              media_url: postResult.postUrl!,
-              batch_id: batchId,
-              status: "posted",
-              media_type: postType,
-              extra: {
-                post_data: postResult.data,
-                post_type: postType,
-                posted_at: new Date().toISOString(),
-                board_id: boards.boardID,
-                board_name: boards.boardName,
-              },
-            },
-            userId
-          );
-
-          successCount++;
-          console.log(
-            `[Pinterest Direct Post] Successfully posted to account and saved to history`
-          );
-        } catch (historyError) {
-          console.error(
-            `[Pinterest Direct Post] Error saving to content history:`,
-            historyError
-          );
-          // Still increment success since the post succeeded
-          successCount++;
-        }
-      } else {
+      if (!historyResult.success) {
         console.error(
-          "[Pinterest Direct Post] Failed with error:",
-          postResult.error
+          `[Pinterest Direct Post] Error saving to content history:`,
+          historyResult.message
         );
-        console.error(
-          "[Pinterest Direct Post] Error message:",
-          postResult.message
-        );
-
-        if (isCronJob) {
-          try {
-            await storeFailedPost({
-              user_id: userId,
-              social_account_id: account.id,
-              platform: "pinterest",
-              post_title: accountContent.title || null,
-              post_description: accountContent.description || null,
-              post_options: {
-                boardId: boards.boardID,
-                boardName: boards.boardName,
-                link: accountContent.link,
-                ...config.platformOptions.pinterest,
-              },
-              media_type: postType,
-              media_storage_path: mediaPath,
-              coverTimestamp: config.coverTimestamp,
-
-              batch_id: batchId,
-              extra_data: {
-                message: postResult.message,
-                error: postResult.error,
-                timestamp: new Date().toISOString(),
-                board_id: boards.boardID,
-                board_name: boards.boardName,
-              },
-            });
-
-            console.log(
-              "[Pinterest Direct Post] Failed post stored in failed_posts table"
-            );
-          } catch (storeError) {
-            console.error(
-              "[Pinterest Direct Post] Error storing failed post:",
-              storeError
-            );
-          }
-        }
-
         return {
           success: false,
           count: 0,
-          message: "Failed to post to Pinterest",
+          message: `Post succeeded but failed to save history: ${historyResult.message}`,
         };
       }
-    } catch (postError) {
-      console.error(
-        `[Pinterest Direct Post] Error for account ${account.id}:`,
-        postError
+
+      console.log(
+        `[Pinterest Direct Post] Successfully posted to account and saved to history`
       );
+    } else {
+      console.error(
+        "[Pinterest Direct Post] Failed with error:",
+        postResult.error
+      );
+      console.error(
+        "[Pinterest Direct Post] Error message:",
+        postResult.message
+      );
+
+      if (isCronJob) {
+        const failedPostResult = await storeFailedPost({
+          user_id: userId,
+          social_account_id: account.id,
+          platform: "pinterest",
+          post_title: accountContent.title || null,
+          post_description: accountContent.description || null,
+          post_options: {
+            boardId: boards.boardID,
+            boardName: boards.boardName,
+            link: accountContent.link,
+            ...config.platformOptions.pinterest,
+          },
+          media_type: postType,
+          media_storage_path: mediaPath,
+          coverTimestamp: config.coverTimestamp,
+
+          batch_id: batchId,
+          extra_data: {
+            message: postResult.message,
+            error: postResult.error,
+            timestamp: new Date().toISOString(),
+            board_id: boards.boardID,
+            board_name: boards.boardName,
+          },
+        });
+
+        if (!failedPostResult.success) {
+          console.error(
+            "[Pinterest Direct Post] Error storing failed post:",
+            failedPostResult.message
+          );
+          return {
+            success: false,
+            count: 0,
+            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
+          };
+        }
+
+        console.log(
+          "[Pinterest Direct Post] Failed post stored in failed_posts table"
+        );
+      }
+
+      return {
+        success: false,
+        count: 0,
+        message: "Failed to post to Pinterest",
+      };
     }
 
     return {
-      success: successCount > 0,
-      count: successCount,
-      message: `Successfully posted to ${successCount} Pinterest account(s)`,
+      success: true,
+      count: 1,
+      message: `Successfully posted to ${account.display_name} Pinterest account(s)`,
     };
   } catch (error) {
     console.error("[Pinterest Direct Post] Error:", error);
