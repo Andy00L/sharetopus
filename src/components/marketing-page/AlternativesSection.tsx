@@ -27,7 +27,7 @@ const cards: ReadonlyArray<AlternativeCard> = [
     features: [
       { label: "High cost", positive: false },
       { label: "Limited control", positive: false },
-      { label: "Analatics", positive: true },
+      { label: "Analytics", positive: true },
     ],
   },
   {
