@@ -79,6 +79,7 @@ export async function postToTikTok({
   autoAddMusic?: boolean;
 }): Promise<TikTokPostResult> {
   try {
+    console.log("°°°°°°°°°°°°°°°°°°°°°°°°°°°°°°°", coverTimestamp);
     if (!buffer) {
       return {
         success: false,
