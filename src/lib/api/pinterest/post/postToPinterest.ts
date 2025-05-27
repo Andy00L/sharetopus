@@ -1,6 +1,4 @@
 // lib/api/pinterest/post/postToPinterest.ts
-import FormData from "form-data";
-import fetch from "node-fetch";
 import "server-only";
 
 // Define return type for Pinterest posts
@@ -169,10 +167,7 @@ export async function postToPinterest({
     });
 
     // Then use the buffer with FormData
-    formData.append("file", buffer, {
-      filename: fileName,
-      contentType: mediaType,
-    });
+    formData.append("file", new Blob([buffer], { type: mediaType }), fileName);
 
     const uploadResponse = await fetch(upload_url, {
       method: "POST",
