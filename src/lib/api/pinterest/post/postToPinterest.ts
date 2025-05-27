@@ -17,7 +17,11 @@ interface PinterestMediaRegistrationResponse {
   upload_url: string;
   upload_parameters: Record<string, string>;
 }
-
+interface PinterestMediaStatusResponse {
+  status: string;
+  media_id: string;
+  media_type?: string;
+}
 /**
  * Posts content directly to Pinterest using the two-step process:
  * 1. Register media upload and get upload URL
@@ -188,8 +192,87 @@ export async function postToPinterest({
 
     console.log("[Pinterest Post Function] Media upload successful");
 
-    // STEP 3: Create pin with the uploaded media
+    // STEP 3: Confirm upload status (MISSING STEP!)
 
+    let uploadStatus = "processing";
+    let attempts = 0;
+    const startTime = Date.now();
+    const maxTimeout = 40; // 40 seconds max (leaving 5s buffer)
+
+    // Calculate adaptive wait time based on file size
+    const fileSize = buffer.length;
+    const waitTime = fileSize > 100 * 1024 * 1024 ? 2000 : 1000; // 2s for files > 100MB
+    const maxAttempts = Math.floor(maxTimeout / waitTime); // Adjust attempts based on wait time
+
+    while (uploadStatus !== "succeeded" && attempts < maxAttempts) {
+      const elapsedTime = Date.now() - startTime;
+      if (elapsedTime > maxTimeout) {
+        console.log(
+          `[Pinterest Post Function] Timeout approaching after ${elapsedTime}ms`
+        );
+        break;
+      }
+      const statusResponse = await fetch(
+        `https://api.pinterest.com/v5/media/${media_id}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      if (statusResponse.ok) {
+        const statusData =
+          (await statusResponse.json()) as PinterestMediaStatusResponse;
+        uploadStatus = statusData.status;
+        console.log(`[Pinterest Post Function] Upload status: ${uploadStatus}`);
+
+        if (uploadStatus === "succeeded") {
+          break;
+        } else if (uploadStatus === "failed") {
+          return {
+            success: false,
+            error:
+              "Pinterest couldn't process your video. Please try with a different video file or check that it meets Pinterest's requirements.",
+            message:
+              "Video processing failed on Pinterest's servers. The video format may not be supported.",
+          };
+        }
+      } else {
+        console.error(
+          "[Pinterest Post Function] Status check failed:",
+          statusResponse.status
+        );
+        return {
+          success: false,
+          error:
+            "Unable to verify video upload status with Pinterest. Please try again in a few minutes.",
+          message:
+            "Pinterest's servers are temporarily unavailable. Please try again later.",
+        };
+      }
+
+      attempts++;
+      if (uploadStatus !== "succeeded") {
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
+    }
+    if (uploadStatus !== "succeeded") {
+      return {
+        success: false,
+        error:
+          "Your video is taking longer than expected to process. Please try again or use a smaller video file.",
+        message:
+          "Pinterest is taking too long to process your video. This may happen with very large files or during high traffic periods.",
+      };
+    }
+
+    console.log(
+      "[Pinterest Post Function] Video processing confirmed - ready to create pin"
+    );
+
+    // STEP 4: Create pin with the uploaded media
     const pinRequestBody = {
       board_id: boardId,
       media_source: {
