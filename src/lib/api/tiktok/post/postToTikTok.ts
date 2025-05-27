@@ -227,7 +227,7 @@ async function handleVideoPost({
             disable_duet: tikTokOptions?.disableDuet || false,
             disable_comment: tikTokOptions?.disableComment || false,
             disable_stitch: tikTokOptions?.disableStitch || false,
-            cover_timestamp_ms: Number(coverTimestamp),
+            video_cover_timestamp_ms: coverTimestamp,
           },
           source_info: {
             source: "FILE_UPLOAD",
