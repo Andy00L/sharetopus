@@ -166,12 +166,9 @@ async function exchangeForLongLivedToken(
       };
     }
 
-    const url = "https://graph.instagram.com/access_token";
-
-    const params = new URLSearchParams();
-    params.append("grant_type", "ig_exchange_token");
-    params.append("client_secret", client_secret);
-    params.append("access_token", shortLivedToken);
+    const url = `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(
+      client_secret
+    )}&access_token=${encodeURIComponent(shortLivedToken)}`;
 
     console.log("[Instagram] Exchanging for long-lived token...");
 
@@ -204,6 +201,7 @@ async function exchangeForLongLivedToken(
         error: data.error,
         has_access_token: !!data.access_token,
         full_response: data,
+        url: url,
       });
       return {
         success: false,
