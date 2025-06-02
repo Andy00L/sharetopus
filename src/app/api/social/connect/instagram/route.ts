@@ -222,7 +222,6 @@ export async function GET(request: NextRequest) {
     const extraData = {
       scope: tokenResponse.data.scope,
       account_type: instagramProfile.data.account_type,
-      media_count: instagramProfile.data.media_count,
       followers_count: instagramProfile.data.followers_count,
       follows_count: instagramProfile.data.follows_count,
     };

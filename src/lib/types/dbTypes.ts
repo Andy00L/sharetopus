@@ -267,7 +267,6 @@ export interface InstagramProfile {
   name: string;
   account_type: "PERSONAL" | "BUSINESS" | "CREATOR";
   profile_picture_url: string;
-  media_count: number | null;
   followers_count: number | null;
   follows_count: number | null;
 }

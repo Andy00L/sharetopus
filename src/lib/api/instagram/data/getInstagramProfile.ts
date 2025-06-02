@@ -21,17 +21,15 @@ export async function getInstagramProfile(
       "username",
       "name",
       "account_type",
-      "media_count",
       "followers_count",
       "follows_count",
       "profile_picture_url",
     ].join(",");
 
-    const url = `https://graph.instagram.com/v23.0/${encodeURIComponent(
-      userId
-    )}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(
-      accessToken
-    )}`;
+    console.log(userId);
+    const url = `https://graph.instagram.com/v23.0/me?fields=${encodeURIComponent(
+      fields
+    )}&access_token=${encodeURIComponent(accessToken)}`;
 
     console.log("[Instagram] Requesting profile from API...");
 
@@ -76,7 +74,7 @@ export async function getInstagramProfile(
     }
 
     // Instagram API peut retourner soit { data: [...] } soit directement les données
-    const profileData = data;
+    const profileData = data.data?.[0] ?? data;
 
     // Validate that we have basic required data
     if (!profileData.id && !profileData.user_id) {
@@ -98,7 +96,6 @@ export async function getInstagramProfile(
       name: profileData.name ?? profileData.username,
       account_type: profileData.account_type,
       profile_picture_url: profileData.profile_picture_url,
-      media_count: profileData.media_count,
       followers_count: profileData.followers_count,
       follows_count: profileData.follows_count,
     };
