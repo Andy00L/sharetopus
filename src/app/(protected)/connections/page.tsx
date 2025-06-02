@@ -1,12 +1,14 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import ConnectInstagramButton from "@/components/core/accounts/connectAccountsButton/ConnectInstagramButton";
 import ConnectLinkedInButton from "@/components/core/accounts/connectAccountsButton/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/connectAccountsButton/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/connectAccountsButton/ConnectTikTokButton";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import PinterestSVGIcon, {
+  InstagramSVGIcon,
   LinkedinSVGIcon,
   TiktokSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
@@ -41,6 +43,9 @@ const AccountsPageWithData = async () => {
   );
   const linkedinAccounts = accounts.filter(
     (acc) => acc.platform === "linkedin"
+  );
+  const instagramAccounts = accounts.filter(
+    (acc) => acc.platform === "instagram"
   );
 
   return (
@@ -81,6 +86,7 @@ const AccountsPageWithData = async () => {
       </SidebarGroup>
 
       <SidebarGroup className="mb-8 space-y-6">
+        {/* TikTok */}
         <div className="space-y-3">
           <div className="flex items-center gap-6">
             <div className="scale-250">
@@ -99,6 +105,30 @@ const AccountsPageWithData = async () => {
           </div>
         </div>
 
+        {/* Instagram */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <InstagramSVGIcon />
+            </div>
+
+            <h2 className="text-xl font-semibold">Instagram</h2>
+            <ConnectInstagramButton
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccountsBadge
+              accounts={instagramAccounts}
+              userId={userId}
+            />
+          </div>
+        </div>
+
+        {/* Pinterest */}
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center gap-6">
             <div className="scale-250">
@@ -120,6 +150,7 @@ const AccountsPageWithData = async () => {
           </div>
         </div>
 
+        {/* Linkedin */}
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center gap-6">
             <div className="scale-250">

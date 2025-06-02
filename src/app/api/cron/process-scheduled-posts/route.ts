@@ -220,11 +220,11 @@ export async function POST(request: NextRequest) {
       boards,
       platformOptions,
       accountContent,
-      isScheduled: false, // We're executing now, so it's a direct post
+      isScheduled: false,
       postType,
       userId: user_id,
       batchId: batch_id,
-      cleanupFiles: false, // Don't delete the files after posting
+      cleanupFiles: true,
       isCronJob: true,
     };
 

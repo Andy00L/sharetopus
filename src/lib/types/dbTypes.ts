@@ -250,17 +250,28 @@ export interface SchedulePostData {
 }
 
 export interface TokenExchangeResponse {
-  error: string;
+  error?: string;
   token_type: string;
   access_token: string;
   refresh_token?: string;
   expires_in: number;
   refresh_expires_in?: string;
   scope?: string;
-  user_id: string;
+  user_id?: string;
   open_id?: string;
 }
-
+// lib/types/InstagramProfile.ts
+export interface InstagramProfile {
+  id: string;
+  username: string;
+  name: string;
+  account_type: "PERSONAL" | "BUSINESS" | "CREATOR";
+  profile_picture_url: string;
+  biography: string;
+  media_count: number | null;
+  followers_count: number | null;
+  follows_count: number | null;
+}
 export interface ApiResponse<T> {
   success: boolean;
   message: string;
