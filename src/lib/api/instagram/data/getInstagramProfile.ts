@@ -1,16 +1,23 @@
-// lib/api/instagram/data/getInstagramProfile.ts
+// lib/api/instagram/apiResponse/getInstagramProfile.ts
 import { InstagramProfile } from "@/lib/types/dbTypes";
 import "server-only";
 
+export interface InstagramProfileResult {
+  success: boolean;
+  message: string;
+  data?: InstagramProfile;
+}
+
 export async function getInstagramProfile(
   accessToken: string,
-  userId?: string
-): Promise<InstagramProfile> {
+  userId: string
+): Promise<InstagramProfileResult> {
   try {
     // Define fields to request according to Instagram Business API documentation
     // instagram_business_basic scope is required for these details
     const fields = [
       "id",
+      "user_id",
       "username",
       "name",
       "account_type",
@@ -18,17 +25,15 @@ export async function getInstagramProfile(
       "followers_count",
       "follows_count",
       "profile_picture_url",
-      "biography",
     ].join(",");
 
-    const url = `https://graph.instagram.com/me?fields=${encodeURIComponent(
-      fields
-    )}&access_token=${accessToken}`;
+    const url = `https://graph.instagram.com/v23.0/${encodeURIComponent(
+      userId
+    )}?fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(
+      accessToken
+    )}`;
 
-    console.log(
-      "[Instagram] Requesting profile from:",
-      url.replace(accessToken, "***")
-    );
+    console.log("[Instagram] Requesting profile from API...");
 
     const response = await fetch(url, {
       method: "GET",
@@ -38,103 +43,80 @@ export async function getInstagramProfile(
     });
 
     const responseText = await response.text();
-    console.log("[Instagram] Profile API raw response:", responseText);
 
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error("[Instagram] Failed to parse API response:", parseError);
-      throw new Error(
-        `Failed to parse Instagram profile response: ${responseText}`
-      );
-    }
+    if (!response.ok) {
+      console.error("[Instagram] HTTP error:", {
+        status: response.status,
+        statusText: response.statusText,
+        response: responseText,
+      });
 
-    // Check for Instagram API errors
-    if (data.error) {
-      console.warn(`[Instagram] API returned an error:`, data.error);
-
-      // Handle specific error cases
-      if (data.error.code === 190) {
-        // Invalid access token
-        throw new Error("Instagram access token is invalid or expired");
-      }
-
-      if (data.error.code === 10) {
-        // Application does not have permission for this action
-        console.warn(
-          "[Instagram] Application doesn't have required permissions. Returning basic info."
-        );
-        return {
-          id: userId || "",
-          username: `instagram_user_${userId?.substring(0, 6) || "unknown"}`,
-          name: "Instagram User (Limited Access)",
-          account_type: "BUSINESS",
-          profile_picture_url: "",
-          biography:
-            "Account connected with limited permissions. Required permissions missing.",
-          media_count: null,
-          followers_count: null,
-          follows_count: null,
-        };
-      }
-
-      // For other errors, throw
-      throw new Error(
-        `Instagram API error (${data.error.code}): ${data.error.message}`
-      );
-    }
-
-    // Validate that we have basic required data
-    if (!data.id) {
-      console.warn("[Instagram] Profile data missing required fields.");
       return {
-        id: userId || "",
-        username: `instagram_user_${userId?.substring(0, 6) || "unknown"}`,
-        name: "Instagram User (Data Missing)",
-        account_type: "BUSINESS",
-        profile_picture_url: "",
-        biography: "Could not retrieve profile details from API response.",
-        media_count: null,
-        followers_count: null,
-        follows_count: null,
+        success: false,
+        message: `Instagram API returned ${response.status}: ${response.statusText}`,
       };
     }
 
-    // Build complete profile from response
-    console.log("[Instagram] Successfully parsed profile data:", {
-      id: data.id,
-      username: data.username,
-      account_type: data.account_type,
-    });
+    const data = JSON.parse(responseText);
+
+    // Check for Instagram API errors
+    if (data.error_type || data.error_message || data.error) {
+      console.error("[Instagram] API returned error:", {
+        error_type: data.error_type,
+        error_message: data.error_message,
+        error: data.error,
+        full_response: data,
+      });
+      return {
+        success: false,
+        message: `Instagram profile fetch failed: ${
+          data.error_message ?? data.error?.message ?? "Unknown error"
+        }. Please try again.`,
+      };
+    }
+
+    // Instagram API peut retourner soit { data: [...] } soit directement les données
+    const profileData = data;
+
+    // Validate that we have basic required data
+    if (!profileData.id && !profileData.user_id) {
+      console.error("[Instagram] Missing required fields in response:", {
+        has_id: !!profileData.id,
+        has_user_id: !!profileData.user_id,
+        received_data: data,
+      });
+      return {
+        success: false,
+        message:
+          "Instagram didn't provide the required profile information. Please try connecting again.",
+      };
+    }
+
+    const profileResponse: InstagramProfile = {
+      id: profileData.user_id,
+      username: profileData.username,
+      name: profileData.name ?? profileData.username,
+      account_type: profileData.account_type,
+      profile_picture_url: profileData.profile_picture_url,
+      media_count: profileData.media_count,
+      followers_count: profileData.followers_count,
+      follows_count: profileData.follows_count,
+    };
 
     return {
-      id: data.id,
-      username: data.username || `instagram_user_${data.id.substring(0, 6)}`,
-      name: data.name || data.username || "Instagram User",
-      account_type: data.account_type || "BUSINESS", // PERSONAL, BUSINESS, or CREATOR
-      profile_picture_url: data.profile_picture_url || "",
-      biography: data.biography || "",
-      media_count: data.media_count || null,
-      followers_count: data.followers_count || null,
-      follows_count: data.follows_count || null,
+      success: true,
+      message: "Instagram profile retrieved successfully.",
+      data: profileResponse,
     };
   } catch (error) {
-    console.error("[Instagram] Profile fetch error:", error);
-
-    // Create fallback profile indicating a fetch error
+    console.error("[Instagram] Unexpected error during profile fetch:", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return {
-      id: userId || "",
-      username: `instagram_user_${userId?.substring(0, 6) || "unknown"}`,
-      name: "Instagram User (Error)",
-      account_type: "BUSINESS",
-      profile_picture_url: "",
-      biography: `Error fetching profile: ${
-        error instanceof Error ? error.message : "Unknown error"
-      }`,
-      media_count: null,
-      followers_count: null,
-      follows_count: null,
+      success: false,
+      message:
+        "An unexpected error occurred while fetching your Instagram profile. Please try again.",
     };
   }
 }

@@ -124,7 +124,12 @@ export async function GET(request: NextRequest) {
     // Échanger le code contre un token
     const tokenResponse = await exchangeInstagramCode(code);
 
-    if (!tokenResponse?.access_token) {
+    if (!tokenResponse.success || !tokenResponse.data) {
+      console.error(
+        "[Instagram] Token exchange failed:",
+        tokenResponse.message
+      );
+
       return new Response(
         `
        <!DOCTYPE html>
@@ -134,7 +139,9 @@ export async function GET(request: NextRequest) {
     <title>Token Exchange Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Token exchange failure");
+        window.opener.onInstagramConnectFailure("${
+          tokenResponse.message || "Token exchange failure"
+        }");
         window.close();
       }
     </script>
@@ -153,19 +160,71 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // À ce point, tokenResponse.data est garanti d'exister
+    const tokenData = tokenResponse.data;
+
+    // Validation du user_id
+    if (!tokenData.user_id) {
+      console.error("[Instagram] Missing user_id in token response");
+      return new Response(
+        `<!DOCTYPE html>
+    <html>
+      <head><title>Token Error</title></head>
+      <body>Missing user ID in token response</body>
+    </html>`,
+        { status: 400, headers: { "Content-Type": "text/html" } }
+      );
+    }
+
     // Récupérer les informations du profil Instagram
     const instagramProfile = await getInstagramProfile(
-      tokenResponse.access_token,
-      tokenResponse.user_id
+      tokenData.access_token,
+      tokenData.user_id
     );
+
+    // Vérifier si la récupération du profil a échoué
+    if (!instagramProfile.success || !instagramProfile.data) {
+      console.error(
+        "[Instagram] Profile fetch failed:",
+        instagramProfile.message
+      );
+      return new Response(
+        `
+    <!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Profile Error</title>
+<script>
+  if (window.opener) {
+    window.opener.onInstagramConnectFailure("${
+      instagramProfile.message || "Unable to retrieve profile"
+    }");
+    window.close();
+  }
+</script>
+</head>
+<body>
+<p>Unable to retrieve your Instagram profile. This window will close automatically.</p>
+</body>
+</html>
+    `,
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "text/html",
+          },
+        }
+      );
+    }
 
     // Préparer les données supplémentaires à stocker
     const extraData = {
-      scope:
-        tokenResponse.scope ||
-        "instagram_business_basic,instagram_business_content_publish",
-      account_type: instagramProfile.account_type,
-      media_count: instagramProfile.media_count,
+      scope: tokenResponse.data.scope,
+      account_type: instagramProfile.data.account_type,
+      media_count: instagramProfile.data.media_count,
+      followers_count: instagramProfile.data.followers_count,
+      follows_count: instagramProfile.data.follows_count,
     };
 
     // Enregistrer le compte Instagram dans la base de données
@@ -173,7 +232,7 @@ export async function GET(request: NextRequest) {
       .from("social_accounts")
       .select("id")
       .eq("user_id", userId)
-      .eq("account_identifier", instagramProfile.id)
+      .eq("account_identifier", instagramProfile.data.id)
       .eq("platform", "instagram")
       .single();
 
@@ -212,7 +271,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculer la date d'expiration du token (Instagram tokens last 60 days by default)
-    const expiresInSeconds = tokenResponse.expires_in ?? 5184000; // 60 days default
+    const expiresInSeconds = tokenData.expires_in; // 60 days default
     const expiresAt = new Date(
       Date.now() + expiresInSeconds * 1000
     ).toISOString();
@@ -222,11 +281,12 @@ export async function GET(request: NextRequest) {
       const { error: updateError } = await adminSupabase
         .from("social_accounts")
         .update({
-          username: instagramProfile.username,
-          display_name: instagramProfile.name || instagramProfile.username,
-          avatar_url: instagramProfile.profile_picture_url,
+          username: instagramProfile.data.username,
+          display_name:
+            instagramProfile.data.name || instagramProfile.data.username,
+          avatar_url: instagramProfile.data.profile_picture_url,
           is_availble: true,
-          access_token: tokenResponse.access_token,
+          access_token: tokenResponse.data.access_token,
           refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens
           token_expires_at: expiresAt,
           updated_at: new Date().toISOString(),
@@ -270,12 +330,13 @@ export async function GET(request: NextRequest) {
         .insert({
           user_id: userId,
           platform: "instagram",
-          account_identifier: instagramProfile.id,
+          account_identifier: instagramProfile.data.id,
           is_availble: true,
-          username: instagramProfile.username,
-          display_name: instagramProfile.name || instagramProfile.username,
-          avatar_url: instagramProfile.profile_picture_url,
-          access_token: tokenResponse.access_token,
+          username: instagramProfile.data.username,
+          display_name:
+            instagramProfile.data.name || instagramProfile.data.username,
+          avatar_url: instagramProfile.data.profile_picture_url,
+          access_token: tokenResponse.data.access_token,
           refresh_token: null, // Instagram API with Instagram Login doesn't use refresh tokens
           token_expires_at: expiresAt,
           created_at: new Date().toISOString(),

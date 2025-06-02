@@ -251,7 +251,7 @@ export interface SchedulePostData {
 
 export interface TokenExchangeResponse {
   error?: string;
-  token_type: string;
+  token_type?: string;
   access_token: string;
   refresh_token?: string;
   expires_in: number;
@@ -267,7 +267,6 @@ export interface InstagramProfile {
   name: string;
   account_type: "PERSONAL" | "BUSINESS" | "CREATOR";
   profile_picture_url: string;
-  biography: string;
   media_count: number | null;
   followers_count: number | null;
   follows_count: number | null;
