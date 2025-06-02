@@ -281,9 +281,12 @@ export async function GET(request: NextRequest) {
         .from("social_accounts")
         .update({
           username: instagramProfile.data.username,
+
           display_name:
             instagramProfile.data.name || instagramProfile.data.username,
           avatar_url: instagramProfile.data.profile_picture_url,
+          follower_count: instagramProfile.data.followers_count,
+          following_count: instagramProfile.data.followers_count,
           is_availble: true,
           access_token: tokenResponse.data.access_token,
           refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens
@@ -332,6 +335,8 @@ export async function GET(request: NextRequest) {
           account_identifier: instagramProfile.data.id,
           is_availble: true,
           username: instagramProfile.data.username,
+          follower_count: instagramProfile.data.followers_count,
+          following_count: instagramProfile.data.followers_count,
           display_name:
             instagramProfile.data.name || instagramProfile.data.username,
           avatar_url: instagramProfile.data.profile_picture_url,

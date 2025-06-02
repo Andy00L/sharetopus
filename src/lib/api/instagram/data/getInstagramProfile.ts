@@ -26,7 +26,6 @@ export async function getInstagramProfile(
       "profile_picture_url",
     ].join(",");
 
-    console.log(userId);
     const url = `https://graph.instagram.com/v23.0/me?fields=${encodeURIComponent(
       fields
     )}&access_token=${encodeURIComponent(accessToken)}`;
@@ -56,6 +55,7 @@ export async function getInstagramProfile(
     }
 
     const data = JSON.parse(responseText);
+    console.log(userId, "Raw resonse: ", data);
 
     // Check for Instagram API errors
     if (data.error_type || data.error_message || data.error) {
@@ -75,7 +75,6 @@ export async function getInstagramProfile(
 
     // Instagram API peut retourner soit { data: [...] } soit directement les données
     const profileData = data.data?.[0] ?? data;
-
     // Validate that we have basic required data
     if (!profileData.id && !profileData.user_id) {
       console.error("[Instagram] Missing required fields in response:", {

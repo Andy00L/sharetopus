@@ -34,6 +34,12 @@ const nextConfig: NextConfig = {
         port: "",
         pathname: "/**", // Allow any path
       },
+      {
+        protocol: "https",
+        hostname: "scontent-iad3-2.cdninstagram.com", // Supabase
+        port: "",
+        pathname: "/**", // Allow any path
+      },
     ],
   },
 };
