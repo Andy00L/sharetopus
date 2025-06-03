@@ -12,18 +12,20 @@ export async function getSignedViewUrl(
   expiresIn: number = 300
 ): Promise<SignedViewUrlResponse> {
   try {
-    const response = await fetch("/api/storage/generate-view-url", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        path,
-        expiresIn,
-        requestUserId,
-      }),
-    });
-
+    const response = await fetch(
+      "https://sharetopus.com/api/storage/generate-view-url",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path,
+          expiresIn,
+          requestUserId,
+        }),
+      }
+    );
     const data = await response.json();
 
     if (!response.ok) {
