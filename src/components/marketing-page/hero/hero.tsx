@@ -3,8 +3,8 @@ import Link from "next/link";
 
 import heroImage from "../../../../public/frontend_logo.webp";
 
-import { AnimatedTestimonial } from "./AnimatedTestimonial";
 import PlatformsListe from "../details/platformList";
+import { AnimatedTestimonial } from "./AnimatedTestimonial";
 
 export default function Hero() {
   return (
@@ -103,9 +103,9 @@ export default function Hero() {
             <div className="flex flex-wrap mt-10 rounded-full">
               <Link
                 href="/create"
-                className="bg-[#FF4A20] text-white px-10 py-4 rounded-3xl text-base font-medium hover:bg-[#FF2A11]"
+                className="bg-[#FF4A20] text-white px-10 py-4 rounded-full text-base font-medium hover:bg-[#FF2A11]"
               >
-                Try it for free
+                Start Now
               </Link>
             </div>
 

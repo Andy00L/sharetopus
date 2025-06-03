@@ -18,9 +18,9 @@ export default function Navbar() {
         <div className="flex items-center space-x-4">
           <Link
             href="/create"
-            className="text-sm bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-md hover:bg-[var(--primary)]/90"
+            className="text-sm bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-full hover:bg-[var(--primary)]/90"
           >
-            Sign Up - It&apos;s Free
+            Sign In
           </Link>
         </div>
       </div>
