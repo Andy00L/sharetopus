@@ -2,11 +2,11 @@
 // createPostForm/action/directPostForLinkedInAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
+import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
-import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 
 export async function directPostForLinkedInAccounts(config: {
   account: SocialAccount; // Changed from accounts to accountIds
@@ -60,14 +60,17 @@ export async function directPostForLinkedInAccounts(config: {
   }
   try {
     console.log("[LinkedIn Direct Post] Starting to post directly to LinkedIn");
-    // Download the file for direct upload
-    const buffer = await getSupabaseVideoFile(mediaPath, userId);
-    if (!buffer.success) {
-      return {
-        success: false,
-        count: 0,
-        message: buffer.message,
-      };
+    let buffer;
+    if (mediaPath) {
+      // Download the file for direct upload
+      buffer = await getSupabaseVideoFile(mediaPath, userId);
+      if (!buffer.success) {
+        return {
+          success: false,
+          count: 0,
+          message: buffer.message,
+        };
+      }
     }
     // Vérifier et rafraîchir le token si nécessaire
     const validToken = await ensureValidToken(account);
@@ -117,7 +120,7 @@ export async function directPostForLinkedInAccounts(config: {
       fileName: fileName,
       userId: userId ?? "",
       postType,
-      buffer: buffer.buffer,
+      buffer: buffer?.buffer,
       coverTimestamp: config.coverTimestamp,
     });
 
