@@ -1,21 +1,9 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const { path, expiresIn, requestUserId } = await request.json();
-
-    // Get authenticated user
-    const { userId } = await auth();
-
-    if (!userId || requestUserId !== userId) {
-      console.error("[Generate Upload URL] Authentication error: No userId");
-      return NextResponse.json(
-        { error: "User not authenticated" },
-        { status: 401 }
-      );
-    }
+    const { path, expiresIn } = await request.json();
 
     if (!path || !expiresIn) {
       return NextResponse.json(
