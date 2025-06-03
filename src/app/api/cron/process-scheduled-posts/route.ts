@@ -108,11 +108,14 @@ export async function POST(request: NextRequest) {
     const pinterestAccounts: SocialAccount[] = [];
     const linkedinAccounts: SocialAccount[] = [];
     const tiktokAccounts: SocialAccount[] = [];
+    const instagramAccounts: SocialAccount[] = [];
 
     accountsData.forEach((account) => {
       if (account.platform === "pinterest") pinterestAccounts.push(account);
       else if (account.platform === "linkedin") linkedinAccounts.push(account);
       else if (account.platform === "tiktok") tiktokAccounts.push(account);
+      else if (account.platform === "instagram")
+        instagramAccounts.push(account);
     });
 
     // Extract media path from first post (all posts in batch share same media)
@@ -176,6 +179,10 @@ export async function POST(request: NextRequest) {
         disableDuet: false, // Default value
         disableStitch: false, // Default value
       },
+      instagram: {
+        shareToFeed: true,
+        altText: "viral post",
+      },
     };
     // Add platform-specific options if needed
     // Then override with specific options from posts
@@ -214,6 +221,7 @@ export async function POST(request: NextRequest) {
       pinterestAccounts,
       linkedinAccounts,
       tiktokAccounts,
+      instagramAccounts,
       mediaPath,
       coverTimestamp,
       fileName,

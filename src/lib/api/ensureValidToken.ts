@@ -131,7 +131,7 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
 function isTokenExpired(expiresAt: string | null): boolean {
   if (!expiresAt) {
     console.log("[isTokenExpired] No expiry date found - treating as expired");
-    return true;
+    return false;
   }
   try {
     const now = new Date();
@@ -147,7 +147,7 @@ function isTokenExpired(expiresAt: string | null): boolean {
     return isExpired;
   } catch (error) {
     console.error("[isTokenExpired] Error parsing expiry date:", error);
-    return true; // Treat parsing errors as expired for safety
+    return false; // Treat parsing errors as expired for safety
   }
 }
 

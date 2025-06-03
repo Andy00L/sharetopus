@@ -9,6 +9,8 @@ import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
 import { processLinkedinAccounts } from "./processAccounts/processLinkedinAccounts";
 import { processPinterestAccounts } from "./processAccounts/processPinterestAccounts";
 import { processTiktokAccounts } from "./processAccounts/processTiktokAccounts";
+import { processInstagramAccounts } from "./processAccounts/processInstagramAccounts";
+import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -30,6 +32,7 @@ type PlatformCounts = {
   pinterest: number;
   linkedin: number;
   tiktok: number;
+  instagram: number;
   total: number;
 };
 
@@ -61,6 +64,7 @@ export async function handleSocialMediaPost(config: {
   pinterestAccounts: SocialAccount[];
   linkedinAccounts: SocialAccount[];
   tiktokAccounts: SocialAccount[];
+  instagramAccounts: SocialAccount[];
   mediaPath: string;
   coverTimestamp: number;
   fileName?: string;
@@ -82,6 +86,7 @@ export async function handleSocialMediaPost(config: {
     pinterestAccounts,
     linkedinAccounts,
     tiktokAccounts,
+    instagramAccounts,
     mediaPath,
     coverTimestamp,
     fileName,
@@ -105,6 +110,7 @@ export async function handleSocialMediaPost(config: {
       pinterest: 0,
       linkedin: 0,
       tiktok: 0,
+      instagram: 0,
       total: 0,
     },
     message: "",
@@ -116,6 +122,7 @@ export async function handleSocialMediaPost(config: {
     const totalAccounts =
       pinterestAccounts.length +
       linkedinAccounts.length +
+      instagramAccounts.length +
       tiktokAccounts.length;
 
     if (totalAccounts === 0) {
@@ -319,16 +326,24 @@ export async function handleSocialMediaPost(config: {
 
     // Check TikTok accounts
     tiktokAccounts.forEach((account) => {
-      if (postType === "image") {
-        // Skip checking TikTok accounts for image posts
-        return;
-      }
-
       const content = accountContent.find((c) => c.accountId === account.id);
       if (!content) {
         missingContentAccounts.push({
           accountId: account.id,
           platform: "tiktok",
+          displayName: account.display_name ?? account.username ?? account.id,
+          error: "No content configured for this account",
+        });
+      }
+    });
+
+    // Check Instagram accounts
+    instagramAccounts.forEach((account) => {
+      const content = accountContent.find((c) => c.accountId === account.id);
+      if (!content) {
+        missingContentAccounts.push({
+          accountId: account.id,
+          platform: "instagram",
           displayName: account.display_name ?? account.username ?? account.id,
           error: "No content configured for this account",
         });
@@ -358,8 +373,34 @@ export async function handleSocialMediaPost(config: {
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
     let responseBuffer;
+    let MediaUrl;
 
     if (mediaPath && (postType === "video" || postType === "image")) {
+      const expiresIn = 300; // Min 5 min, or 5 min per account + 10 min buffer
+
+      const signedUrlResult = await getSignedViewUrl(
+        mediaPath,
+        userId!,
+        expiresIn
+      );
+      if (!signedUrlResult.success) {
+        console.log(
+          `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
+        );
+        return {
+          success: false,
+          counts: results.counts,
+          message: signedUrlResult.message,
+          errors: [],
+        };
+      }
+
+      if (signedUrlResult.success) {
+        MediaUrl = signedUrlResult.url;
+        console.log(
+          `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
+        );
+      }
       // Download the file for direct upload
       responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
       if (!responseBuffer.success) {
@@ -377,6 +418,7 @@ export async function handleSocialMediaPost(config: {
       tiktokAccountResults,
       pinterestAccountResults,
       linkedinAccountResults,
+      instagramAccountResults,
     ] = await Promise.all([
       // Process TikTok accounts (if any and not image posts)
       tiktokAccounts.length > 0 && postType !== "image"
@@ -441,6 +483,26 @@ export async function handleSocialMediaPost(config: {
             isCronJob,
           })
         : Promise.resolve({ successCount: 0, errors: [] }),
+      instagramAccounts.length > 0 && postType !== "text"
+        ? processInstagramAccounts({
+            accounts: instagramAccounts,
+            mediaPath,
+            coverTimestamp,
+            mediaType,
+            mediaUrl: MediaUrl,
+            fileName: fileName ?? "",
+            platformOptions,
+            accountContent,
+            isScheduled,
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
+            postType,
+            buffer: responseBuffer?.buffer,
+            userId,
+            batchId,
+            isCronJob,
+          })
+        : Promise.resolve({ successCount: 0, errors: [] }),
     ]);
 
     // Log processing time
@@ -456,16 +518,20 @@ export async function handleSocialMediaPost(config: {
       ...tiktokAccountResults.errors,
       ...pinterestAccountResults.errors,
       ...linkedinAccountResults.errors,
+      ...instagramAccountResults.errors,
     ];
 
     // Collect success counts
     results.counts.pinterest = pinterestAccountResults.successCount;
     results.counts.linkedin = linkedinAccountResults.successCount;
     results.counts.tiktok = tiktokAccountResults.successCount;
+    results.counts.instagram = instagramAccountResults.successCount;
+
     results.counts.total =
       results.counts.pinterest +
       results.counts.linkedin +
-      results.counts.tiktok;
+      results.counts.tiktok +
+      results.counts.instagram;
 
     // Mark success if ANY account succeeded
     results.success = results.counts.total > 0;
@@ -593,7 +659,9 @@ function generateSuccessMessage(
   if (counts.tiktok > 0) {
     platforms.push(`${counts.tiktok} on TikTok`);
   }
-
+  if (counts.instagram > 0) {
+    platforms.push(`${counts.instagram} on Instagram`);
+  }
   // Format message based on how many platforms were used
   let message = "";
   if (platforms.length === 1) {

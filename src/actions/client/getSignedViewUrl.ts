@@ -2,8 +2,8 @@
 
 export interface SignedViewUrlResponse {
   success: boolean;
-  url: string;
-  error?: string;
+  url?: string;
+  message: string;
 }
 
 export async function getSignedViewUrl(
@@ -27,12 +27,17 @@ export async function getSignedViewUrl(
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error ?? "Failed to generate view URL");
+      console.log(data.error ?? "Failed to generate view URL");
+      return { success: false, message: "Failed to generate view URL" };
     }
 
-    return data;
+    return {
+      success: true,
+      url: data,
+      message: "Succesfully got the signed url",
+    };
   } catch (error) {
     console.error("[Signed View URL] Error:", error);
-    throw error;
+    return { success: false, message: "Unecpected error" };
   }
 }

@@ -10,7 +10,7 @@ type FailedPostData = {
   post_title?: string | null;
   post_description?: string | null;
   post_options?: object;
-  media_type: "image" | "video" | "text";
+  media_type: "image" | "video" | "text" | "images";
   media_storage_path: string;
   coverTimestamp?: number;
   batch_id: string;

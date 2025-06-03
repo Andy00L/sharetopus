@@ -287,6 +287,7 @@ export async function GET(request: NextRequest) {
           avatar_url: instagramProfile.data.profile_picture_url,
           follower_count: instagramProfile.data.followers_count,
           following_count: instagramProfile.data.followers_count,
+
           is_availble: true,
           access_token: tokenResponse.data.access_token,
           refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens

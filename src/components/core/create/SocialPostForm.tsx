@@ -66,8 +66,8 @@ export default function SocialPostForm({
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 50) * 1024 * 1024;
-  const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 50) * 1024 * 1024;
+  const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 8) * 1024 * 1024;
+  const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 8) * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [coverTimestamp, setCoverTimestamp] = useState<number>(0);
 
@@ -178,6 +178,9 @@ export default function SocialPostForm({
   const selectedLinkedinAccount = accounts.filter(
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "linkedin"
   );
+  const selectedInstagramAccount = accounts.filter(
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "instagram"
+  );
   // For each Pinterest account ID, keep its board list
   const [boards, setBoards] = useState<
     {
@@ -198,11 +201,6 @@ export default function SocialPostForm({
         account.platform === "tiktok" ||
         account.platform === "instagram")
     ) {
-      return false;
-    }
-
-    // Skip TikTok for image uploads
-    if (postType === "image" && account.platform === "tiktok") {
       return false;
     }
 
@@ -561,6 +559,94 @@ export default function SocialPostForm({
     return { valid: true };
   };
 
+  // Fonction utilitaire pour convertir PNG en JPEG
+  const convertPngToJpeg = (file: File, quality: number = 1): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      const MAX_CONVERSION_SIZE = 100 * 1024 * 1024; // 100MB
+
+      // Vérification de la taille pour éviter les crashes navigateur (limite technique)
+      if (file.size > MAX_CONVERSION_SIZE) {
+        reject(new Error(`Image too large `));
+
+        return;
+      }
+
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas context not available"));
+        return;
+      }
+      const img = new Image();
+
+      const timeout = setTimeout(() => {
+        reject(new Error("Conversion timeout"));
+      }, 10000);
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        URL.revokeObjectURL(img.src);
+      };
+
+      img.onload = () => {
+        cleanup();
+
+        try {
+          canvas.width = img.width;
+          canvas.height = img.height;
+
+          // Fond blanc pour remplacer la transparence PNG
+          ctx!.fillStyle = "white";
+          ctx!.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Dessiner l'image
+          ctx!.drawImage(img, 0, 0);
+
+          // Convertir en JPEG
+          canvas.toBlob(
+            (blob) => {
+              if (blob) {
+                const originalName = file.name;
+                const nameWithoutExt = originalName.replace(/\.[^/.]+$/, "");
+                const jpegName = `${nameWithoutExt}.jpg`;
+
+                const jpegFile = new File([blob], jpegName, {
+                  type: "image/jpeg",
+                  lastModified: Date.now(),
+                });
+                resolve(jpegFile);
+              } else {
+                reject(new Error("Conversion failed"));
+              }
+            },
+            "image/jpeg",
+            quality
+          );
+        } catch (error) {
+          reject(
+            new Error(
+              `Canvas processing failed: ${
+                error instanceof Error ? error.message : "Unknown error"
+              }`
+            )
+          );
+        }
+      };
+
+      img.onerror = () => {
+        cleanup();
+        reject(
+          new Error("Failed to load image. Please try again or try later.")
+        );
+      };
+      try {
+        img.src = URL.createObjectURL(file);
+      } catch {
+        clearTimeout(timeout);
+        reject(new Error("Failed to create object URL"));
+      }
+    });
+  };
   // Unified submit function with enhanced security and error handling
   const handleSubmit = async () => {
     // Helper function to clean up media on error cases
@@ -648,6 +734,7 @@ export default function SocialPostForm({
         pinterestAccounts: selectedPinterestAccount,
         linkedinAccounts: selectedLinkedinAccount,
         tiktokAccounts: selectedTikTokAccount,
+        instagramAccounts: selectedInstagramAccount,
 
         // Media info
         mediaPath: mediaStoragePath,
@@ -881,23 +968,41 @@ export default function SocialPostForm({
 
             {postType === "image" && !selectedFile && (
               <ImageUploads
-                maxSizeMB={uploadLimits?.image ?? 50}
-                onFileSelected={(file) => {
+                maxSizeMB={uploadLimits?.image ?? 8}
+                onFileSelected={async (file) => {
                   // Do any validation here
                   const isImage = ALLOWED_IMAGE_TYPES.includes(file.type);
+
                   if (!isImage) {
                     setError("Please select a valid image (JPEG, PNG) file.");
                     return;
                   }
+                  // Auto-conversion PNG → JPEG pour Instagram
 
-                  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+                  let finalFile = file;
+
+                  // Conversion PNG → JPEG si nécessaire (avec gestion d'erreur)
+                  if (file.type === "image/png") {
+                    try {
+                      finalFile = await convertPngToJpeg(file);
+                    } catch (conversionError) {
+                      const errorMessage =
+                        conversionError instanceof Error
+                          ? conversionError.message
+                          : "Failed to convert image";
+                      setError(`Image conversion failed: ${errorMessage}`);
+                      return;
+                    }
+                  }
+
+                  if (finalFile.size > MAX_IMAGE_SIZE_BYTES) {
                     setError(
                       `File size exceeds the maximum limit of ${uploadLimits?.image}MB.`
                     );
                     return;
                   }
 
-                  setSelectedFile(file);
+                  setSelectedFile(finalFile);
                   setError(null);
                 }}
               />
