@@ -1,5 +1,4 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { directPostForPinterestAccounts } from "../Direct/directPostForPinterestAccounts";
 import { AccountError, BoardInfo, ContentInfo } from "../handleSocialMediaPost";
 import { scheduleForPinterestAccount } from "../Scheduled/scheduleForPinterestAccounts";
 
@@ -21,7 +20,6 @@ export async function processPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-  buffer?: Buffer;
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -96,22 +94,25 @@ export async function processPinterestAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await directPostForPinterestAccounts({
-            account: account,
-            mediaPath: config.mediaPath,
-            coverTimestamp: config.coverTimestamp,
+        : await fetch("/api/social/post/pinterest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              account: account,
+              mediaPath: config.mediaPath,
+              coverTimestamp: config.coverTimestamp,
 
-            mediaType: config.mediaType,
-            boards: accountBoards[0],
-            platformOptions: config.platformOptions,
-            accountContent: accountContent,
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            buffer: config.buffer,
-            postType: config.postType,
-            isCronJob: config.isCronJob,
-          });
+              mediaType: config.mediaType,
+              boards: accountBoards[0],
+              platformOptions: config.platformOptions,
+              accountContent: accountContent,
+              userId: config.userId,
+              fileName: config.fileName,
+              batchId: config.batchId,
+              postType: config.postType,
+              isCronJob: config.isCronJob,
+            }),
+          }).then((res) => res.json());
 
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(

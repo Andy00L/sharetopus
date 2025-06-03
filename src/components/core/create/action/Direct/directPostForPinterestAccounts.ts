@@ -6,6 +6,7 @@ import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 
 /**
  * Directly posts content to Pinterest accounts without scheduling
@@ -35,7 +36,6 @@ export async function directPostForPinterestAccounts(config: {
   batchId: string;
   mediaType: string;
   postType: "image" | "video" | "text";
-  buffer?: Buffer;
   isCronJob?: boolean;
 }): Promise<ScheduleResult> {
   const {
@@ -45,7 +45,6 @@ export async function directPostForPinterestAccounts(config: {
     accountContent,
     userId,
     batchId,
-    buffer,
     mediaType,
     postType,
     fileName,
@@ -57,6 +56,15 @@ export async function directPostForPinterestAccounts(config: {
       "[Pinterest Direct Post] Starting to post directly to Pinterest"
     );
 
+     // Download the file for direct upload
+     const buffer = await getSupabaseVideoFile(mediaPath, userId);
+     if (!buffer.success) {
+       return {
+         success: false,
+         count: 0,
+         message: buffer.message,
+       };
+     }
     // Skip if no content found for this account
     if (!accountContent) {
       console.error(
@@ -100,7 +108,7 @@ export async function directPostForPinterestAccounts(config: {
       mediaType: mediaType,
       fileName: fileName,
       userId: userId ?? "",
-      buffer,
+      buffer:buffer.buffer,
       coverTimestamp: config.coverTimestamp,
       postType: postType,
     });

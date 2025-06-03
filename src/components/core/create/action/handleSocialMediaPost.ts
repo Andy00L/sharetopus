@@ -3,14 +3,9 @@
 import { authCheck } from "@/actions/authCheck";
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
-import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
-import { processInstagramAccounts } from "./processAccounts/processInstagramAccounts";
-import { processLinkedinAccounts } from "./processAccounts/processLinkedinAccounts";
-import { processPinterestAccounts } from "./processAccounts/processPinterestAccounts";
-import { processTiktokAccounts } from "./processAccounts/processTiktokAccounts";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -372,7 +367,6 @@ export async function handleSocialMediaPost(config: {
     console.log(
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
-    let responseBuffer;
     let mediaUrl;
 
     if (mediaPath && (postType === "video" || postType === "image")) {
@@ -401,16 +395,6 @@ export async function handleSocialMediaPost(config: {
           `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
         );
       }
-      // Download the file for direct upload
-      responseBuffer = await getSupabaseVideoFile(mediaPath, userId);
-      if (!responseBuffer.success) {
-        return {
-          success: false,
-          counts: results.counts,
-          message: responseBuffer.message,
-          errors: [],
-        };
-      }
     }
 
     // Process each platform in parallel for maximum performance
@@ -422,84 +406,97 @@ export async function handleSocialMediaPost(config: {
     ] = await Promise.all([
       // Process TikTok accounts (if any and not image posts)
       tiktokAccounts.length > 0 && postType !== "image"
-        ? processTiktokAccounts({
-            accounts: tiktokAccounts,
-            mediaPath,
-            mediaType,
-            fileName: fileName ?? "",
-            platformOptions,
-            accountContent,
-            isScheduled,
-            scheduledDate: scheduledDate ?? "",
-            scheduledTime: scheduledTime ?? "",
-            postType,
-            buffer: responseBuffer?.buffer,
-            coverTimestamp,
-            userId,
-            batchId,
-            isCronJob,
-          })
+        ? fetch("/api/social/process/tiktok", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accounts: tiktokAccounts,
+              mediaPath,
+              mediaType,
+              fileName: fileName ?? "",
+              platformOptions,
+              accountContent,
+              isScheduled,
+              scheduledDate: scheduledDate ?? "",
+              scheduledTime: scheduledTime ?? "",
+              postType,
+              coverTimestamp,
+              userId,
+              batchId,
+              isCronJob,
+            }),
+          }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
 
       // Process Pinterest accounts (if any and not text posts)
       pinterestAccounts.length > 0 && postType !== "text"
-        ? processPinterestAccounts({
-            accounts: pinterestAccounts,
-            mediaPath,
-            coverTimestamp,
-            mediaType,
-            fileName: fileName ?? "",
-            boards: boards || [],
-            platformOptions,
-            accountContent,
-            isScheduled,
-            scheduledDate: scheduledDate ?? "",
-            scheduledTime: scheduledTime ?? "",
-            buffer: responseBuffer?.buffer,
-            postType,
-            userId,
-            batchId,
-            isCronJob,
-          })
+        ? fetch("/api/social/process/pinterest", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accounts: pinterestAccounts,
+              mediaPath,
+              coverTimestamp,
+              mediaType,
+              fileName: fileName ?? "",
+              boards: boards || [],
+              platformOptions,
+              accountContent,
+              isScheduled,
+              scheduledDate: scheduledDate ?? "",
+              scheduledTime: scheduledTime ?? "",
+              postType,
+              userId,
+              batchId,
+              isCronJob,
+            }),
+          }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
 
       // Process LinkedIn accounts (if any)
       linkedinAccounts.length > 0
-        ? processLinkedinAccounts({
-            accounts: linkedinAccounts,
-            mediaPath,
-            coverTimestamp,
-            fileName: fileName ?? "",
-            platformOptions,
-            accountContent,
-            isScheduled,
-            scheduledDate: scheduledDate ?? "",
-            scheduledTime: scheduledTime ?? "",
-            postType,
-            userId,
-            batchId,
-            buffer: responseBuffer?.buffer,
-            mediaType,
-            isCronJob,
-          })
+        ? fetch("/api/social/process/linkedin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accounts: linkedinAccounts,
+              mediaPath,
+              coverTimestamp,
+              fileName: fileName ?? "",
+              platformOptions,
+              accountContent,
+              isScheduled,
+              scheduledDate: scheduledDate ?? "",
+              scheduledTime: scheduledTime ?? "",
+              postType,
+              userId,
+              batchId,
+              mediaType,
+              isCronJob,
+            }),
+          }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
       instagramAccounts.length > 0 && postType !== "text"
-        ? processInstagramAccounts({
-            accounts: instagramAccounts,
-            mediaPath,
-            coverTimestamp,
-            mediaType,
-            mediaUrl,
-            fileName: fileName ?? "",
-            accountContent,
-            isScheduled,
-            scheduledDate: scheduledDate ?? "",
-            scheduledTime: scheduledTime ?? "",
-            postType,
-            userId,
-            batchId,
-            isCronJob,
-          })
+        ? fetch("/api/social/process/instagram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              accounts: instagramAccounts,
+              mediaPath,
+              coverTimestamp,
+              mediaType,
+              mediaUrl,
+              fileName: fileName ?? "",
+              accountContent,
+              isScheduled,
+              scheduledDate: scheduledDate ?? "",
+              scheduledTime: scheduledTime ?? "",
+              postType,
+              userId,
+              batchId,
+              isCronJob,
+            }),
+          }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
     ]);
 

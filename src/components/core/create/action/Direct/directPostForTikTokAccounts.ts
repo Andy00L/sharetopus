@@ -6,6 +6,7 @@ import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
+import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 
 /**
@@ -26,7 +27,6 @@ export async function directPostForTikTokAccounts(config: {
     isCustomized: boolean;
   };
   userId: string | null;
-  buffer?: Buffer;
   postType: "image" | "video" | "text";
 
   fileName: string;
@@ -41,14 +41,21 @@ export async function directPostForTikTokAccounts(config: {
     platformOptions,
     accountContent,
     userId,
-    buffer,
     batchId,
     isCronJob,
   } = config;
 
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
-
+    // Download the file for direct upload
+    const buffer = await getSupabaseVideoFile(mediaPath, userId);
+    if (!buffer.success) {
+      return {
+        success: false,
+        count: 0,
+        message: buffer.message,
+      };
+    }
     if (!accountContent || accountContent.accountId !== account.id) {
       console.error(
         `[TikTok Direct Post] No or mismatched content for account ${account.id}`
@@ -87,7 +94,7 @@ export async function directPostForTikTokAccounts(config: {
       description: accountContent.description ?? "",
       tikTokOptions: platformOptions.tiktok,
       mediaPath: mediaPath,
-      buffer,
+      buffer: buffer.buffer,
       mediaType: mediaType ?? "",
       userId: userId ?? "",
       coverTimestamp: config.coverTimestamp,

@@ -1,5 +1,4 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { directPostForLinkedInAccounts } from "../Direct/directPostForLinkedInAccounts";
 import { AccountError, ContentInfo } from "../handleSocialMediaPost";
 import { scheduleForLinkedInAccounts } from "../Scheduled/scheduledForLinkedinAccounts";
 
@@ -20,7 +19,6 @@ export async function processLinkedinAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-  buffer?: Buffer;
 
   isCronJob?: boolean;
 }) {
@@ -90,22 +88,24 @@ export async function processLinkedinAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await directPostForLinkedInAccounts({
-            account: account,
-            mediaPath: config.mediaPath,
-            coverTimestamp: config.coverTimestamp,
-            mediaType: config.mediaType,
-            platformOptions: config.platformOptions,
-            accountContent: accountContent,
-            postType: config.postType,
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            buffer: config.buffer,
-            cleanupFiles: false,
-            isCronJob: config.isCronJob,
-          });
-
+        : await fetch("/api/social/post/linkedin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              account: account,
+              mediaPath: config.mediaPath,
+              coverTimestamp: config.coverTimestamp,
+              mediaType: config.mediaType,
+              platformOptions: config.platformOptions,
+              accountContent: accountContent,
+              postType: config.postType,
+              userId: config.userId,
+              fileName: config.fileName,
+              batchId: config.batchId,
+              cleanupFiles: false,
+              isCronJob: config.isCronJob,
+            }),
+          }).then((res) => res.json());
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(
         `[processLinkedinAccounts]: Processed account ${

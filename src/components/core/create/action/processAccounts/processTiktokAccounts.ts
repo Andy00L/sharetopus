@@ -1,5 +1,4 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { directPostForTikTokAccounts } from "../Direct/directPostForTikTokAccounts";
 import { AccountError, ContentInfo } from "../handleSocialMediaPost";
 import { scheduleForTikTokAccounts } from "../Scheduled/scheduleForTikTokAccounts";
 
@@ -20,7 +19,6 @@ export async function processTiktokAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-  buffer?: Buffer;
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -79,20 +77,23 @@ export async function processTiktokAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await directPostForTikTokAccounts({
-            account: account,
-            mediaPath: config.mediaPath,
-            coverTimestamp: config.coverTimestamp,
-            mediaType: config.mediaType,
-            buffer: config.buffer,
-            postType,
-            platformOptions: config.platformOptions,
-            accountContent: accountContent,
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            isCronJob: config.isCronJob,
-          });
+        : await fetch("/api/social/post/tiktok", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              account: account,
+              mediaPath: config.mediaPath,
+              coverTimestamp: config.coverTimestamp,
+              mediaType: config.mediaType,
+              postType,
+              platformOptions: config.platformOptions,
+              accountContent: accountContent,
+              userId: config.userId,
+              fileName: config.fileName,
+              batchId: config.batchId,
+              isCronJob: config.isCronJob,
+            }),
+          }).then((res) => res.json());
 
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(

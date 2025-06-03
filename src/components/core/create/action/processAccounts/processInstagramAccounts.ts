@@ -1,5 +1,4 @@
 import { SocialAccount } from "@/lib/types/dbTypes";
-import { directPostForInstagramAccounts } from "../Direct/directPostForInstagramAccounts";
 import { AccountError, ContentInfo } from "../handleSocialMediaPost";
 import { scheduleForInstagramAccounts } from "../Scheduled/scheduleForInstagramAccounts";
 
@@ -117,19 +116,23 @@ export async function processInstagramAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await directPostForInstagramAccounts({
-            account: account,
-            mediaPath: config.mediaPath,
-            coverTimestamp: config.coverTimestamp,
-            mediaType: config.mediaType,
-            mediaUrl: config.mediaUrl!,
-            postType,
-            accountContent: accountContent,
-            userId: config.userId,
-            fileName: config.fileName,
-            batchId: config.batchId,
-            isCronJob: config.isCronJob,
-          });
+        : await fetch("/api/social/post/instagram", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              account: account,
+              mediaPath: config.mediaPath,
+              coverTimestamp: config.coverTimestamp,
+              mediaType: config.mediaType,
+              mediaUrl: config.mediaUrl!,
+              postType,
+              accountContent: accountContent,
+              userId: config.userId,
+              fileName: config.fileName,
+              batchId: config.batchId,
+              isCronJob: config.isCronJob,
+            }),
+          }).then((res) => res.json());
 
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(
