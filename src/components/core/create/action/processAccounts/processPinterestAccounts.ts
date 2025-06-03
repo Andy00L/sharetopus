@@ -94,7 +94,7 @@ export async function processPinterestAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch("/api/social/post/pinterest", {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/pinterest`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

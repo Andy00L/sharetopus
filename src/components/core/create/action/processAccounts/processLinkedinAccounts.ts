@@ -88,7 +88,7 @@ export async function processLinkedinAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch("/api/social/post/linkedin", {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/linkedin`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

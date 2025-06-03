@@ -406,7 +406,7 @@ export async function handleSocialMediaPost(config: {
     ] = await Promise.all([
       // Process TikTok accounts (if any and not image posts)
       tiktokAccounts.length > 0 && postType !== "image"
-        ? fetch("/api/social/process/tiktok", {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/tiktok`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -430,7 +430,7 @@ export async function handleSocialMediaPost(config: {
 
       // Process Pinterest accounts (if any and not text posts)
       pinterestAccounts.length > 0 && postType !== "text"
-        ? fetch("/api/social/process/pinterest", {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/pinterest`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -455,7 +455,7 @@ export async function handleSocialMediaPost(config: {
 
       // Process LinkedIn accounts (if any)
       linkedinAccounts.length > 0
-        ? fetch("/api/social/process/linkedin", {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/linkedin`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -477,7 +477,7 @@ export async function handleSocialMediaPost(config: {
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
       instagramAccounts.length > 0 && postType !== "text"
-        ? fetch("/api/social/process/instagram", {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/instagram`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
