@@ -7,6 +7,7 @@ import { UploadCloud } from "lucide-react";
 interface ImageUploadProps {
   readonly onFileSelected: (file: File) => void;
   readonly maxSizeMB: number;
+  readonly onError?: (errorMessage: string) => void;
 }
 
 export function ImageUploads({ onFileSelected, maxSizeMB }: ImageUploadProps) {

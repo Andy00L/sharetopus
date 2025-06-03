@@ -123,6 +123,16 @@ export async function directPostForInstagramAccounts(config: {
     console.log("Message:", postResult.message);
 
     if (postResult.success) {
+      const getInstagramUrl = (postId: string, postType: string): string => {
+        switch (postType) {
+          case "reel":
+            return `https://www.instagram.com/reel/${postId}/`;
+          case "image":
+          case "carousel":
+          default:
+            return `https://www.instagram.com/p/${postId}/`;
+        }
+      };
       // Store content history
       const historyResult = await storeContentHistory(
         {
@@ -132,7 +142,7 @@ export async function directPostForInstagramAccounts(config: {
           title: accountContent.title || null,
           description: accountContent.description || null,
           media_url: postResult.postId
-            ? `https://www.instagram.com/p/${postResult.postId}/`
+            ? getInstagramUrl(postResult.postId, instagramPostType) // ✅ URL correcte
             : null,
           batch_id: batchId,
           status: "published",
