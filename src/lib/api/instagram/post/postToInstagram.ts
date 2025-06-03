@@ -20,6 +20,7 @@ export interface InstagramPostResult {
   postId?: string;
   containerId?: string;
   data?: ContentHistory[];
+  publicUrl?: string;
   error?: string;
   details?: Record<string, unknown>;
   message?: string;
@@ -508,16 +509,30 @@ async function publishContainer({
     }
 
     const publishData = await publishResponse.json();
-    console.log(
-      "[Instagram Post] Successfully published to Instagram:",
-      publishData
-    );
+    const mediaId = publishData.id;
+    console.log("[Instagram Post] Successfully published:", mediaId);
 
+    const shortcode = await getInstagramShortcode(accessToken, mediaId);
+    let publicUrl;
+    if (shortcode) {
+      // Générer l'URL correcte avec le shortcode
+      publicUrl =
+        postType === "reel"
+          ? `https://www.instagram.com/reel/${shortcode}/`
+          : `https://www.instagram.com/p/${shortcode}/`;
+
+      console.log(`[Instagram Post] Public URL: ${publicUrl}`);
+    } else {
+      console.warn(
+        `[Instagram Post] Could not retrieve shortcode for media ${mediaId}`
+      );
+    }
     return {
       success: true,
-      postId: publishData.id, // Instagram Media ID selon la doc
+      postId: mediaId, // Instagram Media ID selon la doc
       containerId: containerId,
       data: publishData,
+      publicUrl: publicUrl,
       message: `Successfully created ${postType} post on Instagram`,
     };
   } catch (error) {
@@ -568,5 +583,36 @@ export async function checkContainerStatus({
       success: false,
       error: "Error checking container status",
     };
+  }
+}
+
+// ============================================
+// SOLUTION 1: Récupérer le shortcode via l'API Instagram
+// ============================================
+
+// Dans postToInstagram.ts, ajoutez cette fonction :
+async function getInstagramShortcode(
+  accessToken: string,
+  mediaId: string
+): Promise<string | null> {
+  try {
+    console.log(`[Instagram] Getting shortcode for media ID: ${mediaId}`);
+
+    const response = await fetch(
+      `https://graph.instagram.com/v23.0/${mediaId}?fields=shortcode&access_token=${accessToken}`
+    );
+
+    if (!response.ok) {
+      console.error(`[Instagram] Failed to get shortcode: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    console.log(`[Instagram] Shortcode retrieved: ${data.shortcode}`);
+
+    return data.shortcode || null;
+  } catch (error) {
+    console.error("[Instagram] Error getting shortcode:", error);
+    return null;
   }
 }
