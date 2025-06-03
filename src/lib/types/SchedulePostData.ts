@@ -22,9 +22,6 @@ export interface SchedulePostData {
     board_id?: string;
     link?: string;
 
-    //Instagram-specifque options
-    shareToFeed?: boolean;
-    altText?: string;
     // Add other platform options here as needed
   } | null;
 }

@@ -1,13 +1,12 @@
 "use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "./scheduleForPinterestAccounts";
 
 export async function scheduleForInstagramAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
   coverTimestamp: number;
-  platformOptions: PlatformOptions;
   accountContent: {
     accountId: string;
     title?: string;
@@ -24,7 +23,6 @@ export async function scheduleForInstagramAccounts(config: {
   const {
     account,
     mediaPath,
-    platformOptions,
     scheduledDate,
     scheduledTime,
     accountContent,
@@ -45,10 +43,7 @@ export async function scheduleForInstagramAccounts(config: {
       postType: postType,
       mediaStoragePath: mediaPath,
       coverTimestamp: config.coverTimestamp,
-      postOptions: platformOptions.instagram || {
-        shareToFeed: true,
-        altText: accountContent.description.substring(0, 1000), // Instagram alt text limit
-      },
+      postOptions: null,
       batch_id: batchId,
     };
 

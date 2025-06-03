@@ -33,7 +33,7 @@ export async function getSignedViewUrl(
 
     return {
       success: true,
-      url: data,
+      url: data.url,
       message: "Succesfully got the signed url",
     };
   } catch (error) {

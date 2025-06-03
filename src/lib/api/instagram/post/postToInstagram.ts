@@ -5,7 +5,7 @@ import "server-only";
 interface InstagramMediaParams {
   image_url?: string;
   video_url?: string;
-  coverTimestamp?: number;
+  thumb_offset?: number;
   caption?: string;
   alt_text?: string;
   media_type?: "REELS" | "STORIES" | "VIDEO" | "CAROUSEL";
@@ -42,12 +42,13 @@ export async function postToInstagram({
   userId: string; // Instagram User ID (user_id from profile)
   caption?: string;
   postType: "image" | "reel" | "carousel";
+
   mediaUrl?: string; // PUBLIC URL - Instagram will cURL this
   isCarousel?: boolean;
   mediaType: string;
   fileName: string;
   coverTimestamp?: number;
-  altText?: string; // Add this
+  altText: string; // Add this
   shareToFeed?: boolean; // Add this
   carouselItems?: Array<{
     mediaUrl: string;
@@ -124,7 +125,7 @@ async function createSingleMediaPost({
   mediaUrl: string;
   postType: string;
   baseUrl: string;
-  altText?: string;
+  altText: string;
   coverTimestamp?: number;
 
   shareToFeed?: boolean;
@@ -160,12 +161,12 @@ async function createSingleMediaPost({
         `[Instagram Post] Container status: ${statusCheck.status}, waiting...`
       );
 
-      // Attendre que le container soit prêt (selon la doc: max 5 minutes, 1 fois par minute)
+      // Attendre que le container soit prêt ( max  8 seconde, 1 fois par minute)
       let attempts = 0;
       const maxAttempts = 5;
 
       while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 60000)); // 1 minute
+        await new Promise((resolve) => setTimeout(resolve, 8000)); // 8 seconde
         attempts++;
 
         const newStatus = await checkContainerStatus({
@@ -225,7 +226,7 @@ async function createMediaContainer({
   mediaUrl: string;
   postType: string;
   baseUrl: string;
-  altText?: string;
+  altText: string;
   coverTimestamp?: number;
   shareToFeed?: boolean;
 
@@ -270,6 +271,7 @@ async function createMediaContainer({
       "[Instagram Post] Creating media container with params:",
       containerParams
     );
+
     // Reels-specific parameters
     if (postType === "reel") {
       if (shareToFeed !== undefined) {
@@ -279,7 +281,7 @@ async function createMediaContainer({
 
     // Video/Reel thumbnail offset
     if (isVideo && coverTimestamp !== undefined) {
-      containerParams.coverTimestamp = coverTimestamp;
+      containerParams.thumb_offset = coverTimestamp;
     }
     // Appel API EXACTEMENT comme dans la doc
     const containerResponse = await fetch(`${baseUrl}/${userId}/media`, {
@@ -380,6 +382,7 @@ async function createCarouselPost({
         mediaUrl: item.mediaUrl,
         postType: item.mediaType === "video" ? "video" : "image",
         baseUrl,
+        altText: "",
         isCarouselItem: true,
       });
 

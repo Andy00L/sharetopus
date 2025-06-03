@@ -179,10 +179,6 @@ export async function POST(request: NextRequest) {
         disableDuet: false, // Default value
         disableStitch: false, // Default value
       },
-      instagram: {
-        shareToFeed: true,
-        altText: "viral post",
-      },
     };
     // Add platform-specific options if needed
     // Then override with specific options from posts

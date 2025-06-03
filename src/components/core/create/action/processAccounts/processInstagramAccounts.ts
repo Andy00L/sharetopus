@@ -1,7 +1,7 @@
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { SocialAccount } from "@/lib/types/dbTypes";
+import { directPostForInstagramAccounts } from "../Direct/directPostForInstagramAccounts";
 import { AccountError, ContentInfo } from "../handleSocialMediaPost";
 import { scheduleForInstagramAccounts } from "../Scheduled/scheduleForInstagramAccounts";
-import { directPostForInstagramAccounts } from "../Direct/directPostForInstagramAccounts";
 
 /**
  * Process Instagram accounts individually with robust error handling for each account
@@ -13,15 +13,13 @@ export async function processInstagramAccounts(config: {
   coverTimestamp: number;
   mediaType: string;
   fileName: string;
-  platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
   isScheduled: boolean;
   scheduledDate: string;
   scheduledTime: string;
-  postType: "image" | "video" | "text";
+  postType: "image" | "video";
   userId: string | null;
   batchId: string;
-  buffer?: Buffer;
   isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -45,7 +43,7 @@ export async function processInstagramAccounts(config: {
   }
 
   // Skip if no accounts or incompatible post type
-  if (accounts.length === 0 || postType === "text") {
+  if (accounts.length === 0) {
     return { successCount, errors };
   }
 
@@ -112,7 +110,6 @@ export async function processInstagramAccounts(config: {
             account: account,
             mediaPath: config.mediaPath,
             coverTimestamp: config.coverTimestamp,
-            platformOptions: config.platformOptions,
             accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
@@ -127,7 +124,6 @@ export async function processInstagramAccounts(config: {
             mediaType: config.mediaType,
             mediaUrl: config.mediaUrl!,
             postType,
-            platformOptions: config.platformOptions,
             accountContent: accountContent,
             userId: config.userId,
             fileName: config.fileName,

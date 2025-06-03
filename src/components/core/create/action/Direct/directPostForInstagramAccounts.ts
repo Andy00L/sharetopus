@@ -2,7 +2,7 @@
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
@@ -17,7 +17,6 @@ export async function directPostForInstagramAccounts(config: {
   mediaPath: string;
   coverTimestamp: number;
   mediaType: string;
-  platformOptions: PlatformOptions;
   accountContent: {
     accountId: string;
     title: string;
@@ -26,7 +25,7 @@ export async function directPostForInstagramAccounts(config: {
   };
   userId: string | null;
   mediaUrl: string;
-  postType: "image" | "video" | "images" | "text";
+  postType: "image" | "video";
   fileName: string;
   batchId: string;
   isCronJob?: boolean;
@@ -36,7 +35,6 @@ export async function directPostForInstagramAccounts(config: {
     mediaPath,
     postType,
     mediaType,
-    platformOptions,
     accountContent,
     userId,
     mediaUrl,
@@ -97,8 +95,6 @@ export async function directPostForInstagramAccounts(config: {
 
     if (postType === "video") {
       instagramPostType = "reel";
-    } else if (postType === "images") {
-      instagramPostType = "carousel";
     } else {
       // "text" maps to "image" since Instagram doesn't support text-only posts
       instagramPostType = "image";
@@ -113,10 +109,8 @@ export async function directPostForInstagramAccounts(config: {
       fileName: config.fileName,
       postType: instagramPostType,
       coverTimestamp: config.coverTimestamp,
-      altText:
-        platformOptions.instagram?.altText ||
-        accountContent.description.substring(0, 1000),
-      shareToFeed: platformOptions.instagram?.shareToFeed ?? true,
+      altText: accountContent.description.substring(0, 1000) || "viral post",
+      shareToFeed: true,
     });
 
     // Add detailed console logging
@@ -133,7 +127,7 @@ export async function directPostForInstagramAccounts(config: {
       const historyResult = await storeContentHistory(
         {
           platform: "instagram",
-          content_id: postResult.postId || "",
+          content_id: postResult.postId ?? "",
           social_account_id: accountContent.accountId,
           title: accountContent.title || null,
           description: accountContent.description || null,
@@ -147,9 +141,6 @@ export async function directPostForInstagramAccounts(config: {
             post_data: postResult,
             post_type: postType,
             posted_at: new Date().toISOString(),
-            instagram_options: platformOptions.instagram,
-            alt_text: platformOptions.instagram?.altText,
-            share_to_feed: platformOptions.instagram?.shareToFeed,
           },
         },
         userId
@@ -186,7 +177,6 @@ export async function directPostForInstagramAccounts(config: {
           platform: "instagram",
           post_title: accountContent.title || null,
           post_description: accountContent.description || null,
-          post_options: platformOptions.instagram,
           media_type: postType,
           media_storage_path: mediaPath,
           coverTimestamp: config.coverTimestamp,
@@ -194,7 +184,6 @@ export async function directPostForInstagramAccounts(config: {
           extra_data: {
             message: postResult.message,
             timestamp: new Date().toISOString(),
-            instagram_options: platformOptions.instagram,
           },
         });
 

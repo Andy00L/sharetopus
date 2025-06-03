@@ -49,17 +49,13 @@ export interface PinterestOptions {
 export interface LinkedinOptions {
   visibility: string;
 }
-export interface InstagramOptions {
-  shareToFeed: boolean;
-  altText?: string;
-}
+
 export interface PlatformOptions {
   caption?: string;
   scheduledAt?: Date;
   tiktok?: TikTokOptions;
   pinterest?: PinterestOptions;
   facebook?: { privacyLevel: string };
-  instagram?: InstagramOptions;
   linkedin?: LinkedinOptions;
 }
 

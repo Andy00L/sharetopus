@@ -1,16 +1,16 @@
 "use server";
 
 import { authCheck } from "@/actions/authCheck";
+import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
+import { processInstagramAccounts } from "./processAccounts/processInstagramAccounts";
 import { processLinkedinAccounts } from "./processAccounts/processLinkedinAccounts";
 import { processPinterestAccounts } from "./processAccounts/processPinterestAccounts";
 import { processTiktokAccounts } from "./processAccounts/processTiktokAccounts";
-import { processInstagramAccounts } from "./processAccounts/processInstagramAccounts";
-import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -373,7 +373,7 @@ export async function handleSocialMediaPost(config: {
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
     let responseBuffer;
-    let MediaUrl;
+    let mediaUrl;
 
     if (mediaPath && (postType === "video" || postType === "image")) {
       const expiresIn = 300; // Min 5 min, or 5 min per account + 10 min buffer
@@ -396,7 +396,7 @@ export async function handleSocialMediaPost(config: {
       }
 
       if (signedUrlResult.success) {
-        MediaUrl = signedUrlResult.url;
+        mediaUrl = signedUrlResult.url;
         console.log(
           `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
         );
@@ -489,15 +489,13 @@ export async function handleSocialMediaPost(config: {
             mediaPath,
             coverTimestamp,
             mediaType,
-            mediaUrl: MediaUrl,
+            mediaUrl,
             fileName: fileName ?? "",
-            platformOptions,
             accountContent,
             isScheduled,
             scheduledDate: scheduledDate ?? "",
             scheduledTime: scheduledTime ?? "",
             postType,
-            buffer: responseBuffer?.buffer,
             userId,
             batchId,
             isCronJob,
