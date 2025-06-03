@@ -33,13 +33,13 @@ export default async function CreatePostPage() {
       title: "Image Post",
       icon: Image,
       href: "/create/image",
-      platforms: ["linkedin", "pinterest", "tiktok"],
+      platforms: ["linkedin", "pinterest", "tiktok", "instagram"],
     },
     {
       title: "Video Post",
       icon: Video,
       href: "/create/video",
-      platforms: ["linkedin", "pinterest", "tiktok"],
+      platforms: ["linkedin", "pinterest", "tiktok", "instagram"],
     },
   ];
 
