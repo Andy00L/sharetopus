@@ -18,9 +18,10 @@ import { authCheck } from "@/actions/authCheck";
  */
 export async function deleteSupabaseFileAction(
   userId: string | null,
+  filePath: string | null,
+
   isCronJob?: boolean,
 
-  filePath?: string | null,
   forceDelete: boolean = false
 ): Promise<{ success: boolean; message: string }> {
   console.log(
