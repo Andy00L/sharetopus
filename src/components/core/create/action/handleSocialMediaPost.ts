@@ -216,7 +216,7 @@ export async function handleSocialMediaPost(config: {
         // Clean up file on error if needed
         if (cleanupFiles) {
           try {
-            await deleteSupabaseFileAction(userId, mediaPath, true);
+            await deleteSupabaseFileAction(userId, isCronJob, mediaPath, true);
             console.log(
               `[handleSocialMediaPost]: Cleaned up media file after error: ${mediaPath}`
             );
@@ -548,7 +548,12 @@ export async function handleSocialMediaPost(config: {
       // Clean up main media file
       if (mediaPath) {
         try {
-          await deleteSupabaseFileAction(userId, mediaPath, config.isCronJob);
+          await deleteSupabaseFileAction(
+            userId,
+            isCronJob,
+            mediaPath,
+            config.isCronJob
+          );
           console.log(
             `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
           );
@@ -597,7 +602,7 @@ export async function handleSocialMediaPost(config: {
     // Clean up media on error for direct posts
     if (!isScheduled && cleanupFiles && mediaPath) {
       try {
-        await deleteSupabaseFileAction(userId, mediaPath, true);
+        await deleteSupabaseFileAction(userId, isCronJob, mediaPath, true);
         console.log(
           `[handleSocialMediaPost]: Cleaned up media file after unexpected error`
         );

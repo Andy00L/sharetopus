@@ -18,6 +18,8 @@ import { authCheck } from "@/actions/authCheck";
  */
 export async function deleteSupabaseFileAction(
   userId: string | null,
+  isCronJob?: boolean,
+
   filePath?: string | null,
   forceDelete: boolean = false
 ): Promise<{ success: boolean; message: string }> {
@@ -27,7 +29,10 @@ export async function deleteSupabaseFileAction(
     }`
   );
 
-  const authResult = await authCheck(userId);
+  const authResult = await authCheck(userId, {
+    isCronJob,
+    cronSecret: process.env.CRON_SECRET_KEY,
+  });
   if (!authResult) {
     console.error(
       `[deleteSupabaseFileAction]: Authentication check failed for user ID: ${userId}`
