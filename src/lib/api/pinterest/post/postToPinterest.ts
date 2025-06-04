@@ -197,7 +197,7 @@ export async function postToPinterest({
     let uploadStatus = "processing";
     let attempts = 0;
     const startTime = Date.now();
-    const maxTimeout = 30000; // 30 seconds max (leaving 5s buffer)
+    const maxTimeout = 40000; // 30 seconds max (leaving 5s buffer)
 
     // Calculate adaptive wait time based on file size
     const fileSize = buffer.length;
