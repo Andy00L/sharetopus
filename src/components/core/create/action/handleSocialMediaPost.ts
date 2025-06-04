@@ -371,7 +371,11 @@ export async function handleSocialMediaPost(config: {
     );
     let mediaUrl;
 
-    if (mediaPath && (postType === "video" || postType === "image")) {
+    if (
+      !isScheduled &&
+      mediaPath &&
+      (postType === "video" || postType === "image")
+    ) {
       const expiresIn = 300; // Min 5 min, or 5 min per account + 10 min buffer
 
       const signedUrlResult = await getSignedViewUrl(

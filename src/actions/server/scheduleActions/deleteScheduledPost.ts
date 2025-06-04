@@ -202,7 +202,9 @@ export async function deleteScheduledPostBatch(
         // is still being used by other posts before deletion
         const deleteFileResult = await deleteSupabaseFileAction(
           userId,
-          mediaPath
+          mediaPath,
+          false,
+          isCronJob
         );
 
         if (deleteFileResult.success) {
