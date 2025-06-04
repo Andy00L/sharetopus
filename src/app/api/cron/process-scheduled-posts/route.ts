@@ -12,26 +12,26 @@ import {
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 export async function POST(request: NextRequest) {
-  console.log("[BATCH] Processing request started");
-
   try {
     // 1. Authenticate the request
     const authHeader = request.headers.get("Authorization");
     if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
-      console.error("[BATCH] Unauthorized request attempt");
+      console.error("[CronJob] Unauthorized request attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    console.log("[CronJob] Processing request started");
 
     // 2. Parse the request body
     const { batch_id, user_id, secret } = await request.json();
 
     if (secret !== process.env.CRON_SECRET_KEY) {
-      console.error("[BATCH] Invalid secret in request body");
+      console.error("[CronJob] Invalid secret in request body");
       return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
     }
 
     if (!batch_id || !user_id) {
-      console.error("[BATCH] Missing required parameters");
+      console.error("[CronJob] Missing required parameters");
       return NextResponse.json(
         {
           error: "Missing batch_id or user_id",
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[BATCH] Processing batch ${batch_id} for user ${user_id}`);
+    console.log(`[CronJob] Processing batch ${batch_id} for user ${user_id}`);
 
     // 3. Get posts for this batch
     const { data: postsData, error: postsError } = await adminSupabase
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       .eq("batch_id", batch_id);
 
     if (postsError) {
-      console.error(`[BATCH] Error fetching posts: ${postsError.message}`);
+      console.error(`[CronJob] Error fetching posts: ${postsError.message}`);
       return NextResponse.json(
         {
           error: postsError.message,
@@ -60,19 +60,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (!postsData || postsData.length === 0) {
-      console.warn(`[BATCH] No posts found for batch ${batch_id}`);
+      console.warn(`[CronJob] No posts found for batch ${batch_id}`);
       return NextResponse.json({
         message: "No posts found for this batch",
         batch_id,
       });
     }
 
-    console.log(`[BATCH] Found ${postsData.length} posts to process`);
+    console.log(`[CronJob] Found ${postsData.length} posts to process`);
 
     // 4. Get all social accounts needed for this batch
     const accountIds = [
       ...new Set(postsData.map((post) => post.social_account_id)),
     ];
+
     const { data: accountsData, error: accountsError } = await adminSupabase
       .from("social_accounts")
       .select("*")
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     if (accountsError || !accountsData) {
       console.error(
-        `[BATCH] Error fetching accounts: ${accountsError?.message}`
+        `[CronJob] Error fetching accounts: ${accountsError?.message}`
       );
 
       // Reset posts back to scheduled if we can't fetch accounts
@@ -158,7 +159,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (e) {
         console.warn(
-          `[BATCH] Error parsing post options for post ${post.id}: ${e}`
+          `[CronJob] Error parsing post options for post ${post.id}: ${e}`
         );
       }
     }
@@ -204,13 +205,13 @@ export async function POST(request: NextRequest) {
             platformOptions.tiktok!.disableStitch = options.disableStitch;
         }
       } catch (e) {
-        console.warn(`[BATCH] Error parsing platform options: ${e}`);
+        console.warn(`[CronJob] Error parsing platform options: ${e}`);
       }
     });
 
     // 6. Process the batch using handleSocialMediaPost
     console.log(
-      `[BATCH] Executing handleSocialMediaPost for batch ${batch_id}`
+      `[CronJob] Executing handleSocialMediaPost for batch ${batch_id}`
     );
 
     const config = {
@@ -233,14 +234,14 @@ export async function POST(request: NextRequest) {
     };
 
     const result = await handleSocialMediaPost(config);
-    console.log(`[BATCH] Processing result:`, {
+    console.log(`[CronJob] Processing result:`, {
       success: result.success,
       counts: result.counts,
       errors: result.errors?.length,
     });
 
     // 7. Delete processed posts from scheduled_posts table
-    console.log(`[BATCH] Deleting processed posts for batch ${batch_id}`);
+    console.log(`[CronJob] Deleting processed posts for batch ${batch_id}`);
 
     try {
       // Get all post IDs from this batch
@@ -257,12 +258,12 @@ export async function POST(request: NextRequest) {
 
         if (!deleteResult.success) {
           console.warn(
-            `[BATCH] Warning: Error cleaning up scheduled posts: ${deleteResult.message}`
+            `[CronJob] Warning: Error cleaning up scheduled posts: ${deleteResult.message}`
           );
           // Continue anyway - the posts were processed successfully
         } else {
           console.log(
-            `[BATCH] Successfully deleted ${
+            `[CronJob] Successfully deleted ${
               deleteResult.details?.succeeded ?? 0
             } posts from scheduled_posts`
           );
@@ -270,7 +271,7 @@ export async function POST(request: NextRequest) {
       }
     } catch (deleteError) {
       console.error(
-        `[BATCH] Error during deletion of processed posts:`,
+        `[CronJob] Error during deletion of processed posts:`,
         deleteError
       );
       // Continue since this is just cleanup and the main process succeeded
@@ -288,7 +289,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("[BATCH] Unexpected error:", error);
+    console.error("[CronJob] Unexpected error:", error);
 
     // Try to store in failed_posts and delete from scheduled_posts if we have batch_id
     try {
@@ -326,12 +327,15 @@ export async function POST(request: NextRequest) {
           await deleteScheduledPostBatch(postIds, user_id, true);
 
           console.log(
-            `[BATCH] Stored ${postsData.length} failed posts and deleted from scheduled_posts`
+            `[CronJob] Stored ${postsData.length} failed posts and deleted from scheduled_posts`
           );
         }
       }
     } catch (fallbackError) {
-      console.error("[BATCH] Error in fallback error handling:", fallbackError);
+      console.error(
+        "[CronJob] Error in fallback error handling:",
+        fallbackError
+      );
       // Continue to return the original error
     }
 

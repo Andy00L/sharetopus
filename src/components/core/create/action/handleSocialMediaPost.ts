@@ -146,6 +146,7 @@ export async function handleSocialMediaPost(config: {
       isCronJob: config.isCronJob,
       cronSecret: process.env.CRON_SECRET_KEY,
     });
+
     if (!authResult) {
       console.error(
         `[handleSocialMediaPost]: Authentication check failed for user ID: ${userId}`
@@ -176,6 +177,7 @@ export async function handleSocialMediaPost(config: {
           rateCheck.resetIn ?? "unknown"
         } seconds`
       );
+
       return {
         success: false,
         counts: results.counts,
@@ -216,7 +218,7 @@ export async function handleSocialMediaPost(config: {
         // Clean up file on error if needed
         if (cleanupFiles) {
           try {
-            await deleteSupabaseFileAction(userId, mediaPath, isCronJob, true);
+            await deleteSupabaseFileAction(userId, mediaPath, true, isCronJob);
             console.log(
               `[handleSocialMediaPost]: Cleaned up media file after error: ${mediaPath}`
             );
@@ -548,13 +550,7 @@ export async function handleSocialMediaPost(config: {
       // Clean up main media file
       if (mediaPath) {
         try {
-          await deleteSupabaseFileAction(
-            userId,
-            mediaPath,
-            isCronJob,
-
-            config.isCronJob
-          );
+          await deleteSupabaseFileAction(userId, mediaPath, false, isCronJob);
           console.log(
             `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
           );
@@ -603,7 +599,7 @@ export async function handleSocialMediaPost(config: {
     // Clean up media on error for direct posts
     if (!isScheduled && cleanupFiles && mediaPath) {
       try {
-        await deleteSupabaseFileAction(userId, mediaPath, isCronJob, true);
+        await deleteSupabaseFileAction(userId, mediaPath, true, isCronJob);
         console.log(
           `[handleSocialMediaPost]: Cleaned up media file after unexpected error`
         );
