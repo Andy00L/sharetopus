@@ -164,10 +164,10 @@ async function createSingleMediaPost({
 
       // Attendre que le container soit prêt ( max  8 seconde, 1 fois par minute)
       let attempts = 0;
-      const maxAttempts = 1;
+      const maxAttempts = 3;
 
       while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 20000)); // 15 seconde
+        await new Promise((resolve) => setTimeout(resolve, 15000)); // 15 seconde
         attempts++;
 
         const newStatus = await checkContainerStatus({
