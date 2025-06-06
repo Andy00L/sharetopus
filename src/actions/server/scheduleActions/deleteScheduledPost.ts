@@ -56,7 +56,7 @@ export async function deleteScheduledPostBatch(
 
     // Verify user is properly authenticated
     const authResult = await authCheck(userId, {
-      isCronJob: isCronJob,
+      isCronJob,
       cronSecret: process.env.CRON_SECRET_KEY,
     });
     if (!authResult) {
