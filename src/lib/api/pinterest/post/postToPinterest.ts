@@ -1,4 +1,5 @@
 // lib/api/pinterest/post/postToPinterest.ts
+import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import "server-only";
 
 // Define return type for Pinterest posts
@@ -37,7 +38,7 @@ export async function postToPinterest({
   mediaPath,
   mediaType,
   fileName,
-  buffer,
+  userId,
   coverTimestamp,
   postType,
 }: {
@@ -50,7 +51,6 @@ export async function postToPinterest({
   mediaType: string;
   fileName: string;
   userId: string;
-  buffer?: Buffer;
   coverTimestamp: number;
   postType: "image" | "video" | "text";
 }): Promise<PinterestPostResult> {
@@ -64,14 +64,23 @@ export async function postToPinterest({
           "Missing required parameters (accessToken, boardId, and mediaBuffer are required)",
       };
     }
+    // Download the file for direct upload
+    const bufferRes = await getSupabaseVideoFile(mediaPath, userId);
 
+    if (!bufferRes.success) {
+      return {
+        success: false,
+        message: "Buffer is required for video uploads to Pinterest",
+        error: bufferRes.message,
+      };
+    }
+    const buffer = bufferRes.buffer;
     if (!buffer) {
       return {
         success: false,
-        error: "Buffer is required for video uploads to Pinterest",
+        message: "Buffer is required for video uploads to Pinterest",
       };
     }
-
     if (postType === "text") {
       return {
         success: false,
