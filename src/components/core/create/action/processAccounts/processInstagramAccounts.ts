@@ -26,7 +26,7 @@ export async function processInstagramAccounts(config: {
   let successCount = 0;
 
   // Validate we have a URL for Instagram
-  if (!config.mediaUrl) {
+  if (!config.mediaUrl && !isScheduled) {
     console.error(
       "[processInstagramAccounts] No media URL provided for Instagram"
     );
