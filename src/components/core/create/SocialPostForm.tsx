@@ -1044,6 +1044,142 @@ export default function SocialPostForm({
               </div>
             </div>
 
+            {/**Temp tiktok settings */}
+            {selectedTikTokAccount.length > 0 && (
+              <div className="space-y-2">
+                <Label>Privacy Setting *</Label>
+                <Select value={platformOptions.tiktok?.privacyLevel || ""}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select privacy level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PUBLIC_TO_EVERYONE">Everyone</SelectItem>
+                    <SelectItem value="MUTUAL_FOLLOW_FRIENDS">
+                      Friends
+                    </SelectItem>
+                    <SelectItem value="SELF_ONLY">Only me</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="space-y-3">
+              <Label>Interaction Settings</Label>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={!platformOptions.tiktok?.disableComment}
+                    onCheckedChange={(checked) => {
+                      setPlatformOptions((prev) => ({
+                        ...prev,
+                        tiktok: {
+                          ...prev.tiktok!,
+                          disableComment: !checked,
+                        },
+                      }));
+                    }}
+                  />
+                  <Label>Allow Comments</Label>
+                </div>
+
+                {postType === "video" && (
+                  <>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={!platformOptions.tiktok?.disableDuet}
+                        onCheckedChange={(checked) => {
+                          setPlatformOptions((prev) => ({
+                            ...prev,
+                            tiktok: {
+                              ...prev.tiktok!,
+                              disableDuet: !checked,
+                            },
+                          }));
+                        }}
+                      />
+                      <Label>Allow Duet</Label>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        checked={!platformOptions.tiktok?.disableStitch}
+                        onCheckedChange={(checked) => {
+                          setPlatformOptions((prev) => ({
+                            ...prev,
+                            tiktok: {
+                              ...prev.tiktok!,
+                              disableStitch: !checked,
+                            },
+                          }));
+                        }}
+                      />
+                      <Label>Allow Stitch</Label>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  checked={platformOptions.tiktok?.commercialContent || false}
+                  onCheckedChange={(checked) => {
+                    setPlatformOptions((prev) => ({
+                      ...prev,
+                      tiktok: {
+                        ...prev.tiktok!,
+                        commercialContent: checked,
+                        brandedContent: checked
+                          ? prev.tiktok?.brandedContent
+                          : false,
+                        yourBrand: checked ? prev.tiktok?.yourBrand : false,
+                      },
+                    }));
+                  }}
+                />
+                <Label>
+                  This content promotes yourself, a brand, product or service
+                </Label>
+              </div>
+
+              {platformOptions.tiktok?.commercialContent && (
+                <div className="ml-6 space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={platformOptions.tiktok?.yourBrand || false}
+                      onChange={(e) => {
+                        setPlatformOptions((prev) => ({
+                          ...prev,
+                          tiktok: {
+                            ...prev.tiktok!,
+                            yourBrand: e.target.checked,
+                          },
+                        }));
+                      }}
+                    />
+                    <Label>Your brand</Label>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={platformOptions.tiktok?.brandedContent || false}
+                      onChange={(e) => {
+                        setPlatformOptions((prev) => ({
+                          ...prev,
+                          tiktok: {
+                            ...prev.tiktok!,
+                            brandedContent: e.target.checked,
+                          },
+                        }));
+                      }}
+                    />
+                    <Label>Branded content</Label>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/********************************************************************* */}
             {/* Post details section */}
             {(postType === "video" || postType === "image") && (
               <>
@@ -1235,158 +1371,6 @@ export default function SocialPostForm({
                         </div>
                       </TabsContent>
 
-                      {/**Temp tiktok settings */}
-                      {selectedTikTokAccount.length > 0 && (
-                        <div className="space-y-2">
-                          <Label>Privacy Setting *</Label>
-                          <Select
-                            value={platformOptions.tiktok?.privacyLevel || ""}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select privacy level" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="PUBLIC_TO_EVERYONE">
-                                Everyone
-                              </SelectItem>
-                              <SelectItem value="MUTUAL_FOLLOW_FRIENDS">
-                                Friends
-                              </SelectItem>
-                              <SelectItem value="SELF_ONLY">Only me</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-                      <div className="space-y-3">
-                        <Label>Interaction Settings</Label>
-                        <div className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <Switch
-                              checked={!platformOptions.tiktok?.disableComment}
-                              onCheckedChange={(checked) => {
-                                setPlatformOptions((prev) => ({
-                                  ...prev,
-                                  tiktok: {
-                                    ...prev.tiktok!,
-                                    disableComment: !checked,
-                                  },
-                                }));
-                              }}
-                            />
-                            <Label>Allow Comments</Label>
-                          </div>
-
-                          {postType === "video" && (
-                            <>
-                              <div className="flex items-center space-x-2">
-                                <Switch
-                                  checked={!platformOptions.tiktok?.disableDuet}
-                                  onCheckedChange={(checked) => {
-                                    setPlatformOptions((prev) => ({
-                                      ...prev,
-                                      tiktok: {
-                                        ...prev.tiktok!,
-                                        disableDuet: !checked,
-                                      },
-                                    }));
-                                  }}
-                                />
-                                <Label>Allow Duet</Label>
-                              </div>
-
-                              <div className="flex items-center space-x-2">
-                                <Switch
-                                  checked={
-                                    !platformOptions.tiktok?.disableStitch
-                                  }
-                                  onCheckedChange={(checked) => {
-                                    setPlatformOptions((prev) => ({
-                                      ...prev,
-                                      tiktok: {
-                                        ...prev.tiktok!,
-                                        disableStitch: !checked,
-                                      },
-                                    }));
-                                  }}
-                                />
-                                <Label>Allow Stitch</Label>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div className="space-y-3">
-                        <div className="flex items-center space-x-2">
-                          <Switch
-                            checked={
-                              platformOptions.tiktok?.commercialContent || false
-                            }
-                            onCheckedChange={(checked) => {
-                              setPlatformOptions((prev) => ({
-                                ...prev,
-                                tiktok: {
-                                  ...prev.tiktok!,
-                                  commercialContent: checked,
-                                  brandedContent: checked
-                                    ? prev.tiktok?.brandedContent
-                                    : false,
-                                  yourBrand: checked
-                                    ? prev.tiktok?.yourBrand
-                                    : false,
-                                },
-                              }));
-                            }}
-                          />
-                          <Label>
-                            This content promotes yourself, a brand, product or
-                            service
-                          </Label>
-                        </div>
-
-                        {platformOptions.tiktok?.commercialContent && (
-                          <div className="ml-6 space-y-2">
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  platformOptions.tiktok?.yourBrand || false
-                                }
-                                onChange={(e) => {
-                                  setPlatformOptions((prev) => ({
-                                    ...prev,
-                                    tiktok: {
-                                      ...prev.tiktok!,
-                                      yourBrand: e.target.checked,
-                                    },
-                                  }));
-                                }}
-                              />
-                              <Label>Your brand</Label>
-                            </div>
-
-                            <div className="flex items-center space-x-2">
-                              <input
-                                type="checkbox"
-                                checked={
-                                  platformOptions.tiktok?.brandedContent ||
-                                  false
-                                }
-                                onChange={(e) => {
-                                  setPlatformOptions((prev) => ({
-                                    ...prev,
-                                    tiktok: {
-                                      ...prev.tiktok!,
-                                      brandedContent: e.target.checked,
-                                    },
-                                  }));
-                                }}
-                              />
-                              <Label>Branded content</Label>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      {/********************************************************************* */}
                       {/* Pinterest Settings Tab */}
                       {selectedPinterestAccount.length > 0 && (
                         <TabsContent value="pinterest" className="mt-4">
@@ -1682,22 +1666,21 @@ export default function SocialPostForm({
                           <>
                             <SendHorizontal className="mr-2 h-4 w-4" />
                             Publish Now
-                            <div>
-                              {selectedTikTokAccount.length > 0 && (
-                                <div className="text-sm text-muted-foreground p-3 bg-gray-50 rounded">
-                                  By posting, you agree to TikTok&apos;s{" "}
-                                  {platformOptions.tiktok?.brandedContent
-                                    ? "Branded Content Policy and "
-                                    : ""}
-                                  Music Usage Confirmation
-                                </div>
-                              )}
-                            </div>
                           </>
                         )}
                       </>
                     )}
                   </Button>
+
+                  {selectedTikTokAccount.length > 0 && (
+                    <div className="text-sm text-muted-foreground p-3 bg-gray-50 rounded break-words">
+                      By posting, you agree to TikTok&apos;s{" "}
+                      {platformOptions.tiktok?.brandedContent
+                        ? "Branded Content Policy and "
+                        : ""}
+                      Music Usage Confirmation
+                    </div>
+                  )}
                 </div>
               )}
             </div>
