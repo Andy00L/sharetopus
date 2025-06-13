@@ -1671,16 +1671,15 @@ export default function SocialPostForm({
                       </>
                     )}
                   </Button>
-
-                  {selectedTikTokAccount.length > 0 && (
-                    <div className="text-sm text-muted-foreground p-3 bg-gray-50 rounded break-words">
-                      By posting, you agree to TikTok&apos;s{" "}
-                      {platformOptions.tiktok?.brandedContent
-                        ? "Branded Content Policy and "
-                        : ""}
-                      Music Usage Confirmation
-                    </div>
-                  )}
+                </div>
+              )}
+              {selectedTikTokAccount.length > 0 && (
+                <div className="text-sm text-muted-foreground p-3 bg-gray-50 rounded break-words">
+                  By posting, you agree to TikTok&apos;s{" "}
+                  {platformOptions.tiktok?.brandedContent
+                    ? "Branded Content Policy and "
+                    : ""}
+                  Music Usage Confirmation
                 </div>
               )}
             </div>
