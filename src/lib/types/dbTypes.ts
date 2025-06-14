@@ -39,10 +39,6 @@ export interface TikTokOptions {
   disableComment: boolean;
   disableDuet: boolean;
   disableStitch: boolean;
-  /////////////////////////////
-  commercialContent?: boolean;
-  yourBrand?: boolean;
-  brandedContent?: boolean;
 }
 
 export interface PinterestOptions {
