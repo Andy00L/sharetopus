@@ -1,8 +1,10 @@
 import Image from "next/image";
 import Link from "next/link";
 
+import { SignedIn, SignedOut } from "@clerk/nextjs";
 import heroImage from "../../../../public/frontend_logo.webp";
 
+import { Button } from "@/components/ui/button";
 import PlatformsListe from "../details/platformList";
 import { AnimatedTestimonial } from "./AnimatedTestimonial";
 
@@ -81,32 +83,18 @@ export default function Hero() {
                 </div>
                 Customize content for each platform
               </li>
-              {/**<li className="flex items-center">
-                <div className="rounded-full bg-green-100 p-1 mr-3">
-                  <svg
-                    className="h-5 w-5 text-green-600"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                </div>
-                Generate viral videos using our studio templates
-              </li>*/}
             </ul>
-            <div className="flex flex-wrap mt-10 rounded-full">
-              <Link
-                href="/create"
-                className="bg-[#FF4A20] text-white px-10 py-4 rounded-full text-base font-medium hover:bg-[#FF2A11]"
-              >
-                Start Now
-              </Link>
+            <div className="flex flex-wrap mt-5 rounded-full">
+              <SignedOut>
+                <Button className="bg-[#FF4A20] text-white px-10 py-4 rounded-full font-medium hover:bg-[#FF2A29] cursor-pointer">
+                  <Link href="/create">Start Now</Link>
+                </Button>
+              </SignedOut>
+              <SignedIn>
+                <Button className="bg-[#FF4A20] text-white px-10 py-4 rounded-full font-medium hover:bg-[#FF2A29] cursor-pointer">
+                  <Link href="/create">Get back</Link>
+                </Button>
+              </SignedIn>
             </div>
 
             <div className="mt-8 ">

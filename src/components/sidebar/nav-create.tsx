@@ -8,7 +8,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, PlusCircle } from "lucide-react";
+import { PlusCircle } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -32,7 +32,7 @@ export function NavCreate() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-
+          {/* 
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
@@ -46,6 +46,7 @@ export function NavCreate() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          */}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

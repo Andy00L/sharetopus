@@ -9,7 +9,7 @@ import {
 
 export function NavigationItems() {
   return (
-    <NavigationMenu className="font-medium flex flex-col gap-8 ">
+    <NavigationMenu className="font-medium flex flex-col ">
       <NavigationMenuList>
         <NavigationMenuItem>
           <NavigationMenuLink asChild>

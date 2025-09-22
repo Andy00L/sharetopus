@@ -17,7 +17,7 @@ export default function NotFound() {
     <div className="flex min-h-screen flex-col">
       <Navbar />
       <div className="h-[calc(100vh-64px)] w-full flex flex-col items-center justify-center px-4 text-center">
-        <div className="w-64 h-64 mb-8 relative flex items-center justify-center">
+        <div className="w-64 h-64 relative flex items-center justify-center">
           <Image
             src={user1}
             alt="Bear silhouette"
@@ -33,14 +33,11 @@ export default function NotFound() {
           Oops! Page not found
         </h1>
 
-        <p className="text-xl text-gray-600 mb-10 max-w-md">
+        <p className="text-xl text-gray-600 mb-5 max-w-md">
           Looks like this page has wandered off into the woods.
         </p>
 
-        <Button
-          asChild
-          className="bg-black hover:bg-black/80 text-white px-8 py-6 h-auto text-base"
-        >
+        <Button>
           <Link href="/">Return to Homepage</Link>
         </Button>
       </div>
