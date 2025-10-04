@@ -544,18 +544,6 @@ export default function SocialPostForm({
       }
     }
 
-    // Additional cross-platform validation
-    if (postType === "image" && selectedTikTokAccount.length > 0) {
-      console.warn(
-        "[checksBeforeSubmission]: TikTok doesn't support image posts"
-      );
-      return {
-        valid: false,
-        message:
-          "TikTok doesn't support image posts. Please choose a different post type or unselect TikTok accounts.",
-      };
-    }
-
     return { valid: true };
   };
 

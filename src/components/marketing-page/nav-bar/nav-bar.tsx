@@ -1,10 +1,12 @@
 import { Button } from "@/components/ui/button";
-import { SignedIn, SignedOut } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import Image from "next/image";
 import Link from "next/link";
 import logo from "../../../../public/trans_logo (1).webp";
 import { NavigationItems } from "./nav-items";
-export default function Navbar() {
+export default async function Navbar() {
+  const { userId } = await auth();
+
   return (
     <header className="w-full flex justify-center p-7 ">
       <div className="container z-50 flex items-center justify-between mx-auto gap-x-20 max-w-7xl ">
@@ -18,16 +20,15 @@ export default function Navbar() {
         </nav>
 
         <div className="flex items-center space-x-4">
-          <SignedOut>
+          {!userId ? (
             <Button className="px-4 py-2 rounded-full font-medium cursor-pointer">
               <Link href="/create">Sign In</Link>
             </Button>
-          </SignedOut>
-          <SignedIn>
+          ) : (
             <Button className="px-4 py-2 rounded-full font-medium cursor-pointer">
               <Link href="/create">Hey friend :)</Link>
             </Button>
-          </SignedIn>
+          )}
         </div>
       </div>
     </header>

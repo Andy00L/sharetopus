@@ -271,7 +271,8 @@ async function handleUserDeleted(data: { id: string }) {
       const { success, message } = await deleteSupabaseFileAction(
         userId,
         null,
-        true
+        true,
+        process.env.CRON_SECRET_KEY
       );
       if (!success) {
         console.error(

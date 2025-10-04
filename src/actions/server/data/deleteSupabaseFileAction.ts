@@ -1,6 +1,7 @@
 "use server";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
+import { authCheckCronJob } from "../authCheckCronJob";
 
 /**
  * Safely deletes files from Supabase Storage with reference checking
@@ -20,7 +21,7 @@ export async function deleteSupabaseFileAction(
   userId: string | null,
   filePath: string | null,
   forceDelete: boolean = false,
-  isCronJob?: boolean
+  cronSecret?: string
 ): Promise<{ success: boolean; message: string }> {
   console.log(
     `[deleteSupabaseFile]: Starting deletion process for user: ${userId}, path: ${
@@ -28,19 +29,34 @@ export async function deleteSupabaseFileAction(
     }`
   );
 
-  const authResult = await authCheck(userId, {
-    isCronJob,
-    cronSecret: process.env.CRON_SECRET_KEY,
-  });
-  if (!authResult) {
-    console.error(
-      `[deleteSupabaseFileAction]: Authentication check failed for user ID: ${userId}`
-    );
-    return {
-      success: false,
-      message: "Authentication validation failed. Please sign in again.",
-    };
+  // Authentication: Different logic for cron jobs vs regular users
+  let authResult = false;
+  if (cronSecret) {
+    // Cron job authentication using secret key
+    authResult = await authCheckCronJob(userId, cronSecret);
+    if (!authResult) {
+      console.error(
+        `[deleteSupabaseFileAction]: Cron job authentication failed for user ID: ${userId}`
+      );
+      return {
+        success: false,
+        message: "Cron job authentication failed. Invalid secret key.",
+      };
+    }
+  } else {
+    // Regular user authentication using Clerk
+    authResult = await authCheck(userId);
+    if (!authResult) {
+      console.error(
+        `[deleteSupabaseFileAction]: User authentication check failed for user ID: ${userId}`
+      );
+      return {
+        success: false,
+        message: "Authentication validation failed. Please sign in again.",
+      };
+    }
   }
+
   try {
     // ===== CASE 1: FOLDER DELETION =====
     // When only userId is provided, attempt to delete the entire user folder

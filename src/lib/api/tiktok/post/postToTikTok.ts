@@ -382,7 +382,7 @@ async function handleImagePost({
     // For images, we must use PULL_FROM_URL with a signed URL
     const signedUrlResponse = await adminSupabase.storage
       .from("media") // Assuming 'media' is your bucket name
-      .createSignedUrl(mediaPath, 7200); // 2 hour expiration
+      .createSignedUrl(mediaPath, 1200); // 20 minutes expiration
 
     if (signedUrlResponse.error) {
       return {

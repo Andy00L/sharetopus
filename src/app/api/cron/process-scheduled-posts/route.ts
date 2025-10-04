@@ -15,7 +15,9 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Authenticate the request
     const authHeader = request.headers.get("Authorization");
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
+    const cronSecret = authHeader?.replace("Bearer ", "");
+
+    if (cronSecret !== process.env.CRON_SECRET_KEY) {
       console.error("[CronJob] Unauthorized request attempt");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -23,12 +25,7 @@ export async function POST(request: NextRequest) {
     console.log("[CronJob] Processing request started");
 
     // 2. Parse the request body
-    const { batch_id, user_id, secret } = await request.json();
-
-    if (secret !== process.env.CRON_SECRET_KEY) {
-      console.error("[CronJob] Invalid secret in request body");
-      return NextResponse.json({ error: "Invalid secret" }, { status: 401 });
-    }
+    const { batch_id, user_id } = await request.json();
 
     if (!batch_id || !user_id) {
       console.error("[CronJob] Missing required parameters");
@@ -230,7 +227,7 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       batchId: batch_id,
       cleanupFiles: true,
-      isCronJob: true,
+      cronSecret: cronSecret,
     };
 
     const result = await handleSocialMediaPost(config);
@@ -253,7 +250,7 @@ export async function POST(request: NextRequest) {
         const deleteResult = await deleteScheduledPostBatch(
           postIds,
           user_id,
-          true
+          cronSecret
         );
 
         if (!deleteResult.success) {
@@ -324,7 +321,11 @@ export async function POST(request: NextRequest) {
 
           // 3. Delete all posts from scheduled_posts
           const postIds = postsData.map((post) => post.id);
-          await deleteScheduledPostBatch(postIds, user_id, true);
+
+          const authHeader = request.headers.get("Authorization");
+          const cronSecret = authHeader?.replace("Bearer ", "");
+
+          await deleteScheduledPostBatch(postIds, user_id, cronSecret);
 
           console.log(
             `[CronJob] Stored ${postsData.length} failed posts and deleted from scheduled_posts`

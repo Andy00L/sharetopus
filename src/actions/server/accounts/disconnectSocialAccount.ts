@@ -1,8 +1,8 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
 import "server-only";
 import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
-import { checkRateLimit } from "../reddis/rate-limit";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
  * Disconnects a social media account from the user's profile and cleans up associated resources
@@ -25,6 +25,7 @@ export async function disconnectSocialAccount(
 ): Promise<{ success: boolean; message: string; resetIn?: number }> {
   try {
     console.log(`[Disconnect Account] Processing account: ${accountId}`);
+
     // Verify user is properly authenticated
     const authResult = await authCheck(userId);
     if (!authResult) {
@@ -225,10 +226,7 @@ export async function disconnectSocialAccount(
     };
   } catch (err) {
     // Step 10: Handle unexpected errors
-    console.error(
-      `[disconnectSocialAccount]: Unexpected error:`,
-      err instanceof Error ? err.message : err
-    );
+    console.error(`[disconnectSocialAccount]: Unexpected error:`, err);
     return {
       success: false,
       message:

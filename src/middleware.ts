@@ -1,7 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // Create a matcher for all protected routes
 const isProtectedRoute = createRouteMatcher([
-  "/(protected)(.*)", // This will match all routes under the (protected) folder
   "/accounts(.*)",
   "/config(.*)",
   "/create(.*)",

@@ -1,7 +1,7 @@
 // lib/api/pinterest/data/getPinterestBoards.ts
 "use server";
 
-import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 export interface PinterestBoard {
   id: string;

@@ -1,9 +1,9 @@
-import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
 import { SocialAccount } from "@/lib/types/dbTypes";
+import "server-only";
 
-import { checkRateLimit } from "../reddis/rate-limit";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
  * Fetches social accounts for a specific user with optional availability filtering

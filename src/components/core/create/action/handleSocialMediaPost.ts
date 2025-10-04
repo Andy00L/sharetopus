@@ -1,9 +1,10 @@
 "use server";
 
-import { authCheck } from "@/actions/authCheck";
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
+import { authCheck } from "@/actions/server/authCheck";
+import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
-import { checkRateLimit } from "@/actions/server/reddis/rate-limit";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
 
@@ -73,7 +74,7 @@ export async function handleSocialMediaPost(config: {
   userId: string | null;
   batchId: string;
   cleanupFiles?: boolean;
-  isCronJob?: boolean;
+  cronSecret?: string | undefined;
 }): Promise<PostResult> {
   // Start tracking execution time
   const startTime = performance.now();
@@ -95,7 +96,7 @@ export async function handleSocialMediaPost(config: {
     userId,
     batchId,
     cleanupFiles = true,
-    isCronJob,
+    cronSecret,
   } = config;
 
   // Initialize results object
@@ -142,10 +143,37 @@ export async function handleSocialMediaPost(config: {
     // Step 1: Verify user is properly authenticated
 
     // Verify user is properly authenticated
-    const authResult = await authCheck(userId, {
-      isCronJob: config.isCronJob,
-      cronSecret: process.env.CRON_SECRET_KEY,
-    });
+    let authResult = false;
+
+    if (cronSecret) {
+      // Cron job authentication using secret key
+      authResult = await authCheckCronJob(userId, cronSecret);
+      if (!authResult) {
+        console.error(
+          `[handleSocialMediaPost]: Cron job authentication failed for user ID: ${userId}`
+        );
+        return {
+          success: false,
+          counts: results.counts,
+          message: "Cron job authentication failed. Invalid secret key.",
+          errors: [],
+        };
+      }
+    } else {
+      // Regular user authentication using Clerk
+      authResult = await authCheck(userId);
+      if (!authResult) {
+        console.error(
+          `[handleSocialMediaPost]: Authentication check failed for user ID: ${userId}`
+        );
+        return {
+          success: false,
+          counts: results.counts,
+          message: "Authentication validation failed. Please sign in again.",
+          errors: [],
+        };
+      }
+    }
 
     if (!authResult) {
       console.error(
@@ -165,10 +193,7 @@ export async function handleSocialMediaPost(config: {
       userId, // User identifier
       30, // Limit (30 requests)
       60, // Window (60 seconds),
-      {
-        isCronJob: config.isCronJob,
-        cronSecret: process.env.CRON_SECRET_KEY,
-      }
+      cronSecret
     );
 
     if (!rateCheck.success) {
@@ -218,7 +243,7 @@ export async function handleSocialMediaPost(config: {
         // Clean up file on error if needed
         if (cleanupFiles) {
           try {
-            await deleteSupabaseFileAction(userId, mediaPath, true, isCronJob);
+            await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret);
             console.log(
               `[handleSocialMediaPost]: Cleaned up media file after error: ${mediaPath}`
             );
@@ -429,7 +454,7 @@ export async function handleSocialMediaPost(config: {
               coverTimestamp,
               userId,
               batchId,
-              isCronJob,
+              cronSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -454,7 +479,7 @@ export async function handleSocialMediaPost(config: {
               postType,
               userId,
               batchId,
-              isCronJob,
+              cronSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -478,7 +503,7 @@ export async function handleSocialMediaPost(config: {
               userId,
               batchId,
               mediaType,
-              isCronJob,
+              cronSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -500,7 +525,7 @@ export async function handleSocialMediaPost(config: {
               postType,
               userId,
               batchId,
-              isCronJob,
+              cronSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -554,7 +579,7 @@ export async function handleSocialMediaPost(config: {
       // Clean up main media file
       if (mediaPath) {
         try {
-          await deleteSupabaseFileAction(userId, mediaPath, false, isCronJob);
+          await deleteSupabaseFileAction(userId, mediaPath, false, cronSecret);
           console.log(
             `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
           );
@@ -603,7 +628,7 @@ export async function handleSocialMediaPost(config: {
     // Clean up media on error for direct posts
     if (!isScheduled && cleanupFiles && mediaPath) {
       try {
-        await deleteSupabaseFileAction(userId, mediaPath, true, isCronJob);
+        await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret);
         console.log(
           `[handleSocialMediaPost]: Cleaned up media file after unexpected error`
         );

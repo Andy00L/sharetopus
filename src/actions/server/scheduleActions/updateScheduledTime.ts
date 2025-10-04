@@ -1,7 +1,7 @@
 "use server";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
-import { checkRateLimit } from "../reddis/rate-limit";
+import { authCheck } from "@/actions/server/authCheck";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
  * Updates the scheduled time for multiple posts at once

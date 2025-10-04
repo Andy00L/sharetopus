@@ -1,10 +1,10 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
-import { checkRateLimit } from "../reddis/rate-limit";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 import { checkUserSubscription } from "./checkUserSubscription";
 
 /**

@@ -2,9 +2,9 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
 import { ScheduledPost } from "@/lib/types/dbTypes";
-import { checkRateLimit } from "../reddis/rate-limit";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
  * Retrieves all scheduled posts for the authenticated user

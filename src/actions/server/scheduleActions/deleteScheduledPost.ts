@@ -1,9 +1,10 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
+import { authCheckCronJob } from "../authCheckCronJob";
 import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
-import { checkRateLimit } from "../reddis/rate-limit";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
  * Batch deletes multiple scheduled posts and their associated media (if no longer used)
@@ -21,7 +22,7 @@ import { checkRateLimit } from "../reddis/rate-limit";
 export async function deleteScheduledPostBatch(
   postIds: string[],
   userId: string | null,
-  isCronJob?: boolean
+  cronSecret?: string | undefined
 ): Promise<{
   success: boolean;
   message: string;
@@ -55,18 +56,32 @@ export async function deleteScheduledPostBatch(
     );
 
     // Verify user is properly authenticated
-    const authResult = await authCheck(userId, {
-      isCronJob,
-      cronSecret: process.env.CRON_SECRET_KEY,
-    });
-    if (!authResult) {
-      console.error(
-        `[deleteScheduledPostBatch]: Authentication check failed for user ID: ${userId}`
-      );
-      return {
-        success: false,
-        message: "Authentication validation failed. Please sign in again.",
-      };
+
+    let authResult = false;
+    if (cronSecret) {
+      // Cron job authentication using secret key
+      authResult = await authCheckCronJob(userId, cronSecret);
+      if (!authResult) {
+        console.error(
+          `[deleteScheduledPostBatch]: Cron job authentication failed for user ID: ${userId}`
+        );
+        return {
+          success: false,
+          message: "Cron job authentication failed. Invalid secret key.",
+        };
+      }
+    } else {
+      // Regular user authentication using Clerk
+      authResult = await authCheck(userId);
+      if (!authResult) {
+        console.error(
+          `[deleteScheduledPostBatch]: Authentication check failed for user ID: ${userId}`
+        );
+        return {
+          success: false,
+          message: "Authentication validation failed. Please sign in again.",
+        };
+      }
     }
 
     console.log(
@@ -80,23 +95,17 @@ export async function deleteScheduledPostBatch(
       "deleteScheduledPostBatch", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
-      60 // Window (60 seconds)
+      60, // Window (60 seconds)
+      cronSecret
     );
     if (!rateCheck.success) {
-      console.warn(
-        `[deleteScheduledPostBatch]: Rate limit exceeded for user: ${userId}. Reset in: ${
-          rateCheck.resetIn ?? "unknown"
-        } seconds`
-      );
       return {
         success: false,
-        message: "Too many requests. Please try again later.",
+        message: rateCheck.message ?? "",
         resetIn: rateCheck.resetIn,
       };
     }
-    console.log(
-      `[deleteScheduledPostBatch]: Rate limit check passed for user: ${userId}`
-    );
+
     // Step 3: Fetch post data to verify ownership and get media information
     console.log(
       `[deleteScheduledPostBatch]: Fetching data for ${postIds.length} posts`
@@ -204,7 +213,7 @@ export async function deleteScheduledPostBatch(
           userId,
           mediaPath,
           false,
-          isCronJob
+          cronSecret
         );
 
         if (deleteFileResult.success) {

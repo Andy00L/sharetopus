@@ -1,7 +1,7 @@
 "use server";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/authCheck";
+import { authCheck } from "@/actions/server/authCheck";
 
 /**
  * Checks if a user has an active subscription in Stripe.

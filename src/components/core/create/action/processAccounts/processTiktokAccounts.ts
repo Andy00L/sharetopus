@@ -19,14 +19,14 @@ export async function processTiktokAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-  isCronJob?: boolean;
+  cronSecret: string | undefined;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
   let successCount = 0;
 
   // Skip if no accounts or incompatible post type
-  if (accounts.length === 0 || postType === "image") {
+  if (accounts.length === 0) {
     return { successCount, errors };
   }
 
@@ -91,7 +91,7 @@ export async function processTiktokAccounts(config: {
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
-              isCronJob: config.isCronJob,
+              isCronJob: config.cronSecret,
             }),
           }).then((res) => res.json());
 
