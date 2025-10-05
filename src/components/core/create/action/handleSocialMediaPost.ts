@@ -383,6 +383,7 @@ export async function handleSocialMediaPost(config: {
 
     if (
       !isScheduled &&
+      tiktokAccounts.length == 0 &&
       mediaPath &&
       (postType === "video" || postType === "image")
     ) {
@@ -421,7 +422,7 @@ export async function handleSocialMediaPost(config: {
       instagramAccountResults,
     ] = await Promise.all([
       // Process TikTok accounts (if any and not image posts)
-      tiktokAccounts.length > 0 && postType !== "image"
+      tiktokAccounts.length > 0
         ? fetch(`${process.env.FRONTEND_URL}/api/social/process/tiktok`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

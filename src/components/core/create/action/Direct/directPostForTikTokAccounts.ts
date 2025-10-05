@@ -5,13 +5,13 @@ import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
+import { createSecureMediaUrl } from "@/actions/client/mediaURL";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
-import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
 
 /**
  * Directly posts content to TikTok accounts without scheduling
- * Handles videos with FILE_UPLOAD and tries to use signed URLs for images
+ * Handles videos with PULL_URL and tries to use signed URLs for images
  */
 export async function directPostForTikTokAccounts(config: {
   account: SocialAccount;
@@ -26,7 +26,7 @@ export async function directPostForTikTokAccounts(config: {
     description: string;
     isCustomized: boolean;
   };
-  userId: string | null;
+  userId: string;
   postType: "image" | "video" | "text";
 
   fileName: string;
@@ -47,13 +47,14 @@ export async function directPostForTikTokAccounts(config: {
 
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
-    // Download the file for direct upload
-    const buffer = await getSupabaseVideoFile(mediaPath, userId);
-    if (!buffer.success) {
+    // Create secure URL for video
+    const media_url = createSecureMediaUrl(mediaPath, userId);
+
+    if (!media_url) {
       return {
         success: false,
         count: 0,
-        message: buffer.message,
+        message: "Content file could not be retrieve.",
       };
     }
     if (!accountContent || accountContent.accountId !== account.id) {
@@ -93,10 +94,8 @@ export async function directPostForTikTokAccounts(config: {
       title: accountContent.title ?? "",
       description: accountContent.description ?? "",
       tikTokOptions: platformOptions.tiktok,
-      mediaPath: mediaPath,
-      buffer: buffer.buffer,
       mediaType: mediaType ?? "",
-      userId: userId ?? "",
+      media_url: media_url,
       coverTimestamp: config.coverTimestamp,
       postType: postType,
     });
