@@ -104,9 +104,11 @@ export default {
         });
       }
 
-      const { signedUrl } = await signedUrlResponse.json();
+      const json = await signedUrlResponse.json();
+      const signedUrl = json.data?.signedUrl; // <-- extract from nested `data`
 
       if (!signedUrl) {
+        console.error("[Worker] No signed URL in response data");
         return new Response("File not found", {
           status: 404,
           headers: { "Content-Type": "application/json" },

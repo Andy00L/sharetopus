@@ -564,6 +564,17 @@ export async function handleSocialMediaPost(config: {
     if (!isScheduled && cleanupFiles) {
       // Clean up main media file
       if (mediaPath) {
+        // Wait for external platforms to download the file
+        const hasExternalDownloads =
+          tiktokAccounts.length > 0 || instagramAccounts.length > 0;
+
+        if (hasExternalDownloads) {
+          console.log(
+            `[Cleanup] Waiting 30s for external downloads to complete...`
+          );
+          // Wait 30s for TikTok/Instagram to download
+          await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
+        }
         try {
           await deleteSupabaseFileAction(userId, mediaPath, false, cronSecret);
           console.log(
