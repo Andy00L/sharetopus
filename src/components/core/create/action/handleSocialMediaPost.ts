@@ -219,21 +219,6 @@ export async function handleSocialMediaPost(config: {
       try {
         // Get media type and validate for all platforms at once
         mediaType = getMimeTypeFromFileName(fileName);
-
-        // Verify file type compatibility with platforms
-        if (postType === "image" && tiktokAccounts.length > 0) {
-          console.warn(
-            "[handleSocialMediaPost]: TikTok does not support image posts"
-          );
-
-          // Add warning to errors array
-          results.errors?.push({
-            accountId: "multiple",
-            platform: "tiktok",
-            displayName: "All TikTok Accounts",
-            error: "TikTok does not support image posts",
-          });
-        }
       } catch (fileError) {
         console.error(
           `[handleSocialMediaPost]: Error processing file:`,
