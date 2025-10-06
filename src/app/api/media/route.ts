@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     );
 
     // 🔐 Create Supabase signed URL
-    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_KEY;
     const bucketName = process.env.SUPABASE_BUCKET_NAME;
 
