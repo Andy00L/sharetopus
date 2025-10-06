@@ -1,6 +1,7 @@
 "use server";
 
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
+import { createSecureMediaUrlSigned } from "@/actions/client/mediaURL";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
@@ -141,48 +142,23 @@ export async function handleSocialMediaPost(config: {
     );
 
     // Step 1: Verify user is properly authenticated
-
-    // Verify user is properly authenticated
-    let authResult = false;
-
-    if (cronSecret) {
-      // Cron job authentication using secret key
-      authResult = await authCheckCronJob(userId, cronSecret);
-      if (!authResult) {
-        console.error(
-          `[handleSocialMediaPost]: Cron job authentication failed for user ID: ${userId}`
-        );
-        return {
-          success: false,
-          counts: results.counts,
-          message: "Cron job authentication failed. Invalid secret key.",
-          errors: [],
-        };
-      }
-    } else {
-      // Regular user authentication using Clerk
-      authResult = await authCheck(userId);
-      if (!authResult) {
-        console.error(
-          `[handleSocialMediaPost]: Authentication check failed for user ID: ${userId}`
-        );
-        return {
-          success: false,
-          counts: results.counts,
-          message: "Authentication validation failed. Please sign in again.",
-          errors: [],
-        };
-      }
-    }
+    const authResult = cronSecret
+      ? await authCheckCronJob(userId, cronSecret)
+      : await authCheck(userId);
 
     if (!authResult) {
+      const errorMessage = cronSecret
+        ? "Cron job authentication failed. Invalid secret key."
+        : "Authentication validation failed. Please sign in again.";
+
       console.error(
-        `[handleSocialMediaPost]: Authentication check failed for user ID: ${userId}`
+        `[handleSocialMediaPost]: Authentication failed for user ID: ${userId}`
       );
+
       return {
         success: false,
         counts: results.counts,
-        message: "Authentication validation failed. Please sign in again.",
+        message: errorMessage,
         errors: [],
       };
     }
@@ -215,14 +191,33 @@ export async function handleSocialMediaPost(config: {
     // Step 3: Pre-process media if needed - do this ONCE instead of in each platform handler
     let mediaType: string = "";
 
+    // Early return if media is missing but required
+    const requiresMedia =
+      (postType === "image" || postType === "video") &&
+      (pinterestAccounts.length > 0 ||
+        (tiktokAccounts.length > 0 && postType === "video"));
+
+    if (!mediaPath && requiresMedia) {
+      console.error(
+        `[handleSocialMediaPost]: Media required for ${postType} posts on Pinterest/TikTok`
+      );
+      return {
+        success: false,
+        counts: results.counts,
+        message: `${postType} posts require media files for Pinterest${
+          postType === "video" ? " and TikTok" : ""
+        }`,
+        errors: [],
+      };
+    }
+
+    // Process media file if provided
     if (mediaPath && fileName) {
-      try {
-        // Get media type and validate for all platforms at once
-        mediaType = getMimeTypeFromFileName(fileName);
-      } catch (fileError) {
+      const mimeResult = getMimeTypeFromFileName(fileName);
+
+      if (!mimeResult.success) {
         console.error(
-          `[handleSocialMediaPost]: Error processing file:`,
-          fileError
+          `[handleSocialMediaPost]: Error processing file: ${mimeResult.message}`
         );
 
         // Clean up file on error if needed
@@ -243,127 +238,39 @@ export async function handleSocialMediaPost(config: {
         return {
           success: false,
           counts: results.counts,
-          message:
-            "Failed to process media file. Please try again with a different file.",
+          message: mimeResult.message || "Failed to process media file.",
           errors: [
             {
               accountId: "none",
               platform: "system",
               displayName: "Media Processing",
-              error:
-                fileError instanceof Error
-                  ? fileError.message
-                  : String(fileError),
+              error: mimeResult.message || "Unknown file type error",
             },
           ],
         };
       }
-    } else if (
-      (postType === "image" || postType === "video") &&
-      (pinterestAccounts.length > 0 ||
-        (tiktokAccounts.length > 0 && postType === "video"))
-    ) {
-      // Validate media requirements by platform
-      console.error(
-        `[handleSocialMediaPost]: Media required for ${postType} posts on Pinterest/TikTok`
-      );
-      return {
-        success: false,
-        counts: results.counts,
-        message: `${postType} posts require media files for Pinterest${
-          postType === "video" ? " and TikTok" : ""
-        }`,
-        errors: [],
-      };
+
+      mediaType = mimeResult.mimeType;
     }
 
     // Step 4: Verify content for each account
-    const missingContentAccounts: AccountError[] = [];
+    const missingContentAccounts: AccountError[] = [
+      ...validateAccountContent(
+        pinterestAccounts,
+        accountContent,
+        "pinterest",
+        boards,
+        postType
+      ),
+      ...validateAccountContent(linkedinAccounts, accountContent, "linkedin"),
+      ...validateAccountContent(tiktokAccounts, accountContent, "tiktok"),
+      ...validateAccountContent(instagramAccounts, accountContent, "instagram"),
+    ];
 
-    // Check Pinterest accounts
-    pinterestAccounts.forEach((account) => {
-      const content = accountContent.find((c) => c.accountId === account.id);
-      if (!content) {
-        missingContentAccounts.push({
-          accountId: account.id,
-          platform: "pinterest",
-          displayName: account.display_name ?? account.username ?? account.id,
-          error: "No content configured for this account",
-        });
-      }
-
-      // For Pinterest, also verify board selection
-      if (postType !== "text" && content) {
-        const hasSelectedBoard = boards?.some(
-          (b) => b.accountId === account.id && b.isSelected
-        );
-        if (!hasSelectedBoard) {
-          missingContentAccounts.push({
-            accountId: account.id,
-            platform: "pinterest",
-            displayName: account.display_name ?? account.username ?? account.id,
-            error: "No board selected for this account",
-          });
-        }
-      }
-    });
-
-    // Check LinkedIn accounts
-    linkedinAccounts.forEach((account) => {
-      const content = accountContent.find((c) => c.accountId === account.id);
-      if (!content) {
-        missingContentAccounts.push({
-          accountId: account.id,
-          platform: "linkedin",
-          displayName: account.display_name ?? account.username ?? account.id,
-          error: "No content configured for this account",
-        });
-      }
-
-      // Verify LinkedIn-specific requirements
-      if (!account.account_identifier) {
-        missingContentAccounts.push({
-          accountId: account.id,
-          platform: "linkedin",
-          displayName: account.display_name ?? account.username ?? account.id,
-          error: "No LinkedIn identifier found for this account",
-        });
-      }
-    });
-
-    // Check TikTok accounts
-    tiktokAccounts.forEach((account) => {
-      const content = accountContent.find((c) => c.accountId === account.id);
-      if (!content) {
-        missingContentAccounts.push({
-          accountId: account.id,
-          platform: "tiktok",
-          displayName: account.display_name ?? account.username ?? account.id,
-          error: "No content configured for this account",
-        });
-      }
-    });
-
-    // Check Instagram accounts
-    instagramAccounts.forEach((account) => {
-      const content = accountContent.find((c) => c.accountId === account.id);
-      if (!content) {
-        missingContentAccounts.push({
-          accountId: account.id,
-          platform: "instagram",
-          displayName: account.display_name ?? account.username ?? account.id,
-          error: "No content configured for this account",
-        });
-      }
-    });
-
-    // Return early if any accounts are missing required configuration
     if (missingContentAccounts.length > 0) {
-      results.errors = missingContentAccounts;
       console.error(
         `[handleSocialMediaPost]: ${missingContentAccounts.length} accounts have invalid configuration`
       );
-
       return {
         success: false,
         counts: results.counts,
@@ -379,24 +286,40 @@ export async function handleSocialMediaPost(config: {
     console.log(
       `[handleSocialMediaPost]: Starting parallel account processing`
     );
+
     let mediaUrl;
+    let tiktokMediaUrl;
+
+    // Generate TikTok proxy URL if we have TikTok accounts
+    if (tiktokAccounts.length > 0 && mediaPath && !isScheduled) {
+      tiktokMediaUrl = createSecureMediaUrlSigned(mediaPath, userId!);
+      console.log(
+        `[handleSocialMediaPost] TikTok proxy URL created for ${tiktokAccounts.length} accounts`
+      );
+    }
+
+    // Generate regular signed URL for non-TikTok platforms (Instagram, LinkedIn, Pinterest)
+    const hasNonTikTokPlatforms =
+      instagramAccounts.length > 0 ||
+      linkedinAccounts.length > 0 ||
+      pinterestAccounts.length > 0;
 
     if (
       !isScheduled &&
-      tiktokAccounts.length == 0 &&
+      hasNonTikTokPlatforms &&
       mediaPath &&
       (postType === "video" || postType === "image")
     ) {
-      const expiresIn = 300; // Min 5 min, or 5 min per account + 10 min buffer
-
+      const expiresIn = 300; // 5 minutes
       const signedUrlResult = await getSignedViewUrl(
         mediaPath,
         userId!,
         expiresIn
       );
+
       if (!signedUrlResult.success) {
-        console.log(
-          `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
+        console.error(
+          `[handleSocialMediaPost] Failed to create signed URL: ${signedUrlResult.message}`
         );
         return {
           success: false,
@@ -406,12 +329,10 @@ export async function handleSocialMediaPost(config: {
         };
       }
 
-      if (signedUrlResult.success) {
-        mediaUrl = signedUrlResult.url;
-        console.log(
-          `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry`
-        );
-      }
+      mediaUrl = signedUrlResult.url;
+      console.log(
+        `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry for non-TikTok platforms`
+      );
     }
 
     // Process each platform in parallel for maximum performance
@@ -434,6 +355,7 @@ export async function handleSocialMediaPost(config: {
               platformOptions,
               accountContent,
               isScheduled,
+              tiktokMediaUrl,
               scheduledDate: scheduledDate ?? "",
               scheduledTime: scheduledTime ?? "",
               postType,
@@ -561,31 +483,29 @@ export async function handleSocialMediaPost(config: {
     }
 
     // Step 7: Clean up media file if direct posting and cleanup is requested
-    if (!isScheduled && cleanupFiles) {
-      // Clean up main media file
-      if (mediaPath) {
-        // Wait for external platforms to download the file
-        const hasExternalDownloads =
-          tiktokAccounts.length > 0 || instagramAccounts.length > 0;
+    const shouldCleanup = !isScheduled && cleanupFiles && mediaPath;
 
-        if (hasExternalDownloads) {
-          console.log(
-            `[Cleanup] Waiting 30s for external downloads to complete...`
-          );
-          // Wait 30s for TikTok/Instagram to download
-          await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
-        }
-        try {
-          await deleteSupabaseFileAction(userId, mediaPath, false, cronSecret);
-          console.log(
-            `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
-          );
-        } catch (cleanupError) {
-          console.error(
-            `[handleSocialMediaPost]: Error cleaning up media file:`,
-            cleanupError
-          );
-        }
+    if (shouldCleanup) {
+      const hasExternalDownloads =
+        tiktokAccounts.length > 0 || instagramAccounts.length > 0;
+
+      if (hasExternalDownloads) {
+        console.log(
+          `[Cleanup] Waiting 30s for external downloads to complete...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
+      }
+
+      try {
+        await deleteSupabaseFileAction(userId, mediaPath, false, cronSecret);
+        console.log(
+          `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
+        );
+      } catch (cleanupError) {
+        console.error(
+          `[handleSocialMediaPost]: Error cleaning up media file:`,
+          cleanupError
+        );
       }
     }
 
@@ -623,7 +543,9 @@ export async function handleSocialMediaPost(config: {
     );
 
     // Clean up media on error for direct posts
-    if (!isScheduled && cleanupFiles && mediaPath) {
+    const shouldCleanupOnError = !isScheduled && cleanupFiles && mediaPath;
+
+    if (shouldCleanupOnError) {
       try {
         await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret);
         console.log(
@@ -703,4 +625,55 @@ function generateSuccessMessage(
   }
 
   return `Successfully ${action} ${message}`;
+}
+
+function validateAccountContent(
+  accounts: SocialAccount[],
+  accountContent: ContentInfo[],
+  platform: string,
+  boards?: BoardInfo[],
+  postType?: string
+): AccountError[] {
+  const errors: AccountError[] = [];
+
+  accounts.forEach((account) => {
+    const content = accountContent.find((c) => c.accountId === account.id);
+    const displayName = account.display_name ?? account.username ?? account.id;
+
+    if (!content) {
+      errors.push({
+        accountId: account.id,
+        platform,
+        displayName,
+        error: "No content configured for this account",
+      });
+      return;
+    }
+
+    // Platform-specific validations
+    if (platform === "pinterest" && postType !== "text") {
+      const hasSelectedBoard = boards?.some(
+        (b) => b.accountId === account.id && b.isSelected
+      );
+      if (!hasSelectedBoard) {
+        errors.push({
+          accountId: account.id,
+          platform,
+          displayName,
+          error: "No board selected for this account",
+        });
+      }
+    }
+
+    if (platform === "linkedin" && !account.account_identifier) {
+      errors.push({
+        accountId: account.id,
+        platform,
+        displayName,
+        error: "No LinkedIn identifier found for this account",
+      });
+    }
+  });
+
+  return errors;
 }

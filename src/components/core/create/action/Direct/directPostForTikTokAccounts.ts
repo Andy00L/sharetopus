@@ -7,7 +7,6 @@ import "server-only";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
-import { createSecureMediaUrlSigned } from "@/actions/client/mediaURL";
 
 /**
  * Directly posts content to TikTok accounts without scheduling
@@ -17,7 +16,7 @@ export async function directPostForTikTokAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
   coverTimestamp: number;
-
+  tiktokMediaUrl: string;
   mediaType: string;
   platformOptions: PlatformOptions;
   accountContent: {
@@ -39,6 +38,7 @@ export async function directPostForTikTokAccounts(config: {
     postType,
     mediaType,
     platformOptions,
+    tiktokMediaUrl,
     accountContent,
     userId,
     batchId,
@@ -47,10 +47,8 @@ export async function directPostForTikTokAccounts(config: {
 
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
-    // Create secure URL for video
-    const media_url = createSecureMediaUrlSigned(mediaPath, userId);
 
-    if (!media_url) {
+    if (!tiktokMediaUrl) {
       return {
         success: false,
         count: 0,
@@ -95,7 +93,7 @@ export async function directPostForTikTokAccounts(config: {
       description: accountContent.description ?? "",
       tikTokOptions: platformOptions.tiktok,
       mediaType: mediaType ?? "",
-      media_url: media_url,
+      media_url: tiktokMediaUrl,
       coverTimestamp: config.coverTimestamp,
       postType: postType,
     });

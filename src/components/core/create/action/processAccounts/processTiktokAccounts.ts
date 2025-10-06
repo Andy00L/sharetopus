@@ -11,6 +11,7 @@ export async function processTiktokAccounts(config: {
   coverTimestamp: number;
   mediaType: string;
   fileName: string;
+  tiktokMediaUrl: string;
   platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
   isScheduled: boolean;
@@ -86,6 +87,7 @@ export async function processTiktokAccounts(config: {
               coverTimestamp: config.coverTimestamp,
               mediaType: config.mediaType,
               postType,
+              tiktokMediaUrl: config.tiktokMediaUrl,
               platformOptions: config.platformOptions,
               accountContent: accountContent,
               userId: config.userId,
