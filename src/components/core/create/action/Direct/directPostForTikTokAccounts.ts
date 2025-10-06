@@ -5,9 +5,9 @@ import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-import { createSecureMediaUrl } from "@/actions/client/mediaURL";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { createSecureMediaUrlSigned } from "@/actions/client/mediaURL";
 
 /**
  * Directly posts content to TikTok accounts without scheduling
@@ -48,7 +48,7 @@ export async function directPostForTikTokAccounts(config: {
   try {
     console.log("[TikTok Direct Post] Starting to post directly to TikTok");
     // Create secure URL for video
-    const media_url = createSecureMediaUrl(mediaPath, userId);
+    const media_url = createSecureMediaUrlSigned(mediaPath, userId);
 
     if (!media_url) {
       return {
