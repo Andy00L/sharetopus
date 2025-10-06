@@ -1,35 +1,21 @@
-import { createHmac } from "crypto";
 import { NextRequest } from "next/server";
-
-export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
   console.log(`[Media Proxy] Incoming signed request: ${request.url}`);
 
-  // 🔐 SECURITY CHECK 1: HMAC Signature Verification
-  const secret = process.env.MEDIA_URL_SECRET;
-  if (!secret) {
-    console.error("[Media Proxy] MEDIA_URL_SECRET not configured");
-    return new Response("Server configuration error", {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  if (!verifySignature(searchParams, secret)) {
-    console.warn("[Media Proxy] Invalid or expired signature");
-    return new Response("Invalid or expired URL", {
-      status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
   // Extract parameters (already validated in verifySignature)
-  const filePath = decodeURIComponent(searchParams.get("f")!);
-  const userId = decodeURIComponent(searchParams.get("u")!);
+  const filePath = decodeURIComponent(searchParams.get("file")!);
+  const userId = decodeURIComponent(searchParams.get("user")!);
 
+  if (!filePath || !userId) {
+    console.warn("[Media Proxy] Missing required parameters");
+    return new Response("Missing parameters", {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
   // 🛡️ SECURITY CHECK 2: Path Validation (defense in depth)
   if (
     filePath.includes("..") ||
@@ -131,62 +117,5 @@ export async function GET(request: NextRequest) {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
-  }
-}
-
-/**
- * Verifies the HMAC signature of a signed media URL
- * @param searchParams - URL search parameters containing the signature and payload
- * @param secret - HMAC secret from environment variables
- * @returns boolean indicating if signature is valid
- */
-function verifySignature(
-  searchParams: URLSearchParams,
-  secret: string
-): boolean {
-  try {
-    const filePath = searchParams.get("f");
-    const userId = searchParams.get("u");
-    const exp = searchParams.get("exp");
-    const nonce = searchParams.get("n");
-    const signature = searchParams.get("sig");
-
-    if (!filePath || !userId || !exp || !nonce || !signature) {
-      console.warn(
-        "[Media Proxy] Missing required parameters for signature verification"
-      );
-      return false;
-    }
-
-    // Check expiration
-    const now = Math.floor(Date.now() / 1000);
-    const expiration = parseInt(exp);
-    if (now > expiration) {
-      console.warn(`[Media Proxy] URL expired: ${now} > ${expiration}`);
-      return false;
-    }
-
-    // Recreate the payload exactly as it was signed
-    const payload = `f=${filePath}&u=${userId}&exp=${exp}&n=${nonce}`;
-
-    // Compute expected signature
-    const expectedSig = createHmac("sha256", secret)
-      .update(payload)
-      .digest("base64url");
-
-    // Constant-time comparison to prevent timing attacks
-    if (signature.length !== expectedSig.length) {
-      return false;
-    }
-
-    let result = 0;
-    for (let i = 0; i < signature.length; i++) {
-      result |= signature.charCodeAt(i) ^ expectedSig.charCodeAt(i);
-    }
-
-    return result === 0;
-  } catch (error) {
-    console.error("[Media Proxy] Signature verification error:", error);
-    return false;
   }
 }
