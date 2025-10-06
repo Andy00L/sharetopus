@@ -66,7 +66,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(`[Media Proxy] Redirecting to Supabase signed URL`);
+    console.log(
+      `[Media Proxy] Redirecting to Supabase signed URL: ${data.signedUrl}`
+    );
 
     return Response.redirect(data.signedUrl, 302);
   } catch (error) {
