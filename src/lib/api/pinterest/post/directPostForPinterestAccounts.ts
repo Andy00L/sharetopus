@@ -1,63 +1,64 @@
-// createPostForm/action/directPostForTikTokAccounts.ts
+// createPostForm/action/directPostForPinterestAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
+import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
-
-import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
-import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { ScheduleResult } from "../schedule/scheduleForPinterestAccounts";
 
 /**
- * Directly posts content to TikTok accounts without scheduling
- * Handles videos with PULL_URL and tries to use signed URLs for images
+ * Directly posts content to Pinterest accounts without scheduling
+ * Converts the file to base64 and sends it to the Pinterest API
  */
-export async function directPostForTikTokAccounts(config: {
+export async function directPostForPinterestAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
   coverTimestamp: number;
-  tiktokMediaUrl: string;
-  mediaType: string;
+
+  boards: {
+    boardID: string;
+    boardName: string;
+    accountId: string;
+    isSelected: boolean;
+  };
   platformOptions: PlatformOptions;
   accountContent: {
     accountId: string;
     title: string;
     description: string;
+    link: string;
     isCustomized: boolean;
   };
-  userId: string;
-  postType: "image" | "video" | "text";
-
+  userId: string | null;
   fileName: string;
   batchId: string;
+  mediaType: string;
+  postType: "image" | "video" | "text";
   isCronJob?: boolean;
 }): Promise<ScheduleResult> {
   const {
     account,
     mediaPath,
-    postType,
-    mediaType,
-    platformOptions,
-    tiktokMediaUrl,
+    boards,
     accountContent,
     userId,
     batchId,
+    mediaType,
+    postType,
+    fileName,
     isCronJob,
   } = config;
 
   try {
-    console.log("[TikTok Direct Post] Starting to post directly to TikTok");
+    console.log(
+      "[Pinterest Direct Post] Starting to post directly to Pinterest"
+    );
 
-    if (!tiktokMediaUrl) {
-      return {
-        success: false,
-        count: 0,
-        message: "Content file could not be retrieve.",
-      };
-    }
-    if (!accountContent || accountContent.accountId !== account.id) {
+    // Skip if no content found for this account
+    if (!accountContent) {
       console.error(
-        `[TikTok Direct Post] No or mismatched content for account ${account.id}`
+        `[Pinterest Direct Post] No content found for account ${account.id}`
       );
       return {
         success: false,
@@ -71,7 +72,7 @@ export async function directPostForTikTokAccounts(config: {
 
     if (!validToken.success) {
       console.error(
-        `[TikTok Direct Post] No valid access token for account ${account.id}`
+        `[Pinterest Direct Post] No valid access token for account ${account.id}`
       );
       return {
         success: false,
@@ -81,29 +82,30 @@ export async function directPostForTikTokAccounts(config: {
     }
 
     console.log(
-      `[TikTok Direct Post] Posting to account: ${
+      `[Pinterest Direct Post] Posting to account: ${
         account.username ?? account.id
       }`
     );
 
-    // Call our TikTok posting function
-    const postResult = await postToTikTok({
+    // Call our new postToPinterest function instead of the API endpoint
+    const postResult = await postToPinterest({
       accessToken: validToken.token!,
-      title: accountContent.title ?? "",
-      description: accountContent.description ?? "",
-      tikTokOptions: platformOptions.tiktok,
-      mediaType: mediaType ?? "",
-      media_url: tiktokMediaUrl,
+      boardId: boards.boardID,
+      title: accountContent.title,
+      description: accountContent.description,
+      link: accountContent.link,
+      mediaPath: mediaPath,
+      mediaType: mediaType,
+      fileName: fileName,
+      userId: userId ?? "",
       coverTimestamp: config.coverTimestamp,
       postType: postType,
     });
-
     // Add detailed console logging
     console.log(
-      `========== TIKTOK POST RESPONSE (${account.username}) ==========`
+      `========== PINTEREST POST RESPONSE (${account.username}) ==========`
     );
     console.log("Success:", postResult.success);
-    console.log("Publish ID:", postResult.publishId);
     console.log("Post ID:", postResult.postId);
     console.log("Post URL:", postResult.postUrl);
     console.log("Message:", postResult.message);
@@ -112,20 +114,21 @@ export async function directPostForTikTokAccounts(config: {
       // Store content history
       const historyResult = await storeContentHistory(
         {
-          platform: "tiktok",
-          content_id: postResult.postId || postResult.publishId || "",
+          platform: "pinterest",
+          content_id: postResult.postId!,
           social_account_id: accountContent.accountId,
-          title: accountContent.title || null,
-          description: accountContent.description || null,
-          media_url: postResult.postUrl || null,
+          title: accountContent.title ?? null,
+          description: accountContent.description,
+          media_url: postResult.postUrl!,
           batch_id: batchId,
-          status: postResult.status,
+          status: "posted",
           media_type: postType,
           extra: {
             post_data: postResult.data,
             post_type: postType,
             posted_at: new Date().toISOString(),
-            privacy_level: platformOptions.tiktok,
+            board_id: boards.boardID,
+            board_name: boards.boardName,
           },
         },
         userId
@@ -133,7 +136,7 @@ export async function directPostForTikTokAccounts(config: {
 
       if (!historyResult.success) {
         console.error(
-          `[TikTok Direct Post] Error saving to content history:`,
+          `[Pinterest Direct Post] Error saving to content history:`,
           historyResult.message
         );
         return {
@@ -144,41 +147,48 @@ export async function directPostForTikTokAccounts(config: {
       }
 
       console.log(
-        `[TikTok Direct Post] Successfully posted to account and saved to history`
+        `[Pinterest Direct Post] Successfully posted to account and saved to history`
       );
-    }
-    // Add more detailed error logging
-    if (!postResult.success) {
+    } else {
       console.error(
-        "[TikTok Direct Post] Failed with error:",
+        "[Pinterest Direct Post] Failed with error:",
         postResult.error
       );
+      console.error(
+        "[Pinterest Direct Post] Error message:",
+        postResult.message
+      );
 
-      console.error("[TikTok Direct Post] Error details:", postResult.details);
-      console.error("[TikTok Direct Post] Error message:", postResult.message);
       if (isCronJob) {
         const failedPostResult = await storeFailedPost({
           user_id: userId,
           social_account_id: account.id,
-          platform: "tiktok",
+          platform: "pinterest",
           post_title: accountContent.title || null,
           post_description: accountContent.description || null,
-          post_options: platformOptions.tiktok,
+          post_options: {
+            boardId: boards.boardID,
+            boardName: boards.boardName,
+            link: accountContent.link,
+            ...config.platformOptions.pinterest,
+          },
           media_type: postType,
           media_storage_path: mediaPath,
           coverTimestamp: config.coverTimestamp,
+
           batch_id: batchId,
           extra_data: {
             message: postResult.message,
-            details: postResult.details,
             error: postResult.error,
             timestamp: new Date().toISOString(),
+            board_id: boards.boardID,
+            board_name: boards.boardName,
           },
         });
 
         if (!failedPostResult.success) {
           console.error(
-            "[TikTok Direct Post] Error storing failed post:",
+            "[Pinterest Direct Post] Error storing failed post:",
             failedPostResult.message
           );
           return {
@@ -189,34 +199,29 @@ export async function directPostForTikTokAccounts(config: {
         }
 
         console.log(
-          "[TikTok Direct Post] Failed post stored in failed_posts table"
-        );
-      } else {
-        console.log(
-          "[TikTok Direct Post] Skipping failed post storage (not a cron job)"
+          "[Pinterest Direct Post] Failed post stored in failed_posts table"
         );
       }
+
       return {
         success: false,
         count: 0,
-        message: postResult.message || "Failed to post to TikTok",
+        message: "Failed to post to Pinterest",
       };
     }
 
     return {
       success: true,
       count: 1,
-      message: `Successfully posted to TikTok account ${
-        account.username || account.id
-      }`,
+      message: `Successfully posted to ${account.display_name} Pinterest account(s)`,
     };
   } catch (error) {
-    console.error("[TikTok Direct Post] Error:", error);
+    console.error("[Pinterest Direct Post] Error:", error);
 
     return {
       success: false,
       count: 0,
-      message: `Failed to post to TikTok`,
+      message: `Failed to post to Pinterest`,
     };
   }
 }

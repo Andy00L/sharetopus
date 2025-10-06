@@ -1,6 +1,10 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { AccountError, BoardInfo, ContentInfo } from "../handleSocialMediaPost";
-import { scheduleForPinterestAccount } from "../Scheduled/scheduleForPinterestAccounts";
+import {
+  AccountError,
+  BoardInfo,
+  ContentInfo,
+} from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
+import { scheduleForPinterestAccount } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 /**
  * Process Pinterest accounts individually with robust error handling for each account

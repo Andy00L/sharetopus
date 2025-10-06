@@ -8,7 +8,7 @@ import {
   BoardInfo,
   ContentInfo,
   handleSocialMediaPost,
-} from "@/components/core/create/action/handleSocialMediaPost";
+} from "@/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 export async function POST(request: NextRequest) {

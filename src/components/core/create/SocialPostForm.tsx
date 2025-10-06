@@ -35,7 +35,7 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import FilePreview from "../../renderFilePreview";
-import { handleSocialMediaPost } from "./action/handleSocialMediaPost";
+import { handleSocialMediaPost } from "./action/handleSocialMediaPost/handleSocialMediaPost";
 import { uploadMedia } from "./action/media/uploadMedia";
 import {
   ALLOWED_IMAGE_TYPES,

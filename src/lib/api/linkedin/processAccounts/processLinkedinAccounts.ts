@@ -1,61 +1,49 @@
-import { SocialAccount } from "@/lib/types/dbTypes";
-import { AccountError, ContentInfo } from "../handleSocialMediaPost";
-import { scheduleForInstagramAccounts } from "../Scheduled/scheduleForInstagramAccounts";
+import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import {
+  AccountError,
+  ContentInfo,
+} from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
+import { scheduleForLinkedInAccounts } from "../schedule/scheduledForLinkedinAccounts";
 
 /**
- * Process Instagram accounts individually with robust error handling for each account
+ * Process LinkedIn accounts individually with robust error handling for each account
  */
-export async function processInstagramAccounts(config: {
+export async function processLinkedinAccounts(config: {
   accounts: SocialAccount[];
+  coverTimestamp?: number;
   mediaPath: string;
-  mediaUrl?: string;
-  coverTimestamp: number;
   mediaType: string;
   fileName: string;
+  platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
   isScheduled: boolean;
   scheduledDate: string;
   scheduledTime: string;
-  postType: "image" | "video";
+  postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
+
   isCronJob?: boolean;
 }) {
-  const { accounts, isScheduled, postType } = config;
+  const { accounts, isScheduled } = config;
   const errors: AccountError[] = [];
   let successCount = 0;
 
-  // Validate we have a URL for Instagram
-  if (!config.mediaUrl && !isScheduled) {
-    console.error(
-      "[processInstagramAccounts] No media URL provided for Instagram"
-    );
-    return {
-      successCount: 0,
-      errors: accounts.map((account) => ({
-        accountId: account.id,
-        platform: "instagram",
-        displayName: account.display_name || account.username || account.id,
-        error: "No public media URL available for Instagram",
-      })),
-    };
-  }
-
-  // Skip if no accounts or incompatible post type
+  // Skip if no accounts
   if (accounts.length === 0) {
     return { successCount, errors };
   }
 
   console.log(
-    `[processInstagramAccounts]: Processing ${accounts.length} Instagram accounts`
+    `[processLinkedinAccounts]: Processing ${accounts.length} LinkedIn accounts`
   );
 
   // Process accounts in parallel for maximum performance
   const accountPromises = accounts.map(async (account) => {
     try {
       console.log(
-        `[processInstagramAccounts]: Processing account: ${
-          account.display_name || account.username || account.id
+        `[processLinkedinAccounts]: Processing account: ${
+          account.display_name ?? account.username ?? account.id
         }`
       );
 
@@ -63,41 +51,27 @@ export async function processInstagramAccounts(config: {
       const accountContent = config.accountContent.find(
         (c) => c.accountId === account.id
       );
-
       if (!accountContent) {
-        console.error("No content configured for this account");
         return {
           success: false,
           error: {
             accountId: account.id,
-            platform: "instagram",
-            displayName: account.display_name || account.username || account.id,
+            platform: "linkedin",
+            displayName: account.display_name ?? account.username ?? account.id,
             error: "No content configured for this account",
           },
         };
       }
 
-      // Validate Instagram-specific requirements
-      if (!account.access_token) {
-        return {
-          success: false,
-          error: {
-            accountId: account.id,
-            platform: "instagram",
-            displayName: account.display_name || account.username || account.id,
-            error: "Missing Instagram access token",
-          },
-        };
-      }
-
+      // Verify LinkedIn account has identifier
       if (!account.account_identifier) {
         return {
           success: false,
           error: {
             accountId: account.id,
-            platform: "instagram",
-            displayName: account.display_name || account.username || account.id,
-            error: "Missing Instagram Business/Creator account ID",
+            platform: "linkedin",
+            displayName: account.display_name ?? account.username ?? account.id,
+            error: "No LinkedIn identifier found for this account",
           },
         };
       }
@@ -105,10 +79,11 @@ export async function processInstagramAccounts(config: {
       // Process single account with detailed timing
       const accountStartTime = performance.now();
       const result = isScheduled
-        ? await scheduleForInstagramAccounts({
+        ? await scheduleForLinkedInAccounts({
             account: account,
             mediaPath: config.mediaPath,
             coverTimestamp: config.coverTimestamp,
+            platformOptions: config.platformOptions,
             accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
@@ -116,7 +91,7 @@ export async function processInstagramAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/instagram`, {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/linkedin`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -124,19 +99,19 @@ export async function processInstagramAccounts(config: {
               mediaPath: config.mediaPath,
               coverTimestamp: config.coverTimestamp,
               mediaType: config.mediaType,
-              mediaUrl: config.mediaUrl!,
-              postType,
+              platformOptions: config.platformOptions,
               accountContent: accountContent,
+              postType: config.postType,
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
+              cleanupFiles: false,
               isCronJob: config.isCronJob,
             }),
           }).then((res) => res.json());
-
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(
-        `[processInstagramAccounts]: Processed account ${
+        `[processLinkedinAccounts]: Processed account ${
           account.id
         } in ${accountProcessingTime.toFixed(2)}ms: ${
           result.success ? "Success" : "Failed"
@@ -151,7 +126,7 @@ export async function processInstagramAccounts(config: {
           success: false,
           error: {
             accountId: account.id,
-            platform: "instagram",
+            platform: "Linkedin",
             displayName: account.display_name ?? account.username ?? account.id,
             error: result.message ?? "Failed to process account",
           },
@@ -160,14 +135,14 @@ export async function processInstagramAccounts(config: {
     } catch (error) {
       // Record account-level error but don't stop other accounts
       console.error(
-        `[processInstagramAccounts]: Error processing account ${account.id}:`,
+        `[processLinkedinAccounts]: Error processing account ${account.id}:`,
         error
       );
       return {
         success: false,
         error: {
           accountId: account.id,
-          platform: "instagram",
+          platform: "linkedin",
           displayName: account.display_name ?? account.username ?? account.id,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -188,7 +163,7 @@ export async function processInstagramAccounts(config: {
   });
 
   console.log(
-    `[processInstagramAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
+    `[processLinkedinAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
   );
   return { successCount, errors };
 }

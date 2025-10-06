@@ -20,11 +20,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Sharetopus | Post once, share everywhere",
   description:
-    "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
+    "Post to all your socials in one go. Saves you time and lets you tweak content per platform",
 
   // Basic metadata
   keywords:
-    "social media management, multi-platform posting, content scheduling, social media analytics, share content, post to multiple platforms, social media tool, content distribution, social media automation, cross-platform posting, social media dashboard, social media marketing, sharetopus, post everywhere",
+    "social media management, multi-platform posting, content scheduling, share content, post to multiple platforms, social media tool, content distribution, social media automation, cross-platform posting, social media dashboard, social media marketing, sharetopus, post everywhere",
 
   authors: [{ name: "Sharetopus Team" }],
   publisher: "Sharetopus Inc.",
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Sharetopus | Post once, share everywhere",
     description:
-      "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
+      "Post to all your socials in one go. Saves you time and lets you tweak content per platform.",
     url: "https://sharetopus.com",
     siteName: "sharetopus",
     locale: "en_CA",
@@ -56,7 +56,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Sharetopus | Post once, share everywhere",
     description:
-      "Post to all your socials in one go. Saves you time, lets you tweak content per platform, and tracks how your posts perform.",
+      "Post to all your socials in one go. Saves you time and lets you tweak content per platform.",
     images: "/social_sharing.webp",
     creator: "@sharetopus",
   },

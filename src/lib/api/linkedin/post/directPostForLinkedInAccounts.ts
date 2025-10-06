@@ -6,7 +6,7 @@ import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 export async function directPostForLinkedInAccounts(config: {
   account: SocialAccount; // Changed from accounts to accountIds

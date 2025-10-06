@@ -1,4 +1,4 @@
-import { processInstagramAccounts } from "@/components/core/create/action/processAccounts/processInstagramAccounts";
+import { processInstagramAccounts } from "@/lib/api/instagram/processAccounts/processInstagramAccounts";
 
 export async function POST(request: Request) {
   try {

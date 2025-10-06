@@ -1,4 +1,4 @@
-import { processPinterestAccounts } from "@/components/core/create/action/processAccounts/processPinterestAccounts";
+import { processPinterestAccounts } from "@/lib/api/pinterest/processAccounts/processPinterestAccounts";
 
 export async function POST(request: Request) {
   try {

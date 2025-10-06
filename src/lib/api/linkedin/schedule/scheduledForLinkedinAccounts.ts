@@ -1,7 +1,7 @@
 "use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { ScheduleResult } from "./scheduleForPinterestAccounts";
+import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 export async function scheduleForLinkedInAccounts(config: {
   account: SocialAccount;

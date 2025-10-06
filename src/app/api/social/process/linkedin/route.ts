@@ -1,4 +1,4 @@
-import { processLinkedinAccounts } from "@/components/core/create/action/processAccounts/processLinkedinAccounts";
+import { processLinkedinAccounts } from "@/lib/api/linkedin/processAccounts/processLinkedinAccounts";
 
 export async function POST(request: Request) {
   try {

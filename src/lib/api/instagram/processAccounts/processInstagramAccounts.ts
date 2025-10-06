@@ -1,30 +1,48 @@
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { AccountError, ContentInfo } from "../handleSocialMediaPost";
-import { scheduleForTikTokAccounts } from "../Scheduled/scheduleForTikTokAccounts";
+import { SocialAccount } from "@/lib/types/dbTypes";
+import {
+  AccountError,
+  ContentInfo,
+} from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
+import { scheduleForInstagramAccounts } from "../../instagram/schedule/scheduleForInstagramAccounts";
 
 /**
- * Process TikTok accounts individually with robust error handling for each account
+ * Process Instagram accounts individually with robust error handling for each account
  */
-export async function processTiktokAccounts(config: {
+export async function processInstagramAccounts(config: {
   accounts: SocialAccount[];
   mediaPath: string;
+  mediaUrl?: string;
   coverTimestamp: number;
   mediaType: string;
   fileName: string;
-  tiktokMediaUrl: string;
-  platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
   isScheduled: boolean;
   scheduledDate: string;
   scheduledTime: string;
-  postType: "image" | "video" | "text";
+  postType: "image" | "video";
   userId: string | null;
   batchId: string;
-  cronSecret: string | undefined;
+  isCronJob?: boolean;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
   let successCount = 0;
+
+  // Validate we have a URL for Instagram
+  if (!config.mediaUrl && !isScheduled) {
+    console.error(
+      "[processInstagramAccounts] No media URL provided for Instagram"
+    );
+    return {
+      successCount: 0,
+      errors: accounts.map((account) => ({
+        accountId: account.id,
+        platform: "instagram",
+        displayName: account.display_name || account.username || account.id,
+        error: "No public media URL available for Instagram",
+      })),
+    };
+  }
 
   // Skip if no accounts or incompatible post type
   if (accounts.length === 0) {
@@ -32,20 +50,19 @@ export async function processTiktokAccounts(config: {
   }
 
   console.log(
-    `[processTiktokAccounts]: Processing ${accounts.length} TikTok accounts`
+    `[processInstagramAccounts]: Processing ${accounts.length} Instagram accounts`
   );
 
   // Process accounts in parallel for maximum performance
   const accountPromises = accounts.map(async (account) => {
     try {
       console.log(
-        `[processTiktokAccounts]: Processing account: ${
+        `[processInstagramAccounts]: Processing account: ${
           account.display_name || account.username || account.id
         }`
       );
 
       // Find content for this account
-
       const accountContent = config.accountContent.find(
         (c) => c.accountId === account.id
       );
@@ -56,9 +73,34 @@ export async function processTiktokAccounts(config: {
           success: false,
           error: {
             accountId: account.id,
-            platform: "tiktok",
+            platform: "instagram",
             displayName: account.display_name || account.username || account.id,
             error: "No content configured for this account",
+          },
+        };
+      }
+
+      // Validate Instagram-specific requirements
+      if (!account.access_token) {
+        return {
+          success: false,
+          error: {
+            accountId: account.id,
+            platform: "instagram",
+            displayName: account.display_name || account.username || account.id,
+            error: "Missing Instagram access token",
+          },
+        };
+      }
+
+      if (!account.account_identifier) {
+        return {
+          success: false,
+          error: {
+            accountId: account.id,
+            platform: "instagram",
+            displayName: account.display_name || account.username || account.id,
+            error: "Missing Instagram Business/Creator account ID",
           },
         };
       }
@@ -66,11 +108,10 @@ export async function processTiktokAccounts(config: {
       // Process single account with detailed timing
       const accountStartTime = performance.now();
       const result = isScheduled
-        ? await scheduleForTikTokAccounts({
+        ? await scheduleForInstagramAccounts({
             account: account,
             mediaPath: config.mediaPath,
             coverTimestamp: config.coverTimestamp,
-            platformOptions: config.platformOptions,
             accountContent: accountContent,
             scheduledDate: config.scheduledDate,
             scheduledTime: config.scheduledTime,
@@ -78,7 +119,7 @@ export async function processTiktokAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/tiktok`, {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/instagram`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -86,20 +127,19 @@ export async function processTiktokAccounts(config: {
               mediaPath: config.mediaPath,
               coverTimestamp: config.coverTimestamp,
               mediaType: config.mediaType,
+              mediaUrl: config.mediaUrl!,
               postType,
-              tiktokMediaUrl: config.tiktokMediaUrl,
-              platformOptions: config.platformOptions,
               accountContent: accountContent,
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
-              isCronJob: config.cronSecret,
+              isCronJob: config.isCronJob,
             }),
           }).then((res) => res.json());
 
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(
-        `[processTiktokAccounts]: Processed account ${
+        `[processInstagramAccounts]: Processed account ${
           account.id
         } in ${accountProcessingTime.toFixed(2)}ms: ${
           result.success ? "Success" : "Failed"
@@ -114,7 +154,7 @@ export async function processTiktokAccounts(config: {
           success: false,
           error: {
             accountId: account.id,
-            platform: "Tiktok",
+            platform: "instagram",
             displayName: account.display_name ?? account.username ?? account.id,
             error: result.message ?? "Failed to process account",
           },
@@ -123,14 +163,14 @@ export async function processTiktokAccounts(config: {
     } catch (error) {
       // Record account-level error but don't stop other accounts
       console.error(
-        `[processTiktokAccounts]: Error processing account ${account.id}:`,
+        `[processInstagramAccounts]: Error processing account ${account.id}:`,
         error
       );
       return {
         success: false,
         error: {
           accountId: account.id,
-          platform: "tiktok",
+          platform: "instagram",
           displayName: account.display_name ?? account.username ?? account.id,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -151,7 +191,7 @@ export async function processTiktokAccounts(config: {
   });
 
   console.log(
-    `[processTiktokAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
+    `[processInstagramAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
   );
   return { successCount, errors };
 }

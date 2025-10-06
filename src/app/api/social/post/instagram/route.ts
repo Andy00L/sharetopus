@@ -1,4 +1,4 @@
-import { directPostForInstagramAccounts } from "@/components/core/create/action/Direct/directPostForInstagramAccounts";
+import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 
 export async function POST(request: Request) {
   try {

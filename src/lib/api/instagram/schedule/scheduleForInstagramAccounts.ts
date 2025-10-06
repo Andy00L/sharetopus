@@ -1,13 +1,12 @@
 "use server";
 import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { ScheduleResult } from "./scheduleForPinterestAccounts";
+import { SocialAccount } from "@/lib/types/dbTypes";
+import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
-export async function scheduleForTikTokAccounts(config: {
+export async function scheduleForInstagramAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
   coverTimestamp: number;
-  platformOptions: PlatformOptions;
   accountContent: {
     accountId: string;
     title?: string;
@@ -17,7 +16,6 @@ export async function scheduleForTikTokAccounts(config: {
   };
   scheduledDate: string;
   scheduledTime: string;
-
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
@@ -25,7 +23,6 @@ export async function scheduleForTikTokAccounts(config: {
   const {
     account,
     mediaPath,
-    platformOptions,
     scheduledDate,
     scheduledTime,
     accountContent,
@@ -36,7 +33,7 @@ export async function scheduleForTikTokAccounts(config: {
 
   let successCount = 0;
   try {
-    console.log("[Schedule For Tiktok Accounts] Starting to schedule posts");
+    console.log("[Schedule For Instagram Accounts] Starting to schedule posts");
 
     const scheduleData = {
       socialAccountId: account.id,
@@ -46,12 +43,12 @@ export async function scheduleForTikTokAccounts(config: {
       postType: postType,
       mediaStoragePath: mediaPath,
       coverTimestamp: config.coverTimestamp,
-      postOptions: platformOptions.tiktok || null,
+      postOptions: null,
       batch_id: batchId,
     };
 
     console.log(
-      `[Schedule For Tiktok Accounts] Scheduling TikTok post for: ${account.display_name}`
+      `[Schedule For Instagram Accounts] Scheduling Instagram post for: ${account.display_name}`
     );
 
     const result = await schedulePost(scheduleData, userId);
@@ -65,7 +62,7 @@ export async function scheduleForTikTokAccounts(config: {
     } else {
       successCount++;
       console.log(
-        `[Schedule For Tiktok Accounts] Successfully scheduled post for ${account.platform}:`,
+        `[Schedule For Instagram Accounts] Successfully scheduled post for ${account.platform}:`,
         result
       );
     }
@@ -73,18 +70,18 @@ export async function scheduleForTikTokAccounts(config: {
     return {
       success: true,
       count: successCount,
-      message: `${successCount} Tiktok posts scheduled successfully`,
+      message: `${successCount} Instagram posts scheduled successfully`,
     };
   } catch (e) {
     console.error(
-      `[Schedule For Tiktok Accounts] Schedule error for account ${account.id}:`,
+      `[Schedule For Instagram Accounts] Schedule error for account ${account.id}:`,
       e
     );
 
     return {
       success: false,
       count: 0,
-      message: `Failed to schedule Pinterest posts  for ${account.display_name}`,
+      message: `Failed to schedule Instagram posts for ${account.display_name}`,
     };
   }
 }

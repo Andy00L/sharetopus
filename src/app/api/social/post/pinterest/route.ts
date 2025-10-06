@@ -1,4 +1,4 @@
-import { directPostForPinterestAccounts } from "@/components/core/create/action/Direct/directPostForPinterestAccounts";
+import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
 
 export async function POST(request: Request) {
   try {

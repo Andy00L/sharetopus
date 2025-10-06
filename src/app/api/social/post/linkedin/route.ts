@@ -1,4 +1,4 @@
-import { directPostForLinkedInAccounts } from "@/components/core/create/action/Direct/directPostForLinkedInAccounts";
+import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
 
 export async function POST(request: Request) {
   try {

@@ -1,13 +1,15 @@
 "use server";
 
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
-import { createSecureMediaUrlSigned } from "@/actions/client/mediaURL";
+import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { getMimeTypeFromFileName } from "./Direct/getMimeTypeFromFileName";
+import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
+import { generateSuccessMessage } from "./successMessage";
+import { validateAccountContent } from "./validateContent";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -25,7 +27,7 @@ export type ContentInfo = {
   isCustomized: boolean;
 };
 
-type PlatformCounts = {
+export type PlatformCounts = {
   pinterest: number;
   linkedin: number;
   tiktok: number;
@@ -75,7 +77,7 @@ export async function handleSocialMediaPost(config: {
   userId: string | null;
   batchId: string;
   cleanupFiles?: boolean;
-  cronSecret?: string | undefined;
+  cronSecret?: string;
 }): Promise<PostResult> {
   // Start tracking execution time
   const startTime = performance.now();
@@ -578,102 +580,4 @@ export async function handleSocialMediaPost(config: {
       ],
     };
   }
-}
-
-/**
- * Generate a user-friendly success message based on the results
- */
-function generateSuccessMessage(
-  counts: PlatformCounts,
-  isScheduled: boolean,
-  errorCount: number
-): string {
-  if (counts.total === 0) {
-    return "No posts were processed successfully. Please check your account selections and try again.";
-  }
-
-  const action = isScheduled ? "scheduled" : "published";
-  const platforms: string[] = [];
-
-  if (counts.pinterest > 0) {
-    platforms.push(`${counts.pinterest} on Pinterest`);
-  }
-  if (counts.linkedin > 0) {
-    platforms.push(`${counts.linkedin} on LinkedIn`);
-  }
-  if (counts.tiktok > 0) {
-    platforms.push(`${counts.tiktok} on TikTok`);
-  }
-  if (counts.instagram > 0) {
-    platforms.push(`${counts.instagram} on Instagram`);
-  }
-  // Format message based on how many platforms were used
-  let message = "";
-  if (platforms.length === 1) {
-    message = `${counts.total} post${counts.total > 1 ? "s" : ""} ${
-      platforms[0]
-    }`;
-  } else if (platforms.length === 2) {
-    message = `${counts.total} posts (${platforms.join(" and ")})`;
-  } else if (platforms.length === 3) {
-    message = `${counts.total} posts (${platforms[0]}, ${platforms[1]}, and ${platforms[2]})`;
-  }
-
-  // Add information about failures if any
-  if (errorCount > 0) {
-    message += ` with ${errorCount} failed account${errorCount > 1 ? "s" : ""}`;
-  }
-
-  return `Successfully ${action} ${message}`;
-}
-
-function validateAccountContent(
-  accounts: SocialAccount[],
-  accountContent: ContentInfo[],
-  platform: string,
-  boards?: BoardInfo[],
-  postType?: string
-): AccountError[] {
-  const errors: AccountError[] = [];
-
-  accounts.forEach((account) => {
-    const content = accountContent.find((c) => c.accountId === account.id);
-    const displayName = account.display_name ?? account.username ?? account.id;
-
-    if (!content) {
-      errors.push({
-        accountId: account.id,
-        platform,
-        displayName,
-        error: "No content configured for this account",
-      });
-      return;
-    }
-
-    // Platform-specific validations
-    if (platform === "pinterest" && postType !== "text") {
-      const hasSelectedBoard = boards?.some(
-        (b) => b.accountId === account.id && b.isSelected
-      );
-      if (!hasSelectedBoard) {
-        errors.push({
-          accountId: account.id,
-          platform,
-          displayName,
-          error: "No board selected for this account",
-        });
-      }
-    }
-
-    if (platform === "linkedin" && !account.account_identifier) {
-      errors.push({
-        accountId: account.id,
-        platform,
-        displayName,
-        error: "No LinkedIn identifier found for this account",
-      });
-    }
-  });
-
-  return errors;
 }

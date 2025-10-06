@@ -6,7 +6,7 @@ import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
-import { ScheduleResult } from "../Scheduled/scheduleForPinterestAccounts";
+import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 /**
  * Directly posts content to Instagram accounts without scheduling

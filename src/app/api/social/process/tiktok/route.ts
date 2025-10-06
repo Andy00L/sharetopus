@@ -1,4 +1,4 @@
-import { processTiktokAccounts } from "@/components/core/create/action/processAccounts/processTiktokAccounts";
+import { processTiktokAccounts } from "@/lib/api/tiktok/processAccounts/processTiktokAccounts";
 
 export async function POST(request: Request) {
   try {

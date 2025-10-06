@@ -1,16 +1,20 @@
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import { AccountError, ContentInfo } from "../handleSocialMediaPost";
-import { scheduleForLinkedInAccounts } from "../Scheduled/scheduledForLinkedinAccounts";
+import {
+  AccountError,
+  ContentInfo,
+} from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
+import { scheduleForTikTokAccounts } from "../schedule/scheduleForTikTokAccounts";
 
 /**
- * Process LinkedIn accounts individually with robust error handling for each account
+ * Process TikTok accounts individually with robust error handling for each account
  */
-export async function processLinkedinAccounts(config: {
+export async function processTiktokAccounts(config: {
   accounts: SocialAccount[];
-  coverTimestamp?: number;
   mediaPath: string;
+  coverTimestamp: number;
   mediaType: string;
   fileName: string;
+  tiktokMediaUrl: string;
   platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
   isScheduled: boolean;
@@ -19,56 +23,45 @@ export async function processLinkedinAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-
-  isCronJob?: boolean;
+  cronSecret: string | undefined;
 }) {
-  const { accounts, isScheduled } = config;
+  const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
   let successCount = 0;
 
-  // Skip if no accounts
+  // Skip if no accounts or incompatible post type
   if (accounts.length === 0) {
     return { successCount, errors };
   }
 
   console.log(
-    `[processLinkedinAccounts]: Processing ${accounts.length} LinkedIn accounts`
+    `[processTiktokAccounts]: Processing ${accounts.length} TikTok accounts`
   );
 
   // Process accounts in parallel for maximum performance
   const accountPromises = accounts.map(async (account) => {
     try {
       console.log(
-        `[processLinkedinAccounts]: Processing account: ${
-          account.display_name ?? account.username ?? account.id
+        `[processTiktokAccounts]: Processing account: ${
+          account.display_name || account.username || account.id
         }`
       );
 
       // Find content for this account
+
       const accountContent = config.accountContent.find(
         (c) => c.accountId === account.id
       );
-      if (!accountContent) {
-        return {
-          success: false,
-          error: {
-            accountId: account.id,
-            platform: "linkedin",
-            displayName: account.display_name ?? account.username ?? account.id,
-            error: "No content configured for this account",
-          },
-        };
-      }
 
-      // Verify LinkedIn account has identifier
-      if (!account.account_identifier) {
+      if (!accountContent) {
+        console.error("No content configured for this account");
         return {
           success: false,
           error: {
             accountId: account.id,
-            platform: "linkedin",
-            displayName: account.display_name ?? account.username ?? account.id,
-            error: "No LinkedIn identifier found for this account",
+            platform: "tiktok",
+            displayName: account.display_name || account.username || account.id,
+            error: "No content configured for this account",
           },
         };
       }
@@ -76,7 +69,7 @@ export async function processLinkedinAccounts(config: {
       // Process single account with detailed timing
       const accountStartTime = performance.now();
       const result = isScheduled
-        ? await scheduleForLinkedInAccounts({
+        ? await scheduleForTikTokAccounts({
             account: account,
             mediaPath: config.mediaPath,
             coverTimestamp: config.coverTimestamp,
@@ -88,7 +81,7 @@ export async function processLinkedinAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/linkedin`, {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/tiktok`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -96,19 +89,20 @@ export async function processLinkedinAccounts(config: {
               mediaPath: config.mediaPath,
               coverTimestamp: config.coverTimestamp,
               mediaType: config.mediaType,
+              postType,
+              tiktokMediaUrl: config.tiktokMediaUrl,
               platformOptions: config.platformOptions,
               accountContent: accountContent,
-              postType: config.postType,
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
-              cleanupFiles: false,
-              isCronJob: config.isCronJob,
+              isCronJob: config.cronSecret,
             }),
           }).then((res) => res.json());
+
       const accountProcessingTime = performance.now() - accountStartTime;
       console.log(
-        `[processLinkedinAccounts]: Processed account ${
+        `[processTiktokAccounts]: Processed account ${
           account.id
         } in ${accountProcessingTime.toFixed(2)}ms: ${
           result.success ? "Success" : "Failed"
@@ -123,7 +117,7 @@ export async function processLinkedinAccounts(config: {
           success: false,
           error: {
             accountId: account.id,
-            platform: "Linkedin",
+            platform: "Tiktok",
             displayName: account.display_name ?? account.username ?? account.id,
             error: result.message ?? "Failed to process account",
           },
@@ -132,14 +126,14 @@ export async function processLinkedinAccounts(config: {
     } catch (error) {
       // Record account-level error but don't stop other accounts
       console.error(
-        `[processLinkedinAccounts]: Error processing account ${account.id}:`,
+        `[processTiktokAccounts]: Error processing account ${account.id}:`,
         error
       );
       return {
         success: false,
         error: {
           accountId: account.id,
-          platform: "linkedin",
+          platform: "tiktok",
           displayName: account.display_name ?? account.username ?? account.id,
           error: error instanceof Error ? error.message : String(error),
         },
@@ -160,7 +154,7 @@ export async function processLinkedinAccounts(config: {
   });
 
   console.log(
-    `[processLinkedinAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
+    `[processTiktokAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
   );
   return { successCount, errors };
 }

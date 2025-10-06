@@ -1,4 +1,4 @@
-import { directPostForTikTokAccounts } from "@/components/core/create/action/Direct/directPostForTikTokAccounts";
+import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 
 export async function POST(request: Request) {
   try {
