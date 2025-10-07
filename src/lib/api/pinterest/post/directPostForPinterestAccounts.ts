@@ -35,6 +35,7 @@ export async function directPostForPinterestAccounts(config: {
   batchId: string;
   mediaType: string;
   postType: "image" | "video" | "text";
+  mediaUrl: string;
   isCronJob?: boolean;
 }): Promise<ScheduleResult> {
   const {
@@ -48,6 +49,7 @@ export async function directPostForPinterestAccounts(config: {
     postType,
     fileName,
     isCronJob,
+    mediaUrl,
   } = config;
 
   try {
@@ -100,6 +102,7 @@ export async function directPostForPinterestAccounts(config: {
       userId: userId ?? "",
       coverTimestamp: config.coverTimestamp,
       postType: postType,
+      mediaUrl,
     });
     // Add detailed console logging
     console.log(

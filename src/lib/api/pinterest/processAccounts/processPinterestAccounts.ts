@@ -25,6 +25,7 @@ export async function processPinterestAccounts(config: {
   userId: string | null;
   batchId: string;
   isCronJob?: boolean;
+  mediaUrl: string;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -105,7 +106,6 @@ export async function processPinterestAccounts(config: {
               account: account,
               mediaPath: config.mediaPath,
               coverTimestamp: config.coverTimestamp,
-
               mediaType: config.mediaType,
               boards: accountBoards[0],
               platformOptions: config.platformOptions,
@@ -115,6 +115,7 @@ export async function processPinterestAccounts(config: {
               batchId: config.batchId,
               postType: config.postType,
               isCronJob: config.isCronJob,
+              mediaUrl: config.mediaUrl,
             }),
           }).then((res) => res.json());
 

@@ -390,6 +390,7 @@ export async function handleSocialMediaPost(config: {
               userId,
               batchId,
               cronSecret,
+              mediaUrl,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
