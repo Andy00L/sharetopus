@@ -119,7 +119,7 @@ export async function processInstagramAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/instagram`, {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/instagram/post`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

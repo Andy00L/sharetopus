@@ -1,10 +1,10 @@
 "use server";
 
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
-import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
@@ -346,7 +346,7 @@ export async function handleSocialMediaPost(config: {
     ] = await Promise.all([
       // Process TikTok accounts (if any and not image posts)
       tiktokAccounts.length > 0
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/tiktok`, {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/tiktok/process`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -371,7 +371,7 @@ export async function handleSocialMediaPost(config: {
 
       // Process Pinterest accounts (if any and not text posts)
       pinterestAccounts.length > 0 && postType !== "text"
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/pinterest`, {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/pinterest/process`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -397,7 +397,7 @@ export async function handleSocialMediaPost(config: {
 
       // Process LinkedIn accounts (if any)
       linkedinAccounts.length > 0
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/linkedin`, {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/linkedin/process`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -419,7 +419,7 @@ export async function handleSocialMediaPost(config: {
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
       instagramAccounts.length > 0 && postType !== "text"
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/process/instagram`, {
+        ? fetch(`${process.env.FRONTEND_URL}/api/social/instagram/process`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

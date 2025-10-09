@@ -153,7 +153,7 @@ export default function ConnectInstagramButton({
       }
 
       // THEN fetch the auth URL
-      const response = await fetch("/api/social/initiate/instagram", {
+      const response = await fetch("/api/social/instagram/initiate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

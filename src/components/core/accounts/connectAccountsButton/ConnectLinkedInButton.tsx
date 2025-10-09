@@ -148,7 +148,7 @@ export default function ConnectLinkedInButton({
       }
 
       // THEN fetch the auth URL
-      const response = await fetch("/api/social/initiate/linkedin", {
+      const response = await fetch("/api/social/linkedin/initiate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

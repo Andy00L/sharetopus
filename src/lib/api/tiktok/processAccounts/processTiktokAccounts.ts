@@ -81,7 +81,7 @@ export async function processTiktokAccounts(config: {
             userId: config.userId,
             batchId: config.batchId,
           })
-        : await fetch(`${process.env.FRONTEND_URL}/api/social/post/tiktok`, {
+        : await fetch(`${process.env.FRONTEND_URL}/api/social/tiktok/post`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

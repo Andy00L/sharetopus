@@ -153,7 +153,7 @@ export default function ConnectPinterestButton({
       }
 
       // THEN fetch the auth URL
-      const response = await fetch("/api/social/initiate/pinterest", {
+      const response = await fetch("/api/social/pinterest/initiate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -153,7 +153,7 @@ export default function ConnectTikTokButton({
       }
 
       // THEN fetch the auth URL
-      const response = await fetch("/api/social/initiate/tiktok", {
+      const response = await fetch("/api/social/tiktok/initiate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
