@@ -8,15 +8,8 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
 /**
  * Fetches social accounts for a specific user with optional availability filtering
  *
- * This function:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse (max 30 requests per minute)
- * 3. Queries the database for the user's social accounts
- * 4. Optionally filters accounts by availability status
- * 5. Returns a structured response with the account data or error information
- *
  * @param userId - The ID of the user whose social accounts to fetch
- * @param filterByAvailability - When true, only returns accounts marked as available (default: true)
+ * @param filterByAvailability - When true, only returns available accounts (default: true)
  * @returns Structured response with success status, message, and optional account data
  */
 export async function fetchSocialAccounts(
@@ -29,12 +22,9 @@ export async function fetchSocialAccounts(
   resetIn?: number;
 }> {
   try {
-    console.log(
-      `[fetchSocialAccounts]: Starting social accounts fetch for user: ${userId}`
-    );
-
     // Verify user is properly authenticated
     const authResult = await authCheck(userId);
+
     if (!authResult) {
       console.error(
         `[fetchSocialAccounts]: Authentication check failed for user ID: ${userId}`
@@ -44,41 +34,30 @@ export async function fetchSocialAccounts(
         message: "Authentication validation failed. Please sign in again.",
       };
     }
-    console.log(
-      `[fetchSocialAccounts]: Authentication validated for user: ${userId}`
-    );
 
     // Step 2: Check rate limits to prevent abuse
-    console.log(
-      `[fetchSocialAccounts]: Checking rate limits for user: ${userId}`
-    );
     const rateCheck = await checkRateLimit(
       "fetchSocialAccounts", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
       60 // Window (60 seconds)
     );
+
     if (!rateCheck.success) {
       console.warn(
         `[fetchSocialAccounts]: Rate limit exceeded for user: ${userId}. Reset in: ${
           rateCheck.resetIn ?? "unknown"
         } seconds`
       );
+
       return {
         success: false,
         message: "Too many requests. Please try again later.",
         resetIn: rateCheck.resetIn,
       };
     }
-    console.log(
-      `[fetchSocialAccounts]: Rate limit check passed for user: ${userId}`
-    );
 
     // Step 3: Build and execute the database query
-    console.log(
-      `[fetchSocialAccounts]: Querying database for social accounts, filter by availability: ${filterByAvailability}`
-    );
-
     // Start building the query
     let query = adminSupabase
       .from("social_accounts")
@@ -87,7 +66,7 @@ export async function fetchSocialAccounts(
 
     // Only apply the availability filter if requested
     if (filterByAvailability) {
-      query = query.eq("is_availble", true);
+      query = query.eq("is_available", true);
     }
 
     // Execute the query

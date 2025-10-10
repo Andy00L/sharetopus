@@ -9,30 +9,35 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
-const SocialPostFormWithData = async () => {
+async function SocialPostFormWithData() {
   const { userId } = await auth();
+
   const subscriptionInfo = await checkActiveSubscription(userId);
-  if (!subscriptionInfo.isActive) {
+
+  if (!subscriptionInfo.isActive || !subscriptionInfo.plan) {
     redirect("/create");
   }
+
   const accounts = await fetchSocialAccounts(userId);
+
   if (!accounts.success) {
     return <RateLimitError resetIn={accounts.resetIn} />;
   }
-  const planId = subscriptionInfo.plan!;
 
-  const uploadLimits = PRICE_ID_UPLOAD_LIMITS[planId];
+  const uploadLimits = PRICE_ID_UPLOAD_LIMITS[subscriptionInfo.plan];
+
   return (
     <SocialPostForm
-      accounts={accounts.data!}
+      accounts={accounts.data ?? []}
       uploadLimits={uploadLimits}
       userId={userId}
-      planId={subscriptionInfo.plan!}
+      planId={subscriptionInfo.plan}
       postType="image"
     />
   );
-};
-export default function page() {
+}
+
+export default function CreateImagePostPage() {
   return (
     <SidebarContent className="px-4 py-6">
       <h1 className="text-2xl font-bold mb-2">Create a image post</h1>

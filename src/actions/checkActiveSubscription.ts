@@ -10,20 +10,16 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
   plan: string | null;
   isActive: boolean;
 }> {
-  if (!userId) {
-    console.error(`[checkActiveSubscription] No userId provided`);
-    return {
-      success: false,
-      message: "Missing required user ID",
-      isActive: false,
-      plan: null,
-    };
-  }
-
   try {
-    console.log(
-      `[checkActiveSubscription] Checking subscription status for user ${userId}`
-    );
+    if (!userId) {
+      console.error(`[checkActiveSubscription] No userId provided`);
+      return {
+        success: false,
+        message: "Missing required user ID",
+        isActive: false,
+        plan: null,
+      };
+    }
 
     const { data, error } = await adminSupabase
       .from("stripe_subscriptions")
@@ -34,7 +30,10 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
       .limit(1);
 
     if (error) {
-      console.error("[checkActiveSubscription] Supabase query error:", error);
+      console.error(
+        `[checkActiveSubscription] Supabase query error User: ${userId}:`,
+        error
+      );
       return {
         success: false,
         message: `Database error: ${error.message}`,
@@ -44,6 +43,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
     }
 
     const hasActiveSubscription = data && data.length > 0;
+
     const subscriptionPlan = hasActiveSubscription ? data[0].plan : null;
 
     console.log(
@@ -61,7 +61,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
       plan: subscriptionPlan,
     };
   } catch (err) {
-    console.error("[checkActiveSubscription] Unexpected error:", err);
+    console.error("[checkActiveSubscription] Unexpected error :", err);
     return {
       success: false,
       message: "An unexpected error occurred",

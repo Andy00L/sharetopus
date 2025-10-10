@@ -12,7 +12,7 @@ import { headers } from "next/headers";
 async function getIpAddress(): Promise<string | null> {
   const headersList = await headers();
 
-  // Try different headers to get IP
+  // Try different headers to get IP (order matters - most reliable first)
   const forwardedFor = headersList.get("x-forwarded-for");
   if (forwardedFor) {
     return forwardedFor.split(",")[0].trim();
@@ -27,33 +27,40 @@ async function getIpAddress(): Promise<string | null> {
 }
 
 /**
- * Apply rate limiting to any function
+ * Apply rate limiting to any operation
  *
- * @param operationName Name of operation (e.g., 'fetchdata')
- * @param userId Optional: User ID to use for rate limiting (overrides IP)
- * @param limit Number of requests allowed
- * @param window Time window in seconds
+ * @param operationName - Name of operation (e.g., 'fetchData', 'submitForm')
+ * @param userId - Optional user ID for rate limiting (overrides IP-based limiting)
+ * @param limit - Number of requests allowed (default: 20)
+ * @param window - Time window in seconds (default: 60)
+ * @param bypassSecret - Optional secret to bypass rate limiting (for internal/cron use)
+ * @returns Object with success status and optional reset time
  */
 export async function checkRateLimit(
   operationName: string,
   userId?: string | null,
   limit: number = 20,
   window: number = 60,
-  cronSecret?: string | undefined
+  bypassSecret?: string | undefined
 ): Promise<{ success: boolean; message?: string; resetIn?: number }> {
   try {
-    // If this is a cron job request and it has the correct secret, bypass Clerk auth
-    if (cronSecret == process.env.CRON_SECRET_KEY) {
+    // Check for valid bypass secret
+    const validBypassSecret = process.env.CRON_SECRET_KEY;
+    if (
+      bypassSecret &&
+      validBypassSecret &&
+      bypassSecret === validBypassSecret
+    ) {
       console.log(
-        `[Rate-limit] Bypassing Rate Limitfor cron job request for user ${userId}`
+        `[checkRateLimit] Rate limiting bypassed for operation: ${operationName}`
       );
       return {
         success: true,
-        message: " Bypassing Rate Limitfor cron job request for user ${userId}",
+        message: "Rate limiting bypassed",
       };
     }
 
-    // Create a rate limiter for this function
+    // Create a rate limiter for this operation
     const limiter = new Ratelimit({
       redis,
       limiter: Ratelimit.slidingWindow(limit, `${window} s`),
@@ -63,41 +70,44 @@ export async function checkRateLimit(
 
     // Get identifier (userId or IP)
     const identifier = userId ?? (await getIpAddress());
+
     if (!identifier) {
       console.error(
-        `[Rate-limit] Failed to determine identifier: No user ID provided and IP address could not be retrieved`
+        `[checkRateLimit] No identifier available for operation: ${operationName}`
       );
 
-      return { success: false, message: "No identifier for rate limiting" };
+      return {
+        success: false,
+        message: "Unable to identify client for rate limiting",
+      };
     }
-    console.log(
-      `[Rate-limit] Using identifier: ${
-        userId ? "User ID" : "IP address"
-      } (${identifier.substring(0, 8)}...)`
-    );
 
     // Apply rate limiting
     const { success, reset } = await limiter.limit(identifier);
 
     if (success) {
-      console.log(`[Rate-limit] Request permitted: Rate limit not exceeded`);
       return {
         success: true,
       };
-    } else {
-      // Format the reset time nicely
-      const resetInSeconds = Math.ceil((reset - Date.now()) / 1000);
-      console.warn(
-        `[Rate-limit] Request rejected: Rate limit exceeded. Reset in ${resetInSeconds} seconds`
-      );
-      return {
-        success: false,
-        message: "Rate limit exceeded. Please try again later.",
-        resetIn: resetInSeconds,
-      };
     }
+
+    // Calculate reset time
+    const resetInSeconds = Math.ceil((reset - Date.now()) / 1000);
+    console.warn(
+      `[checkRateLimit] Rate limit exceeded for operation: ${operationName}, reset in: ${resetInSeconds}s`
+    );
+
+    return {
+      success: false,
+      message: "Rate limit exceeded. Please try again later.",
+      resetIn: resetInSeconds,
+    };
   } catch (error) {
-    console.error("[Rate-limit] Rate limit check failed", error);
+    console.error(
+      `[checkRateLimit] Rate limit check failed for operation: ${operationName}`,
+      error instanceof Error ? error.message : error
+    );
+
     return {
       success: false,
       message: "Rate limit check failed",

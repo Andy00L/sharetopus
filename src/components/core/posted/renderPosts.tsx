@@ -8,25 +8,27 @@ export default async function RenderPosts() {
   const { userId } = await auth();
   const posts = await getContentHistoryGroupedByBatch(userId);
 
-  // If there's an error or no data, display an appropriate message
-  if (!posts.success || posts.data === null) {
+  // Handle errors or missing data
+  if (!posts.success || !posts.data) {
     return <NoData />;
   }
+
   const data = posts.data;
   if (data === null) {
     return <NoData />;
   }
+
   // Check if we have any batches
   const batchIds = Object.keys(posts.data);
-
   if (batchIds.length === 0) {
     return <NoBatch />;
   }
+
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {batchIds.map((batchId) => (
-          <ContentHistoryCard key={batchId} items={data[batchId]} />
+          <ContentHistoryCard key={batchId} items={posts.data![batchId]} />
         ))}
       </div>
     </>

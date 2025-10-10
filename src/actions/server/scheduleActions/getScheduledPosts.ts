@@ -9,12 +9,6 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
 /**
  * Retrieves all scheduled posts for the authenticated user
  *
- * This function:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse
- * 3. Fetches scheduled posts with their associated social account details
- * 4. Returns a structured response with the posts data or error information
- *
  * @param userId - ID of the user whose scheduled posts to retrieve
  * @returns Structured response with success status, message, and optional post data
  */
@@ -25,19 +19,9 @@ export async function getScheduledPosts(userId: string | null): Promise<{
   resetIn?: number;
 }> {
   try {
-    console.log(
-      `[getScheduledPosts]: Starting scheduled posts retrieval for user: ${userId}`
-    );
-
-    // Step 1: Verify user is authenticated
-    if (!userId) {
-      console.error(`[getScheduledPosts]: Missing user ID in request`);
-      return {
-        success: false,
-        message: "User ID is required. Please sign in to continue.",
-      };
-    }
+    //Verify authentication
     const authResult = await authCheck(userId);
+
     if (!authResult) {
       console.error(
         `[getScheduledPosts]: Authentication check failed for user ID: ${userId}`
@@ -47,25 +31,13 @@ export async function getScheduledPosts(userId: string | null): Promise<{
         message: "Authentication validation failed. Please sign in again.",
       };
     }
-    console.log(
-      `[getScheduledPosts]: Authentication validated for user: ${userId}`
-    );
-    // Step 2: Check rate limits to prevent abuse
-    console.log(
-      `[getScheduledPosts]: Checking rate limits for user: ${userId}`
-    );
-    const rateCheck = await checkRateLimit(
-      "getScheduledPosts", // Unique identifier for this operation
-      userId, // User identifier
-      60, // Limit (60 requests)
-      60 // Window (60 seconds)
-    );
+
+    // Check rate limits
+    const rateCheck = await checkRateLimit("getScheduledPosts", userId, 60, 60);
 
     if (!rateCheck.success) {
       console.warn(
-        `[getScheduledPosts]: Rate limit exceeded for user: ${userId}. Reset in: ${
-          rateCheck.resetIn ?? "unknown"
-        } seconds`
+        `[getScheduledPosts]: Rate limit exceeded for user: ${userId}, reset in: ${rateCheck.resetIn}s`
       );
       return {
         success: false,
@@ -73,12 +45,8 @@ export async function getScheduledPosts(userId: string | null): Promise<{
         resetIn: rateCheck.resetIn,
       };
     }
-    console.log(
-      `[getScheduledPosts]: Rate limit check passed for user: ${userId}`
-    );
 
-    // Step 3: Fetch scheduled posts with social account details
-    console.log(`[getScheduledPosts]: Querying database for scheduled posts`);
+    // Fetch scheduled posts with social account details
     const { data, error } = await adminSupabase
       .from("scheduled_posts")
       .select(
@@ -116,7 +84,7 @@ export async function getScheduledPosts(userId: string | null): Promise<{
           "Failed to retrieve your scheduled posts. Please try again later.",
       };
     }
-    // Step 5: Return successful response with data
+
     const postsCount = data?.length || 0;
     console.log(
       `[getScheduledPosts]: Successfully retrieved ${postsCount} scheduled posts for user: ${userId}`
@@ -146,10 +114,8 @@ export async function getScheduledPosts(userId: string | null): Promise<{
 /**
  * Groups scheduled posts by their batch ID
  *
- * This function:
- * 1. Retrieves all scheduled posts for the user
- * 2. Organizes them into groups based on their batch ID
- * 3. Returns the grouped data in a structured response
+ * Note: This function reuses getScheduledPosts(), so rate limiting is inherited.
+ * If you need independent rate limiting, add it here separately.
  *
  * @param userId - ID of the user whose scheduled posts to group
  * @returns Structured response with success status, message, and optional grouped data
@@ -163,14 +129,9 @@ export async function getScheduledPostsGroupedByBatch(
   resetIn?: number;
 }> {
   try {
-    console.log(
-      `[getScheduledPostsGroupedByBatch]: Starting batch grouping for user: ${userId}`
-    );
-
-    // Step 1: Get all scheduled posts using the primary function
+    // Retrieve all scheduled posts
     const postsResponse = await getScheduledPosts(userId);
 
-    // Step 2: Handle errors or rate limiting from the posts retrieval
     if (!postsResponse.success) {
       console.log(
         `[getScheduledPostsGroupedByBatch]: Failed to retrieve posts: ${postsResponse.message}`
@@ -182,7 +143,6 @@ export async function getScheduledPostsGroupedByBatch(
       };
     }
 
-    // If no posts found, return early with empty object
     if (!postsResponse.data || postsResponse.data.length === 0) {
       console.log(
         `[getScheduledPostsGroupedByBatch]: No posts found to group for user: ${userId}`
@@ -194,10 +154,7 @@ export async function getScheduledPostsGroupedByBatch(
       };
     }
 
-    // Step 3: Group posts by batch_id
-    console.log(
-      `[getScheduledPostsGroupedByBatch]: Grouping ${postsResponse.data.length} posts by batch ID`
-    );
+    // Group posts by batch_id
     const groupedPosts = postsResponse.data.reduce(
       (acc: Record<string, ScheduledPost[]>, post) => {
         const batchId = post.batch_id || "no-batch";
@@ -210,10 +167,9 @@ export async function getScheduledPostsGroupedByBatch(
       {}
     );
 
-    // Step 4: Calculate batch statistics for logging
     const batchCount = Object.keys(groupedPosts).length;
     console.log(
-      `[getScheduledPostsGroupedByBatch]: Successfully grouped posts into ${batchCount} batches`
+      `[getScheduledPostsGroupedByBatch] Grouped into ${batchCount} batches for user: ${userId}`
     );
 
     // Step 5: Return successful response with grouped data
@@ -223,7 +179,7 @@ export async function getScheduledPostsGroupedByBatch(
       data: groupedPosts,
     };
   } catch (err) {
-    // Step 6: Handle unexpected errors
+    // Catch any unexpected errors not handled above
     console.error(
       `[getScheduledPostsGroupedByBatch]: Unexpected error grouping posts:`,
       err instanceof Error ? err.message : err

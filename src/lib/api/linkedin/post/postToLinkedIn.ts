@@ -158,7 +158,7 @@ export async function postToLinkedIn({
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": mediaType,
             },
-            body: buffer,
+            body: buffer as unknown as BodyInit,
           });
 
           if (!uploadResponse.ok) {

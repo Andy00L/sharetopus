@@ -1,5 +1,5 @@
-import "server-only";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import "server-only";
 import {
   PinterestMediaRegistrationResponse,
   PinterestMediaStatusResponse,
@@ -177,7 +177,12 @@ async function uploadVideoFile({
     });
 
     // Add the video file
-    formData.append("file", new Blob([buffer], { type: mediaType }), fileName);
+
+    formData.append(
+      "file",
+      new Blob([new Uint8Array(buffer)], { type: mediaType }),
+      fileName
+    );
 
     const response = await fetch(uploadUrl, {
       method: "POST",

@@ -1,34 +1,57 @@
 "use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
+import { authCheck } from "@/actions/server/authCheck";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
-export async function directPostForLinkedInAccounts(config: {
-  account: SocialAccount; // Changed from accounts to accountIds
+interface AccountContent {
+  accountId: string;
+  title?: string;
+  description: string;
+  link: string;
+  isCustomized: boolean;
+}
+
+interface DirectPostConfig {
+  account: SocialAccount;
   mediaPath: string;
   coverTimestamp?: number;
-
   mediaType?: string;
   platformOptions: PlatformOptions;
-  accountContent: {
-    accountId: string;
-    title?: string;
-    description: string;
-    link: string;
-    isCustomized: boolean;
-  };
+  accountContent: AccountContent;
   userId: string | null;
   cleanupFiles?: boolean;
   fileName?: string;
   batchId: string;
   postType: "image" | "video" | "text";
   isCronJob?: boolean;
-}): Promise<ScheduleResult> {
+  cronSecret?: string;
+}
+
+/**
+ * Posts content directly to a LinkedIn account
+ *
+ * This function:
+ * 1. Validates authentication (unless cron job)
+ * 2. Applies rate limiting (unless cron job)
+ * 3. Downloads media files if needed
+ * 4. Ensures valid LinkedIn access token
+ * 5. Posts to LinkedIn
+ * 6. Stores content history on success
+ * 7. Stores failed post record on failure (cron jobs only)
+ *
+ * @param config - Configuration object containing account, content, and media details
+ * @returns Result indicating success/failure with count and message
+ */
+export async function directPostForLinkedInAccounts(
+  config: DirectPostConfig
+): Promise<ScheduleResult> {
   const {
     account,
     mediaPath,
@@ -40,31 +63,68 @@ export async function directPostForLinkedInAccounts(config: {
     fileName,
     isCronJob,
   } = config;
-
-  if (!account) {
-    console.error("[LinkedIn Direct Post] Error fetching accounts:");
-
-    return {
-      success: false,
-      count: 0,
-      message: "No LinkedIn account provided",
-    };
-  }
-
-  if (!accountContent) {
-    return {
-      success: false,
-      count: 0,
-      message: "No content found for account",
-    };
-  }
   try {
-    console.log("[LinkedIn Direct Post] Starting to post directly to LinkedIn");
+    if (!account) {
+      console.error("[LinkedIn Direct Post] No account provided");
+
+      return {
+        success: false,
+        count: 0,
+        message: "No LinkedIn account provided",
+      };
+    }
+
+    if (!accountContent) {
+      console.error("[LinkedIn Direct Post] No account content provided");
+      return {
+        success: false,
+        count: 0,
+        message: "No content found for account",
+      };
+    }
+
+    // Verify authentication (skip for cron jobs with valid secret)
+    if (!isCronJob) {
+      const authResult = await authCheck(userId);
+      if (!authResult) {
+        console.error(`[LinkedIn Direct Post] Auth failed for user: ${userId}`);
+        return {
+          success: false,
+          count: 0,
+          message: "Authentication validation failed. Please sign in again.",
+        };
+      }
+
+      // Check rate limits (only for user-initiated posts, not cron)
+      const rateCheck = await checkRateLimit(
+        "directPostLinkedIn",
+        userId,
+        25, // 10 posts
+        60 // per minute
+      );
+
+      if (!rateCheck.success) {
+        console.warn(
+          `[LinkedIn Direct Post] Rate limit exceeded for user: ${userId}`
+        );
+        return {
+          success: false,
+          count: 0,
+          message: "Too many posts. Please try again later.",
+        };
+      }
+    }
+
     let buffer;
+
     if (mediaPath) {
-      // Download the file for direct upload
       buffer = await getSupabaseVideoFile(mediaPath, userId);
+
       if (!buffer.success) {
+        console.error(
+          `[LinkedIn Direct Post] Failed to fetch media:`,
+          buffer.message
+        );
         return {
           success: false,
           count: 0,
@@ -72,17 +132,19 @@ export async function directPostForLinkedInAccounts(config: {
         };
       }
     }
+
     // Vérifier et rafraîchir le token si nécessaire
     const validToken = await ensureValidToken(account);
 
     if (!validToken.success) {
       console.error(
-        `[Linkedin Direct Post] No valid access token for account ${account.id}`
+        `[LinkedIn Direct Post] Invalid token for account ${account.id}`
       );
+
       return {
         success: false,
         count: 0,
-        message: validToken.error,
+        message: validToken.error || "Failed to validate access token",
       };
     }
 
@@ -93,7 +155,7 @@ export async function directPostForLinkedInAccounts(config: {
 
     if (!memberUrn) {
       console.error(
-        `[LinkedIn Direct Post] No LinkedIn member URN found for account ${account.id}`
+        `[LinkedIn Direct Post] No member URN for account ${account.id}`
       );
 
       return {
@@ -103,20 +165,14 @@ export async function directPostForLinkedInAccounts(config: {
       };
     }
 
-    console.log(
-      `[LinkedIn Direct Post] Posting to account: ${
-        account.username ?? account.id
-      }`
-    );
-
-    // Call our API endpoint to post to LinkedIn
+    // Post to LinkedIn
     const postResult = await postToLinkedIn({
       accessToken: validToken.token!,
       memberUrn: memberUrn,
       text: accountContent.description,
       link: accountContent.link,
-      mediaPath: mediaPath,
-      mediaType: mediaType,
+      mediaPath,
+      mediaType,
       fileName: fileName,
       userId: userId ?? "",
       postType,
@@ -124,16 +180,18 @@ export async function directPostForLinkedInAccounts(config: {
       coverTimestamp: config.coverTimestamp,
     });
 
-    // Add detailed console logging to examine the response structure
     console.log(
-      `========== LINKEDIN POST RESPONSE (${account.username}) ==========`
+      `[LinkedIn Direct Post] Result for ${account.username}: ${
+        postResult.success ? "SUCCESS" : "FAILED"
+      }`
     );
-    console.log("Success:", postResult.success);
-    console.log("Post ID:", postResult.postId);
-    console.log("Message:", postResult.message);
 
+    if (postResult.postId) {
+      console.log(`[LinkedIn Direct Post] Post ID: ${postResult.postId}`);
+    }
+
+    // Handle successful post
     if (postResult.success) {
-      // Store content history
       const historyResult = await storeContentHistory(
         {
           platform: "linkedin",
@@ -156,7 +214,7 @@ export async function directPostForLinkedInAccounts(config: {
 
       if (!historyResult.success) {
         console.error(
-          `[LinkedIn Direct Post] Error saving to content history:`,
+          `[LinkedIn Direct Post] Failed to save history:`,
           historyResult.message
         );
         return {
@@ -166,84 +224,82 @@ export async function directPostForLinkedInAccounts(config: {
         };
       }
 
-      console.log(
-        `[LinkedIn Direct Post] Successfully posted to account and saved to history`
-      );
-    } else {
-      console.error(
-        "[LinkedIn Direct Post] Failed with error:",
-        postResult.error
-      );
-      console.error(
-        "[LinkedIn Direct Post] Error message:",
-        postResult.message
-      );
-      if (isCronJob) {
-        const failedPostResult = await storeFailedPost({
-          user_id: userId,
-          social_account_id: account.id,
-          platform: "linkedin",
-          post_title: accountContent.title || null,
-          post_description: accountContent.description || null,
-          coverTimestamp: config.coverTimestamp,
-
-          post_options: {
-            memberUrn: memberUrn,
-            link: accountContent.link,
-            visibility: config.platformOptions.linkedin?.visibility || "PUBLIC",
-          },
-          media_type: postType,
-          media_storage_path: mediaPath || "",
-          batch_id: batchId,
-          extra_data: {
-            message: postResult.message,
-            error: postResult.error,
-            timestamp: new Date().toISOString(),
-          },
-        });
-
-        if (!failedPostResult.success) {
-          console.error(
-            "[LinkedIn Direct Post] Error storing failed post:",
-            failedPostResult.message
-          );
-          return {
-            success: false,
-            count: 0,
-            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
-          };
-        }
-
-        console.log(
-          "[LinkedIn Direct Post] Failed post stored in failed_posts table"
-        );
-      } else {
-        console.log(
-          "[LinkedIn Direct Post] Skipping failed post storage (not a cron job)"
-        );
-      }
       return {
-        success: false,
-        count: 0,
-        message: postResult.message || "Failed to post to LinkedIn",
+        success: true,
+        count: 1,
+        message: `Successfully posted to ${account.display_name}`,
       };
     }
 
+    // Handle failed post
+    console.error(
+      `[LinkedIn Direct Post] Post failed:`,
+      postResult.message,
+      postResult.error
+    );
+
+    if (isCronJob) {
+      const failedPostResult = await storeFailedPost({
+        user_id: userId,
+        social_account_id: account.id,
+        platform: "linkedin",
+        post_title: accountContent.title || null,
+        post_description: accountContent.description || null,
+        coverTimestamp: config.coverTimestamp,
+
+        post_options: {
+          memberUrn: memberUrn,
+          link: accountContent.link,
+          visibility: config.platformOptions.linkedin?.visibility || "PUBLIC",
+        },
+        media_type: postType,
+        media_storage_path: mediaPath || "",
+        batch_id: batchId,
+        extra_data: {
+          message: postResult.message,
+          error: postResult.error,
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      if (!failedPostResult.success) {
+        console.error(
+          "[LinkedIn Direct Post] Error storing failed post:",
+          failedPostResult.message
+        );
+        return {
+          success: false,
+          count: 0,
+          message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
+        };
+      }
+
+      console.log(
+        "[LinkedIn Direct Post] Failed post stored in failed_posts table"
+      );
+    } else {
+      console.log(
+        "[LinkedIn Direct Post] Skipping failed post storage (not a cron job)"
+      );
+    }
     return {
-      success: true,
-      count: 1,
-      message: `Successfully posted to ${account.display_name} LinkedIn account(s)`,
+      success: false,
+      count: 0,
+      message: postResult.message || "Failed to post to LinkedIn",
     };
   } catch (error) {
     console.error(
-      "[LinkedIn Direct Post] Error for account ${account.id}:",
-      error
+      `[LinkedIn Direct Post] Unexpected error for account ${account.id}:`,
+      error instanceof Error ? error.message : error
     );
 
     return {
       success: false,
       count: 0,
-      message: `Failed to post to LinkedIn: `,
+      message:
+        error instanceof Error
+          ? `Failed to post to LinkedIn: ${error.message}`
+          : "Failed to post to LinkedIn",
     };
   }
 }
