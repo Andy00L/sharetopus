@@ -85,16 +85,6 @@ export async function directPostForLinkedInAccounts(
 
     // Verify authentication (skip for cron jobs with valid secret)
     if (!isCronJob) {
-      const authResult = await authCheck(userId);
-      if (!authResult) {
-        console.error(`[LinkedIn Direct Post] Auth failed for user: ${userId}`);
-        return {
-          success: false,
-          count: 0,
-          message: "Authentication validation failed. Please sign in again.",
-        };
-      }
-
       // Check rate limits (only for user-initiated posts, not cron)
       const rateCheck = await checkRateLimit(
         "directPostLinkedIn",
