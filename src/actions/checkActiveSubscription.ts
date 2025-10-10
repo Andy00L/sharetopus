@@ -46,12 +46,6 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
 
     const subscriptionPlan = hasActiveSubscription ? data[0].plan : null;
 
-    console.log(
-      `[checkActiveSubscription] User ${userId} subscription status: ${
-        hasActiveSubscription ? ["active", "trialing"] : "Inactive"
-      }, Plan: ${subscriptionPlan ?? "None"}`
-    );
-
     return {
       success: true,
       message: hasActiveSubscription

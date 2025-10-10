@@ -98,9 +98,7 @@ export async function fetchSocialAccounts(
     }
 
     // Step 6: Return successful response with data
-    console.log(
-      `[fetchSocialAccounts]: Successfully fetched ${data.length} social accounts for user: ${userId}`
-    );
+
     return {
       success: true,
       message: "Social accounts retrieved successfully.",

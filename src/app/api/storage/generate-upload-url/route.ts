@@ -182,13 +182,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log("[Generate Upload URL] Success, returning:", {
-      path: data.path,
-      // Don't log the full URL for security
-      signedUrlPartial: data.signedUrl.substring(0, 50) + "...",
-      token: data.token ? "present" : "missing",
-    });
-
     return NextResponse.json({
       success: true,
       uploadUrl: data.signedUrl,

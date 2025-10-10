@@ -1,6 +1,5 @@
 "use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
-import { authCheck } from "@/actions/server/authCheck";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
