@@ -200,11 +200,8 @@ export default function BatchedPostCard({
       );
 
       if (result.success) {
-        // Close dialogs on success; runAction will show toast + refresh.
         setRescheduleOpen(false);
         setIsOpen(false);
-        setCancelOpen(false);
-        setDeleteOpen(false);
 
         return {
           success: true,
@@ -335,15 +332,11 @@ export default function BatchedPostCard({
     }
   };
   useEffect(() => {
-    if (!rescheduleOpen && !cancelOpen && !deleteOpen && !isOpen) {
-      // Reset all dialog-related states
+    if (!cancelOpen && !deleteOpen && !isOpen) {
       setLoading(false);
-      setIsOpen(false); // Explicitly ensure main dialog is closed
       setRescheduleOpen(false);
-      setCancelOpen(false);
-      setDeleteOpen(false);
     }
-  }, [rescheduleOpen, cancelOpen, deleteOpen, isOpen]);
+  }, [cancelOpen, deleteOpen, isOpen]);
 
   return (
     <>
@@ -402,164 +395,151 @@ export default function BatchedPostCard({
         <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
           <AlertDialogHeader className="flex-shrink-0">
             <AlertDialogTitle className="mb-2">
-              Scheduled Posts ({posts.length})
+              {rescheduleOpen
+                ? `Reschedule ${posts.length} Posts`
+                : `Scheduled Posts (${posts.length})`}
             </AlertDialogTitle>{" "}
             <AlertDialogDescription className="mb-4">
-              Scheduled for {formattedDate}
+              {rescheduleOpen
+                ? "Select a new date and time for these posts"
+                : `Scheduled for ${formattedDate}`}
             </AlertDialogDescription>
-            <div className="flex flex-wrap gap-2 mt-2">
-              {canReschedule && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className=" cursor-pointer"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // First close all dialogs
-                    setIsOpen(false);
-                    // Then open the reschedule dialog separately
-                    setRescheduleOpen(true);
-                    // Use longer delay for safety
-                  }}
-                >
-                  <CalendarIcon className="h-4 w-4 mr-1 cursor-pointer" />
-                  Reschedule
-                </Button>
-              )}
-              {canCancel && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mr-2 cursor-pointer"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setCancelOpen(true);
-                    setIsOpen(false);
-                  }}
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Cancel
-                </Button>
-              )}
-              {canResume && (
-                <Button
-                  size="sm"
-                  className="cursor-pointer"
-                  variant="outline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    runAction(resumeAllPosts);
-                    setIsOpen(false);
-                  }}
-                >
-                  <PlayCircle className="h-4 w-4 mr-1" />
-                  Resume
-                </Button>
-              )}
-            </div>
           </AlertDialogHeader>
 
-          <div className="py-3 overflow-y-auto flex-grow">
-            <h4 className="text-sm font-medium mb-2 ">Platforms</h4>
-            <div className="flex flex-col gap-4">
-              {posts.map((post) => (
-                <PlatformContentDropdown key={post.id} post={post} />
-              ))}
-            </div>
-          </div>
+          {rescheduleOpen ? (
+            <>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="date">Date</Label>
+                  <Input
+                    id="date"
+                    type="date"
+                    value={rescheduleDate}
+                    min={format(new Date(), "yyyy-MM-dd")}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
 
-          <AlertDialogFooter className="flex justify-between flex-shrink-0">
-            <Button
-              variant="destructive"
-              className="cursor-pointer"
-              size="sm"
-              onClick={() => {
-                setDeleteOpen(true);
-                setIsOpen(false);
-              }}
-            >
-              <Trash2 className="h-4 w-4 mr-1" />
-              Delete
-            </Button>
-            <AlertDialogCancel className="cursor-pointer">
-              Close
-            </AlertDialogCancel>
-          </AlertDialogFooter>
+                <div className="grid gap-2">
+                  <Label htmlFor="time">Time</Label>
+                  <Input
+                    id="time"
+                    type="time"
+                    value={rescheduleTime}
+                    onChange={(e) => setRescheduleTime(e.target.value)}
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              <AlertDialogFooter className="flex-shrink-0">
+                <Button
+                  variant="outline"
+                  className="cursor-pointer"
+                  aria-label="Cancel reschedule"
+                  onClick={() => setRescheduleOpen(false)}
+                  disabled={loading}
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={handleRescheduleSubmit}
+                  className="cursor-pointer"
+                  aria-label="Reschedule Posts"
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    <>
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      Reschedule Posts
+                    </>
+                  )}
+                </Button>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="py-3 overflow-y-auto flex-grow">
+                <h4 className="text-sm font-medium mb-2 ">Platforms</h4>
+                <div className="flex flex-col gap-4">
+                  {posts.map((post) => (
+                    <PlatformContentDropdown key={post.id} post={post} />
+                  ))}
+                </div>
+              </div>
+
+              <AlertDialogFooter className="flex flex-wrap justify-between gap-2 flex-shrink-0">
+                <div className="flex flex-wrap gap-2">
+                  {canReschedule && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="cursor-pointer"
+                      aria-label="Reschedule"
+                      onClick={() => setRescheduleOpen(true)}
+                    >
+                      <CalendarIcon className="h-4 w-4 mr-1" />
+                      Reschedule
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="cursor-pointer"
+                      aria-label="Cancel scheduled posts"
+                      onClick={() => {
+                        setCancelOpen(true);
+                        setIsOpen(false);
+                      }}
+                    >
+                      <X className="h-4 w-4 mr-1" />
+                      Cancel
+                    </Button>
+                  )}
+                  {canResume && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="cursor-pointer"
+                      aria-label="Resume scheduled posts"
+                      onClick={() => {
+                        runAction(resumeAllPosts);
+                        setIsOpen(false);
+                      }}
+                    >
+                      <PlayCircle className="h-4 w-4 mr-1" />
+                      Resume
+                    </Button>
+                  )}
+                  <Button
+                    variant="destructive"
+                    className="cursor-pointer"
+                    aria-label="Delete scheduled posts"
+                    size="sm"
+                    onClick={() => {
+                      setDeleteOpen(true);
+                      setIsOpen(false);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Delete
+                  </Button>
+                </div>
+                <AlertDialogCancel className="cursor-pointer">
+                  Close
+                </AlertDialogCancel>
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Reschedule Dialog */}
-      {rescheduleOpen && (
-        <AlertDialog
-          open={rescheduleOpen}
-          onOpenChange={(open) => !open && setRescheduleOpen(false)}
-        >
-          <AlertDialogContent className="sm:max-w-md">
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                Reschedule {posts.length} Posts
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                Select a new date and time for these posts
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-
-            <div className="grid gap-4 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="date">Date</Label>
-                <Input
-                  id="date"
-                  type="date"
-                  value={rescheduleDate}
-                  min={format(new Date(), "yyyy-MM-dd")}
-                  onChange={(e) => setRescheduleDate(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="time">Time</Label>
-                <Input
-                  id="time"
-                  type="time"
-                  value={rescheduleTime}
-                  onChange={(e) => setRescheduleTime(e.target.value)}
-                  disabled={loading}
-                />
-              </div>
-            </div>
-
-            <AlertDialogFooter>
-              <Button
-                variant="outline"
-                className="cursor-pointer"
-                onClick={() => setRescheduleOpen(false)}
-                disabled={loading}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleRescheduleSubmit}
-                className="cursor-pointer"
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    Reschedule Posts
-                  </>
-                )}
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
 
       {/* Cancel Dialog */}
       <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
