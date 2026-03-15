@@ -1,14 +1,15 @@
 import Image from "next/image";
 import Link from "next/link";
 
-import { SignedIn, SignedOut } from "@clerk/nextjs";
+import { auth } from "@clerk/nextjs/server";
 import heroImage from "../../../../public/frontend_logo.webp";
 
 import { Button } from "@/components/ui/button";
 import PlatformsListe from "../details/platformList";
 import { AnimatedTestimonial } from "./AnimatedTestimonial";
 
-export default function Hero() {
+export default async function Hero() {
+  const { userId } = await auth();
   return (
     <section className="max-w-6xl mx-auto bg-base-100 flex flex-col items-center justify-center px-8 py-8 lg:py-20">
       <div className="container mx-auto px-6">
@@ -85,16 +86,9 @@ export default function Hero() {
               </li>
             </ul>
             <div className="flex flex-wrap mt-5 rounded-full">
-              <SignedOut>
-                <Button className="bg-[#FF4A20] text-white px-10 py-4 rounded-full font-medium hover:bg-[#FF2A29] cursor-pointer">
-                  <Link href="/create">Start Now</Link>
-                </Button>
-              </SignedOut>
-              <SignedIn>
-                <Button className="bg-[#FF4A20] text-white px-10 py-4 rounded-full font-medium hover:bg-[#FF2A29] cursor-pointer">
-                  <Link href="/create">Get back</Link>
-                </Button>
-              </SignedIn>
+              <Button className="bg-[#FF4A20] text-white px-10 py-4 rounded-full font-medium hover:bg-[#FF2A29] cursor-pointer">
+                <Link href="/create">{userId ? "Get back" : "Start Now"}</Link>
+              </Button>
             </div>
 
             <div className="mt-8 ">

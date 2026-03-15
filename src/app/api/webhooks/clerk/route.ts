@@ -2,7 +2,7 @@
 import { adminSupabase as supabase } from "@/actions/api/adminSupabase";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import stripe from "@/lib/stripe";
-import { WebhookEvent } from "@clerk/nextjs/server";
+import { WebhookEvent } from "@clerk/backend";
 import { headers } from "next/headers";
 import { Webhook } from "svix";
 
