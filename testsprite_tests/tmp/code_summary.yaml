@@ -1,0 +1,289 @@
+version: "2"
+type: frontend
+tech_stack:
+  - TypeScript
+  - Next.js 16 (App Router)
+  - React 19
+  - Tailwind CSS 4
+  - Shadcn/ui (Radix UI)
+  - Clerk v7 (authentication)
+  - Supabase (PostgreSQL + Storage)
+  - Stripe (payments)
+  - Upstash Redis (rate limiting)
+  - Upstash QStash (scheduled jobs)
+  - Recharts (charts)
+  - Zod (validation)
+  - date-fns (dates)
+  - dnd-kit (drag and drop)
+  - Lucide React (icons)
+  - Sonner (toast notifications)
+routes:
+  - path: /
+    file: src/app/(marketing)/page.tsx
+    auth_required: false
+    description: Marketing landing page with hero, features, testimonials, pricing section (#pricing), and CTAs
+  - path: /PrivacyPolicy
+    file: src/app/(marketing)/PrivacyPolicy/page.tsx
+    auth_required: false
+    description: Static privacy policy page
+  - path: /tos
+    file: src/app/(marketing)/tos/page.tsx
+    auth_required: false
+    description: Static terms of service page
+  - path: /create
+    file: src/app/(protected)/create/page.tsx
+    auth_required: true
+    description: Post type selection hub with cards for Text, Image, and Video posts
+  - path: /create/text
+    file: src/app/(protected)/create/text/page.tsx
+    auth_required: true
+    description: Text post creation form for LinkedIn with account selection and scheduling
+  - path: /create/image
+    file: src/app/(protected)/create/image/page.tsx
+    auth_required: true
+    description: Image post creation form for LinkedIn, Pinterest, TikTok, Instagram with media upload
+  - path: /create/video
+    file: src/app/(protected)/create/video/page.tsx
+    auth_required: true
+    description: Video post creation form with upload, thumbnail selector, and multi-platform support
+  - path: /connections
+    file: src/app/(protected)/connections/page.tsx
+    auth_required: true
+    description: Social account connection manager with OAuth flows for TikTok, Pinterest, LinkedIn
+  - path: /scheduled
+    file: src/app/(protected)/scheduled/page.tsx
+    auth_required: true
+    description: View and manage scheduled posts with reschedule, cancel, resume, and delete actions
+  - path: /posted
+    file: src/app/(protected)/posted/page.tsx
+    auth_required: true
+    description: Published content history grouped by batch with per-platform status and external links
+  - path: /studio
+    file: src/app/(protected)/studio/page.tsx
+    auth_required: true
+    description: Analytics dashboard placeholder (Coming Soon)
+  - path: /userProfile
+    file: src/app/(protected)/userProfile/[[...rest]]/page.tsx
+    auth_required: true
+    description: Clerk UserProfile component for account settings, password, and OAuth management
+  - path: /payment/success
+    file: src/app/(protected)/payment/success/page.tsx
+    auth_required: true
+    description: Post-checkout success page with confetti animation and Continue button to /create
+features:
+  - name: Landing Page & Marketing
+    description: Public landing page with hero section, feature highlights, testimonials, stats, alternatives comparison, and pricing section with monthly/yearly toggle
+    files:
+      - src/app/(marketing)/page.tsx
+      - src/components/marketing-page/pricing.tsx
+      - src/components/marketing-page/hero.tsx
+      - src/components/marketing-page/features.tsx
+      - src/components/marketing-page/testimonials.tsx
+      - src/components/marketing-page/footer.tsx
+    entry_route: /
+    user_interactions:
+      - View hero section with app description
+      - Scroll through feature highlights and testimonials
+      - Scroll to pricing section (#pricing) to view plans
+      - Toggle between monthly and yearly pricing
+      - Click Start Now CTA button which navigates to /create (triggers Clerk auth if not signed in)
+      - Click Privacy Policy and Terms of Service links in footer
+    api_calls: []
+    auth_required: false
+  - name: Authentication via Clerk
+    description: User authentication handled entirely by Clerk with modal/redirect UI. No custom login page exists. Accessing any protected route triggers Clerk sign-in.
+    files:
+      - src/app/layout.tsx
+      - src/middleware.ts
+      - src/app/api/webhooks/clerk/route.ts
+    entry_route: /create
+    user_interactions:
+      - Access any protected route to trigger Clerk sign-in modal
+      - Sign up with email or OAuth providers
+      - Sign in with existing credentials
+      - Clerk webhook syncs user data to Supabase on create/update/delete
+    api_calls:
+      - method: POST
+        endpoint: /api/webhooks/clerk
+    auth_required: false
+  - name: Multi-Platform Post Creation
+    description: Create text, image, or video posts for multiple social platforms from a unified interface with per-platform customization
+    files:
+      - src/app/(protected)/create/page.tsx
+      - src/app/(protected)/create/text/page.tsx
+      - src/app/(protected)/create/image/page.tsx
+      - src/app/(protected)/create/video/page.tsx
+      - src/components/core/create/SocialPostForm.tsx
+      - src/components/core/create/upload/ImageUploadArea.tsx
+      - src/components/core/create/upload/VideoUploadArea.tsx
+    entry_route: /create
+    user_interactions:
+      - Navigate to /create and select post type (Text, Image, or Video)
+      - Select one or more connected social accounts
+      - Upload media file (image or video) if applicable
+      - Write post description with 3000 character limit
+      - Customize content per platform (title, description, alt text)
+      - Set platform-specific options (TikTok privacy, Pinterest board, LinkedIn visibility)
+      - Choose Post Now or Schedule for Later
+      - If scheduling, pick date (min tomorrow) and time
+      - See success toast notification on completion
+    api_calls:
+      - method: POST
+        endpoint: /api/storage/generate-upload-url
+      - method: POST
+        endpoint: /api/social/linkedin/post
+      - method: POST
+        endpoint: /api/social/tiktok/post
+      - method: POST
+        endpoint: /api/social/pinterest/post
+      - method: POST
+        endpoint: /api/social/instagram/post
+    auth_required: true
+  - name: Social Account Connections
+    description: Connect and manage social media accounts via OAuth with plan-based account limits
+    files:
+      - src/app/(protected)/connections/page.tsx
+      - src/components/core/accounts/ConnectionCard.tsx
+      - src/app/api/social/linkedin/initiate/route.ts
+      - src/app/api/social/linkedin/connect/route.ts
+      - src/app/api/social/tiktok/initiate/route.ts
+      - src/app/api/social/tiktok/connect/route.ts
+      - src/app/api/social/pinterest/initiate/route.ts
+      - src/app/api/social/pinterest/connect/route.ts
+      - src/app/api/social/instagram/initiate/route.ts
+      - src/app/api/social/instagram/connect/route.ts
+    entry_route: /connections
+    user_interactions:
+      - Navigate to /connections
+      - View connected accounts per platform with count vs plan limit
+      - Click Connect button for a platform to initiate OAuth flow
+      - Authorize app in platform OAuth popup
+      - See new account appear after successful connection
+      - Click account avatar badge to disconnect with confirmation dialog
+      - See ConnectionLimitModal if account limit reached with upgrade CTA
+    api_calls:
+      - method: POST
+        endpoint: /api/social/linkedin/initiate
+      - method: GET
+        endpoint: /api/social/linkedin/connect
+      - method: POST
+        endpoint: /api/social/tiktok/initiate
+      - method: GET
+        endpoint: /api/social/tiktok/connect
+      - method: POST
+        endpoint: /api/social/pinterest/initiate
+      - method: GET
+        endpoint: /api/social/pinterest/connect
+      - method: POST
+        endpoint: /api/social/instagram/initiate
+      - method: GET
+        endpoint: /api/social/instagram/connect
+    auth_required: true
+  - name: Scheduled Post Management
+    description: View, reschedule, cancel, resume, and delete scheduled posts grouped by batch
+    files:
+      - src/app/(protected)/scheduled/page.tsx
+      - src/components/core/scheduled/ScheduledBatchCard.tsx
+      - src/actions/server/scheduleActions/getScheduledPosts.ts
+      - src/actions/server/scheduleActions/updateScheduledPost.ts
+      - src/actions/server/scheduleActions/deleteScheduledPost.ts
+      - src/app/api/cron/process-scheduled-posts/route.ts
+    entry_route: /scheduled
+    user_interactions:
+      - Navigate to /scheduled to view all scheduled post batches
+      - See batches grouped by date with status badges and platform icons
+      - Click reschedule to pick new date and time
+      - Click cancel to mark batch as cancelled
+      - Click resume to reactivate a cancelled batch
+      - Click delete with confirmation dialog to permanently remove
+    api_calls:
+      - method: POST
+        endpoint: /api/cron/process-scheduled-posts
+    auth_required: true
+  - name: Posted Content History
+    description: View published content history grouped by batch with per-platform status and external post links
+    files:
+      - src/app/(protected)/posted/page.tsx
+      - src/components/core/posted/PostedBatchCard.tsx
+      - src/actions/server/contentHistoryActions/getContentHistory.ts
+    entry_route: /posted
+    user_interactions:
+      - Navigate to /posted to view all published content
+      - See batches grouped by date with platform avatars
+      - Click a batch to view per-platform post details
+      - See post status per platform (Posted, Failed, In Progress)
+      - Click View post link to open published post on the platform
+    api_calls: []
+    auth_required: true
+  - name: Stripe Subscription Billing
+    description: Subscription management with 3 tiers (Starter, Creator, Pro), Stripe Checkout, and Customer Portal
+    files:
+      - src/components/marketing-page/pricing.tsx
+      - src/actions/server/stripe/checkOutSession.ts
+      - src/actions/server/stripe/checkUserSubscription.ts
+      - src/actions/server/stripe/createCustomerPortal.ts
+      - src/app/api/webhooks/stripe/route.ts
+      - src/lib/stripe.ts
+    entry_route: /
+    user_interactions:
+      - View pricing plans on landing page (#pricing section)
+      - Toggle between monthly and yearly billing
+      - Click plan button to start Stripe Checkout (authenticates first if needed)
+      - Complete payment on Stripe hosted checkout page
+      - Redirect to /payment/success with confetti animation
+      - Access billing via sidebar user dropdown to open Stripe Customer Portal
+    api_calls:
+      - method: POST
+        endpoint: /api/webhooks/stripe
+    auth_required: true
+  - name: User Profile Settings
+    description: Clerk-powered user profile management for account settings, password changes, and connected OAuth accounts
+    files:
+      - src/app/(protected)/userProfile/[[...rest]]/page.tsx
+    entry_route: /userProfile
+    user_interactions:
+      - Navigate to /userProfile from sidebar
+      - View and edit profile information
+      - Change password or email
+      - Manage connected OAuth providers
+    api_calls: []
+    auth_required: true
+  - name: Sidebar Navigation
+    description: Main app navigation sidebar with links to all protected routes and user menu with billing access
+    files:
+      - src/components/core/sidebar/app-sidebar.tsx
+      - src/components/core/sidebar/nav-main.tsx
+    entry_route: /create
+    user_interactions:
+      - Click Create link to navigate to /create
+      - Click Connections link to navigate to /connections
+      - Click Scheduled link to navigate to /scheduled
+      - Click Posted link to navigate to /posted
+      - Click Studio link to navigate to /studio
+      - Click user avatar to open dropdown menu
+      - Click Billing in dropdown to open Stripe Customer Portal
+      - Click Account in dropdown to navigate to /userProfile
+    api_calls: []
+    auth_required: true
+known_limitations:
+  - issue: Instagram connection UI is commented out but backend OAuth and posting are fully implemented
+    location: src/app/(protected)/connections/page.tsx
+    impact: Users cannot connect Instagram accounts through the UI
+  - issue: Studio analytics page shows Coming Soon placeholder with no functionality
+    location: src/app/(protected)/studio/page.tsx
+    impact: No analytics data is displayed to users
+  - issue: There is no /login route - authentication is handled by Clerk modal/redirect on protected route access
+    location: src/middleware.ts
+    impact: Tests should not navigate to /login directly; instead access a protected route to trigger auth
+  - issue: Pricing is not a separate page but a section on the landing page at #pricing
+    location: src/app/(marketing)/page.tsx
+    impact: Tests should scroll to #pricing on the landing page instead of navigating to /pricing
+  - issue: After login users land on /create not /dashboard
+    location: src/middleware.ts
+    impact: Tests should expect /create as the post-auth landing page
+  - issue: Twitter/X and Facebook have stub data but are not fully implemented
+    location: src/lib/api/
+    impact: These platforms are not functional for posting or connecting
+  - issue: Published posts cannot be edited, only cancelled or deleted
+    location: src/app/(protected)/scheduled/page.tsx
+    impact: No edit functionality exists for published content

@@ -1,0 +1,1681 @@
+[
+  {
+    "id": "TC001",
+    "title": "Landing page loads and key marketing sections are visible",
+    "description": "Verifies the public landing page renders the hero content and users can reach features/testimonials sections by scrolling.",
+    "category": "Landing Page & Marketing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Hero section\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Sharetopus\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Features\" section"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Feature highlights section\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Testimonials\" section"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Testimonials section\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC002",
+    "title": "Pricing section is reachable and displays plan information",
+    "description": "Verifies users can scroll to the pricing section and see available plans and pricing UI.",
+    "category": "Landing Page & Marketing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Pricing\" section"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Pricing section\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Monthly/Yearly toggle\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Plan card\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Plan call-to-action button\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC003",
+    "title": "Toggle between monthly and yearly pricing updates the pricing view",
+    "description": "Verifies the pricing toggle can switch between monthly and yearly modes and the UI reflects the selected option.",
+    "category": "Landing Page & Marketing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Pricing\" section"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Monthly option\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Yearly\" in the pricing toggle"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Yearly option selected\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Monthly\" in the pricing toggle"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Monthly option selected\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC004",
+    "title": "Privacy Policy link navigates to the static Privacy Policy page",
+    "description": "Verifies the footer Privacy Policy link routes to /PrivacyPolicy and static content is visible.",
+    "category": "Landing Page & Marketing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Footer\" section"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Privacy Policy\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/PrivacyPolicy\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Privacy Policy\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Privacy Policy content\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC005",
+    "title": "Terms of Service link navigates to the static Terms of Service page",
+    "description": "Verifies the footer Terms of Service link routes to /tos and static content is visible.",
+    "category": "Landing Page & Marketing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to \"Footer\" section"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Terms of Service\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/tos\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Terms of Service\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Terms of Service content\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC006",
+    "title": "Successful sign-in returns user to /create and shows post type hub",
+    "description": "Verifies that an existing user can sign in via Clerk and is redirected back to /create with protected content visible.",
+    "category": "Authentication via Clerk",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_USER}}\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_PASSWORD}}\" into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Sign in\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Text\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Image\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Video\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC007",
+    "title": "Invalid password shows Clerk authentication error",
+    "description": "Verifies that Clerk displays an error when the user attempts to sign in with an incorrect password.",
+    "category": "Authentication via Clerk",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Type \"fake.user@example.com\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Type \"WrongPassword123!\" into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Sign in\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"couldn't\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"password\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC008",
+    "title": "Authenticated user can access another protected route (/scheduled)",
+    "description": "Verifies that after signing in, the user can access a different protected route and see its content.",
+    "category": "Authentication via Clerk",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_USER}}\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_PASSWORD}}\" into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Sign in\""
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/scheduled\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Scheduled\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC009",
+    "title": "Authenticated user can access /posted history page",
+    "description": "Verifies that after signing in, the user can access the published history page without being prompted to sign in again.",
+    "category": "Authentication via Clerk",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_USER}}\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_PASSWORD}}\" into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Sign in\""
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Posted\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC010",
+    "title": "Direct access to a deeper protected page (/create/text) is allowed after sign-in",
+    "description": "Verifies that a user can sign in and then view the protected LinkedIn text post creation form.",
+    "category": "Authentication via Clerk",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create/text"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_USER}}\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Type \"{{LOGIN_PASSWORD}}\" into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Sign in\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/text\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"LinkedIn\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC011",
+    "title": "Text post: Post Now to LinkedIn shows success toast",
+    "description": "Verifies a user can create and immediately post a LinkedIn text post and sees a success confirmation.",
+    "category": "Multi-Platform Post Creation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Text\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Text\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/text\""
+      },
+      {
+        "type": "action",
+        "description": "Select one connected LinkedIn account"
+      },
+      {
+        "type": "action",
+        "description": "Type \"E2E test post - text only\" into the post description field"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Post Now\" option"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Post\" button"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"success\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC012",
+    "title": "Text post: Enforce 3000 character limit in description",
+    "description": "Verifies the text post description enforces the 3000 character limit and prevents overly long content.",
+    "category": "Multi-Platform Post Creation",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Text\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/text\""
+      },
+      {
+        "type": "action",
+        "description": "Select one connected LinkedIn account"
+      },
+      {
+        "type": "action",
+        "description": "Type a post description longer than 3000 characters into the post description field"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"3000\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"character\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"Post\" button is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC013",
+    "title": "Text post: Cannot submit without selecting an account",
+    "description": "Verifies the form blocks submission and shows validation when no connected account is selected.",
+    "category": "Multi-Platform Post Creation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Text\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/text\""
+      },
+      {
+        "type": "action",
+        "description": "Type \"Attempt without account selection\" into the post description field"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Post Now\" option"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Post\" button"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"at least one\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"account\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC014",
+    "title": "Create hub: Post type cards route correctly to each creation page",
+    "description": "Verifies the create hub cards navigate to the correct text, image, and video creation routes.",
+    "category": "Multi-Platform Post Creation",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Text\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Text\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/text\""
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Image\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/image\""
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Video\" post card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create/video\""
+      }
+    ]
+  },
+  {
+    "id": "TC015",
+    "title": "Connections page shows connected accounts and plan limit counters",
+    "description": "Verifies the Connections page loads and displays per-platform connected accounts with a count vs plan limit indicator.",
+    "category": "Social Account Connections",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/connections\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Connections\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"TikTok\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Pinterest\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"LinkedIn\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"connected\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC016",
+    "title": "Instagram connection UI is not available (disabled or missing)",
+    "description": "Verifies the Connections page does not allow initiating Instagram connection via UI due to the known disabled UI implementation.",
+    "category": "Social Account Connections",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Instagram\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Connect\" is not visible"
+      }
+    ]
+  },
+  {
+    "id": "TC017",
+    "title": "View Scheduled page shows grouped batches with visible status and platform indicators",
+    "description": "Verifies the Scheduled page loads and displays scheduled post batches grouped by date with visible status badges and platform icons.",
+    "category": "Scheduled Post Management",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/scheduled\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Scheduled\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a status badge on a batch card\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"platform icon(s) on a batch card\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC018",
+    "title": "Reschedule a batch to a valid future date/time updates the scheduled date shown in list",
+    "description": "Verifies a user can reschedule a batch to a future date/time (min tomorrow) and sees the updated date reflected on the Scheduled list.",
+    "category": "Scheduled Post Management",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Reschedule\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Reschedule\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Pick a new date that is at least tomorrow in the reschedule date picker"
+      },
+      {
+        "type": "action",
+        "description": "Pick a new time in the reschedule time control"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Confirm\" to save the new schedule"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Rescheduled\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC019",
+    "title": "Cancel a scheduled batch changes its status to cancelled",
+    "description": "Verifies cancelling a scheduled batch updates the batch status to a cancelled state in the UI.",
+    "category": "Scheduled Post Management",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Cancel\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Confirm\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Confirm\" to cancel the batch"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Cancelled\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC020",
+    "title": "Resume a cancelled batch changes its status back to scheduled",
+    "description": "Verifies resuming a cancelled batch returns it to a scheduled state in the UI.",
+    "category": "Scheduled Post Management",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a batch card with a cancelled status badge\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the cancelled batch card"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Resume\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Confirm\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Confirm\" to resume the batch"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Scheduled\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC021",
+    "title": "Delete a batch removes it from the Scheduled list after confirmation",
+    "description": "Verifies deleting a batch via confirmation dialog removes that batch from the list.",
+    "category": "Scheduled Post Management",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Delete\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Delete\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Confirm\" to permanently delete the batch"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"No scheduled posts\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC022",
+    "title": "Reschedule validation: selecting a past date shows a future-date error",
+    "description": "Verifies rescheduling to a past date is blocked and a validation message is shown indicating the date must be in the future (min tomorrow).",
+    "category": "Scheduled Post Management",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Reschedule\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Reschedule\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Pick a date in the past in the reschedule date picker"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Confirm\" to attempt to save the new schedule"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Date must be in the future\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC023",
+    "title": "Cancel action can be dismissed without changing batch status",
+    "description": "Verifies the user can open the cancel confirmation dialog and dismiss it without changing the batch status.",
+    "category": "Scheduled Post Management",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Cancel\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Confirm\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Cancel\" to dismiss the confirmation dialog"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled status badge on the same batch card\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC024",
+    "title": "Delete action can be dismissed without removing the batch",
+    "description": "Verifies the user can open the delete confirmation dialog and dismiss it without deleting the batch from the list.",
+    "category": "Scheduled Post Management",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a scheduled post batch card\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first scheduled post batch card in the list"
+      },
+      {
+        "type": "action",
+        "description": "Click \"Delete\" in the batch actions menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Delete\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Press Escape"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch card list\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the same batch card is still visible in the list\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC025",
+    "title": "Open Posted Content History and view batch details",
+    "description": "Verifies a user can access Posted Content History, open a batch, and see per-platform status details.",
+    "category": "Posted Content History",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Posted\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"View post\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the first visible posted batch card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Status\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Posted\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Failed\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC026",
+    "title": "Verify posted batches are grouped by date on the Posted page",
+    "description": "Verifies the Posted page shows content history grouped into date sections with batches underneath.",
+    "category": "Posted Content History",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Posted\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a date group heading above a list of batch cards\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a batch card under the first visible date group\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC027",
+    "title": "Open a batch and verify per-platform entries are shown",
+    "description": "Verifies that opening a batch shows per-platform post details and that multiple platform rows can be inspected.",
+    "category": "Posted Content History",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "action",
+        "description": "Click on a posted batch card that shows multiple platform avatars"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"LinkedIn\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"TikTok\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Pinterest\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC028",
+    "title": "View post link is present within batch details",
+    "description": "Verifies that a per-platform 'View post' link is visible inside batch details for posted items.",
+    "category": "Posted Content History",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "action",
+        "description": "Click on the first visible posted batch card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"View post\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC029",
+    "title": "Failed status batch shows failure details in batch dialog",
+    "description": "Verifies that when a batch contains a Failed platform status, the error message/failure details are visible in the batch details dialog.",
+    "category": "Posted Content History",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Failed\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on a posted batch card that shows a platform status of \"Failed\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"error\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"a failure details or error message section\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC030",
+    "title": "Close batch details dialog and remain on Posted page",
+    "description": "Verifies the batch details dialog can be closed and the user remains on /posted with the batch list visible.",
+    "category": "Posted Content History",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "action",
+        "description": "Click on the first visible posted batch card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the dialog close button (X) in the batch details dialog"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is not visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      }
+    ]
+  },
+  {
+    "id": "TC031",
+    "title": "Close batch details dialog using Escape key",
+    "description": "Verifies the batch details dialog can be dismissed with the Escape key and the Posted page remains visible.",
+    "category": "Posted Content History",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "action",
+        "description": "Click on the first visible posted batch card"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Press Escape"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is not visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Posted\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC032",
+    "title": "In Progress status is displayed for partially processed batches (if present)",
+    "description": "Verifies that any batch/platform entry with 'In Progress' shows that status in the batch details view.",
+    "category": "Posted Content History",
+    "priority": "Low",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"In Progress\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on a posted batch card that shows a platform status of \"In Progress\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"the batch details dialog\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"In Progress\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC033",
+    "title": "View pricing section and toggle monthly/yearly prices",
+    "description": "Verifies the landing page pricing section is reachable and the billing interval toggle updates visible plan pricing.",
+    "category": "Stripe Subscription Billing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "action",
+        "description": "Scroll to the pricing section"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Starter\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Creator\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Pro\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Yearly\" billing toggle"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"year\" is visible in the pricing section"
+      },
+      {
+        "type": "action",
+        "description": "Click on the \"Monthly\" billing toggle"
+      }
+    ]
+  },
+  {
+    "id": "TC034",
+    "title": "Payment success page shows confetti messaging and Continue navigates to /create",
+    "description": "Verifies the post-checkout success page content is visible and the Continue action routes back to the create hub.",
+    "category": "Stripe Subscription Billing",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /payment/success"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/payment/success\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Success\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Continue\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Continue\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create\""
+      }
+    ]
+  },
+  {
+    "id": "TC035",
+    "title": "Access User Profile and view Clerk account settings UI",
+    "description": "Verifies an authenticated user can open the User Profile page and see the Clerk UserProfile settings component.",
+    "category": "User Profile Settings",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/userProfile\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Profile\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Account\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Password\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC036",
+    "title": "Update profile name and save changes",
+    "description": "Verifies the user can edit their profile name in the Clerk profile settings and save successfully.",
+    "category": "User Profile Settings",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/userProfile\""
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Profile\""
+      },
+      {
+        "type": "action",
+        "description": "Fill \"Updated Test Name\" into the name field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Save\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Saved\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC037",
+    "title": "Attempt to save profile with an invalid email format",
+    "description": "Verifies the Clerk UI shows a validation message when an invalid email format is entered.",
+    "category": "User Profile Settings",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Profile\""
+      },
+      {
+        "type": "action",
+        "description": "Fill \"not-an-email\" into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Save\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"email\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"invalid\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC038",
+    "title": "Open password section and verify password change form is present",
+    "description": "Verifies the user can navigate to the password section and see the password change UI controls.",
+    "category": "User Profile Settings",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/userProfile\""
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Password\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Current password\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"New password\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC039",
+    "title": "Change password with incorrect current password shows error",
+    "description": "Verifies an error message is shown when the user enters an incorrect current password during password change.",
+    "category": "User Profile Settings",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Password\""
+      },
+      {
+        "type": "action",
+        "description": "Fill \"WrongCurrentPassword123!\" into the current password field"
+      },
+      {
+        "type": "action",
+        "description": "Fill \"NewPassword123!\" into the new password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Save\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"incorrect\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC040",
+    "title": "Password change with mismatched confirmation (if confirmation field exists)",
+    "description": "Verifies the Clerk UI blocks submission when new password and confirmation do not match (when a confirmation field is present).",
+    "category": "User Profile Settings",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Password\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Confirm password\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Fill \"NewPassword123!\" into the new password field"
+      },
+      {
+        "type": "action",
+        "description": "Fill \"DifferentPassword123!\" into the confirm password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Save\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"match\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC041",
+    "title": "Password change blocked when new password is too weak",
+    "description": "Verifies the Clerk UI shows password strength/requirement validation for a weak new password.",
+    "category": "User Profile Settings",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /userProfile"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Password\""
+      },
+      {
+        "type": "action",
+        "description": "Fill \"123\" into the new password field"
+      },
+      {
+        "type": "action",
+        "description": "Click on \"Save\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"password\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"must\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC042",
+    "title": "Navigate across main sidebar links and confirm Studio shows Coming Soon",
+    "description": "Verifies the persistent sidebar can navigate between Connections, Scheduled, Posted, and Studio, and that Studio displays the Coming Soon placeholder.",
+    "category": "Sidebar Navigation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click Connections link to navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/connections\""
+      },
+      {
+        "type": "action",
+        "description": "Click Scheduled link to navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/scheduled\""
+      },
+      {
+        "type": "action",
+        "description": "Click Posted link to navigate to /posted"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/posted\""
+      }
+    ]
+  },
+  {
+    "id": "TC043",
+    "title": "Open Studio from sidebar and verify Coming Soon placeholder is visible",
+    "description": "Verifies Studio is reachable from the sidebar and the page indicates it is not yet implemented.",
+    "category": "Sidebar Navigation",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click Studio link to navigate to /studio"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/studio\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Coming Soon\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC044",
+    "title": "Use sidebar Create link to return to /create from another protected page",
+    "description": "Verifies the Create link in the sidebar returns the user to the Create hub from another protected page.",
+    "category": "Sidebar Navigation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/connections\""
+      },
+      {
+        "type": "action",
+        "description": "Click Create link to navigate to /create"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/create\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Text\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC045",
+    "title": "Open user dropdown and navigate to Account (User Profile)",
+    "description": "Verifies the user avatar dropdown opens and Account navigates to the user profile page.",
+    "category": "Sidebar Navigation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "action",
+        "description": "Click user avatar to open dropdown menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Account\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click Account in dropdown to navigate to /userProfile"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify URL contains \"/userProfile\""
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"user profile\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC046",
+    "title": "User dropdown can be opened from multiple pages (consistency check)",
+    "description": "Verifies the user avatar dropdown is accessible on different protected pages and shows expected actions.",
+    "category": "Sidebar Navigation",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /scheduled"
+      },
+      {
+        "type": "action",
+        "description": "Click user avatar to open dropdown menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Billing\" is visible"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text \"Account\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click user avatar to open dropdown menu"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC047",
+    "title": "Sidebar remains visible after navigation to each protected destination",
+    "description": "Verifies that the sidebar persists and remains visible after navigating to Connections, Scheduled, Posted, and back to Create.",
+    "category": "Sidebar Navigation",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click Connections link to navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click Scheduled link to navigate to /scheduled"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      },
+      {
+        "type": "action",
+        "description": "Click Create link to navigate to /create"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify element \"sidebar\" is visible"
+      }
+    ]
+  }
+]

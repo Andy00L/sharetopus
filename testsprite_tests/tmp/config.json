@@ -1,0 +1,20 @@
+{
+  "status": "commited",
+  "type": "frontend",
+  "scope": "codebase",
+  "localEndpoint": "http://localhost:3000",
+  "loginUser": "test.ttesto@gmail.com",
+  "loginPassword": "Lamala56@",
+  "executionArgs": {
+    "projectName": "sharetopus",
+    "projectPath": "C:/Users/0ther/CODE/personal/sharetopus/sharetopus",
+    "testIds": [],
+    "additionalInstruction": "CRITICAL CONTEXT FOR TEST GENERATION:\n- This app uses Clerk for authentication. There is NO /login route. Auth is handled by Clerk's built-in UI (modal/redirect triggers when accessing any protected route).\n- There is NO /pricing route. Pricing is a section on the landing page (scroll to #pricing).\n- There is NO /dashboard route. After login, users land on /create.\n- Protected routes: /create, /create/text, /create/image, /create/video, /connections, /scheduled, /posted, /studio, /userProfile\n- Public routes: / (landing), /PrivacyPolicy (capital P), /tos\n- The test account has an active Stripe subscription, 3 connected Pinterest accounts, 3 scheduled posts, and 2+ posted items.\n- For auth tests: accessing any protected route like /create will trigger Clerk sign-in. Do NOT navigate to /login.\n- For pricing tests: navigate to / and scroll to #pricing section. Do NOT navigate to /pricing.\n- After successful login, expect to land on /create, NOT /dashboard.\n- The /connections page now requires authentication via Clerk middleware. Unauthenticated users will be redirected to sign-in.\n- The Reschedule button is now in the dialog footer (not header) and shows an inline reschedule form within the same dialog instead of opening a separate dialog.",
+    "serverMode": "development",
+    "envs": {
+      "API_KEY": "sk-user-rsl_FM0rMR-G7cDlfVI-rLm9VTpemI5UY6EpNqfXD-doGsaNh9hDKSud4E9phm_6t6wQhodZHqB53monJsh4gFKGHA69MVzj-zx1ywzu9QxbNS8HXuSkCwSJOLHop_lHyBw"
+    }
+  },
+  "serverPort": 55321,
+  "proxy": "http://298ed112-14cd-4b64-a8bf-8b4ff772c3f7:Tcxx3Fc1TwYRCfkV0mdk5hxYabulgVsV@tun.testsprite.com:8080"
+}
