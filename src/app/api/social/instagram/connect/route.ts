@@ -288,7 +288,7 @@ export async function GET(request: NextRequest) {
           follower_count: instagramProfile.data.followers_count,
           following_count: instagramProfile.data.followers_count,
 
-          is_availble: true,
+          is_available: true,
           access_token: tokenResponse.data.access_token,
           refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens
           token_expires_at: expiresAt,
@@ -334,7 +334,7 @@ export async function GET(request: NextRequest) {
           user_id: userId,
           platform: "instagram",
           account_identifier: instagramProfile.data.id,
-          is_availble: true,
+          is_available: true,
           username: instagramProfile.data.username,
           follower_count: instagramProfile.data.followers_count,
           following_count: instagramProfile.data.followers_count,
