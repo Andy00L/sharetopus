@@ -24,6 +24,8 @@ export default function PlatformContentDropdown({
       <div
         className="flex items-center gap-3 p-3 cursor-pointer hover:bg-accent/50"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        aria-label={`View scheduled content details for ${post.platform} post`}
       >
         <SocialAvatarWrapper
           src={post.social_accounts?.avatar_url}
@@ -33,7 +35,13 @@ export default function PlatformContentDropdown({
           size={48}
         />
         <div className="flex-1">
-          <p className="font-medium">{post.social_accounts?.display_name}</p>
+          <p className="font-medium">
+            {post.social_accounts?.display_name || "Connected account"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Platform:{" "}
+            <span className="font-medium capitalize">{post.platform}</span>
+          </p>
           <p className="text-xs text-muted-foreground">
             Status: <span className="font-medium">{post.status}</span>
           </p>
@@ -49,6 +57,10 @@ export default function PlatformContentDropdown({
       {/* Content dropdown - visible when expanded */}
       {expanded && (
         <div className="p-3 pt-0 border-t bg-muted/30">
+          <p className="text-xs font-medium text-muted-foreground mb-1">
+            Platform content details
+          </p>
+
           {post.post_title && (
             <div className="mt-2">
               <p className="text-sm font-medium">Title:</p>
@@ -63,6 +75,13 @@ export default function PlatformContentDropdown({
                 {truncateText(post.post_description, 120)}{" "}
               </p>
             </div>
+          )}
+
+          {!post.post_title && !post.post_description && (
+            <p className="text-xs text-muted-foreground mt-2">
+              No additional content details are available for this scheduled
+              post.
+            </p>
           )}
         </div>
       )}

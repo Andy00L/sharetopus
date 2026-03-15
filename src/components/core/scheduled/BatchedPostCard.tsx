@@ -171,16 +171,28 @@ export default function BatchedPostCard({
       setLoading(false);
     }
   };
-  // Add this function to the component
-  const handleRescheduleSubmit = async () => {
-    if (!userId) return;
 
-    const postIds = posts.map((post) => post.id);
+  // Reschedule handler
+  const handleRescheduleSubmit = async () => {
+    if (!userId) {
+      toast.error("You need to be signed in to reschedule posts.");
+      return;
+    }
+
+    if (!rescheduleDate || !rescheduleTime) {
+      toast.error("Please select both a date and a time.");
+      return;
+    }
+
     const scheduledDateTime = new Date(`${rescheduleDate}T${rescheduleTime}`);
 
-    setLoading(true);
+    if (isNaN(scheduledDateTime.getTime())) {
+      toast.error("The selected date/time is invalid. Please try again.");
+      return;
+    }
 
-    try {
+    const doReschedule = async () => {
+      const postIds = posts.map((post) => post.id);
       const result = await updateScheduledTimeBatch(
         postIds,
         scheduledDateTime,
@@ -188,24 +200,26 @@ export default function BatchedPostCard({
       );
 
       if (result.success) {
-        toast.success(result.message);
+        // Close dialogs on success; runAction will show toast + refresh.
         setRescheduleOpen(false);
         setIsOpen(false);
         setCancelOpen(false);
         setDeleteOpen(false);
 
-        setTimeout(() => {
-          router.refresh();
-        }, 300);
-        return;
-      } else {
-        toast.error(result.message);
+        return {
+          success: true,
+          message: result.message,
+        };
       }
-    } catch {
-      toast.error("Failed to reschedule posts");
-    } finally {
-      setLoading(false);
-    }
+
+      return {
+        success: false,
+        message: result.message,
+        resetIn: result.resetIn,
+      };
+    };
+
+    await runAction(doReschedule);
   };
   // Cancel all posts in batch
   const cancelAllPosts = async () => {
