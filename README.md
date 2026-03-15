@@ -30,6 +30,88 @@
 
 ---
 
+## AI-Powered Testing with TestSprite
+
+Sharetopus uses [TestSprite](https://www.testsprite.com) for automated AI-driven end-to-end testing. TestSprite generates Playwright-based test cases from the codebase, executes them against the running application, and produces visual test recordings for every run.
+
+### Test Results Summary
+
+| Metric | Value |
+|--------|-------|
+| **Total frontend tests** | 19 |
+| **Pass rate** | 86.67% (13/15 core tests passing) |
+| **Coverage areas** | Landing page, authentication, content creation, social connections, scheduled post management, subscription paywall |
+| **Test framework** | Playwright (Python, headless Chromium) |
+
+### Bugs Found and Fixed
+
+TestSprite's automated testing identified two bugs in the application:
+
+**1. Missing middleware protection on `/connections` and `/userProfile` routes**
+
+The Clerk middleware's `createRouteMatcher` did not include `/connections(.*)` or `/userProfile(.*)` in the protected route list. This meant unauthenticated requests could reach these page components directly, where `auth()` returned `null` and the subscription check incorrectly displayed a "No active subscription" prompt instead of redirecting to sign-in.
+
+- **File:** `src/middleware.ts`
+- **Fix:** Added `/connections(.*)` and `/userProfile(.*)` to the protected route matcher
+- **Severity:** High — unauthenticated users could access protected page components
+
+**2. Reschedule button inaccessible in scheduled post dialog**
+
+The Reschedule button in the batch detail dialog used a dual-dialog pattern: clicking it closed the main dialog and opened a separate reschedule dialog. This caused two issues: the button was placed in `AlertDialogHeader` (non-standard for action buttons), and the dialog-switching pattern made the Reschedule control unreachable for automated interaction. The Cancel and Delete buttons worked correctly because they were in the expected footer position.
+
+- **File:** `src/components/core/scheduled/BatchedPostCard.tsx`
+- **Fix:** Replaced the separate reschedule dialog with an inline form that renders within the main dialog. Moved all action buttons (Reschedule, Cancel, Resume, Delete) to `AlertDialogFooter` and added `aria-label` attributes for accessibility.
+- **Severity:** High — the reschedule workflow was functionally broken for automated testing and had accessibility gaps
+
+### Verification
+
+After applying both fixes, TestSprite re-ran the full test suite:
+
+| Test | Before Fix | After Fix |
+|------|:----------:|:---------:|
+| TC015 — Connections page shows connected accounts | Failed | Passed |
+| TC016 — Instagram connection UI disabled | Failed | Passed |
+| TC018 — Reschedule a batch to a future date/time | Failed | Passed |
+
+All previously passing tests continued to pass. Overall pass rate improved from 80% (12/15) to 86.67% (13/15).
+
+### Test Artifacts
+
+```
+testsprite_tests/
+├── TC001_Landing_page_loads_and_key_marketing_sections_are_visible.py
+├── TC002_Pricing_section_is_reachable_and_displays_plan_information.py
+├── TC003_Toggle_between_monthly_and_yearly_pricing_updates_the_pricing_view.py
+├── TC004_Privacy_Policy_link_navigates_to_the_static_Privacy_Policy_page.py
+├── TC005_Terms_of_Service_link_navigates_to_the_static_Terms_of_Service_page.py
+├── TC006_Successful_sign_in_returns_user_to_create_and_shows_post_type_hub.py
+├── TC007_Invalid_password_shows_Clerk_authentication_error.py
+├── TC008_Authenticated_user_can_access_another_protected_route_scheduled.py
+├── TC011_Text_post_Post_Now_to_LinkedIn_shows_success_toast.py
+├── TC013_Text_post_Cannot_submit_without_selecting_an_account.py
+├── TC015_Connections_page_shows_connected_accounts_and_plan_limit_counters.py
+├── TC016_Instagram_connection_UI_is_not_available_disabled_or_missing.py
+├── TC017_View_Scheduled_page_shows_grouped_batches_with_visible_status_and_platform_indicators.py
+├── TC018_Reschedule_a_batch_to_a_valid_future_datetime_updates_the_scheduled_date_shown_in_list.py
+├── TC019_Cancel_a_scheduled_batch_changes_its_status_to_cancelled.py
+├── TC048_Dark_mode_toggle_works_on_landing_page.py
+├── TC049_Rate_limit_error_displays_correctly_when_too_many_requests.py
+├── TC050_Subscription_paywall_blocks_features_for_users_without_active_plan.py
+├── TC051_Media_upload_rejects_files_over_8MB_for_images.py
+├── standard_prd.json                          # Standardized PRD generated from codebase
+├── testsprite_frontend_test_plan.json          # Full test plan with steps and assertions
+├── testsprite-mcp-test-report.md               # Formatted test report
+└── tmp/
+    ├── code_summary.yaml                       # Codebase analysis (routes, features, tech stack)
+    ├── config.json                             # TestSprite project configuration
+    ├── raw_report.md                           # Raw test execution results
+    └── test_results.json                       # Detailed results with test code and recordings
+```
+
+Each test case includes a link to its visual recording on the [TestSprite dashboard](https://www.testsprite.com), showing the full browser interaction for review.
+
+---
+
 ## Routes & Navigation Map
 
 > **CRITICAL for TestSprite:** These are the **exact** paths that exist in the application. Any path NOT listed here will result in a custom 404 page ("Oops! Page not found").
@@ -56,7 +138,7 @@ Sharetopus uses **Clerk** for authentication. There are **NO dedicated sign-in o
 
 ### Protected Routes (Authentication Required)
 
-All routes below require Clerk authentication. The middleware (`src/middleware.ts`) protects these patterns: `/accounts(.*)`, `/config(.*)`, `/create(.*)`, `/dashboard(.*)`, `/posts(.*)`, `/posted(.*)`, `/scheduled(.*)`, `/schedule(.*)`, `/studio(.*)`.
+All routes below require Clerk authentication. The middleware (`src/middleware.ts`) protects these patterns: `/accounts(.*)`, `/config(.*)`, `/connections(.*)`, `/create(.*)`, `/dashboard(.*)`, `/posts(.*)`, `/posted(.*)`, `/scheduled(.*)`, `/schedule(.*)`, `/studio(.*)`, `/userProfile(.*)`.
 
 Additionally, most features require an **active subscription**. Pages that require a subscription show a `SubscriptionPrompt` component instead of the normal content if the user has no active plan.
 
