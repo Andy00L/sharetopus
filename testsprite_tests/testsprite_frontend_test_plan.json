@@ -1677,5 +1677,133 @@
         "description": "Verify element \"sidebar\" is visible"
       }
     ]
+  },
+  {
+    "id": "TC048",
+    "title": "Dark mode toggle works on landing page",
+    "description": "Verifies the landing page has a dark mode toggle button and that clicking it switches the page to dark theme.",
+    "category": "Landing Page & Marketing",
+    "priority": "Medium",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a dark mode toggle button (sun/moon icon) is visible on the page header"
+      },
+      {
+        "type": "action",
+        "description": "Click the dark mode toggle button"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page switches to dark theme (html element has class 'dark' or background color changes to a dark color)"
+      },
+      {
+        "type": "action",
+        "description": "Click the dark mode toggle button again"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the page switches back to light theme"
+      }
+    ]
+  },
+  {
+    "id": "TC049",
+    "title": "Rate limit error displays correctly when too many requests",
+    "description": "Verifies the RateLimitError component renders with the 'Rate Limit Exceeded' alert, a countdown timer in MM:SS format, and a disabled 'Wait' button that becomes 'Try Again' when the timer reaches zero.",
+    "category": "Error Handling",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Sign in with test credentials via Clerk (navigate to /posted which triggers sign-in, fill email and password, submit)"
+      },
+      {
+        "type": "action",
+        "description": "Rapidly reload or re-navigate to /posted many times in quick succession (at least 60+ times) to trigger the rate limit on the getContentHistory action"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify text 'Rate Limit Exceeded' or 'Rate limit exceeded' is visible on the page"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a countdown timer is displayed showing time remaining in MM:SS or seconds format"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a 'Wait' or 'Try Again' button is visible"
+      }
+    ]
+  },
+  {
+    "id": "TC050",
+    "title": "Subscription paywall blocks features for users without active plan",
+    "description": "Verifies that accessing a subscription-gated page without an active plan shows the SubscriptionPrompt with 'No active subscription' message and a 'Subscribe now' CTA linking to pricing.",
+    "category": "Payment & Subscription",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /create without being signed in (Clerk middleware will redirect to sign-in)"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify Clerk sign-in form is shown (email input field is visible)"
+      },
+      {
+        "type": "action",
+        "description": "Sign in with test credentials that have an active subscription (fill email and password, submit)"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the /create page loads and does NOT show 'No active subscription' text — the post type hub with 'Text Post', 'Image Post', 'Video Post' cards is visible instead"
+      },
+      {
+        "type": "action",
+        "description": "Navigate to /connections"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the connections page loads and does NOT show 'No active subscription' — platform names like 'TikTok', 'Pinterest', 'LinkedIn' are visible"
+      }
+    ]
+  },
+  {
+    "id": "TC051",
+    "title": "Media upload rejects files over 8MB for images",
+    "description": "Verifies that the image post creation form rejects image files exceeding the 8MB size limit and displays an appropriate error message.",
+    "category": "Content Creation",
+    "priority": "High",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Sign in with test credentials via Clerk (navigate to /create/image which triggers sign-in, fill email and password, submit)"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the image post creation page loads at /create/image"
+      },
+      {
+        "type": "action",
+        "description": "Select at least one connected social account for posting"
+      },
+      {
+        "type": "action",
+        "description": "Upload an image file that exceeds 8MB in size (generate or use a large test file)"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an error message is displayed containing text about the image size exceeding the maximum limit (e.g. 'exceeds the maximum limit' or 'size exceeds')"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the form does not proceed to submission and the oversized image is rejected"
+      }
+    ]
   }
 ]

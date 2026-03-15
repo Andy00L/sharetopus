@@ -8,13 +8,18 @@
   "executionArgs": {
     "projectName": "sharetopus",
     "projectPath": "C:/Users/0ther/CODE/personal/sharetopus/sharetopus",
-    "testIds": [],
-    "additionalInstruction": "CRITICAL CONTEXT FOR TEST GENERATION:\n- This app uses Clerk for authentication. There is NO /login route. Auth is handled by Clerk's built-in UI (modal/redirect triggers when accessing any protected route).\n- There is NO /pricing route. Pricing is a section on the landing page (scroll to #pricing).\n- There is NO /dashboard route. After login, users land on /create.\n- Protected routes: /create, /create/text, /create/image, /create/video, /connections, /scheduled, /posted, /studio, /userProfile\n- Public routes: / (landing), /PrivacyPolicy (capital P), /tos\n- The test account has an active Stripe subscription, 3 connected Pinterest accounts, 3 scheduled posts, and 2+ posted items.\n- For auth tests: accessing any protected route like /create will trigger Clerk sign-in. Do NOT navigate to /login.\n- For pricing tests: navigate to / and scroll to #pricing section. Do NOT navigate to /pricing.\n- After successful login, expect to land on /create, NOT /dashboard.\n- The /connections page now requires authentication via Clerk middleware. Unauthenticated users will be redirected to sign-in.\n- The Reschedule button is now in the dialog footer (not header) and shows an inline reschedule form within the same dialog instead of opening a separate dialog.",
+    "testIds": [
+      "TC048",
+      "TC049",
+      "TC050",
+      "TC051"
+    ],
+    "additionalInstruction": "CRITICAL CONTEXT FOR TEST GENERATION:\n- This app uses Clerk for authentication. There is NO /login route. Auth is handled by Clerk's built-in UI (modal/redirect triggers when accessing any protected route).\n- There is NO /pricing route. Pricing is a section on the landing page (scroll to #pricing).\n- There is NO /dashboard route. After login, users land on /create.\n- Protected routes require Clerk sign-in: /create, /create/text, /create/image, /create/video, /connections, /scheduled, /posted, /studio, /userProfile\n- Public routes: / (landing), /PrivacyPolicy (capital P), /tos\n- The test account has an active Stripe subscription, 3 connected Pinterest accounts, 3 scheduled posts, and 2+ posted items. No LinkedIn accounts connected.\n- TC048: The dark mode toggle (ModeToggle component) uses next-themes with a sun/moon icon button. On marketing pages (/ , /PrivacyPolicy, /tos), the theme is forced to light via forcedTheme prop. The toggle may or may not be visible on the landing page.\n- TC049: The RateLimitError component shows 'Rate Limit Exceeded' alert with a countdown timer in MM:SS format and a 'Wait' button. Rate limit for /posted (getContentHistory) is 60 requests per 60 seconds. Triggering it requires many rapid requests.\n- TC050: The SubscriptionPrompt shows 'No active subscription' card. The test account HAS an active subscription, so the paywall should NOT appear - verify the gated pages load normally.\n- TC051: Image upload limit is 8MB. Validation happens client-side in SocialPostForm checksBeforeSubmission(). Error message: 'Image size exceeds the maximum limit of XMB.'",
     "serverMode": "development",
     "envs": {
       "API_KEY": "sk-user-rsl_FM0rMR-G7cDlfVI-rLm9VTpemI5UY6EpNqfXD-doGsaNh9hDKSud4E9phm_6t6wQhodZHqB53monJsh4gFKGHA69MVzj-zx1ywzu9QxbNS8HXuSkCwSJOLHop_lHyBw"
     }
   },
-  "serverPort": 55321,
-  "proxy": "http://298ed112-14cd-4b64-a8bf-8b4ff772c3f7:Tcxx3Fc1TwYRCfkV0mdk5hxYabulgVsV@tun.testsprite.com:8080"
+  "serverPort": 63720,
+  "proxy": "http://c0de307a-6d99-420d-98f6-77e8ffeccabd:KvaPHsKTag5gIxbmRpUVETj06xMiD85J@tun.testsprite.com:8080"
 }
