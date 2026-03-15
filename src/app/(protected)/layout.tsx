@@ -1,12 +1,15 @@
 import { AppSidebar } from "@/components/sidebar/app-sidebar";
 import { SiteHeader } from "@/components/sidebar/Site-Header";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { ensureUserExists } from "@/actions/server/ensureUserExists";
 
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  await ensureUserExists();
+
   return (
     <SidebarProvider>
       <AppSidebar variant="inset" />

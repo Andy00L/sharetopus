@@ -152,6 +152,9 @@ const devPriceIdAccountLimits: Record<string, number> = {
   // Pro plan - Unlimited (use a very high number)
   price_1RKrCRCZd1WOWtsDRzjqHluX: 999, // Monthly
   price_1RKrGyCZd1WOWtsD2avrk52o: 999, // Yearly
+
+  // Temporary dev test plan - 5 accounts
+  price_1TBCLaCyG8V2WH2Ff8AhK1zC: 5,
 };
 
 const prodPriceIdAccountLimits: Record<string, number> = {
@@ -196,6 +199,9 @@ const DEV_PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
   // Dev Pro plan - 45GB storage
   price_1RKrCRCZd1WOWtsDRzjqHluX: 45 * 1024 * 1024 * 1024,
   price_1RKrGyCZd1WOWtsD2avrk52o: 45 * 1024 * 1024 * 1024,
+
+  // Temporary dev test plan - 5GB storage
+  price_1TBCLaCyG8V2WH2Ff8AhK1zC: 5 * 1024 * 1024 * 1024,
 };
 
 // Export based on environment

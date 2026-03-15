@@ -1,5 +1,5 @@
 // app/api/webhooks/clerk/route.ts
-import { supabase } from "@/actions/api/supabase";
+import { adminSupabase as supabase } from "@/actions/api/adminSupabase";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
 import stripe from "@/lib/stripe";
 import { WebhookEvent } from "@clerk/nextjs/server";
