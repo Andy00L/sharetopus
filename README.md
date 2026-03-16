@@ -1,4 +1,4 @@
-# 🐙 Sharetopus — Post Once, Share Everywhere
+# 🐙 Sharetopus: Post Once, Share Everywhere
 
 ![Next.js](https://img.shields.io/badge/Next.js-16.1.6-black?logo=next.js)
 ![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react)
@@ -22,11 +22,9 @@
 
 **Production URL:** [https://sharetopus.com](https://sharetopus.com)
 
-![Landing Page Screenshot](./public/screenshots/landing.png)
-![Dashboard Screenshot](./public/screenshots/dashboard.png)
-![Create Post Screenshot](./public/screenshots/create-post.png)
-
-> Screenshots are placeholders — replace with actual captures.
+![Landing Page Screenshot](./public/landing.png)
+![Dashboard Screenshot](./public/dashboard.png)
+![Create Post Screenshot](./public/create-post.png)
 
 ---
 
@@ -53,7 +51,7 @@ The Clerk middleware's `createRouteMatcher` did not include `/connections(.*)` o
 
 - **File:** `src/middleware.ts`
 - **Fix:** Added `/connections(.*)` and `/userProfile(.*)` to the protected route matcher
-- **Severity:** High — unauthenticated users could access protected page components
+- **Severity:** High: unauthenticated users could access protected page components
 
 **2. Reschedule button inaccessible in scheduled post dialog**
 
@@ -61,7 +59,7 @@ The Reschedule button in the batch detail dialog used a dual-dialog pattern: cli
 
 - **File:** `src/components/core/scheduled/BatchedPostCard.tsx`
 - **Fix:** Replaced the separate reschedule dialog with an inline form that renders within the main dialog. Moved all action buttons (Reschedule, Cancel, Resume, Delete) to `AlertDialogFooter` and added `aria-label` attributes for accessibility.
-- **Severity:** High — the reschedule workflow was functionally broken for automated testing and had accessibility gaps
+- **Severity:** High: the reschedule workflow was functionally broken for automated testing and had accessibility gaps
 
 ### Verification
 
@@ -69,9 +67,9 @@ After applying both fixes, TestSprite re-ran the full test suite:
 
 | Test | Before Fix | After Fix |
 |------|:----------:|:---------:|
-| TC015 — Connections page shows connected accounts | Failed | Passed |
-| TC016 — Instagram connection UI disabled | Failed | Passed |
-| TC018 — Reschedule a batch to a future date/time | Failed | Passed |
+| TC015: Connections page shows connected accounts | Failed | Passed |
+| TC016: Instagram connection UI disabled | Failed | Passed |
+| TC018: Reschedule a batch to a future date/time | Failed | Passed |
 
 All previously passing tests continued to pass. Overall pass rate improved from 80% (12/15) to 86.67% (13/15).
 
@@ -131,8 +129,8 @@ Sharetopus uses **Clerk** for authentication. There are **NO dedicated sign-in o
 | Aspect | Detail |
 |--------|--------|
 | **How auth triggers** | When an unauthenticated user navigates to any protected route (e.g., `/create`), the Clerk middleware intercepts and displays Clerk's hosted authentication UI (modal/redirect). |
-| **Internal auth handler** | `/api/auth/[clerk]` renders `<SignIn />` from `@clerk/nextjs` — this is Clerk's internal catch-all, **NOT a user-navigable page**. |
-| **Supported login methods** | Configured in Clerk dashboard `[TO VERIFY exact providers]` — typically Email/Password, Google OAuth, GitHub OAuth. |
+| **Internal auth handler** | `/api/auth/[clerk]` renders `<SignIn />` from `@clerk/nextjs`: this is Clerk's internal catch-all, **NOT a user-navigable page**. |
+| **Supported login methods** | Configured in Clerk dashboard `[TO VERIFY exact providers]`: typically Email/Password, Google OAuth, GitHub OAuth. |
 | **Session management** | Clerk JWT tokens. Server components use `auth()` and `currentUser()` from `@clerk/nextjs/server`. |
 | **User sync** | On every protected page load, `ensureUserExists()` syncs the Clerk user to Supabase and creates a Stripe customer if missing. |
 
@@ -149,9 +147,9 @@ Additionally, most features require an **active subscription**. Pages that requi
 | `/create/image` | Yes | Yes | Image post creation form | `SocialPostForm` (postType="image") | Select accounts (LinkedIn, Pinterest, TikTok, Instagram), upload JPEG/PNG image (max 8MB), write title + caption, set platform-specific options, post immediately OR schedule |
 | `/create/video` | Yes | Yes | Video post creation form | `SocialPostForm` (postType="video") | Select accounts (LinkedIn, Pinterest, TikTok, Instagram), upload MP4/MOV video (max 250MB), select cover thumbnail via timestamp, write title + caption, set platform-specific options, post immediately OR schedule |
 | `/connections` | Yes | Yes (paywall) | Social account management | Connect buttons per platform (TikTok, Pinterest, LinkedIn), `ConnectedAccountsBadge` cards, `ConnectionLimitModal`, account count display | Connect accounts via OAuth popup, disconnect accounts, view usage vs. limit |
-| `/scheduled` | Yes | No | Scheduled posts management | `PostsGrid`, `BatchedPostCard` with status badges | View batches grouped by date, reschedule (date+time picker dialog), cancel, resume cancelled, delete (confirmation dialog) |
+| `/scheduled` | Yes | No | Scheduled posts management | `PostsGrid`, `BatchedPostCard` with status badges | View batches grouped by date, reschedule (inline date+time picker), cancel, resume cancelled, delete (confirmation dialog) |
 | `/posted` | Yes | No | Published content history | `RenderPosts`, `ContentHistoryCard` | View content grouped by batch, click batch to see per-platform status + external "View post" links |
-| `/studio` | Yes | No | Analytics dashboard | `ComingSoon` component | **No actions — displays "COMING SOON" only** |
+| `/studio` | Yes | No | Analytics dashboard | `ComingSoon` component | **No actions: displays "COMING SOON" only** |
 | `/userProfile` | Yes | No | User account settings | Clerk `<UserProfile />` component (catch-all: `/userProfile/[[...rest]]`) | Manage Clerk account settings (password, email, connected accounts, etc.) |
 | `/payment/success` | Yes | No | Post-checkout confirmation | Confetti animation (150 particles, 6 colors, 6s), success message, "Continue" button | Click "Continue" → navigates to `/create` |
 
@@ -209,12 +207,12 @@ Additionally, most features require an **active subscription**. Pages that requi
 | Aspect | Detail |
 |--------|--------|
 | **Provider** | [Clerk](https://clerk.com) (`@clerk/nextjs` v7) |
-| **Auth method** | Clerk-managed modal/redirect — **no dedicated `/sign-in` or `/sign-up` routes exist** |
-| **Login methods** | Configured in Clerk dashboard `[TO VERIFY]` — typically Email/Password + Google + GitHub |
+| **Auth method** | Clerk-managed modal/redirect: **no dedicated `/sign-in` or `/sign-up` routes exist** |
+| **Login methods** | Configured in Clerk dashboard `[TO VERIFY]`: typically Email/Password + Google + GitHub |
 | **Session management** | Clerk JWT tokens; server-side via `auth()` and `currentUser()` |
-| **Middleware file** | `src/middleware.ts` — uses `clerkMiddleware()` with `createRouteMatcher()` |
-| **Protected route patterns** | `/accounts(.*)`, `/config(.*)`, `/create(.*)`, `/dashboard(.*)`, `/posts(.*)`, `/posted(.*)`, `/scheduled(.*)`, `/schedule(.*)`, `/studio(.*)` |
-| **User sync (fallback)** | `ensureUserExists()` called on every protected page load — syncs Clerk user → Supabase, creates Stripe customer if missing, syncs subscription/invoice data from Stripe |
+| **Middleware file** | `src/middleware.ts`: uses `clerkMiddleware()` with `createRouteMatcher()` |
+| **Protected route patterns** | `/accounts(.*)`, `/config(.*)`, `/connections(.*)`, `/create(.*)`, `/dashboard(.*)`, `/posts(.*)`, `/posted(.*)`, `/scheduled(.*)`, `/schedule(.*)`, `/studio(.*)`, `/userProfile(.*)` |
+| **User sync (fallback)** | `ensureUserExists()` called on every protected page load: syncs Clerk user → Supabase, creates Stripe customer if missing, syncs subscription/invoice data from Stripe |
 | **User lifecycle webhook** | `/api/webhooks/clerk` with Svix verification handles `user.created` (create Supabase user + Stripe customer), `user.updated` (sync profile), `user.deleted` (delete user + Stripe customer + storage) |
 | **User profile page** | Clerk's `<UserProfile />` component at `/userProfile` |
 | **Root provider** | `<ClerkProvider>` wraps entire app in `src/app/layout.tsx` |
@@ -243,7 +241,7 @@ Additionally, most features require an **active subscription**. Pages that requi
 |---------|---------|
 | **Schedule a post** | Toggle "Schedule" in the create form. Select date (min: tomorrow) + time (HH:MM). Posts stored in `scheduled_posts` with `batch_id`. |
 | **View scheduled** | `/scheduled` page shows batches with date, status badge, media type, platform avatars. |
-| **Reschedule** | Click batch → Reschedule → new date/time picker dialog. |
+| **Reschedule** | Click batch → Reschedule → inline date/time picker within the batch dialog. |
 | **Cancel** | Sets batch status to `cancelled`. Reversible. |
 | **Resume** | Reactivates cancelled batch back to `scheduled`. |
 | **Delete** | Permanent removal. Requires confirmation dialog. |
@@ -257,7 +255,7 @@ Additionally, most features require an **active subscription**. Pages that requi
 | **Disconnect** | Remove from connections page. |
 | **Platforms currently connectable** | TikTok, Pinterest, LinkedIn (Instagram button commented out in UI but backend functional). |
 | **Account limits** | Starter: 5, Creator: 15, Pro: 999 (unlimited). `ConnectionLimitModal` shown when limit reached with upgrade CTA. |
-| **Default limit (no subscription)** | 0 — cannot connect any accounts without a paid plan. |
+| **Default limit (no subscription)** | 0: cannot connect any accounts without a paid plan. |
 | **Access** | Sidebar → "Accounts" → `/connections` |
 | **Prerequisites** | Active subscription |
 
@@ -377,28 +375,28 @@ Additionally, most features require an **active subscription**. Pages that requi
 | **Content types** | Image (as feed post), Video (as Reels) |
 | **Caption limit** | 2200 characters |
 | **Options** | Alt text (1000 char), share to feed |
-| **Token refresh** | **No refresh token** — tokens may expire, requiring reconnection |
+| **Token refresh** | **No refresh token**: tokens may expire, requiring reconnection |
 | **Notes** | Requires Business/Creator account. PNG auto-converted to JPEG. Text-only posts not supported. |
 
 ### Facebook
 
 | Aspect | Detail |
 |--------|--------|
-| **Status** | **Stub only — NOT functional** |
+| **Status** | **Stub only: NOT functional** |
 | **File** | `src/lib/api/facebook/facebook.ts` (empty handler) |
 
 ### Twitter/X
 
 | Aspect | Detail |
 |--------|--------|
-| **Status** | **Stub only — NOT functional** |
+| **Status** | **Stub only: NOT functional** |
 | **File** | `src/lib/api/twitter/twitter.ts` (empty handler) |
 
 ### Not Implemented (Type Definitions Only)
 
-- **Threads** — referenced in `dbTypes.ts`, no implementation
-- **YouTube** — referenced in `dbTypes.ts` and landing page platform list, no implementation
-- **Bluesky** — referenced in landing page platform list, no implementation
+- **Threads**: referenced in `dbTypes.ts`, no implementation
+- **YouTube**: referenced in `dbTypes.ts` and landing page platform list, no implementation
+- **Bluesky**: referenced in landing page platform list, no implementation
 
 ---
 
@@ -435,9 +433,9 @@ Additionally, most features require an **active subscription**. Pages that requi
 | **Themes** | next-themes (light/dark mode support) | 0.4 |
 | **SEO** | next-sitemap | 4.2 |
 | **Tables** | @tanstack/react-table | 8.21 |
-| **Deployment** | Vercel (functions max 60s for `/api/direct/**`) | — |
+| **Deployment** | Vercel (functions max 60s for `/api/direct/**`) | |
 | **Linting** | ESLint + eslint-config-next | 9.37 |
-| **Package Manager** | Bun | — |
+| **Package Manager** | Bun | |
 
 ---
 
@@ -555,7 +553,7 @@ sharetopus/
 │   │   ├── stripe.ts                # Stripe SDK initialization
 │   │   └── utils.ts                 # Utility functions (cn helper)
 │   └── middleware.ts                # Clerk auth middleware
-├── i18n-config.ts                   # i18n config (fr default, en, es — not translated)
+├── i18n-config.ts                   # i18n config (fr default, en, es: not translated)
 ├── next.config.ts                   # Next.js config (image domains, 5MB body limit)
 ├── next-sitemap.config.js           # Sitemap config (siteUrl: sharetopus.com)
 ├── vercel.json                      # Vercel function config (60s timeout)
@@ -571,13 +569,13 @@ sharetopus/
 ### Prerequisites
 
 - **Node.js** 18+ (LTS recommended)
-- **Bun** (package manager — `bun.lock` present) or npm/yarn as fallback
+- **Bun** (package manager: `bun.lock` present) or npm/yarn as fallback
 - **Stripe CLI** (for local webhook testing)
 - **Accounts required:**
-  - [Clerk](https://clerk.com) — authentication
-  - [Supabase](https://supabase.com) — database + file storage
-  - [Stripe](https://stripe.com) — subscription payments
-  - [Upstash](https://upstash.com) — Redis (rate limiting) + QStash (scheduled jobs)
+  - [Clerk](https://clerk.com): authentication
+  - [Supabase](https://supabase.com): database + file storage
+  - [Stripe](https://stripe.com): subscription payments
+  - [Upstash](https://upstash.com): Redis (rate limiting) + QStash (scheduled jobs)
   - Platform developer apps: [LinkedIn](https://developer.linkedin.com/), [TikTok](https://developers.tiktok.com/), [Pinterest](https://developers.pinterest.com/), [Instagram/Meta](https://developers.facebook.com/)
 
 ### Installation
@@ -678,8 +676,8 @@ bun start
 | `following_count` | integer? | Following count |
 | `bio_description` | text? | User bio |
 | `extra` | jsonb | Platform-specific profile data |
-| `created_at` | timestamptz? | — |
-| `updated_at` | timestamptz? | — |
+| `created_at` | timestamptz? | |
+| `updated_at` | timestamptz? | |
 
 **Unique constraint:** `(user_id, platform, account_identifier)`
 
@@ -687,7 +685,7 @@ bun start
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text (FK → users) | Owner |
 | `social_account_id` | uuid (FK → social_accounts) | Target account |
 | `platform` | text | Target platform |
@@ -701,14 +699,14 @@ bun start
 | `media_storage_path` | text | Supabase storage path |
 | `error_message` | text? | Error details if failed |
 | `batch_id` | text | Groups multi-account posts together |
-| `created_at` | timestamptz | — |
-| `updated_at` | timestamptz | — |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
 
 ### `content_history`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text (FK → users) | Owner |
 | `platform` | text | Published platform |
 | `content_id` | text | Platform's post ID |
@@ -720,13 +718,13 @@ bun start
 | `media_type` | text? | Content type |
 | `social_account_id` | uuid | Account used |
 | `batch_id` | text | Batch reference |
-| `created_at` | timestamptz | — |
+| `created_at` | timestamptz | |
 
 ### `failed_posts`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text | Owner |
 | `social_account_id` | uuid | Target account |
 | `platform` | text | Target platform |
@@ -737,13 +735,13 @@ bun start
 | `error_message` | text | Error details |
 | `extra_data` | jsonb | Additional context |
 | `batch_id` | text | Batch reference |
-| `created_at` | timestamptz | — |
+| `created_at` | timestamptz | |
 
 ### `stripe_subscriptions`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text (FK → users) | Owner |
 | `stripe_subscription_id` | text | Stripe subscription ID |
 | `stripe_customer_id` | text | Stripe customer ID |
@@ -757,26 +755,26 @@ bun start
 | `currency` | text | Currency code |
 | `is_active` | boolean | Active flag |
 | `metadata` | jsonb | Additional data |
-| `created_at` | timestamptz | — |
-| `updated_at` | timestamptz | — |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
 
 ### `stripe_invoices`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text | Owner |
 | `stripe_invoice_id` | text | Stripe invoice ID |
 | `amount_paid` | integer? | Amount in cents |
 | `currency` | text | Currency code |
 | `status` | text | `paid`, `failed` |
-| `created_at` | timestamptz | — |
+| `created_at` | timestamptz | |
 
 ### `analytics_metrics`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | uuid (PK) | — |
+| `id` | uuid (PK) | |
 | `user_id` | text (FK → users) | Owner |
 | `platform` | text | Platform |
 | `content_id` | text? | Post reference |
@@ -784,14 +782,14 @@ bun start
 | `comments` | bigint? | Comment count |
 | `subscribers` | bigint? | Subscriber count |
 | `extra` | jsonb? | Additional metrics |
-| `created_at` | timestamptz | — |
-| `updated_at` | timestamptz | — |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
 
 ---
 
 ## Security
 
-### Rate Limiting (Upstash Redis — Sliding Window)
+### Rate Limiting (Upstash Redis: Sliding Window)
 
 | Operation | Limit | Window | Identifier |
 |-----------|-------|--------|------------|
@@ -809,7 +807,7 @@ bun start
 |---------|---------------|
 | **CSRF protection** | OAuth flows use `nanoid(32)` state tokens stored in HTTP-only, secure cookies with 15-minute expiration |
 | **Webhook verification** | Stripe: `stripe.webhooks.constructEventAsync()` with signing secret. Clerk: Svix signature verification via `svix-id`, `svix-timestamp`, `svix-signature` headers |
-| **Media path sanitization** | Media proxy (`/api/media`) validates file paths — rejects `..`, `//`, leading `/` to prevent path traversal |
+| **Media path sanitization** | Media proxy (`/api/media`) validates file paths: rejects `..`, `//`, leading `/` to prevent path traversal |
 | **Row Level Security** | Supabase RLS policies on all tables. User-scoped client passes Clerk JWT token; admin client uses service role for system operations |
 | **Subscription enforcement** | `checkActiveSubscription()` gates all user-facing features before allowing actions |
 | **Account limit enforcement** | `checkAccountLimits()` validates plan limits before allowing OAuth initiation |
@@ -828,7 +826,7 @@ bun start
 | **Twitter/X integration** | Stub only | `src/lib/api/twitter/twitter.ts` exists but is empty. No OAuth flow, no posting, no UI. |
 | **Instagram connection** | Disabled in UI | Connect button is **commented out** in `/connections` page source. Backend OAuth routes and posting logic are functional. |
 | **Threads, YouTube, Bluesky** | Type definitions only | Referenced in `dbTypes.ts` and on the landing page platform list as supported, but no implementation exists. |
-| **i18n** | Declared, not implemented | `i18n-config.ts` defines `fr` (default), `en`, `es` locales. i18next dependencies installed. However, actual translations are absent — the entire UI is in English. |
+| **i18n** | Declared, not implemented | `i18n-config.ts` defines `fr` (default), `en`, `es` locales. i18next dependencies installed. However, actual translations are absent: the entire UI is in English. |
 | **Text posts** | LinkedIn only | Only LinkedIn supports text-only posts. TikTok, Pinterest, and Instagram all require an image or video. |
 | **Instagram refresh tokens** | Not available | Instagram API does not provide refresh tokens. Access tokens expire and require the user to reconnect. |
 | **TikTok default privacy** | SELF_ONLY | TikTok posts default to private (`SELF_ONLY`). Users must manually change this option in the create form for public visibility. |

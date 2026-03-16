@@ -1,4 +1,4 @@
-# Sharetopus — Architecture Document
+# Sharetopus: Architecture Document
 
 ## System Overview
 
@@ -84,7 +84,7 @@ src/app/
 │   ├── connections/       # Account management (/connections)
 │   ├── scheduled/         # Scheduled posts (/scheduled)
 │   ├── posted/            # Content history (/posted)
-│   ├── studio/            # Analytics — coming soon (/studio)
+│   ├── studio/            # Analytics: coming soon (/studio)
 │   ├── payment/success/   # Post-checkout confirmation
 │   └── userProfile/       # Clerk UserProfile component
 ├── api/                   # API routes (see Backend section)
@@ -107,7 +107,7 @@ src/components/
 │   │   ├── connectAccountsButton/   # Per-platform connect buttons
 │   │   └── pageUi/                  # ConnectedAccountsBadge, SocialAccountBadge
 │   ├── scheduled/         # Scheduled posts management
-│   │   ├── BatchedPostCard.tsx      # Batch card with actions (reschedule/cancel/delete)
+│   │   ├── BatchedPostCard.tsx      # Batch card with inline reschedule form and footer actions
 │   │   ├── PostsGrid.tsx           # Grid layout for scheduled posts
 │   │   └── MediaPreview.tsx        # Media thumbnail display
 │   └── posted/            # Content history display
@@ -142,7 +142,7 @@ src/components/
 
 - `i18n-config.ts` declares locales: `fr` (default), `en`, `es`
 - `next-i18next` and `react-i18next` are installed as dependencies
-- **Actual translation files and usage:** [NOT FOUND IN CODEBASE] — the app currently renders in English only
+- **Actual translation files and usage:** [NOT FOUND IN CODEBASE]: the app currently renders in English only
 - Metadata declares `hreflang` alternates for `en-CA` and `fr-CA` but no translated routes exist
 
 ---
@@ -154,25 +154,25 @@ src/components/
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/social/linkedin/initiate` | Clerk | Generate LinkedIn OAuth URL |
-| GET | `/api/social/linkedin/connect` | Clerk | LinkedIn OAuth callback — exchange code, store account |
+| GET | `/api/social/linkedin/connect` | Clerk | LinkedIn OAuth callback: exchange code, store account |
 | POST | `/api/social/linkedin/post` | Internal | Direct post to LinkedIn |
 | POST | `/api/social/linkedin/process` | Internal | Process LinkedIn accounts (direct or scheduled) |
 | POST | `/api/social/instagram/initiate` | Clerk | Generate Instagram OAuth URL |
-| GET | `/api/social/instagram/connect` | Clerk | Instagram OAuth callback — exchange code, store account |
+| GET | `/api/social/instagram/connect` | Clerk | Instagram OAuth callback: exchange code, store account |
 | POST | `/api/social/instagram/post` | Internal | Direct post to Instagram |
 | POST | `/api/social/instagram/process` | Internal | Process Instagram accounts |
 | POST | `/api/social/tiktok/initiate` | Clerk | Generate TikTok OAuth URL |
-| GET | `/api/social/tiktok/connect` | Clerk | TikTok OAuth callback — exchange code, store account |
+| GET | `/api/social/tiktok/connect` | Clerk | TikTok OAuth callback: exchange code, store account |
 | POST | `/api/social/tiktok/post` | Internal | Direct post to TikTok |
 | POST | `/api/social/tiktok/process` | Internal | Process TikTok accounts |
 | POST | `/api/social/pinterest/initiate` | Clerk | Generate Pinterest OAuth URL |
-| GET | `/api/social/pinterest/connect` | Clerk | Pinterest OAuth callback — exchange code, store account |
+| GET | `/api/social/pinterest/connect` | Clerk | Pinterest OAuth callback: exchange code, store account |
 | POST | `/api/social/pinterest/post` | Internal | Direct post to Pinterest |
 | POST | `/api/social/pinterest/process` | Internal | Process Pinterest accounts |
 | POST | `/api/cron/process-scheduled-posts` | CRON_SECRET_KEY | Process due scheduled posts batch |
 | POST | `/api/storage/generate-upload-url` | Clerk + subscription | Generate Supabase signed upload URL |
 | POST | `/api/storage/generate-view-url` | None (path validation) | Generate Supabase signed view URL |
-| GET | `/api/media` | Query params | Media proxy — redirects to Supabase signed URL |
+| GET | `/api/media` | Query params | Media proxy: redirects to Supabase signed URL |
 | POST | `/api/webhooks/clerk` | Svix signature | Clerk user lifecycle events |
 | POST | `/api/webhooks/stripe` | Stripe signature | Stripe subscription & invoice events |
 
@@ -193,8 +193,9 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Protected routes:
 const isProtectedRoute = createRouteMatcher([
-  "/accounts(.*)", "/config(.*)", "/create(.*)", "/dashboard(.*)",
-  "/posts(.*)", "/posted(.*)", "/scheduled(.*)", "/schedule(.*)", "/studio(.*)"
+  "/accounts(.*)", "/config(.*)", "/connections(.*)", "/create(.*)",
+  "/dashboard(.*)", "/posts(.*)", "/posted(.*)", "/scheduled(.*)",
+  "/schedule(.*)", "/studio(.*)", "/userProfile(.*)"
 ]);
 
 // Also matches: /(api|trpc)(.*)
@@ -284,11 +285,11 @@ No role-based access control found. Authorization is binary:
 
 ### ORM / Client
 
-**Supabase JavaScript Client** (`@supabase/supabase-js`) — no traditional ORM (no Prisma/Drizzle)
+**Supabase JavaScript Client** (`@supabase/supabase-js`): no traditional ORM (no Prisma/Drizzle)
 
 Two clients:
-- `supabase.ts` — authenticated client (uses Clerk JWT)
-- `adminSupabase.ts` — service role client (bypasses RLS)
+- `supabase.ts`: authenticated client (uses Clerk JWT)
+- `adminSupabase.ts`: service role client (bypasses RLS)
 
 ### Schema
 
@@ -628,7 +629,7 @@ On post/schedule: media path stored in DB
 
 ### Media Proxy
 
-`GET /api/media?file={path}&user={userId}` — validates path, generates 10-minute signed URL, returns 302 redirect.
+`GET /api/media?file={path}&user={userId}`: validates path, generates 10-minute signed URL, returns 302 redirect.
 
 ---
 
@@ -667,7 +668,7 @@ Cron jobs bypass rate limiting via `CRON_SECRET_KEY`.
 ### CORS / CSRF
 
 - CSRF protection on OAuth flows via state parameter in HTTP-only, secure cookies (15-min expiry)
-- No custom CORS configuration found — relies on Next.js defaults
+- No custom CORS configuration found: relies on Next.js defaults
 - Middleware applies Clerk auth to all `/(api|trpc)(.*)` routes
 
 ### Secrets Management
@@ -702,7 +703,7 @@ Cron jobs bypass rate limiting via `CRON_SECRET_KEY`.
 
 ### CI/CD
 
-[NOT FOUND IN CODEBASE] — No GitHub Actions, Vercel build hooks, or CI configuration files detected. Likely using Vercel's default Git integration (auto-deploy on push).
+[NOT FOUND IN CODEBASE]: No GitHub Actions, Vercel build hooks, or CI configuration files detected. Likely using Vercel's default Git integration (auto-deploy on push).
 
 ### Environments
 
