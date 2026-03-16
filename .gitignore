@@ -44,3 +44,5 @@ next-env.d.ts
 /.clerk/
 
 .claude/settings.local.json
+.vscode/Users0ther.claude.json
+.claude/
