@@ -22,6 +22,8 @@
 
 **Production URL:** [https://sharetopus.com](https://sharetopus.com)
 
+**Demo Video:** [https://x.com/Andy00L/status/2033366044941643828](https://x.com/Andy00L/status/2033366044941643828)
+
 ![Landing Page Screenshot](./public/landing.png)
 ![Dashboard Screenshot](./public/dashboard.png)
 ![Create Post Screenshot](./public/create-post.png)
