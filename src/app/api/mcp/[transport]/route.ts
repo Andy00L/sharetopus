@@ -1,9 +1,9 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import { resolveMcpPrincipal } from "@/lib/mcp/auth";
 import type { McpPrincipal } from "@/lib/mcp/auth";
-import { registerTools } from "@/lib/mcp/tools";
-import { registerResources } from "@/lib/mcp/resources";
+import { resolveMcpPrincipal } from "@/lib/mcp/auth";
 import { registerPrompts } from "@/lib/mcp/prompts";
+import { registerResources } from "@/lib/mcp/resources";
+import { registerTools } from "@/lib/mcp/tools";
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -38,7 +38,12 @@ const handler = createMcpHandler(
     registerResources(server);
     registerPrompts(server);
   },
-  {},
+  {
+    serverInfo: {
+      name: "Sharetopus",
+      version: "0.1.0",
+    },
+  },
   {
     basePath: "/api/mcp",
     maxDuration: 300,
