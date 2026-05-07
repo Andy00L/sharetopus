@@ -1,0 +1,71 @@
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { updateScheduledTimeBatchInternal } from "@/actions/server/_internal/scheduleActions/updateScheduledTimeBatch";
+import { entitlementFor } from "../entitlement";
+import { logToolCall } from "../audit";
+import { extractPrincipal, extractSessionId } from "./index";
+
+/**
+ * Reschedules posts to a new time. Cancelled posts get resumed automatically.
+ *
+ * Plan gate: Starter+
+ * Tables touched: scheduled_posts (read + update)
+ * Calls: src/actions/server/_internal/scheduleActions/updateScheduledTimeBatch.ts
+ */
+export function registerReschedulePosts(server: McpServer): void {
+  server.tool(
+    "reschedule_posts",
+    "Change the scheduled time for one or more posts. Cancelled posts are automatically resumed.",
+    {
+      post_ids: z
+        .array(z.string().uuid())
+        .min(1)
+        .max(50)
+        .describe("Array of post IDs to reschedule"),
+      new_scheduled_time: z
+        .string()
+        .describe("New ISO 8601 datetime (must be in the future)"),
+    },
+    async (args, extra) => {
+      const principal = extractPrincipal(extra);
+      const sessionId = extractSessionId(extra);
+      const start = Date.now();
+
+      const ent = await entitlementFor(principal, "reschedule_posts");
+      if (ent.mode === "deny") {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "reschedule_posts",
+          args,
+          resultStatus: "denied",
+          latencyMs: Date.now() - start,
+        });
+        return {
+          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          isError: true,
+        };
+      }
+
+      const result = await updateScheduledTimeBatchInternal(
+        args.post_ids,
+        args.new_scheduled_time,
+        principal.principalId
+      );
+
+      await logToolCall({
+        principal,
+        sessionId,
+        toolName: "reschedule_posts",
+        args,
+        resultStatus: result.success ? "ok" : "error",
+        latencyMs: Date.now() - start,
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: !result.success,
+      };
+    }
+  );
+}

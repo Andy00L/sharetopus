@@ -1,4 +1,4 @@
-import { CheckCircle, Clock } from "lucide-react";
+import { CheckCircle, Clock, Plug } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -42,6 +42,20 @@ export default function NavPost() {
               <Link href="/posted">
                 <CheckCircle className="h-4 w-4" />
                 <span>Posted</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              className={
+                pathname === "/integrations" ? "bg-[#FF4A20] text-white" : ""
+              }
+            >
+              <Link href="/integrations">
+                <Plug className="h-4 w-4" />
+                <span>Integrations</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

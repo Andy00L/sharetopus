@@ -1,0 +1,67 @@
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { cancelScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/cancelScheduledPostBatch";
+import { entitlementFor } from "../entitlement";
+import { logToolCall } from "../audit";
+import { extractPrincipal, extractSessionId } from "./index";
+
+/**
+ * Cancels one or more scheduled posts (sets status to "cancelled").
+ *
+ * Plan gate: Starter+
+ * Tables touched: scheduled_posts (read + update)
+ * Calls: src/actions/server/_internal/scheduleActions/cancelScheduledPostBatch.ts
+ */
+export function registerCancelScheduledPosts(server: McpServer): void {
+  server.tool(
+    "cancel_scheduled_posts",
+    "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
+    {
+      post_ids: z
+        .array(z.string().uuid())
+        .min(1)
+        .max(50)
+        .describe("Array of post IDs to cancel"),
+    },
+    async (args, extra) => {
+      const principal = extractPrincipal(extra);
+      const sessionId = extractSessionId(extra);
+      const start = Date.now();
+
+      const ent = await entitlementFor(principal, "cancel_scheduled_posts");
+      if (ent.mode === "deny") {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "cancel_scheduled_posts",
+          args,
+          resultStatus: "denied",
+          latencyMs: Date.now() - start,
+        });
+        return {
+          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          isError: true,
+        };
+      }
+
+      const result = await cancelScheduledPostBatchInternal(
+        args.post_ids,
+        principal.principalId
+      );
+
+      await logToolCall({
+        principal,
+        sessionId,
+        toolName: "cancel_scheduled_posts",
+        args,
+        resultStatus: result.success ? "ok" : "error",
+        latencyMs: Date.now() - start,
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: !result.success,
+      };
+    }
+  );
+}
