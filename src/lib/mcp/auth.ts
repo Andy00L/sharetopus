@@ -2,6 +2,8 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
+import { auth } from "@clerk/nextjs/server";
+import { verifyClerkToken } from "@clerk/mcp-tools/next";
 import { hashToken, isMcpApiKeyToken } from "./tokens";
 
 /**
@@ -30,18 +32,22 @@ export type McpPrincipal =
 /**
  * Resolves the Bearer token on an MCP request to a Sharetopus principal.
  *
- * Checks API keys first (cheap DB lookup), falls back to Clerk OAuth tokens.
- * Used by the MCP route handler in src/app/api/mcp/[transport]/route.ts
- * before passing control to any tool handler.
+ * Both auth paths (API key and Clerk OAuth) are resolved here so the
+ * subscription gate runs exactly once, after whichever path succeeds.
+ * Free users do not get MCP access at all. Per-tool plan tier checks
+ * via entitlementFor are the second line, but this gate is the first.
  *
- * After resolving a valid API key principal, we check that the user has
- * an active Stripe subscription. MCP is a paid feature. Free users cannot
- * authenticate at all. The check runs on every request because subscription
- * state can change mid-session (user cancels, payment fails). Caching it
- * would be wrong.
+ * Flow:
+ *   1. If the token starts with stp_mcp_, resolve via api_keys table.
+ *   2. Otherwise, try Clerk OAuth token verification.
+ *   3. If neither produced a principal, return null.
+ *   4. Call checkActiveSubscription. Return null if inactive or on error.
+ *   5. Return the principal.
  *
- * If the subscription check errors (network blip, DB down), we treat the
- * user as unsubscribed. Failing open here would let unpaid users through.
+ * The subscription check runs on every request because subscription state
+ * can change mid-session (cancellation, payment failure). Caching would
+ * be wrong. If the check errors (network blip, DB down), we treat the
+ * user as unsubscribed. Failing open would let unpaid users through.
  *
  * Failure modes worth noting:
  *   1. Revoked api_keys still appear in the prefix index for a few seconds
@@ -51,44 +57,70 @@ export type McpPrincipal =
  *      log is the only source of truth on suspicious activity.
  *
  * Tables read: api_keys, principals, stripe_subscriptions
+ * Called by: src/app/api/mcp/[transport]/route.ts
  */
 export async function resolveMcpPrincipal(
   bearerToken: string | null
 ): Promise<McpPrincipal | null> {
   if (!bearerToken) return null;
 
+  let candidate: McpPrincipal | null = null;
+
   // Path 1: API key (cheap hash lookup)
   if (isMcpApiKeyToken(bearerToken)) {
-    const principal = await resolveApiKey(bearerToken);
-    if (!principal) return null;
-
-    // MCP is a paid feature. Block access if no active subscription.
+    candidate = await resolveApiKey(bearerToken);
+  } else {
+    // Path 2: Clerk OAuth token
     try {
-      const sub = await checkActiveSubscription(principal.principalId);
-      if (!sub.isActive) {
-        console.log(
-          `[resolveMcpPrincipal] Blocked API key auth for ${principal.principalId}: no active subscription`
-        );
-        return null;
+      const clerkAuth = await auth({ acceptsToken: "oauth_token" });
+      const authInfo = verifyClerkToken(clerkAuth, bearerToken);
+      if (authInfo) {
+        // principalId is the Clerk user id, not the OAuth client id.
+        // The client id identifies the calling application. The user id
+        // is the human who authorized it. The subscription check needs
+        // the user id.
+        const userId = (authInfo.extra?.userId as string) ?? "";
+        const clerkClientId = authInfo.clientId ?? "";
+        if (userId) {
+          candidate = {
+            kind: "oauth",
+            principalId: userId,
+            oauthClientId: clerkClientId,
+            scopes: authInfo.scopes ?? [],
+          };
+        }
       }
     } catch (err) {
-      // Treat subscription check failure as "not subscribed".
-      // Failing open would let unpaid users through.
       console.error(
-        `[resolveMcpPrincipal] Subscription check failed for ${principal.principalId}:`,
+        "[resolveMcpPrincipal] Clerk token verification failed:",
         err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  if (!candidate) return null;
+
+  // Subscription gate. Runs for BOTH auth paths.
+  // MCP is a paid feature. Free users are blocked here.
+  try {
+    const sub = await checkActiveSubscription(candidate.principalId);
+    if (!sub.isActive) {
+      console.log(
+        `[resolveMcpPrincipal] Blocked ${candidate.kind} auth for ${candidate.principalId}: no active subscription`
       );
       return null;
     }
-
-    return principal;
+  } catch (err) {
+    // Treat any error as "not subscribed". Failing open would let
+    // unpaid users through on a network blip.
+    console.error(
+      `[resolveMcpPrincipal] Subscription check failed for ${candidate.principalId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return null;
   }
 
-  // Path 2: Clerk OAuth token
-  // Handled by @clerk/mcp-tools in the route handler via withMcpAuth.
-  // If we reach here it means the token was not an API key, so return null
-  // and let the Clerk auth layer handle it.
-  return null;
+  return candidate;
 }
 
 /**

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { deleteSupabaseFileActionInternal } from "../data/deleteSupabaseFileAction";
 
 /**
  * Deletes scheduled posts and cleans up orphaned media from Supabase Storage.
@@ -15,8 +15,8 @@ import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFi
  *   1. Fetch posts including media_storage_path to know what to clean up.
  *   2. Verify ownership.
  *   3. Delete rows from scheduled_posts.
- *   4. For each unique media path, call deleteSupabaseFileAction which
- *      checks if any other post still references the file before removing it.
+ *   4. For each unique media path, call deleteSupabaseFileActionInternal
+ *      which checks if any other post still references the file before removing it.
  *
  * Tables touched: scheduled_posts (read + delete), Supabase Storage (delete)
  * Called by: src/lib/mcp/tools/deleteScheduledPosts.ts
@@ -71,11 +71,10 @@ export async function deleteScheduledPostBatchInternal(
     let mediaDeleted = 0;
     for (const mediaPath of uniqueMediaPaths) {
       try {
-        const result = await deleteSupabaseFileAction(
+        const result = await deleteSupabaseFileActionInternal(
           principalId,
           mediaPath,
-          false,
-          undefined
+          false
         );
         if (result.success) {
           mediaDeleted++;

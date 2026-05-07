@@ -1,6 +1,4 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import { verifyClerkToken } from "@clerk/mcp-tools/next";
-import { auth } from "@clerk/nextjs/server";
 import { resolveMcpPrincipal } from "@/lib/mcp/auth";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { registerTools } from "@/lib/mcp/tools";
@@ -51,49 +49,20 @@ const authHandler = withMcpAuth(
   async (_req: Request, bearerToken?: string) => {
     if (!bearerToken) return undefined;
 
-    // Path 1: MCP API key
-    const apiKeyPrincipal = await resolveMcpPrincipal(bearerToken);
-    if (apiKeyPrincipal) {
-      return {
-        token: bearerToken,
-        scopes: apiKeyPrincipal.scopes,
-        clientId: apiKeyPrincipal.apiKeyId ?? "",
-        extra: { principal: apiKeyPrincipal satisfies McpPrincipal },
-      };
-    }
+    // resolveMcpPrincipal handles both API key and Clerk OAuth paths,
+    // including the subscription gate. See src/lib/mcp/auth.ts.
+    const principal = await resolveMcpPrincipal(bearerToken);
+    if (!principal) return undefined;
 
-    // Path 2: Clerk OAuth token
-    try {
-      const clerkAuth = await auth({ acceptsToken: "oauth_token" });
-      const authInfo = verifyClerkToken(clerkAuth, bearerToken);
-      if (authInfo) {
-        // Build our McpPrincipal from the Clerk auth info
-        const userId = (authInfo.extra?.userId as string) ?? "";
-        const clerkClientId = authInfo.clientId ?? "";
-        const oauthPrincipal: McpPrincipal = {
-          kind: "oauth",
-          principalId: userId,
-          oauthClientId: clerkClientId,
-          scopes: authInfo.scopes ?? [],
-        };
-        return {
-          token: authInfo.token,
-          scopes: authInfo.scopes ?? [],
-          clientId: clerkClientId,
-          extra: {
-            ...authInfo.extra,
-            principal: oauthPrincipal,
-          },
-        };
-      }
-    } catch (err) {
-      console.error(
-        "[mcp/route] Clerk token verification failed:",
-        err instanceof Error ? err.message : err
-      );
-    }
-
-    return undefined;
+    return {
+      token: bearerToken,
+      scopes: principal.scopes,
+      clientId:
+        principal.kind === "oauth"
+          ? principal.oauthClientId
+          : (principal.apiKeyId ?? ""),
+      extra: { principal: principal satisfies McpPrincipal },
+    };
   },
   {
     required: true,
