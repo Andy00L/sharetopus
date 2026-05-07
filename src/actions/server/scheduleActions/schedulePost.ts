@@ -1,5 +1,6 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { SchedulePostData } from "@/lib/types/SchedulePostData";
+import type { Json } from "@/lib/types/database.types";
 import "server-only";
 
 /**
@@ -98,6 +99,10 @@ export async function schedulePost(
       };
     }
 
+    if (!userId) {
+      return { success: false, message: "Authentication required." };
+    }
+
     // Step 4: Verify social account ownership
     console.log(
       `[schedulePost]: Verifying ownership of social account: ${data.socialAccountId}`
@@ -106,7 +111,7 @@ export async function schedulePost(
       .from("social_accounts")
       .select("id")
       .eq("id", data.socialAccountId)
-      .eq("user_id", userId)
+      .eq("principal_id", userId)
       .single();
 
     if (accountError || !accountData) {
@@ -128,17 +133,17 @@ export async function schedulePost(
       `[schedulePost]: Scheduling post for: ${scheduledDate.toISOString()}`
     );
     const insertData = {
-      user_id: userId,
+      principal_id: userId,
       social_account_id: data.socialAccountId,
       platform: data.platform,
-      status: "scheduled", // Default status
+      status: "scheduled" as const,
       scheduled_at: scheduledDate.toISOString(),
       post_title: data.title ?? "",
       post_description: data.description,
-      post_options: data.postOptions, // Store the JSONB options
+      post_options: data.postOptions as Json,
       media_type: data.postType,
       media_storage_path: data.mediaStoragePath,
-      cover_Image_Time_stamp: data.coverTimestamp,
+      cover_image_timestamp: data.coverTimestamp,
       batch_id: data.batch_id,
     };
 

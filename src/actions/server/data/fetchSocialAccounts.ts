@@ -62,7 +62,7 @@ export async function fetchSocialAccounts(
     let query = adminSupabase
       .from("social_accounts")
       .select("*")
-      .eq("user_id", userId);
+      .eq("principal_id", userId!);
 
     // Only apply the availability filter if requested
     if (filterByAvailability) {

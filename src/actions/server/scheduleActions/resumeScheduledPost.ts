@@ -109,7 +109,7 @@ export async function resumeScheduledPostBatch(
 
     const { data: posts, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
-      .select("id, user_id, status, scheduled_at, platform")
+      .select("id, principal_id, status, scheduled_at, platform")
       .in("id", postIds);
     if (fetchError) {
       console.error(
@@ -146,7 +146,7 @@ export async function resumeScheduledPostBatch(
     );
 
     // Check if all posts belong to the user
-    const unauthorizedPosts = posts.filter((post) => post.user_id !== userId);
+    const unauthorizedPosts = posts.filter((post) => post.principal_id !== userId);
     if (unauthorizedPosts.length > 0) {
       console.warn(
         `[resumeScheduledPostBatch]: Security violation - User ${userId} attempted to resume ${unauthorizedPosts.length} posts owned by others`

@@ -34,6 +34,11 @@ export async function ensureUserExists() {
   let stripeCustomerId: string | null = null;
   const email = user.emailAddresses?.[0]?.emailAddress;
 
+  if (!email) {
+    console.error("[ensureUserExists] No email found for user, aborting");
+    return;
+  }
+
   try {
     const customer = await stripe.customers.create({
       email,
@@ -48,6 +53,23 @@ export async function ensureUserExists() {
       "[ensureUserExists] Erreur création client Stripe:",
       stripeError
     );
+    return;
+  }
+
+  // Upsert into principals first (users.id FK requires it)
+  const { error: principalError } = await adminSupabase
+    .from("principals")
+    .upsert({ id: user.id, kind: "clerk" }, { onConflict: "id", ignoreDuplicates: true });
+
+  if (principalError) {
+    console.error("[ensureUserExists] Erreur upsert principal:", principalError);
+    // Roll back Stripe customer
+    try {
+      await stripe.customers.del(stripeCustomerId);
+    } catch (deleteError) {
+      console.error("[ensureUserExists] Erreur rollback Stripe:", deleteError);
+    }
+    return;
   }
 
   // Insert user into Supabase
@@ -61,27 +83,23 @@ export async function ensureUserExists() {
 
   if (error) {
     console.error("[ensureUserExists] Erreur insertion Supabase:", error);
-    if (stripeCustomerId) {
-      try {
-        await stripe.customers.del(stripeCustomerId);
-      } catch (deleteError) {
-        console.error(
-          "[ensureUserExists] Erreur rollback Stripe:",
-          deleteError
-        );
-      }
+    try {
+      await stripe.customers.del(stripeCustomerId);
+    } catch (deleteError) {
+      console.error(
+        "[ensureUserExists] Erreur rollback Stripe:",
+        deleteError
+      );
     }
   } else {
     console.log(
       `[ensureUserExists] User ${user.id} synced to Supabase + Stripe`
     );
     // Sync subscriptions + invoices for the newly created user
-    if (stripeCustomerId) {
-      await Promise.all([
-        syncStripeSubscriptions(user.id, stripeCustomerId),
-        syncStripeInvoices(user.id, stripeCustomerId),
-      ]);
-    }
+    await Promise.all([
+      syncStripeSubscriptions(user.id, stripeCustomerId),
+      syncStripeInvoices(user.id, stripeCustomerId),
+    ]);
   }
 }
 
@@ -188,6 +206,8 @@ async function syncStripeInvoices(
     if (invoices.data.length === 0) return;
 
     for (const invoice of invoices.data) {
+      if (!invoice.id) continue;
+
       // Check if this invoice already exists in Supabase
       const { data: existing } = await adminSupabase
         .from("stripe_invoices")
@@ -204,7 +224,7 @@ async function syncStripeInvoices(
         .insert({
           user_id: userId,
           stripe_invoice_id: invoice.id,
-          amount_paid: status === "succeeded" ? (invoice.amount_paid ?? 0) / 100 : undefined,
+          amount_paid_cents: status === "succeeded" ? (invoice.amount_paid ?? 0) : undefined,
           currency: invoice.currency,
           status,
         });

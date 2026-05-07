@@ -115,13 +115,18 @@ async function handleUserCreated(data: ClerkUserData) {
       data.last_name ??
       (data.full_name ? data.full_name.split(" ").slice(1).join(" ") : "");
 
+    if (!email) {
+      console.error("[Clerk Routes]: No email for user, aborting creation");
+      return;
+    }
+
     //stripe customer creation
     let stripeCustomerId: string | null = null;
     try {
       const customer = await stripe.customers.create({
         email: email,
         metadata: {
-          userId: userId, // Link Stripe customer to your user
+          userId: userId,
         },
       });
 
@@ -134,10 +139,29 @@ async function handleUserCreated(data: ClerkUserData) {
         "[Clerk Routes]: Erreur lors de la création du client Stripe:",
         stripeError
       );
-      // We'll continue with user creation even if Stripe fails
+      return;
     }
 
-    ////////////////////////////////
+    // Upsert into principals first (users.id FK requires it)
+    const { error: principalError } = await supabase
+      .from("principals")
+      .upsert({ id: userId, kind: "clerk" }, { onConflict: "id", ignoreDuplicates: true });
+
+    if (principalError) {
+      console.error(
+        "[Clerk Routes]: Erreur upsert principal:",
+        principalError
+      );
+      try {
+        await stripe.customers.del(stripeCustomerId);
+      } catch (deleteError) {
+        console.error(
+          "[Clerk Routes]: Erreur rollback Stripe après échec principal:",
+          deleteError
+        );
+      }
+      return;
+    }
 
     // Insert the new user into your Supabase table.
     const { error } = await supabase.from("users").insert({
@@ -155,19 +179,17 @@ async function handleUserCreated(data: ClerkUserData) {
       );
 
       // Clean up Stripe customer if user creation failed
-      if (stripeCustomerId) {
-        try {
-          await stripe.customers.del(stripeCustomerId);
-          console.log(
-            `[Clerk Routes]: Stripe customer ${stripeCustomerId} deleted after Supabase error`
-          );
-        } catch (deleteError) {
-          console.error(
-            "[Clerk Routes]: Erreur lors de la suppression du client Stripe:",
-            deleteError
-          );
-          throw error;
-        }
+      try {
+        await stripe.customers.del(stripeCustomerId);
+        console.log(
+          `[Clerk Routes]: Stripe customer ${stripeCustomerId} deleted after Supabase error`
+        );
+      } catch (deleteError) {
+        console.error(
+          "[Clerk Routes]: Erreur lors de la suppression du client Stripe:",
+          deleteError
+        );
+        throw error;
       }
     }
   } catch (error) {

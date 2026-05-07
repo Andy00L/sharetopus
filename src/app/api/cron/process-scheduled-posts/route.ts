@@ -9,7 +9,19 @@ import {
   ContentInfo,
   handleSocialMediaPost,
 } from "@/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
+import type { Tables } from "@/lib/types/database.types";
+
+type PostOptions = {
+  link?: string;
+  board?: string;
+  boardName?: string;
+  privacyLevel?: string;
+  visibility?: string;
+  disableComment?: boolean;
+  disableDuet?: boolean;
+  disableStitch?: boolean;
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -103,10 +115,11 @@ export async function POST(request: NextRequest) {
     // 5. Organize data for handleSocialMediaPost
 
     // Group accounts by platform
-    const pinterestAccounts: SocialAccount[] = [];
-    const linkedinAccounts: SocialAccount[] = [];
-    const tiktokAccounts: SocialAccount[] = [];
-    const instagramAccounts: SocialAccount[] = [];
+    type SocialAccountRow = Tables<"social_accounts">;
+    const pinterestAccounts: SocialAccountRow[] = [];
+    const linkedinAccounts: SocialAccountRow[] = [];
+    const tiktokAccounts: SocialAccountRow[] = [];
+    const instagramAccounts: SocialAccountRow[] = [];
 
     accountsData.forEach((account) => {
       if (account.platform === "pinterest") pinterestAccounts.push(account);
@@ -127,7 +140,7 @@ export async function POST(request: NextRequest) {
       | "text";
 
     // Extract cover timestamp from database
-    const coverTimestamp = mediaPost?.cover_Image_Time_stamp || 0;
+    const coverTimestamp = mediaPost?.cover_image_timestamp || 0;
 
     // Prepare boards and content
     const boards: BoardInfo[] = [];
@@ -135,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     for (const post of postsData) {
       try {
-        const options = post.post_options || {};
+        const options = (post.post_options ?? {}) as PostOptions;
         // Add content
         accountContent.push({
           accountId: post.social_account_id,
@@ -182,10 +195,10 @@ export async function POST(request: NextRequest) {
     // Then override with specific options from posts
     postsData.forEach((post) => {
       try {
-        const options = post.post_options || {};
+        const options = (post.post_options ?? {}) as PostOptions;
         if (post.platform === "pinterest") {
           if (options.privacyLevel)
-            platformOptions.pinterest!.privacyLevel = options.privacyLevel;
+            platformOptions.pinterest!.privacyLevel = options.privacyLevel as PrivacyLevel;
           if (options.link) platformOptions.pinterest!.link = options.link;
           // Board is handled separately in the boards array
         } else if (post.platform === "linkedin") {
@@ -193,7 +206,7 @@ export async function POST(request: NextRequest) {
             platformOptions.linkedin!.visibility = options.visibility;
         } else if (post.platform === "tiktok") {
           if (options.privacyLevel)
-            platformOptions.tiktok!.privacyLevel = options.privacyLevel;
+            platformOptions.tiktok!.privacyLevel = options.privacyLevel as PrivacyLevel;
           if (options.disableComment !== undefined)
             platformOptions.tiktok!.disableComment = options.disableComment;
           if (options.disableDuet !== undefined)
@@ -305,12 +318,12 @@ export async function POST(request: NextRequest) {
 
           for (const post of postsData) {
             await storeFailedPost({
-              user_id,
+              principal_id: user_id,
               social_account_id: post.social_account_id,
               platform: post.platform,
               post_title: post.post_title,
               post_description: post.post_description,
-              post_options: post.post_options,
+              post_options: post.post_options as object | undefined,
               media_type: post.media_type,
               media_storage_path: post.media_storage_path ?? "",
               batch_id,

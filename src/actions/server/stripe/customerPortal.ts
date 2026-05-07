@@ -95,7 +95,7 @@ export async function createCustomerPortal(): Promise<{
     const { data, error } = await adminSupabase
       .from("users")
       .select("stripe_customer_id")
-      .eq("id", userId)
+      .eq("id", userId!)
       .single();
 
     if (error) {

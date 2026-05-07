@@ -73,7 +73,7 @@ export async function disconnectSocialAccount(
     );
     const { data: account, error: fetchError } = await adminSupabase
       .from("social_accounts")
-      .select("user_id, platform")
+      .select("principal_id, platform")
       .eq("id", accountId)
       .single();
 
@@ -90,9 +90,9 @@ export async function disconnectSocialAccount(
     }
 
     // Security check: ensure the account belongs to this user
-    if (account.user_id !== userId) {
+    if (account.principal_id !== userId) {
       console.warn(
-        `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.user_id}`
+        `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.principal_id}`
       );
       return {
         success: false,
@@ -111,7 +111,7 @@ export async function disconnectSocialAccount(
       .from("scheduled_posts")
       .select("media_storage_path")
       .eq("social_account_id", accountId)
-      .in("status", ["scheduled", "pending"])
+      .in("status", ["scheduled", "processing"])
       .filter("media_storage_path", "neq", null);
 
     if (postsError) {
@@ -165,7 +165,7 @@ export async function disconnectSocialAccount(
         .from("scheduled_posts")
         .select("media_storage_path", { count: "exact", head: true })
         .eq("media_storage_path", filePath)
-        .in("status", ["scheduled", "pending"]);
+        .in("status", ["scheduled", "processing"]);
 
       if (checkError) {
         console.error(

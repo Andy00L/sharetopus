@@ -174,7 +174,7 @@ export async function GET(request: NextRequest) {
     const { data: existingAccount, error: fetchError } = await adminSupabase
       .from("social_accounts")
       .select("id")
-      .eq("user_id", userId)
+      .eq("principal_id", userId)
       .eq("account_identifier", linkedInProfile.id)
       .eq("platform", "linkedin")
       .single();
@@ -271,8 +271,8 @@ export async function GET(request: NextRequest) {
       const { error: insertError } = await adminSupabase
         .from("social_accounts")
         .insert({
-          user_id: userId,
-          platform: "linkedin",
+          principal_id: userId,
+          platform: "linkedin" as const,
           account_identifier: linkedInProfile.id,
           is_available: true,
           username: linkedInProfile.name,

@@ -92,39 +92,42 @@ async function handleSubscriptionEvent(
     plan: subscription.items.data[0]?.plan.id,
   };
 
-  let data, error;
   if (type === "deleted") {
-    ({ data, error } = await adminSupabase
+    const { error } = await adminSupabase
       .from("stripe_subscriptions")
       .update({ status: "cancelled" })
-      .match({ stripe_subscription_id: subscription.id })
-      .select());
+      .match({ stripe_subscription_id: subscription.id });
     if (error) {
-      console.error("[Stripe route.ts] Error updating the subscrption status");
+      console.error("[Stripe route.ts] Error updating the subscription status:", error);
     }
-  } else {
-    ({ data, error } = await adminSupabase
+  } else if (type === "created") {
+    const { error } = await adminSupabase
       .from("stripe_subscriptions")
-      [type === "created" ? "insert" : "update"](
-        type === "created" ? [subscriptionData] : subscriptionData
-      )
-      .match({ stripe_subscription_id: subscription.id })
-      .select());
+      .insert([subscriptionData]);
     if (error) {
-      console.error(
-        `[Stripe route.ts] Error during subscription ${type}:`,
-        error
-      );
+      console.error("[Stripe route.ts] Error during subscription created:", error);
       return NextResponse.json({
         status: 500,
-        error: "Error during subscription ",
+        error: "Error during subscription insert",
+      });
+    }
+  } else {
+    const { error } = await adminSupabase
+      .from("stripe_subscriptions")
+      .update(subscriptionData)
+      .match({ stripe_subscription_id: subscription.id });
+    if (error) {
+      console.error("[Stripe route.ts] Error during subscription updated:", error);
+      return NextResponse.json({
+        status: 500,
+        error: "Error during subscription update",
       });
     }
   }
+
   return NextResponse.json({
     status: 200,
-    message: `Subscription created`,
-    data,
+    message: `Subscription ${type}`,
   });
 }
 
@@ -158,8 +161,7 @@ async function handleInvoiceEvent(
   const invoiceData = {
     user_id: userId,
     stripe_invoice_id: invoice.id,
-
-    amount_paid: status === "succeeded" ? invoice.amount_paid / 100 : undefined,
+    amount_paid_cents: status === "succeeded" ? invoice.amount_paid : undefined,
     currency: invoice.currency,
     status,
   };

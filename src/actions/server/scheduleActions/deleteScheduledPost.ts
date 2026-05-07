@@ -112,7 +112,7 @@ export async function deleteScheduledPostBatch(
     );
     const { data: posts, error: fetchError } = await adminSupabase
       .from("scheduled_posts")
-      .select("id, user_id, media_storage_path, platform, status")
+      .select("id, principal_id, media_storage_path, platform, status")
       .in("id", postIds);
 
     if (fetchError) {
@@ -147,7 +147,7 @@ export async function deleteScheduledPostBatch(
 
     // Step 4: Verify post ownership
     // Check if all posts belong to the user
-    const unauthorizedPosts = posts.filter((post) => post.user_id !== userId);
+    const unauthorizedPosts = posts.filter((post) => post.principal_id !== userId);
     if (unauthorizedPosts.length > 0) {
       console.warn(
         `[deleteScheduledPostBatch]: Security violation - User ${userId} attempted to delete ${unauthorizedPosts.length} posts owned by others`
