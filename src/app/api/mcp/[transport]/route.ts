@@ -38,10 +38,10 @@ const handler = createMcpHandler(
   },
   {},
   {
-    basePath: "/api",
+    basePath: "/api/mcp",
     maxDuration: 300,
     verboseLogs: process.env.NODE_ENV === "development",
-  }
+  },
 );
 
 const authHandler = withMcpAuth(
@@ -67,7 +67,7 @@ const authHandler = withMcpAuth(
   {
     required: true,
     resourceMetadataPath: "/.well-known/oauth-protected-resource",
-  }
+  },
 );
 
 export { authHandler as GET, authHandler as POST };

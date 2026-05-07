@@ -16,14 +16,15 @@ import {
  */
 export function McpDocsCard() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-  const mcpUrl = `${baseUrl}/api/mcp/streamable-http`;
+  const mcpUrl = `${baseUrl}/api/mcp/mcp`;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Connect an AI Client</CardTitle>
         <CardDescription>
-          Use the Model Context Protocol to let AI assistants manage your social media.
+          Use the Model Context Protocol to let AI assistants manage your social
+          media.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -31,10 +32,11 @@ export function McpDocsCard() {
         <div>
           <h3 className="mb-2 text-sm font-medium">Claude Desktop</h3>
           <p className="mb-2 text-xs text-muted-foreground">
-            Add this to your Claude Desktop MCP settings (Settings &gt; Developer &gt; MCP Servers):
+            Add this to your Claude Desktop MCP settings (Settings &gt;
+            Developer &gt; MCP Servers):
           </p>
           <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-{`{
+            {`{
   "mcpServers": {
     "sharetopus": {
       "url": "${mcpUrl}",
@@ -54,19 +56,21 @@ export function McpDocsCard() {
             Add a new MCP server in Cursor settings:
           </p>
           <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-{`URL: ${mcpUrl}
+            {`URL: ${mcpUrl}
 Auth: Bearer stp_mcp_YOUR_KEY_HERE`}
           </pre>
         </div>
 
         {/* OAuth flow */}
         <div>
-          <h3 className="mb-2 text-sm font-medium">OAuth (no API key needed)</h3>
+          <h3 className="mb-2 text-sm font-medium">
+            OAuth (no API key needed)
+          </h3>
           <p className="text-xs text-muted-foreground">
             Clients that support MCP OAuth discovery (RFC 9728) can connect
-            without an API key. Point the client at <code>{mcpUrl}</code> and
-            it will discover the Clerk authorization server automatically.
-            You will see a consent screen in your browser.
+            without an API key. Point the client at <code>{mcpUrl}</code> and it
+            will discover the Clerk authorization server automatically. You will
+            see a consent screen in your browser.
           </p>
         </div>
 
@@ -77,15 +81,23 @@ Auth: Bearer stp_mcp_YOUR_KEY_HERE`}
             <tbody>
               <tr>
                 <td className="py-1 pr-3 text-muted-foreground">MCP URL</td>
-                <td><code>{mcpUrl}</code></td>
+                <td>
+                  <code>{mcpUrl}</code>
+                </td>
               </tr>
               <tr>
                 <td className="py-1 pr-3 text-muted-foreground">SSE URL</td>
-                <td><code>{baseUrl}/api/mcp/sse</code></td>
+                <td>
+                  <code>{baseUrl}/api/mcp/sse</code>
+                </td>
               </tr>
               <tr>
-                <td className="py-1 pr-3 text-muted-foreground">OAuth Metadata</td>
-                <td><code>{baseUrl}/.well-known/oauth-protected-resource</code></td>
+                <td className="py-1 pr-3 text-muted-foreground">
+                  OAuth Metadata
+                </td>
+                <td>
+                  <code>{baseUrl}/.well-known/oauth-protected-resource</code>
+                </td>
               </tr>
             </tbody>
           </table>
