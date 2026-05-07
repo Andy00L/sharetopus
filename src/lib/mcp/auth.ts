@@ -19,6 +19,7 @@ export type McpPrincipal =
       principalId: string;
       apiKeyId: string;
       scopes: string[];
+      plan: string | null;
       oauthClientId?: undefined;
     }
   | {
@@ -26,6 +27,7 @@ export type McpPrincipal =
       principalId: string;
       oauthClientId: string;
       scopes: string[];
+      plan: string | null;
       apiKeyId?: undefined;
     };
 
@@ -87,6 +89,7 @@ export async function resolveMcpPrincipal(
             principalId: userId,
             oauthClientId: clerkClientId,
             scopes: authInfo.scopes ?? [],
+            plan: null,
           };
         }
       }
@@ -110,6 +113,8 @@ export async function resolveMcpPrincipal(
       );
       return null;
     }
+    // Cache the plan so entitlementFor can read it without a second query.
+    candidate.plan = sub.plan ? sub.plan.toLowerCase() : "free";
   } catch (err) {
     // Treat any error as "not subscribed". Failing open would let
     // unpaid users through on a network blip.
@@ -162,17 +167,19 @@ async function resolveApiKey(rawToken: string): Promise<McpPrincipal | null> {
 
   if (!principal) return null;
 
-  // Fire-and-forget: update last_used_at
-  adminSupabase
+  // Update last_used_at. Awaited so it lands before the serverless
+  // function freezes. (@vercel/functions is not installed, so we
+  // cannot use waitUntil here.)
+  await adminSupabase
     .from("api_keys")
     .update({ last_used_at: new Date().toISOString() })
-    .eq("id", key.id)
-    .then(() => {});
+    .eq("id", key.id);
 
   return {
     kind: "apikey",
     principalId: key.principal_id,
     apiKeyId: key.id,
     scopes: key.scopes ?? [],
+    plan: null,
   };
 }

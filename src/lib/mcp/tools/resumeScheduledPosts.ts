@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resumeScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/resumeScheduledPostBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Resumes cancelled posts back to "scheduled" status.

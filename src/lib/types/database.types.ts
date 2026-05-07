@@ -1577,7 +1577,15 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      atomic_increment_quota: {
+        Args: {
+          _principal_id: string;
+          _period: string;
+          _action: string;
+          _cap: number;
+        };
+        Returns: number | null;
+      };
     };
     Enums: {
       [_ in never]: never;

@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { updateScheduledTimeBatchInternal } from "@/actions/server/_internal/scheduleActions/updateScheduledTimeBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Reschedules posts to a new time. Cancelled posts get resumed automatically.

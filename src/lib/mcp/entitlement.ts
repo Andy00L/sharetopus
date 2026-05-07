@@ -72,16 +72,16 @@ const MONTHLY_CAPS: Record<string, Record<string, number | null>> = {
 /**
  * Checks whether a principal is entitled to perform the given action.
  *
- * Runs on every MCP tool call. Does not cache the subscription plan in
- * the session because a Stripe webhook could downgrade the user mid-session.
+ * Runs on every MCP tool call. The plan tier is read from `principal.plan`,
+ * which auth.ts populates from checkActiveSubscription on every request.
  *
  * Order of checks:
- *   1. Look up the user's active Stripe subscription to determine plan tier.
+ *   1. Read the plan cached on the principal (set by auth.ts).
  *   2. Compare against the minimum tier for the requested action.
- *   3. If the action has a monthly cap, check usage_quotas and increment.
+ *   3. If the action has a monthly cap, call atomic_increment_quota RPC.
  *
- * Tables read: stripe_subscriptions, usage_quotas
- * Tables written: usage_quotas (upsert on allow)
+ * Tables read: usage_quotas (via RPC)
+ * Tables written: usage_quotas (via RPC, atomic increment)
  *
  * Called by: every tool handler before doing any real work
  */
@@ -89,9 +89,16 @@ export async function entitlementFor(
   principal: McpPrincipal,
   action: string
 ): Promise<Entitlement> {
-  // 1. Resolve current plan
-  const plan = await resolveCurrentPlan(principal.principalId);
+  // 1. Read the plan cached on the principal by auth.ts
+  const plan = principal.plan;
   if (!plan) {
+    // This branch should never fire: auth.ts blocks unauthenticated
+    // users and sets plan after the subscription gate. Log it so we
+    // notice if it does.
+    console.error(
+      `[entitlement] principal.plan is null for ${principal.principalId}. ` +
+        "auth.ts should have blocked this request or set a plan."
+    );
     return {
       mode: "deny",
       reason: "no_subscription",
@@ -143,35 +150,14 @@ export async function entitlementFor(
 }
 
 /**
- * Looks up the user's current Stripe subscription and extracts the plan name.
+ * Atomically increments the usage counter for a principal+action pair and
+ * returns whether the caller is still within the cap.
  *
- * Returns the lowercased plan slug (free, starter, creator, pro) or null
- * if there is no active subscription.
+ * Calls the `atomic_increment_quota` Postgres function which performs the
+ * check-and-increment in a single statement, closing the race window that
+ * existed in the old read-then-upsert approach.
  *
- * We look for any subscription with status in (active, trialing). Past-due
- * subs are excluded because Stripe pauses access for those.
- */
-async function resolveCurrentPlan(principalId: string): Promise<string | null> {
-  const { data, error } = await adminSupabase
-    .from("stripe_subscriptions")
-    .select("plan, status")
-    .eq("user_id", principalId)
-    .in("status", ["active", "trialing"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error || !data) return null;
-  if (!data.plan) return "free";
-  return data.plan.toLowerCase();
-}
-
-/**
- * Checks the current month's usage for a principal+action pair and increments
- * if under the cap.
- *
- * Uses upsert with on-conflict increment so Postgres handles concurrency.
- * The period key is YYYY-MM format.
+ * When the function returns null, the cap was already reached.
  */
 async function checkAndIncrementQuota(
   principalId: string,
@@ -180,41 +166,28 @@ async function checkAndIncrementQuota(
 ): Promise<{ allowed: boolean; currentCount: number }> {
   const period = new Date().toISOString().slice(0, 7); // YYYY-MM
 
-  // Read current count
-  const { data: existing } = await adminSupabase
-    .from("usage_quotas")
-    .select("count")
-    .eq("principal_id", principalId)
-    .eq("period", period)
-    .eq("action", action)
-    .maybeSingle();
-
-  const currentCount = existing?.count ?? 0;
-
-  if (currentCount >= cap) {
-    return { allowed: false, currentCount };
-  }
-
-  // Upsert with increment. The on-conflict clause handles the race condition
-  // where two requests arrive at the same time.
-  const { error } = await adminSupabase.from("usage_quotas").upsert(
-    {
-      principal_id: principalId,
-      period,
-      action,
-      count: currentCount + 1,
-    },
-    { onConflict: "principal_id,period,action" }
-  );
+  const { data, error } = await adminSupabase.rpc("atomic_increment_quota", {
+    _principal_id: principalId,
+    _period: period,
+    _action: action,
+    _cap: cap,
+  });
 
   if (error) {
     console.error(
-      `[entitlement] Failed to upsert usage_quotas for ${action}:`,
+      `[entitlement] atomic_increment_quota RPC failed for ${action}:`,
       error.message
     );
     // Fail open for quota tracking errors. The alternative is blocking
     // users because of a transient DB issue, which is worse.
+    return { allowed: true, currentCount: 0 };
   }
 
-  return { allowed: true, currentCount: currentCount + 1 };
+  // The RPC returns null when the cap was already reached.
+  if (data === null) {
+    // We do not know the exact count when denied; use the cap value.
+    return { allowed: false, currentCount: cap };
+  }
+
+  return { allowed: true, currentCount: data as number };
 }

@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { fetchSocialAccountsInternal } from "@/actions/server/_internal/data/fetchSocialAccounts";
-import { extractPrincipal } from "../tools/index";
+import { extractPrincipal } from "@/lib/mcp/context";
 import { entitlementFor } from "../entitlement";
 
 /**

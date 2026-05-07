@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { cancelScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/cancelScheduledPostBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Cancels one or more scheduled posts (sets status to "cancelled").

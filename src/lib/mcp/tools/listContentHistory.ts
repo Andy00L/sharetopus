@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getContentHistoryInternal } from "@/actions/server/_internal/contentHistoryActions/getContentHistory";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Lists content that has already been posted.

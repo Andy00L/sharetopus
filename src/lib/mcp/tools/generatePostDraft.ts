@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Generates a post draft using MCP sampling.

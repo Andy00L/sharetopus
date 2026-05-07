@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const ALLOWED_CONTENT_TYPES = [

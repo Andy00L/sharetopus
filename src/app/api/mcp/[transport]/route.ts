@@ -11,9 +11,10 @@ export const maxDuration = 300;
 /**
  * MCP Streamable HTTP + SSE endpoint.
  *
- * Both /api/mcp/sse and /api/mcp/streamable-http resolve here thanks
- * to the [transport] dynamic segment. The handler from mcp-handler
- * negotiates the right transport based on the client's request.
+ * The [transport] dynamic segment routes both transports to this file.
+ * mcp-handler derives endpoints from basePath "/api/mcp":
+ *   - Streamable HTTP: /api/mcp/mcp
+ *   - SSE:             /api/mcp/sse
  *
  * Auth flow:
  *   1. Bearer token arrives in the Authorization header.
@@ -24,8 +25,9 @@ export const maxDuration = 300;
  *      Clerk userId becomes the principalId.
  *   4. If neither works, the request gets a 401.
  *
- * The principal is stashed in authInfo.extra so tool handlers can
- * retrieve it without re-resolving on every call.
+ * The principal (including cached plan tier) is stashed in
+ * authInfo.extra so tool handlers can retrieve it without
+ * re-resolving on every call.
  *
  * Called by: MCP clients (Claude Desktop, Cursor, ChatGPT, etc.)
  * Tables touched: api_keys (via resolveMcpPrincipal), mcp_sessions (read/write)

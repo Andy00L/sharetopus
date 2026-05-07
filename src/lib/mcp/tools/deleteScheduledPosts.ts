@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { deleteScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/deleteScheduledPostBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "./index";
+import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 
 /**
  * Permanently deletes scheduled posts and cleans up orphaned media.
