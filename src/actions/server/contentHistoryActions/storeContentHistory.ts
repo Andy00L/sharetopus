@@ -2,16 +2,26 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { ContentHistory } from "@/lib/types/dbTypes";
+import type { TablesInsert, Json } from "@/lib/types/database.types";
+
+export type StoreContentHistoryInput = {
+  platform: string;
+  content_id: string;
+  social_account_id: string;
+  title?: string | null;
+  description?: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
+  status?: string | null;
+  batch_id?: string | null;
+  extra?: Record<string, unknown>;
+};
 
 /**
  * Stores a record of posted content in the content_history table
- *
- * @param data ContentHistoryData object containing necessary information
- * @returns Object with success status, message, and optionally the record ID
  */
 export async function storeContentHistory(
-  data: ContentHistory,
+  data: StoreContentHistoryInput,
   userId: string | null
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
   // Basic validation
@@ -37,8 +47,8 @@ export async function storeContentHistory(
     );
 
     // Prepare data for insertion
-    const insertData = {
-      user_id: userId,
+    const insertData: TablesInsert<"content_history"> = {
+      principal_id: userId,
       platform: data.platform,
       content_id: data.content_id,
       title: data.title ?? null,
@@ -48,9 +58,7 @@ export async function storeContentHistory(
       status: data.status,
       batch_id: data.batch_id,
       social_account_id: data.social_account_id,
-
-      extra: data.extra ? JSON.stringify(data.extra) : null,
-      created_at: new Date().toISOString(),
+      extra: (data.extra ?? {}) as Json,
     };
 
     // Insert the record into the content_history table

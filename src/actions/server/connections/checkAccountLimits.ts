@@ -47,7 +47,7 @@ export async function checkAccountLimits(
     const { data: accountsData, error: accountsError } = await adminSupabase
       .from("social_accounts")
       .select("id")
-      .eq("user_id", userId);
+      .eq("principal_id", userId);
 
     if (accountsError) {
       console.error(

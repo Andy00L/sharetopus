@@ -164,7 +164,7 @@ export async function directPostForPinterestAccounts(config: {
 
       if (isCronJob) {
         const failedPostResult = await storeFailedPost({
-          user_id: userId,
+          principal_id: userId,
           social_account_id: account.id,
           platform: "pinterest",
           post_title: accountContent.title || null,

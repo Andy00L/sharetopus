@@ -62,7 +62,7 @@ export async function POST() {
       await adminSupabase
         .from("social_accounts")
         .select("id")
-        .eq("user_id", userId)
+        .eq("principal_id", userId)
         .eq("platform", "instagram");
 
     if (countError) {

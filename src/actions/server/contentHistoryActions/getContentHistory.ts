@@ -49,7 +49,7 @@ export async function getContentHistory(userId: string | null): Promise<{
         social_accounts!social_account_id(avatar_url)
       `
       )
-      .eq("user_id", userId)
+      .eq("principal_id", userId!)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -114,10 +114,11 @@ export async function getContentHistoryGroupedByBatch(
 
   // Group by batch_id, handling null/undefined batch IDs
   const groupedByBatch = result.data.reduce((acc, item) => {
-    if (!acc[item.batch_id]) {
-      acc[item.batch_id] = [];
+    const key = item.batch_id ?? "no-batch";
+    if (!acc[key]) {
+      acc[key] = [];
     }
-    acc[item.batch_id].push(item);
+    acc[key].push(item);
     return acc;
   }, {} as Record<string, ContentHistory[]>);
 

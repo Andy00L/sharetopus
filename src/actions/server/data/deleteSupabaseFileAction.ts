@@ -113,7 +113,7 @@ export async function deleteSupabaseFileAction(
               .from("scheduled_posts")
               .select("id", { count: "exact", head: true })
               .eq("media_storage_path", path)
-              .in("status", ["scheduled", "pending", "processing"]);
+              .in("status", ["scheduled", "processing"]);
 
           if (checkError) {
             console.error(
@@ -234,7 +234,7 @@ export async function deleteSupabaseFileAction(
         .from("scheduled_posts")
         .select("id", { count: "exact", head: true })
         .eq("media_storage_path", filePath)
-        .in("status", ["scheduled", "pending", "processing"]);
+        .in("status", ["scheduled", "processing"]);
 
       if (checkError) {
         console.error(

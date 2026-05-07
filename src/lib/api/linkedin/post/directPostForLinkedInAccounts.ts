@@ -229,7 +229,7 @@ export async function directPostForLinkedInAccounts(
 
     if (isCronJob) {
       const failedPostResult = await storeFailedPost({
-        user_id: userId,
+        principal_id: userId,
         social_account_id: account.id,
         platform: "linkedin",
         post_title: accountContent.title || null,

@@ -158,7 +158,7 @@ export async function directPostForTikTokAccounts(config: {
       console.error("[TikTok Direct Post] Error message:", postResult.message);
       if (isCronJob) {
         const failedPostResult = await storeFailedPost({
-          user_id: userId,
+          principal_id: userId,
           social_account_id: account.id,
           platform: "tiktok",
           post_title: accountContent.title || null,

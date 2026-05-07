@@ -68,7 +68,7 @@ export async function getScheduledPosts(userId: string | null): Promise<{
         )
       `
       )
-      .eq("user_id", userId)
+      .eq("principal_id", userId!)
       .order("scheduled_at", { ascending: true });
 
     // Step 4: Handle database errors
@@ -95,7 +95,7 @@ export async function getScheduledPosts(userId: string | null): Promise<{
         postsCount > 0
           ? `Successfully retrieved ${postsCount} scheduled posts.`
           : "No scheduled posts found.",
-      data: data || [],
+      data: (data || []) as unknown as ScheduledPost[],
     };
   } catch (err) {
     // Step 6: Handle unexpected errors

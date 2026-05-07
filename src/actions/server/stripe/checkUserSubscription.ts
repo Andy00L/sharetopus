@@ -37,7 +37,7 @@ export async function checkUserSubscription(
     const { data, error } = await adminSupabase
       .from("stripe_subscriptions")
       .select("status")
-      .eq("user_id", userId)
+      .eq("user_id", userId!)
       .order("created_at", { ascending: false }) // Get the most recent subscription first
       .limit(1); // We only need the most recent subscription
 

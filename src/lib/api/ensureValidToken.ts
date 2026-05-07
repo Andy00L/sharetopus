@@ -182,7 +182,7 @@ async function updateTokenInDatabase(
         updated_at: new Date().toISOString(),
       })
       .eq("id", accountId)
-      .eq("platform", platform);
+      .eq("platform", platform as "linkedin" | "tiktok" | "pinterest" | "instagram");
 
     if (error) {
       console.error(

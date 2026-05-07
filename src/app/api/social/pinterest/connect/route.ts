@@ -199,8 +199,8 @@ export async function GET(request: NextRequest) {
     try {
       // Prepare account data
       const accountData = {
-        user_id: userId,
-        platform: "pinterest",
+        principal_id: userId,
+        platform: "pinterest" as const,
         account_identifier: pinterestProfile?.id ?? "",
         is_available: true,
         access_token,
@@ -240,7 +240,7 @@ export async function GET(request: NextRequest) {
       const { error: upsertError } = await adminSupabase
         .from("social_accounts")
         .upsert([accountData], {
-          onConflict: "user_id, platform, account_identifier",
+          onConflict: "principal_id, platform, account_identifier",
           ignoreDuplicates: false,
         });
 

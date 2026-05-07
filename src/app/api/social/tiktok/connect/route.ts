@@ -166,9 +166,9 @@ export async function GET(request: NextRequest) {
       try {
         // Prepare account data with rich profile information
         const accountData = {
-          user_id: userId,
-          platform: "tiktok",
-          account_identifier: open_id,
+          principal_id: userId,
+          platform: "tiktok" as const,
+          account_identifier: open_id ?? "",
           is_available: true,
           access_token,
           refresh_token,
@@ -200,8 +200,8 @@ export async function GET(request: NextRequest) {
         const { error: upsertError } = await adminSupabase
           .from("social_accounts")
           .upsert([accountData], {
-            onConflict: "user_id, platform, account_identifier", // Define your unique constraint columns
-            ignoreDuplicates: false, // Ensure it updates if conflict occurs
+            onConflict: "principal_id, platform, account_identifier",
+            ignoreDuplicates: false,
           });
 
         if (upsertError) {

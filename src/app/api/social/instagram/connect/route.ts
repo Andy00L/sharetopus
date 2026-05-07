@@ -230,7 +230,7 @@ export async function GET(request: NextRequest) {
     const { data: existingAccount, error: fetchError } = await adminSupabase
       .from("social_accounts")
       .select("id")
-      .eq("user_id", userId)
+      .eq("principal_id", userId)
       .eq("account_identifier", instagramProfile.data.id)
       .eq("platform", "instagram")
       .single();
@@ -331,8 +331,8 @@ export async function GET(request: NextRequest) {
       const { error: insertError } = await adminSupabase
         .from("social_accounts")
         .insert({
-          user_id: userId,
-          platform: "instagram",
+          principal_id: userId,
+          platform: "instagram" as const,
           account_identifier: instagramProfile.data.id,
           is_available: true,
           username: instagramProfile.data.username,

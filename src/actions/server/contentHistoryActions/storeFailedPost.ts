@@ -2,20 +2,21 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { TablesInsert, Json } from "@/lib/types/database.types";
 
 type FailedPostData = {
-  user_id: string | null;
+  principal_id: string | null;
   social_account_id: string;
   platform: string;
   post_title?: string | null;
   post_description?: string | null;
   post_options?: object;
-  media_type: "image" | "video" | "text" | "images";
+  media_type: "image" | "video" | "text";
   media_storage_path: string;
   coverTimestamp?: number;
   batch_id: string;
   scheduled_at?: string;
-  extra_data?: Record<string, unknown>; // Simple extra data field
+  extra_data?: Record<string, unknown>;
 };
 
 /**
@@ -24,7 +25,7 @@ type FailedPostData = {
 export async function storeFailedPost(
   data: FailedPostData
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
-  if (!data.user_id || !data.social_account_id || !data.platform) {
+  if (!data.principal_id || !data.social_account_id || !data.platform) {
     return {
       success: false,
       message: "Missing required information",
@@ -33,25 +34,27 @@ export async function storeFailedPost(
 
   try {
     console.log(
-      `[storeFailedPost] Storing failed post for user ${data.user_id}`
+      `[storeFailedPost] Storing failed post for user ${data.principal_id}`
     );
 
-    const insertData = {
-      user_id: data.user_id,
+    const errorMsg = typeof data.extra_data?.message === "string"
+      ? data.extra_data.message
+      : "Failed to post";
+
+    const insertData: TablesInsert<"failed_posts"> = {
+      principal_id: data.principal_id,
       social_account_id: data.social_account_id,
       platform: data.platform,
       status: "failed",
       scheduled_at: data.scheduled_at || new Date().toISOString(),
       post_title: data.post_title || null,
       post_description: data.post_description || null,
-      post_options: data.post_options,
+      post_options: (data.post_options ?? {}) as Json,
       media_type: data.media_type,
       media_storage_path: data.media_storage_path,
-      cover_Image_Time_stamp: data.coverTimestamp,
+      cover_image_timestamp: data.coverTimestamp,
       batch_id: data.batch_id,
-      error_message: data.extra_data?.message || "Failed to post", // Default generic message
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      error_message: errorMsg,
     };
 
     const { data: newRecord, error } = await adminSupabase
