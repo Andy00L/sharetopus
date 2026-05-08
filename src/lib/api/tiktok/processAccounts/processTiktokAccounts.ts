@@ -96,7 +96,7 @@ export async function processTiktokAccounts(config: {
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
-              isCronJob: config.cronSecret,
+              cronSecret: config.cronSecret,
             }),
           }).then((res) => res.json());
 

@@ -23,7 +23,7 @@ export async function processLinkedinAccounts(config: {
   userId: string | null;
   batchId: string;
 
-  isCronJob?: boolean;
+  cronSecret?: string;
 }) {
   const { accounts, isScheduled } = config;
   const errors: AccountError[] = [];
@@ -106,7 +106,7 @@ export async function processLinkedinAccounts(config: {
               fileName: config.fileName,
               batchId: config.batchId,
               cleanupFiles: false,
-              isCronJob: config.isCronJob,
+              cronSecret: config.cronSecret,
             }),
           }).then((res) => res.json());
       const accountProcessingTime = performance.now() - accountStartTime;

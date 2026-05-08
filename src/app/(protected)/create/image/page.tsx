@@ -1,7 +1,7 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import { PRICE_ID_UPLOAD_LIMITS } from "@/components/core/create/constants/uploadLimits";
-import SocialPostForm from "@/components/core/create/SocialPostForm";
+import SocialPostForm from "@/components/core/create/SocialPostForm/SocialPostForm";
 import RateLimitError from "@/components/RateLimitError";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";

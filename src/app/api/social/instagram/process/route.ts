@@ -1,10 +1,29 @@
+import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { processInstagramAccounts } from "@/lib/api/instagram/processAccounts/processInstagramAccounts";
 
 export async function POST(request: Request) {
   try {
-    const config = await request.json();
+    const body = await request.json();
 
-    const result = await processInstagramAccounts(config);
+    const authResult = await authCheckCronJob(body.userId ?? null, body.cronSecret);
+    if (!authResult) {
+      return Response.json(
+        {
+          successCount: 0,
+          errors: [
+            {
+              accountId: "server-error",
+              platform: "Instagram",
+              displayName: "Instagram API",
+              error: "Unauthorized",
+            },
+          ],
+        },
+        { status: 401 }
+      );
+    }
+
+    const result = await processInstagramAccounts(body);
 
     return Response.json(result);
   } catch (error) {

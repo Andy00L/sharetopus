@@ -22,7 +22,7 @@ export async function processInstagramAccounts(config: {
   postType: "image" | "video";
   userId: string | null;
   batchId: string;
-  isCronJob?: boolean;
+  cronSecret?: string;
 }) {
   const { accounts, isScheduled, postType } = config;
   const errors: AccountError[] = [];
@@ -133,7 +133,7 @@ export async function processInstagramAccounts(config: {
               userId: config.userId,
               fileName: config.fileName,
               batchId: config.batchId,
-              isCronJob: config.isCronJob,
+              cronSecret: config.cronSecret,
             }),
           }).then((res) => res.json());
 

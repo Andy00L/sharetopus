@@ -337,6 +337,10 @@ export async function handleSocialMediaPost(config: {
       );
     }
 
+    // Internal route calls use the server's own cron secret since
+    // the caller was already authenticated above (Clerk or cronSecret).
+    const routeSecret = process.env.CRON_SECRET_KEY;
+
     // Process each platform in parallel for maximum performance
     const [
       tiktokAccountResults,
@@ -364,7 +368,7 @@ export async function handleSocialMediaPost(config: {
               coverTimestamp,
               userId,
               batchId,
-              cronSecret,
+              cronSecret: routeSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -389,7 +393,7 @@ export async function handleSocialMediaPost(config: {
               postType,
               userId,
               batchId,
-              cronSecret,
+              cronSecret: routeSecret,
               mediaUrl,
             }),
           }).then((res) => res.json())
@@ -414,7 +418,7 @@ export async function handleSocialMediaPost(config: {
               userId,
               batchId,
               mediaType,
-              cronSecret,
+              cronSecret: routeSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),
@@ -436,7 +440,7 @@ export async function handleSocialMediaPost(config: {
               postType,
               userId,
               batchId,
-              cronSecret,
+              cronSecret: routeSecret,
             }),
           }).then((res) => res.json())
         : Promise.resolve({ successCount: 0, errors: [] }),

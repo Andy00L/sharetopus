@@ -1,10 +1,29 @@
+import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { processTiktokAccounts } from "@/lib/api/tiktok/processAccounts/processTiktokAccounts";
 
 export async function POST(request: Request) {
   try {
-    const config = await request.json();
+    const body = await request.json();
 
-    const result = await processTiktokAccounts(config);
+    const authResult = await authCheckCronJob(body.userId ?? null, body.cronSecret);
+    if (!authResult) {
+      return Response.json(
+        {
+          successCount: 0,
+          errors: [
+            {
+              accountId: "server-error",
+              platform: "Tiktok",
+              displayName: "Tiktok API",
+              error: "Unauthorized",
+            },
+          ],
+        },
+        { status: 401 }
+      );
+    }
+
+    const result = await processTiktokAccounts(body);
 
     return Response.json(result);
   } catch (error) {

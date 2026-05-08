@@ -1,5 +1,5 @@
 "use server";
-import { schedulePost } from "@/actions/server/scheduleActions/schedulePost";
+import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions/schedulePost";
 import { SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
@@ -47,11 +47,15 @@ export async function scheduleForInstagramAccounts(config: {
       batch_id: batchId,
     };
 
+    if (!userId) {
+      return { success: false, count: 0, message: "Authentication required." };
+    }
+
     console.log(
       `[Schedule For Instagram Accounts] Scheduling Instagram post for: ${account.display_name}`
     );
 
-    const result = await schedulePost(scheduleData, userId);
+    const result = await schedulePostInternal(scheduleData, userId);
 
     if (!result.success) {
       return {

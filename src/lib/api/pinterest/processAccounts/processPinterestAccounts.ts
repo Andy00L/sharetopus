@@ -24,7 +24,7 @@ export async function processPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
-  isCronJob?: boolean;
+  cronSecret?: string;
   mediaUrl: string;
 }) {
   const { accounts, isScheduled, postType } = config;
@@ -114,7 +114,7 @@ export async function processPinterestAccounts(config: {
               fileName: config.fileName,
               batchId: config.batchId,
               postType: config.postType,
-              isCronJob: config.isCronJob,
+              cronSecret: config.cronSecret,
               mediaUrl: config.mediaUrl,
             }),
           }).then((res) => res.json());

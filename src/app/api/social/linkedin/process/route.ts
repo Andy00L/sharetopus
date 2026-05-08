@@ -1,10 +1,29 @@
+import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { processLinkedinAccounts } from "@/lib/api/linkedin/processAccounts/processLinkedinAccounts";
 
 export async function POST(request: Request) {
   try {
-    const config = await request.json();
+    const body = await request.json();
 
-    const result = await processLinkedinAccounts(config);
+    const authResult = await authCheckCronJob(body.userId ?? null, body.cronSecret);
+    if (!authResult) {
+      return Response.json(
+        {
+          successCount: 0,
+          errors: [
+            {
+              accountId: "server-error",
+              platform: "linkedin",
+              displayName: "LinkedIn API",
+              error: "Unauthorized",
+            },
+          ],
+        },
+        { status: 401 }
+      );
+    }
+
+    const result = await processLinkedinAccounts(body);
 
     return Response.json(result);
   } catch (error) {
