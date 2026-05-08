@@ -82,7 +82,7 @@ export async function createVideoPin({
     // Step 3: Wait for video processing
     const processingResult = await waitForVideoProcessing(
       accessToken,
-      media_id
+      media_id,
     );
     if (!processingResult.success) {
       return processingResult;
@@ -112,7 +112,7 @@ export async function createVideoPin({
  * Step 1: Register media upload with Pinterest
  */
 async function registerMediaUpload(
-  accessToken: string
+  accessToken: string,
 ): Promise<MediaUploadResult> {
   try {
     const response = await fetch("https://api.pinterest.com/v5/media", {
@@ -181,7 +181,7 @@ async function uploadVideoFile({
     formData.append(
       "file",
       new Blob([new Uint8Array(buffer)], { type: mediaType }),
-      fileName
+      fileName,
     );
 
     const response = await fetch(uploadUrl, {
@@ -216,9 +216,9 @@ async function uploadVideoFile({
  */
 async function waitForVideoProcessing(
   accessToken: string,
-  mediaId: string
+  mediaId: string,
 ): Promise<PinterestPostResult> {
-  const MAX_TIMEOUT = 40000; // 40 seconds
+  const MAX_TIMEOUT = 200000; // 40 seconds
   const WAIT_TIME = 1000; // 1 second between checks
   const MAX_ATTEMPTS = Math.floor(MAX_TIMEOUT / WAIT_TIME);
 
@@ -258,7 +258,7 @@ async function waitForVideoProcessing(
     console.log(
       `[Pinterest PostVideo] Upload status: ${status} (attempt ${
         attempt + 1
-      }/${MAX_ATTEMPTS})`
+      }/${MAX_ATTEMPTS})`,
     );
 
     // Wait before next check
@@ -279,7 +279,7 @@ async function waitForVideoProcessing(
  */
 async function checkMediaStatus(
   accessToken: string,
-  mediaId: string
+  mediaId: string,
 ): Promise<PinterestPostResult> {
   try {
     const response = await fetch(
@@ -290,7 +290,7 @@ async function checkMediaStatus(
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
         },
-      }
+      },
     );
 
     const data = (await response.json()) as PinterestMediaStatusResponse;
