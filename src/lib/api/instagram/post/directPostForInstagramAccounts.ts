@@ -29,6 +29,7 @@ export async function directPostForInstagramAccounts(config: {
   fileName: string;
   batchId: string;
   isCronJob?: boolean;
+  scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -133,6 +134,7 @@ export async function directPostForInstagramAccounts(config: {
           description: accountContent.description || null,
           media_url: postResult.publicUrl!,
           batch_id: batchId,
+          scheduled_post_id: config.scheduledPostId ?? null,
           status: "posted",
           media_type: postType,
           extra: {

@@ -14,6 +14,7 @@ export type StoreContentHistoryInput = {
   media_type?: string | null;
   status?: string | null;
   batch_id?: string | null;
+  scheduled_post_id?: string | null;
   extra?: Record<string, unknown>;
 };
 
@@ -57,6 +58,7 @@ export async function storeContentHistory(
       media_type: data.media_type,
       status: data.status,
       batch_id: data.batch_id,
+      scheduled_post_id: data.scheduled_post_id ?? null,
       social_account_id: data.social_account_id,
       extra: (data.extra ?? {}) as Json,
     };

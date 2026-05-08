@@ -31,6 +31,7 @@ export async function directPostForTikTokAccounts(config: {
   fileName: string;
   batchId: string;
   isCronJob?: boolean;
+  scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -119,6 +120,7 @@ export async function directPostForTikTokAccounts(config: {
           description: accountContent.description || null,
           media_url: postResult.postUrl || null,
           batch_id: batchId,
+          scheduled_post_id: config.scheduledPostId ?? null,
           status: postResult.status,
           media_type: postType,
           extra: {

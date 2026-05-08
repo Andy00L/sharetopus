@@ -30,6 +30,7 @@ interface DirectPostConfig {
   batchId: string;
   postType: "image" | "video" | "text";
   isCronJob?: boolean;
+  scheduledPostId?: string;
   cronSecret?: string;
 }
 
@@ -189,6 +190,7 @@ export async function directPostForLinkedInAccounts(
           description: accountContent.description,
           media_url: `https://www.linkedin.com/feed/update/${postResult.postId}`,
           batch_id: batchId,
+          scheduled_post_id: config.scheduledPostId ?? null,
           media_type: postType,
           status: "posted",
           social_account_id: accountContent.accountId,

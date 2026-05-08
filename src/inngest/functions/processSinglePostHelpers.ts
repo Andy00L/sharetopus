@@ -354,6 +354,7 @@ export async function callPlatformDirectPost(args: {
           postType: post.media_type,
           mediaUrl: mediaUrl ?? "",
           isCronJob: true,
+          scheduledPostId: post.id,
         });
         break;
       }
@@ -370,6 +371,7 @@ export async function callPlatformDirectPost(args: {
           batchId,
           postType: post.media_type,
           isCronJob: true,
+          scheduledPostId: post.id,
         });
         break;
       }
@@ -387,6 +389,7 @@ export async function callPlatformDirectPost(args: {
           fileName,
           batchId,
           isCronJob: true,
+          scheduledPostId: post.id,
         });
         break;
       }
@@ -406,6 +409,7 @@ export async function callPlatformDirectPost(args: {
           fileName,
           batchId,
           isCronJob: true,
+          scheduledPostId: post.id,
         });
         break;
       }
@@ -457,15 +461,16 @@ export type RecordStatusResult = {
 };
 
 /**
- * Idempotent: only flips status if currently 'processing'. Re-invocation
- * after success is a no-op.
+ * Idempotent: only acts if the row is currently 'processing'.
+ * Re-invocation after success is a no-op (row already deleted).
  *
  * For terminal failures, the directPostFor function already wrote to
  * failed_posts (via storeFailedPost when isCronJob:true). This step
- * only updates the scheduled_posts row.
+ * only updates the scheduled_posts row to status='failed'.
  *
- * For success, content_history is already written by the directPostFor
- * function; this step only updates the scheduled_posts row.
+ * For success, content_history (with scheduled_post_id lineage) is
+ * already written by the directPostFor function; this step deletes
+ * the scheduled_posts row so the Scheduled UI no longer shows it.
  */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
@@ -478,27 +483,22 @@ export async function recordPostStatus(args: {
   if (result.ok) {
     const { data, error } = await adminSupabase
       .from("scheduled_posts")
-      .update({
-        status: "posted" satisfies PostStatus,
-        posted_at: nowIso,
-        error_message: null,
-        updated_at: nowIso,
-      })
+      .delete()
       .eq("id", post.id)
       .eq("status", "processing" satisfies PostStatus)
       .select("id");
 
     if (error) {
-      console.error("[processSinglePost] mark posted failed:", error.message);
+      console.error("[recordPostStatus] delete posted row failed:", error.message);
       return {
         success: true,
-        message: `mark-posted error: ${error.message}`,
+        message: `delete-posted error: ${error.message}`,
         updated: false,
       };
     }
     return {
       success: true,
-      message: data && data.length > 0 ? "marked posted" : "already moved on",
+      message: data && data.length > 0 ? "deleted posted row" : "already moved on",
       updated: !!(data && data.length > 0),
     };
   }

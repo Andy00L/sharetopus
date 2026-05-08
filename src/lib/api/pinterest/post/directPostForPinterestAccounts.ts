@@ -37,6 +37,7 @@ export async function directPostForPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   mediaUrl: string;
   isCronJob?: boolean;
+  scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -124,6 +125,7 @@ export async function directPostForPinterestAccounts(config: {
           description: accountContent.description,
           media_url: postResult.postUrl!,
           batch_id: batchId,
+          scheduled_post_id: config.scheduledPostId ?? null,
           status: "posted",
           media_type: postType,
           extra: {
