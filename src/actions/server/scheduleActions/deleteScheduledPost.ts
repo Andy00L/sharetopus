@@ -12,7 +12,7 @@ import { deleteScheduledPostBatchInternal } from "@/actions/server/_internal/sch
  * then delegates to deleteScheduledPostBatchInternal.
  *
  * Tables touched (via _internal): scheduled_posts (read + delete), Storage
- * Called by: BatchedPostCard, process-scheduled-posts cron
+ * Called by: BatchedPostCard, MCP deleteScheduledPosts tool
  */
 export async function deleteScheduledPostBatch(
   postIds: string[],

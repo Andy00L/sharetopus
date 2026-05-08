@@ -220,6 +220,7 @@ export type Database = {
           platform: string;
           status:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -251,6 +252,7 @@ export type Database = {
           platform: string;
           status?:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -280,6 +282,7 @@ export type Database = {
           platform?: string;
           status?:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -657,6 +660,7 @@ export type Database = {
           platform: string;
           status:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -688,6 +692,7 @@ export type Database = {
           platform: string;
           status?:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -717,6 +722,7 @@ export type Database = {
           platform?: string;
           status?:
             | "scheduled"
+            | "queued"
             | "processing"
             | "posted"
             | "failed"
@@ -1701,6 +1707,7 @@ export type ConnectionStatus =
 
 export type PostStatus =
   | "scheduled"
+  | "queued"
   | "processing"
   | "posted"
   | "failed"

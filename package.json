@@ -53,6 +53,7 @@
     "date-fns": "^4.1.0",
     "form-data": "^4.0.5",
     "i18next": "^25.10.10",
+    "inngest": "^4.3.0",
     "lucide-react": "^0.485.0",
     "mcp-handler": "^1.1.0",
     "nanoid": "^5.1.11",
@@ -80,15 +81,15 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
+    "@eslint/eslintrc": "^3.3.5",
+    "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^20.19.39",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
-    "@tailwindcss/postcss": "^4.2.4",
-    "tailwindcss": "^4.2.4",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.1.6",
-    "@eslint/eslintrc": "^3.3.5"
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.9.3"
   },
   "overrides": {
     "@types/react": "19.2.2",
