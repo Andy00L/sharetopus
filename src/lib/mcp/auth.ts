@@ -5,6 +5,7 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { auth } from "@clerk/nextjs/server";
 import { verifyClerkToken } from "@clerk/mcp-tools/next";
 import { hashToken, isMcpApiKeyToken } from "./tokens";
+import { type PlanTier, priceIdToTier } from "@/lib/types/plans";
 
 /**
  * The resolved identity behind an MCP request.
@@ -19,7 +20,7 @@ export type McpPrincipal =
       principalId: string;
       apiKeyId: string;
       scopes: string[];
-      plan: string | null;
+      plan: PlanTier;
       oauthClientId?: undefined;
     }
   | {
@@ -27,7 +28,7 @@ export type McpPrincipal =
       principalId: string;
       oauthClientId: string;
       scopes: string[];
-      plan: string | null;
+      plan: PlanTier;
       apiKeyId?: undefined;
     };
 
@@ -89,7 +90,7 @@ export async function resolveMcpPrincipal(
             principalId: userId,
             oauthClientId: clerkClientId,
             scopes: authInfo.scopes ?? [],
-            plan: null,
+            plan: "free",
           };
         }
       }
@@ -113,8 +114,9 @@ export async function resolveMcpPrincipal(
       );
       return null;
     }
-    // Cache the plan so entitlementFor can read it without a second query.
-    candidate.plan = sub.plan ? sub.plan.toLowerCase() : "free";
+    // Translate the raw Stripe price ID to a tier name so entitlementFor
+    // can compare tiers without knowing about price IDs.
+    candidate.plan = priceIdToTier(sub.plan);
   } catch (err) {
     // Treat any error as "not subscribed". Failing open would let
     // unpaid users through on a network blip.
@@ -180,6 +182,6 @@ async function resolveApiKey(rawToken: string): Promise<McpPrincipal | null> {
     principalId: key.principal_id,
     apiKeyId: key.id,
     scopes: key.scopes ?? [],
-    plan: null,
+    plan: "free",
   };
 }

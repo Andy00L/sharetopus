@@ -3,6 +3,47 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { tierLabel } from "@/lib/types/plans";
+
+/**
+ * Fetches the raw subscription row for a user.
+ * Returns errors as values so the handler never sees a raw { data, error }.
+ */
+async function fetchSubscription(userId: string): Promise<{
+  success: boolean;
+  message: string;
+  subscription?: {
+    plan: string | null;
+    status: string;
+    start_date: string;
+    current_period_end: string | null;
+  };
+}> {
+  const { data, error } = await adminSupabase
+    .from("stripe_subscriptions")
+    .select("plan, status, start_date, current_period_end")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    return {
+      success: false,
+      message: `Failed to fetch subscription: ${error.message}`,
+    };
+  }
+
+  if (!data) {
+    return { success: true, message: "No subscription found" };
+  }
+
+  return {
+    success: true,
+    message: "Subscription found",
+    subscription: data,
+  };
+}
 
 /**
  * Returns the user's current subscription status and usage quotas.
@@ -38,14 +79,7 @@ export function registerListBillingSummary(server: McpServer): void {
         };
       }
 
-      // Fetch subscription
-      const { data: sub } = await adminSupabase
-        .from("stripe_subscriptions")
-        .select("plan, status, start_date, current_period_end")
-        .eq("user_id", principal.principalId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const subResult = await fetchSubscription(principal.principalId);
 
       // Fetch current month usage
       const period = new Date().toISOString().slice(0, 7);
@@ -70,12 +104,14 @@ export function registerListBillingSummary(server: McpServer): void {
             type: "text",
             text: JSON.stringify(
               {
-                subscription: sub
+                subscription: subResult.subscription
                   ? {
-                      plan: sub.plan,
-                      status: sub.status,
-                      start_date: sub.start_date,
-                      current_period_end: sub.current_period_end,
+                      plan_tier: principal.plan,
+                      plan_label: tierLabel(principal.plan),
+                      price_id: subResult.subscription.plan,
+                      status: subResult.subscription.status,
+                      start_date: subResult.subscription.start_date,
+                      current_period_end: subResult.subscription.current_period_end,
                     }
                   : null,
                 usage_this_month: (quotas ?? []).reduce(

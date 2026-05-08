@@ -2,28 +2,21 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { McpPrincipal } from "./auth";
+import { type PlanTier, tierMeets, tierLabel } from "@/lib/types/plans";
 
 /**
  * Result of an entitlement check. Tool handlers branch on `mode`.
  */
-export type Entitlement =
-  | { mode: "allow"; reason: "plan" }
-  | {
-      mode: "deny";
-      reason: "no_subscription" | "plan_too_low" | "rate_limit" | "platform_quota";
-      detail?: string;
-    };
+export type EntitlementResult =
+  | { mode: "allow" }
+  | { mode: "deny"; reason: EntitlementDenyReason; detail: string };
 
-/**
- * Plan tiers in ascending order of privilege.
- * "free" means any active subscription (we treat the lowest tier as free-equivalent).
- */
-const PLAN_RANK: Record<string, number> = {
-  free: 0,
-  starter: 1,
-  creator: 2,
-  pro: 3,
-};
+type EntitlementDenyReason =
+  | "no_subscription"
+  | "plan_too_low"
+  | "monthly_quota"
+  | "platform_quota"
+  | "infra_error";
 
 /**
  * Maps each MCP action to the minimum plan tier required.
@@ -34,21 +27,21 @@ const PLAN_RANK: Record<string, number> = {
  * generate_post_draft requires Pro because it uses client-side sampling
  * and we want to gate the capability to paying users.
  */
-const ACTION_PLAN_GATE: Record<string, string> = {
+const ACTION_PLAN_GATE: Record<string, PlanTier> = {
   // Read tools (free tier)
   list_connections: "free",
   list_scheduled_posts: "free",
   list_content_history: "free",
   list_billing_summary: "free",
+  request_account_reauth_link: "free",
 
   // Write tools (starter+)
+  attach_media_from_url: "starter",
   schedule_post: "starter",
   cancel_scheduled_posts: "starter",
   resume_scheduled_posts: "starter",
   reschedule_posts: "starter",
   delete_scheduled_posts: "starter",
-  attach_media_from_url: "starter",
-  request_account_reauth_link: "starter",
 
   // Advanced tools (creator+)
   bulk_schedule: "creator",
@@ -63,7 +56,7 @@ const ACTION_PLAN_GATE: Record<string, string> = {
  * Only write actions that hit external APIs need caps.
  * null means unlimited.
  */
-const MONTHLY_CAPS: Record<string, Record<string, number | null>> = {
+const MONTHLY_CAPS: Record<string, Record<PlanTier, number | null>> = {
   schedule_post: { free: 10, starter: 100, creator: 500, pro: null },
   bulk_schedule: { free: 0, starter: 0, creator: 200, pro: null },
   generate_post_draft: { free: 0, starter: 0, creator: 0, pro: 100 },
@@ -73,12 +66,11 @@ const MONTHLY_CAPS: Record<string, Record<string, number | null>> = {
  * Checks whether a principal is entitled to perform the given action.
  *
  * Runs on every MCP tool call. The plan tier is read from `principal.plan`,
- * which auth.ts populates from checkActiveSubscription on every request.
+ * which auth.ts populates via priceIdToTier on every request.
  *
  * Order of checks:
- *   1. Read the plan cached on the principal (set by auth.ts).
- *   2. Compare against the minimum tier for the requested action.
- *   3. If the action has a monthly cap, call atomic_increment_quota RPC.
+ *   1. Compare the principal's tier against the minimum for the action.
+ *   2. If the action has a monthly cap, call atomic_increment_quota RPC.
  *
  * Tables read: usage_quotas (via RPC)
  * Tables written: usage_quotas (via RPC, atomic increment)
@@ -88,65 +80,77 @@ const MONTHLY_CAPS: Record<string, Record<string, number | null>> = {
 export async function entitlementFor(
   principal: McpPrincipal,
   action: string
-): Promise<Entitlement> {
-  // 1. Read the plan cached on the principal by auth.ts
-  const plan = principal.plan;
-  if (!plan) {
-    // This branch should never fire: auth.ts blocks unauthenticated
-    // users and sets plan after the subscription gate. Log it so we
-    // notice if it does.
-    console.error(
-      `[entitlement] principal.plan is null for ${principal.principalId}. ` +
-        "auth.ts should have blocked this request or set a plan."
-    );
-    return {
-      mode: "deny",
-      reason: "no_subscription",
-      detail: "No active subscription found. Subscribe at sharetopus.com to use MCP tools.",
-    };
+): Promise<EntitlementResult> {
+  const tierGate = checkTierGate(principal, action);
+  if (tierGate.mode === "deny") return tierGate;
+
+  const quota = await checkAndIncrementQuota(principal, action);
+  if (quota.mode === "deny") return quota;
+
+  return { mode: "allow" };
+}
+
+function checkTierGate(
+  principal: McpPrincipal,
+  action: string
+): EntitlementResult {
+  const required = ACTION_PLAN_GATE[action] ?? "starter";
+  if (tierMeets(principal.plan, required)) return { mode: "allow" };
+  return {
+    mode: "deny",
+    reason: principal.plan === "free" ? "no_subscription" : "plan_too_low",
+    detail: buildTierDenyMessage(action, required, principal.plan),
+  };
+}
+
+function buildTierDenyMessage(
+  action: string,
+  required: PlanTier,
+  actual: PlanTier
+): string {
+  if (actual === "free") {
+    return `Action "${action}" requires the ${tierLabel(required)} ` +
+           `plan or higher. You do not have an active subscription.`;
   }
+  return `Action "${action}" requires the ${tierLabel(required)} ` +
+         `plan or higher. You are on the ${tierLabel(actual)} plan.`;
+}
 
-  // 2. Check plan tier
-  const requiredPlan = ACTION_PLAN_GATE[action] ?? "free";
-  const userRank = PLAN_RANK[plan] ?? 0;
-  const requiredRank = PLAN_RANK[requiredPlan] ?? 0;
-
-  if (userRank < requiredRank) {
-    return {
-      mode: "deny",
-      reason: "plan_too_low",
-      detail: `Action "${action}" requires the ${requiredPlan} plan or higher. You are on the ${plan} plan.`,
-    };
-  }
-
-  // 3. Check monthly quota (only for actions that have caps)
+/**
+ * Checks and increments the monthly quota for the given action.
+ * Returns an allow or deny result matching EntitlementResult.
+ */
+async function checkAndIncrementQuota(
+  principal: McpPrincipal,
+  action: string
+): Promise<EntitlementResult> {
   const caps = MONTHLY_CAPS[action];
-  if (caps) {
-    const cap = caps[plan];
-    if (cap === 0) {
-      return {
-        mode: "deny",
-        reason: "platform_quota",
-        detail: `Action "${action}" is not available on the ${plan} plan.`,
-      };
-    }
-    if (cap !== null && cap !== undefined) {
-      const quotaResult = await checkAndIncrementQuota(
-        principal.principalId,
-        action,
-        cap
-      );
-      if (!quotaResult.allowed) {
-        return {
-          mode: "deny",
-          reason: "platform_quota",
-          detail: `Monthly quota exceeded for "${action}". Used ${quotaResult.currentCount}/${cap}. Resets next month.`,
-        };
-      }
-    }
+  if (!caps) return { mode: "allow" };
+
+  const cap = caps[principal.plan];
+  if (cap === 0) {
+    return {
+      mode: "deny",
+      reason: "platform_quota",
+      detail: `Action "${action}" is not available on the ${tierLabel(principal.plan)} plan.`,
+    };
+  }
+  if (cap === null || cap === undefined) return { mode: "allow" };
+
+  const quotaResult = await incrementQuota(
+    principal.principalId,
+    action,
+    cap
+  );
+  if (!quotaResult.allowed) {
+    return {
+      mode: "deny",
+      reason: "monthly_quota",
+      detail: `Monthly quota exceeded for "${action}". Used ${quotaResult.currentCount}/${cap}. Resets next month.`,
+    };
   }
 
-  return { mode: "allow", reason: "plan" };
+  return { mode: "allow" };
 }
 
 /**
@@ -159,7 +163,7 @@ export async function entitlementFor(
  *
  * When the function returns null, the cap was already reached.
  */
-async function checkAndIncrementQuota(
+async function incrementQuota(
   principalId: string,
   action: string,
   cap: number

@@ -216,3 +216,78 @@ export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = isProd
 
 // Default limit for unknown subscription IDs
 export const DEFAULT_ACCOUNT_LIMIT = 0;
+
+/**
+ * Tier hierarchy used by MCP entitlement gates and any other code
+ * that needs to compare plan levels. Order is rank: higher index
+ * grants access to lower-rank actions.
+ */
+export const TIER_RANK = ["free", "starter", "creator", "pro"] as const;
+export type PlanTier = (typeof TIER_RANK)[number];
+
+/**
+ * Maps Stripe price IDs to plan tiers. Built at module load by
+ * walking BOTH dev and prod arrays so the same code works in any
+ * environment without rebuilding the mapping per request.
+ *
+ * Stripe price IDs are case-sensitive. Keys retain their original case.
+ */
+function buildPriceIdToTierMap(): Record<string, PlanTier> {
+  const map: Record<string, PlanTier> = {};
+  const allPlans = [...devPlanPrices, ...prodPlanPrices];
+  for (const plan of allPlans) {
+    const tier = normalizePlanTitleToTier(plan.title);
+    if (tier === null) continue;
+    map[plan.priceIdMonthly] = tier;
+    map[plan.priceIdYearly] = tier;
+  }
+  return map;
+}
+
+/**
+ * Note the trailing space on "Pro " in the planPrices arrays.
+ * trim() handles it.
+ */
+function normalizePlanTitleToTier(title: string): PlanTier | null {
+  const t = title.trim().toLowerCase();
+  if (t === "starter") return "starter";
+  if (t === "creator") return "creator";
+  if (t === "pro") return "pro";
+  return null;
+}
+
+const PRICE_ID_TO_TIER: Record<string, PlanTier> = buildPriceIdToTierMap();
+
+/**
+ * Resolve a Stripe price ID to a plan tier.
+ * Returns "free" for null or unknown IDs (fail-closed default).
+ * Logs unknown non-null IDs because they indicate config drift
+ * between Stripe and planPrices.
+ */
+export function priceIdToTier(priceId: string | null): PlanTier {
+  if (priceId === null) return "free";
+  const tier = PRICE_ID_TO_TIER[priceId];
+  if (tier === undefined) {
+    console.error(
+      `[plans.priceIdToTier] Unknown Stripe price ID "${priceId}". ` +
+      `Add it to planPrices or stripe_subscriptions has stale data. ` +
+      `Defaulting to "free".`,
+    );
+    return "free";
+  }
+  return tier;
+}
+
+/**
+ * True iff actual tier meets or exceeds required tier.
+ */
+export function tierMeets(actual: PlanTier, required: PlanTier): boolean {
+  return TIER_RANK.indexOf(actual) >= TIER_RANK.indexOf(required);
+}
+
+/**
+ * Human-readable label for tier (UI/error messages).
+ */
+export function tierLabel(tier: PlanTier): string {
+  return tier.charAt(0).toUpperCase() + tier.slice(1);
+}
