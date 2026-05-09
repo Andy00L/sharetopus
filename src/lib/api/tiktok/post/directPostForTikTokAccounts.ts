@@ -5,7 +5,6 @@ import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 /**
@@ -30,7 +29,6 @@ export async function directPostForTikTokAccounts(config: {
 
   fileName: string;
   batchId: string;
-  isCronJob?: boolean;
   scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
@@ -43,7 +41,6 @@ export async function directPostForTikTokAccounts(config: {
     accountContent,
     userId,
     batchId,
-    isCronJob,
   } = config;
 
   try {
@@ -158,46 +155,6 @@ export async function directPostForTikTokAccounts(config: {
 
       console.error("[TikTok Direct Post] Error details:", postResult.details);
       console.error("[TikTok Direct Post] Error message:", postResult.message);
-      if (isCronJob) {
-        const failedPostResult = await storeFailedPost({
-          principal_id: userId,
-          social_account_id: account.id,
-          platform: "tiktok",
-          post_title: accountContent.title || null,
-          post_description: accountContent.description || null,
-          post_options: platformOptions.tiktok,
-          media_type: postType,
-          media_storage_path: mediaPath,
-          coverTimestamp: config.coverTimestamp,
-          batch_id: batchId,
-          extra_data: {
-            message: postResult.message,
-            details: postResult.details,
-            error: postResult.error,
-            timestamp: new Date().toISOString(),
-          },
-        });
-
-        if (!failedPostResult.success) {
-          console.error(
-            "[TikTok Direct Post] Error storing failed post:",
-            failedPostResult.message
-          );
-          return {
-            success: false,
-            count: 0,
-            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
-          };
-        }
-
-        console.log(
-          "[TikTok Direct Post] Failed post stored in failed_posts table"
-        );
-      } else {
-        console.log(
-          "[TikTok Direct Post] Skipping failed post storage (not a cron job)"
-        );
-      }
       return {
         success: false,
         count: 0,

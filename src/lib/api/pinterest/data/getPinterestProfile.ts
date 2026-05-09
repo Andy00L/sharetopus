@@ -1,11 +1,11 @@
 // lib/api/pinterest/getPinterestProfile.ts
 import "server-only";
 
-import { PinterestProfile } from "@/lib/types/PinterestProfile ";
+import { PinterestProfile } from "@/lib/types/PinterestProfile";
 
 export async function getPinterestProfile(
   accessToken: string,
-  userId?: string
+  userId?: string,
 ): Promise<PinterestProfile> {
   try {
     const url = "https://api.pinterest.com/v5/user_account";
@@ -27,7 +27,7 @@ export async function getPinterestProfile(
     } catch (parseError) {
       console.error("[Pinterest] Failed to parse API response:", parseError);
       throw new Error(
-        `Failed to parse Pinterest profile response: ${responseText}`
+        `Failed to parse Pinterest profile response: ${responseText}`,
       );
     }
 

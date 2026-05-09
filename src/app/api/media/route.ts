@@ -66,11 +66,64 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    console.log(
-      `[Media Proxy] Redirecting to Supabase signed URL: ${data.signedUrl}`
-    );
+    console.log("[Media Proxy] Streaming file from Supabase signed URL");
 
-    return Response.redirect(data.signedUrl, 302);
+    // Stream the file body instead of redirecting. TikTok's Content
+    // Posting API rejects redirects on PULL_FROM_URL per their docs.
+    // Pinterest's S3 ingester also rejects redirects in some configs.
+    let upstream: Response;
+    try {
+      upstream = await fetch(data.signedUrl);
+    } catch (fetchErr) {
+      console.error("[Media Proxy] Upstream fetch failed:", fetchErr);
+      return new Response("Upstream fetch failed", {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!upstream.ok) {
+      console.error(
+        `[Media Proxy] Upstream returned ${upstream.status}`
+      );
+      if (upstream.status === 404) {
+        return new Response("File not found", {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("Upstream error", {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!upstream.body) {
+      console.error("[Media Proxy] Upstream response has no body");
+      return new Response("Upstream returned empty body", {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const responseHeaders: Record<string, string> = {
+      "Cache-Control": "private, no-store",
+    };
+
+    const contentType = upstream.headers.get("content-type");
+    if (contentType) {
+      responseHeaders["Content-Type"] = contentType;
+    }
+
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) {
+      responseHeaders["Content-Length"] = contentLength;
+    }
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: responseHeaders,
+    });
   } catch (error) {
     console.error("[Media Proxy] Unexpected error:", error);
     return new Response("Internal server error", {

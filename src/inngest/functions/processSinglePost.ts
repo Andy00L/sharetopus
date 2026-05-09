@@ -134,8 +134,8 @@ export const processSinglePost = inngest.createFunction(
     // Retry policy: throw ONLY on retryable failures. Inngest
     // performs exponential backoff up to RUNTIME.maxRetries.
     // Terminal failures fall through; record-status already wrote
-    // failed_posts (via the directPostFor side-effect when
-    // isCronJob:true) and scheduled_posts.status='failed'.
+    // both scheduled_posts.status='failed' and a failed_posts row
+    // via the centralized storeFailedPost in recordPostStatus.
     if (!result.ok && isRetryableReason(result.reason)) {
       throw new Error(`retryable: ${result.reason}: ${result.message}`);
     }

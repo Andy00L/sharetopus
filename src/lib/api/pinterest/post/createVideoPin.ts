@@ -1,4 +1,5 @@
-import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import { adminSupabase } from "@/actions/api/adminSupabase";
+import { buildStreamingMultipartFormDataBody } from "@/lib/api/_shared/buildStreamingMultipartFormDataBody";
 import "server-only";
 import {
   PinterestMediaRegistrationResponse,
@@ -20,11 +21,14 @@ type MediaUploadResult =
     };
 
 /**
- * Create a video pin using the 3-step process:
- * 1. Register media upload
- * 2. Upload video file
- * 3. Wait for processing
- * 4. Create pin
+ * Create a video pin using the 4-step process:
+ * 1. Register media upload with Pinterest
+ * 2. Stream the video file from Supabase to Pinterest's S3
+ * 3. Wait for Pinterest to process the video
+ * 4. Create pin with the processed video
+ *
+ * Step 2 streams the file chunk-by-chunk via a ReadableStream so
+ * memory peaks at the chunk size (~64KB), not the full file size.
  */
 export async function createVideoPin({
   accessToken,
@@ -50,15 +54,6 @@ export async function createVideoPin({
   coverTimestamp: number;
 }): Promise<PinterestPostResult> {
   try {
-    // Get video buffer from Supabase
-    const bufferRes = await getSupabaseVideoFile(mediaPath, userId);
-    if (!bufferRes.success || !bufferRes.buffer) {
-      return {
-        success: false,
-        error: bufferRes.message || "Failed to retrieve video file",
-      };
-    }
-
     // Step 1: Register media upload
     const registrationResult = await registerMediaUpload(accessToken);
     if (!registrationResult.success) {
@@ -67,11 +62,12 @@ export async function createVideoPin({
 
     const { media_id, upload_url, upload_parameters } = registrationResult;
 
-    // Step 2: Upload video file
-    const uploadResult = await uploadVideoFile({
+    // Step 2: Stream video file from Supabase to Pinterest's S3
+    const uploadResult = await uploadVideoFileStreaming({
       uploadUrl: upload_url,
       uploadParameters: upload_parameters,
-      buffer: bufferRes.buffer,
+      mediaPath,
+      userId,
       mediaType,
       fileName,
     });
@@ -153,40 +149,107 @@ async function registerMediaUpload(
 }
 
 /**
- * Step 2: Upload video file to Pinterest's S3
+ * Step 2: Stream the video file from Supabase to Pinterest's S3.
+ *
+ * Mints a Supabase signed URL, fetches it for a ReadableStream,
+ * reads Content-Length from the response headers, then builds a
+ * streaming multipart/form-data body via buildStreamingMultipartFormDataBody.
+ * Memory peaks at chunk size (~64KB), not file size.
  */
-async function uploadVideoFile({
+async function uploadVideoFileStreaming({
   uploadUrl,
   uploadParameters,
-  buffer,
+  mediaPath,
+  userId,
   mediaType,
   fileName,
 }: {
   uploadUrl: string;
   uploadParameters: Record<string, string>;
-  buffer: Buffer;
+  mediaPath: string;
+  userId: string;
   mediaType: string;
   fileName: string;
 }): Promise<PinterestPostResult> {
   try {
-    const formData = new FormData();
+    // Mint a Supabase signed URL (10-minute expiry for upload window)
+    const { data: signedData, error: signedError } = await adminSupabase.storage
+      .from("scheduled-videos")
+      .createSignedUrl(mediaPath, 600);
 
-    // Add all upload parameters from Pinterest
-    Object.entries(uploadParameters).forEach(([key, value]) => {
-      formData.append(key, value);
-    });
+    if (signedError || !signedData?.signedUrl) {
+      console.error("[Pinterest PostVideo] Failed to mint signed URL:", signedError);
+      return {
+        success: false,
+        error: "Failed to mint Supabase signed URL for video",
+        message: signedError?.message ?? "No signed URL returned",
+      };
+    }
 
-    // Add the video file
+    // Fetch the signed URL for the file stream and Content-Length
+    const supabaseResponse = await fetch(signedData.signedUrl);
 
-    formData.append(
-      "file",
-      new Blob([new Uint8Array(buffer)], { type: mediaType }),
-      fileName,
+    if (!supabaseResponse.ok) {
+      console.error(
+        `[Pinterest PostVideo] Supabase fetch returned ${supabaseResponse.status}`
+      );
+      return {
+        success: false,
+        error: "Failed to fetch video from storage",
+        message: `Storage returned status ${supabaseResponse.status}`,
+      };
+    }
+
+    if (!supabaseResponse.body) {
+      console.error("[Pinterest PostVideo] Supabase response has no body");
+      return {
+        success: false,
+        error: "Storage returned empty body for video",
+      };
+    }
+
+    const contentLengthHeader = supabaseResponse.headers.get("content-length");
+    if (!contentLengthHeader) {
+      console.error("[Pinterest PostVideo] Missing Content-Length from storage");
+      return {
+        success: false,
+        error: "Storage did not return Content-Length for video",
+        message: "Cannot stream without known file size (S3 requires Content-Length)",
+      };
+    }
+
+    const fileByteLength = Number(contentLengthHeader);
+    if (!Number.isFinite(fileByteLength) || fileByteLength <= 0) {
+      console.error("[Pinterest PostVideo] Invalid Content-Length:", contentLengthHeader);
+      return {
+        success: false,
+        error: "Storage returned invalid Content-Length for video",
+      };
+    }
+
+    console.log(
+      `[Pinterest PostVideo] Streaming ${fileByteLength} bytes to Pinterest S3`
     );
 
+    // Build the streaming multipart body
+    const { body: streamingBody, headers: streamingHeaders } =
+      buildStreamingMultipartFormDataBody({
+        fields: uploadParameters,
+        fileFieldName: "file",
+        fileName,
+        fileContentType: mediaType,
+        fileByteLength,
+        fileStream: supabaseResponse.body,
+      });
+
+    // POST to Pinterest's S3 upload endpoint
     const response = await fetch(uploadUrl, {
       method: "POST",
-      body: formData,
+      body: streamingBody,
+      headers: streamingHeaders,
+      // @ts-expect-error duplex: "half" required by Node 18+ when body is a ReadableStream;
+      // not yet in lib.dom.d.ts. See https://nodejs.org/api/globals.html#fetch.
+      duplex: "half",
     });
 
     if (!response.ok) {
@@ -199,7 +262,7 @@ async function uploadVideoFile({
       };
     }
 
-    console.log("[Pinterest PostVideo] Video uploaded successfully");
+    console.log("[Pinterest PostVideo] Video uploaded successfully (streamed)");
     return { success: true };
   } catch (error) {
     console.error("[Pinterest PostVideo] Video upload error:", error);

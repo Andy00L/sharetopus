@@ -1,7 +1,6 @@
 "use server";
 // createPostForm/action/directPostForLinkedInAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
@@ -229,50 +228,6 @@ export async function directPostForLinkedInAccounts(
       postResult.error
     );
 
-    if (isCronJob) {
-      const failedPostResult = await storeFailedPost({
-        principal_id: userId,
-        social_account_id: account.id,
-        platform: "linkedin",
-        post_title: accountContent.title || null,
-        post_description: accountContent.description || null,
-        coverTimestamp: config.coverTimestamp,
-
-        post_options: {
-          memberUrn: memberUrn,
-          link: accountContent.link,
-          visibility: config.platformOptions.linkedin?.visibility || "PUBLIC",
-        },
-        media_type: postType,
-        media_storage_path: mediaPath || "",
-        batch_id: batchId,
-        extra_data: {
-          message: postResult.message,
-          error: postResult.error,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
-      if (!failedPostResult.success) {
-        console.error(
-          "[LinkedIn Direct Post] Error storing failed post:",
-          failedPostResult.message
-        );
-        return {
-          success: false,
-          count: 0,
-          message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
-        };
-      }
-
-      console.log(
-        "[LinkedIn Direct Post] Failed post stored in failed_posts table"
-      );
-    } else {
-      console.log(
-        "[LinkedIn Direct Post] Skipping failed post storage (not a cron job)"
-      );
-    }
     return {
       success: false,
       count: 0,

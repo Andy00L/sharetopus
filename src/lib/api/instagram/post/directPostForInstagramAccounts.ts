@@ -5,7 +5,6 @@ import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
 import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
 
 /**
@@ -28,7 +27,6 @@ export async function directPostForInstagramAccounts(config: {
   postType: "image" | "video";
   fileName: string;
   batchId: string;
-  isCronJob?: boolean;
   scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
@@ -40,7 +38,6 @@ export async function directPostForInstagramAccounts(config: {
     userId,
     mediaUrl,
     batchId,
-    isCronJob,
   } = config;
 
   try {
@@ -169,44 +166,6 @@ export async function directPostForInstagramAccounts(config: {
         "[Instagram Direct Post] Failed with error:",
         postResult.message
       );
-
-      if (isCronJob) {
-        const failedPostResult = await storeFailedPost({
-          principal_id: userId,
-          social_account_id: account.id,
-          platform: "instagram",
-          post_title: accountContent.title || null,
-          post_description: accountContent.description || null,
-          media_type: postType,
-          media_storage_path: mediaPath,
-          coverTimestamp: config.coverTimestamp,
-          batch_id: batchId,
-          extra_data: {
-            message: postResult.message,
-            timestamp: new Date().toISOString(),
-          },
-        });
-
-        if (!failedPostResult.success) {
-          console.error(
-            "[Instagram Direct Post] Error storing failed post:",
-            failedPostResult.message
-          );
-          return {
-            success: false,
-            count: 0,
-            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
-          };
-        }
-
-        console.log(
-          "[Instagram Direct Post] Failed post stored in failed_posts table"
-        );
-      } else {
-        console.log(
-          "[Instagram Direct Post] Skipping failed post storage (not a cron job)"
-        );
-      }
 
       return {
         success: false,

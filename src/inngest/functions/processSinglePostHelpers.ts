@@ -3,6 +3,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
 import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
 import { deleteSupabaseFileActionInternal } from "@/actions/server/_internal/data/deleteSupabaseFileAction";
+import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import type {
   Platform,
@@ -220,7 +221,7 @@ export type CompatibilityResult = {
  * Per-platform post-type rules from the existing process* code:
  *   - pinterest: image | video. Text rejected.
  *   - instagram: image | video. Text rejected.
- *   - tiktok: video only. Text and image rejected.
+ *   - tiktok: image | video. Text rejected.
  *   - linkedin: text | image | video. All accepted.
  * If incompatible, the worker records it as invalid_input (terminal).
  */
@@ -244,12 +245,12 @@ export function checkPlatformCompatibility(
       reason: "Instagram does not support text-only posts",
     };
   }
-  if (platform === "tiktok" && mediaType !== "video") {
+  if (platform === "tiktok" && mediaType === "text") {
     return {
       success: true,
       message: "incompatible",
       compatible: false,
-      reason: "TikTok requires video content",
+      reason: "TikTok does not support text-only posts",
     };
   }
   return {
@@ -277,10 +278,9 @@ type PostOptions = {
 
 /**
  * Dispatches to the right per-account direct-post function based on
- * platform. ALL invocations pass isCronJob:true so the underlying
- * function writes to failed_posts on failure (preserves existing
- * UI). The worker also writes scheduled_posts.status='failed' via
- * the record-status step.
+ * platform. Failed-post recording is centralized in recordPostStatus;
+ * the directPostFor functions no longer write to failed_posts.
+ * LinkedIn still receives isCronJob:true to skip rate limiting.
  */
 export async function callPlatformDirectPost(args: {
   post: ScheduledPost;
@@ -353,7 +353,6 @@ export async function callPlatformDirectPost(args: {
           mediaType,
           postType: post.media_type,
           mediaUrl: mediaUrl ?? "",
-          isCronJob: true,
           scheduledPostId: post.id,
         });
         break;
@@ -388,7 +387,6 @@ export async function callPlatformDirectPost(args: {
           postType: post.media_type,
           fileName,
           batchId,
-          isCronJob: true,
           scheduledPostId: post.id,
         });
         break;
@@ -408,7 +406,6 @@ export async function callPlatformDirectPost(args: {
           postType: igPostType,
           fileName,
           batchId,
-          isCronJob: true,
           scheduledPostId: post.id,
         });
         break;
@@ -464,9 +461,12 @@ export type RecordStatusResult = {
  * Idempotent: only acts if the row is currently 'processing'.
  * Re-invocation after success is a no-op (row already posted/failed).
  *
- * For terminal failures, the directPostFor function already wrote to
- * failed_posts (via storeFailedPost when isCronJob:true). This step
- * only updates the scheduled_posts row to status='failed'.
+ * For terminal failures, this function both UPDATEs the scheduled_posts
+ * row to status='failed' AND INSERTs a failed_posts record via
+ * storeFailedPost. The failed_posts INSERT only fires when the CAS
+ * guard matches (row was 'processing'), preventing duplicate rows on
+ * re-invocation. If the INSERT fails, the error is logged and the
+ * function continues (the scheduled_posts update already succeeded).
  *
  * For success, content_history (with scheduled_post_id lineage) is
  * already written by the directPostFor function; this step marks the
@@ -479,7 +479,7 @@ export async function recordPostStatus(args: {
   account: SocialAccount;
   result: PlatformPostOutcome;
 }): Promise<RecordStatusResult> {
-  const { post, result } = args;
+  const { post, account, result } = args;
   const nowIso = new Date().toISOString();
 
   if (result.ok) {
@@ -526,7 +526,7 @@ export async function recordPostStatus(args: {
     .select("id");
 
   if (error) {
-    console.error("[processSinglePost] mark failed failed:", error.message);
+    console.error("[recordPostStatus] mark failed failed:", error.message);
     return {
       success: true,
       message: `mark-failed error: ${error.message}`,
@@ -534,10 +534,44 @@ export async function recordPostStatus(args: {
     };
   }
 
+  const wasUpdated = !!(data && data.length > 0);
+
+  // Write a failed_posts row only when we actually transitioned the
+  // row to 'failed'. The CAS guard prevents duplicate rows on
+  // re-invocation (wasUpdated is false if the row already moved on).
+  if (wasUpdated) {
+    const storeResult = await storeFailedPost({
+      principal_id: post.principal_id,
+      social_account_id: post.social_account_id ?? account.id,
+      platform: post.platform,
+      post_title: post.post_title ?? null,
+      post_description: post.post_description ?? null,
+      post_options: (post.post_options ?? {}) as object,
+      media_type: post.media_type as "image" | "video" | "text",
+      media_storage_path: post.media_storage_path ?? "",
+      coverTimestamp: post.cover_image_timestamp ?? undefined,
+      batch_id: post.batch_id ?? post.id,
+      extra_data: {
+        reason: result.reason,
+        message: result.message,
+        timestamp: nowIso,
+      },
+    });
+
+    if (!storeResult.success) {
+      console.error(
+        "[recordPostStatus] Failed to store failed post record:",
+        storeResult.message
+      );
+      // Continue. The scheduled_posts UPDATE already succeeded;
+      // losing the failed_posts row is non-fatal.
+    }
+  }
+
   return {
     success: true,
-    message: data && data.length > 0 ? "marked failed" : "already moved on",
-    updated: !!(data && data.length > 0),
+    message: wasUpdated ? "marked failed" : "already moved on",
+    updated: wasUpdated,
   };
 }
 

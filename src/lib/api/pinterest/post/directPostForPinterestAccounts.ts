@@ -1,6 +1,5 @@
 // createPostForm/action/directPostForPinterestAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -36,7 +35,6 @@ export async function directPostForPinterestAccounts(config: {
   mediaType: string;
   postType: "image" | "video" | "text";
   mediaUrl: string;
-  isCronJob?: boolean;
   scheduledPostId?: string;
 }): Promise<ScheduleResult> {
   const {
@@ -49,7 +47,6 @@ export async function directPostForPinterestAccounts(config: {
     mediaType,
     postType,
     fileName,
-    isCronJob,
     mediaUrl,
   } = config;
 
@@ -163,50 +160,6 @@ export async function directPostForPinterestAccounts(config: {
         "[Pinterest Direct Post] Error message:",
         postResult.message
       );
-
-      if (isCronJob) {
-        const failedPostResult = await storeFailedPost({
-          principal_id: userId,
-          social_account_id: account.id,
-          platform: "pinterest",
-          post_title: accountContent.title || null,
-          post_description: accountContent.description || null,
-          post_options: {
-            boardId: boards.boardID,
-            boardName: boards.boardName,
-            link: accountContent.link,
-            ...config.platformOptions.pinterest,
-          },
-          media_type: postType,
-          media_storage_path: mediaPath,
-          coverTimestamp: config.coverTimestamp,
-
-          batch_id: batchId,
-          extra_data: {
-            message: postResult.message,
-            error: postResult.error,
-            timestamp: new Date().toISOString(),
-            board_id: boards.boardID,
-            board_name: boards.boardName,
-          },
-        });
-
-        if (!failedPostResult.success) {
-          console.error(
-            "[Pinterest Direct Post] Error storing failed post:",
-            failedPostResult.message
-          );
-          return {
-            success: false,
-            count: 0,
-            message: `Post failed and couldn't save failure record: ${failedPostResult.message}`,
-          };
-        }
-
-        console.log(
-          "[Pinterest Direct Post] Failed post stored in failed_posts table"
-        );
-      }
 
       return {
         success: false,
