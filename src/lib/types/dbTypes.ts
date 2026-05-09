@@ -25,6 +25,8 @@ export type ContentHistory = Tables<"content_history"> & {
   social_accounts?: { avatar_url: string | null } | null;
 };
 
+export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;
+
 // ─────────────────────────────────────────────────────────────────────
 // Enum types
 // ─────────────────────────────────────────────────────────────────────

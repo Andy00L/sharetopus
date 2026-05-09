@@ -1,7 +1,9 @@
 // createPostForm/action/directPostForTikTokAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { insertPendingTikTokPull } from "@/actions/server/data/pendingTikTokPulls";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
+import { dispatchTikTokPublishPollEvent } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
@@ -132,7 +134,7 @@ export async function directPostForTikTokAccounts(config: {
 
       if (!historyResult.success) {
         console.error(
-          `[TikTok Direct Post] Error saving to content history:`,
+          `[directPostForTikTokAccounts] Error saving to content history:`,
           historyResult.message
         );
         return {
@@ -143,8 +145,40 @@ export async function directPostForTikTokAccounts(config: {
       }
 
       console.log(
-        `[TikTok Direct Post] Successfully posted to account and saved to history`
+        `[directPostForTikTokAccounts] Successfully posted to account and saved to history`
       );
+
+      // Track this publish_id for race-safe cleanup gate and silent
+      // failure correction. Best effort: log but do not fail the post.
+      if (postResult.publishId) {
+        const pendingInsert = await insertPendingTikTokPull({
+          publish_id: postResult.publishId,
+          principal_id: userId,
+          social_account_id: accountContent.accountId,
+          scheduled_post_id: config.scheduledPostId ?? null,
+          content_history_id: historyResult.recordId ?? null,
+          media_storage_path: mediaPath,
+        });
+
+        if (!pendingInsert.success) {
+          console.error(
+            "[directPostForTikTokAccounts] Failed to insert pending pull:",
+            pendingInsert.message
+          );
+        } else {
+          const dispatchResult = await dispatchTikTokPublishPollEvent({
+            publish_id: postResult.publishId,
+            content_history_id: historyResult.recordId ?? null,
+            social_account_id: accountContent.accountId,
+          });
+          if (!dispatchResult.success) {
+            console.error(
+              "[directPostForTikTokAccounts] Failed to dispatch poll event:",
+              dispatchResult.message
+            );
+          }
+        }
+      }
     }
     // Add more detailed error logging
     if (!postResult.success) {

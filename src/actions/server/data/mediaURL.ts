@@ -1,20 +1,27 @@
 // app/lib/mediaURL.ts
 import "server-only";
+import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
 
 /**
- * Create a short-lived, HMAC-signed URL to your media proxy.
- * The Edge route will verify and stream the bytes to TikTok.
+ * @deprecated Use buildTikTokMediaUrl (dual-mode) for new code.
+ * This wrapper preserves the existing sync signature for callers
+ * like handleSocialMediaPost that have not yet migrated.
+ * See FIX 17.1 for migration details.
  */
 export function createSecureMediaUrlSigned(
-  filePath: string, // e.g. "user-videos/video-123.mp4" (bucket/object)
-  userId: string // your authenticated user id
+  filePath: string,
+  userId: string
 ): string {
-  const baseUrl =
-    process.env.NODE_ENV === "production"
-      ? "https://sharetopus.com/api/media"
-      : "http://localhost:3000/api/media";
-
-  const params = new URLSearchParams({ file: filePath, user: userId });
-
-  return `${baseUrl}?${params}`;
+  const result = buildProxiedTikTokMediaUrl({
+    mediaPath: filePath,
+    principalId: userId,
+  });
+  if (!result.success) {
+    console.error(
+      "[createSecureMediaUrlSigned] Failed to build proxy URL:",
+      result.message
+    );
+    return "";
+  }
+  return result.url;
 }

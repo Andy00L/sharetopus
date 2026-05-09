@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { countPendingTikTokPullsForMediaPath } from "@/actions/server/data/pendingTikTokPulls";
 
 /**
  * Deletes files from Supabase Storage with reference checking. No auth.
@@ -116,17 +117,37 @@ export async function deleteSupabaseFileActionInternal(
 
           const referenceCount = (scheduledCount ?? 0) + (failedCount ?? 0);
 
-          if (referenceCount === 0) {
-            console.log(
-              `[deleteSupabaseFileInternal]: File not referenced, marking for deletion: ${path}`
-            );
-            safeFilesToDelete.push(path);
-          } else {
+          if (referenceCount > 0) {
             console.log(
               `[deleteSupabaseFileInternal]: File referenced by ${referenceCount} post(s), preserving: ${path}`
             );
             referencedFiles++;
+            continue;
           }
+
+          // Check pending TikTok pulls (async pull not yet completed)
+          const pendingPulls = await countPendingTikTokPullsForMediaPath(path);
+          if (!pendingPulls.success) {
+            console.error(
+              `[deleteSupabaseFileInternal]: Failed to count pending TikTok pulls for ${path}:`,
+              pendingPulls.message
+            );
+            // Conservative: treat as referenced to avoid deleting mid-pull
+            referencedFiles++;
+            continue;
+          }
+          if (pendingPulls.count > 0) {
+            console.log(
+              `[deleteSupabaseFileInternal]: File has ${pendingPulls.count} pending TikTok pull(s), preserving: ${path}`
+            );
+            referencedFiles++;
+            continue;
+          }
+
+          console.log(
+            `[deleteSupabaseFileInternal]: File not referenced, marking for deletion: ${path}`
+          );
+          safeFilesToDelete.push(path);
         }
 
         console.log(
@@ -244,6 +265,29 @@ export async function deleteSupabaseFileActionInternal(
         return {
           success: true,
           message: `Cannot delete: This file is currently being used by ${referenceCount} scheduled posts.`,
+        };
+      }
+
+      // Check pending TikTok pulls (async pull not yet completed)
+      const pendingPullsResult = await countPendingTikTokPullsForMediaPath(filePath);
+      if (!pendingPullsResult.success) {
+        console.error(
+          "[deleteSupabaseFileInternal] Failed to count pending TikTok pulls:",
+          pendingPullsResult.message
+        );
+        // Conservative: do NOT delete on uncertainty
+        return {
+          success: false,
+          message: "Could not verify safe-to-delete; preserving file",
+        };
+      }
+      if (pendingPullsResult.count > 0) {
+        console.log(
+          `[deleteSupabaseFileInternal]: File has ${pendingPullsResult.count} pending TikTok pull(s), preserving: ${filePath}`
+        );
+        return {
+          success: true,
+          message: `Cannot delete: File has ${pendingPullsResult.count} pending TikTok pull(s).`,
         };
       }
 

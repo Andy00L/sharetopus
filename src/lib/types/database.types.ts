@@ -518,6 +518,82 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      pending_tiktok_pulls: {
+        Row: {
+          publish_id: string;
+          principal_id: string;
+          social_account_id: string;
+          scheduled_post_id: string | null;
+          content_history_id: string | null;
+          media_storage_path: string;
+          status: "pending" | "completed" | "failed";
+          attempt_count: number;
+          last_polled_at: string | null;
+          finalized_at: string | null;
+          failure_reason: string | null;
+          created_at: string;
+        };
+        Insert: {
+          publish_id: string;
+          principal_id: string;
+          social_account_id: string;
+          scheduled_post_id?: string | null;
+          content_history_id?: string | null;
+          media_storage_path: string;
+          status?: "pending" | "completed" | "failed";
+          attempt_count?: number;
+          last_polled_at?: string | null;
+          finalized_at?: string | null;
+          failure_reason?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          publish_id?: string;
+          principal_id?: string;
+          social_account_id?: string;
+          scheduled_post_id?: string | null;
+          content_history_id?: string | null;
+          media_storage_path?: string;
+          status?: "pending" | "completed" | "failed";
+          attempt_count?: number;
+          last_polled_at?: string | null;
+          finalized_at?: string | null;
+          failure_reason?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "pending_tiktok_pulls_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_tiktok_pulls_social_account_id_fkey";
+            columns: ["social_account_id"];
+            isOneToOne: false;
+            referencedRelation: "social_accounts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_tiktok_pulls_scheduled_post_id_fkey";
+            columns: ["scheduled_post_id"];
+            isOneToOne: false;
+            referencedRelation: "scheduled_posts";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_tiktok_pulls_content_history_id_fkey";
+            columns: ["content_history_id"];
+            isOneToOne: false;
+            referencedRelation: "content_history";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
       pricing_actions: {
         Row: {
           action: string;
@@ -1768,5 +1844,6 @@ export type UsdcFmvDaily = Tables<"usdc_fmv_daily">;
 export type McpAuditLog = Tables<"mcp_audit_log">;
 export type X402AccessLog = Tables<"x402_access_log">;
 export type UsageQuota = Tables<"usage_quotas">;
+export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;
 export type PlatformQuota = Tables<"platform_quotas">;
 export type RateLimitEvent = Tables<"rate_limit_events">;

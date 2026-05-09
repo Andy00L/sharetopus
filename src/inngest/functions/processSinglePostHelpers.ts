@@ -1,7 +1,7 @@
 import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
-import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
+import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
 import { deleteSupabaseFileActionInternal } from "@/actions/server/_internal/data/deleteSupabaseFileAction";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
@@ -160,7 +160,7 @@ export type SignedUrlsResult =
 /**
  * Mirrors handleSocialMediaPost URL-minting logic:
  *   - Pinterest/LinkedIn/Instagram: getSignedViewUrl (Supabase 5 min)
- *   - TikTok: createSecureMediaUrlSigned (proxy URL)
+ *   - TikTok: buildTikTokMediaUrl (proxy or supabase_direct per env)
  * For text posts (no media_storage_path) both are null.
  */
 export async function buildPlatformSignedUrls(
@@ -177,15 +177,18 @@ export async function buildPlatformSignedUrls(
   }
 
   if (platform === "tiktok") {
-    const tiktokUrl = createSecureMediaUrlSigned(
-      post.media_storage_path,
-      post.principal_id
-    );
+    const tiktokUrlResult = await buildTikTokMediaUrl({
+      mediaPath: post.media_storage_path,
+      principalId: post.principal_id,
+    });
+    if (!tiktokUrlResult.success) {
+      return { success: false, message: tiktokUrlResult.message };
+    }
     return {
       success: true,
-      message: "tiktok proxy url minted",
+      message: `tiktok ${tiktokUrlResult.mode} url minted`,
       mediaUrl: null,
-      tiktokMediaUrl: tiktokUrl,
+      tiktokMediaUrl: tiktokUrlResult.url,
     };
   }
 
