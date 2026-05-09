@@ -48,7 +48,10 @@ export function VideoCoverSelector({
       // Set initial time to 10% of video duration
       const initialTime = videoDuration * 0.1;
       setCurrentTime(initialTime);
-      videoRef.current.currentTime = initialTime;
+      // Note: do NOT pre-seek here. generateThumbnail (called by the
+      // useEffect on [duration]) is the sole seeker. A pre-seek to the
+      // same value causes the browser to skip generateThumbnail's seek,
+      // leaving onseeked to never fire, leaving onCoverChange at 0.
     }
   };
 

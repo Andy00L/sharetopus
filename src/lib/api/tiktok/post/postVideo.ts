@@ -6,6 +6,26 @@ import {
   TikTokPostResult,
 } from "./postToTikTok";
 
+const TIKTOK_MIN_COVER_TIMESTAMP_MS = 1000;
+
+/**
+ * Resolves the cover timestamp value sent to TikTok's video init endpoint.
+ * TikTok requires a positive integer in milliseconds. We clamp the value
+ * to >= 1000ms (1 second) and floor to an integer to defend against
+ * upstream regressions (UI races, null DB fallbacks, float arithmetic).
+ *
+ * If the input is non-finite (NaN, Infinity, undefined coerced to NaN),
+ * returns the minimum value as a safe default.
+ */
+function resolveTikTokVideoCoverTimestampMs(
+  input: number | null | undefined
+): number {
+  if (input === null || input === undefined || !Number.isFinite(input)) {
+    return TIKTOK_MIN_COVER_TIMESTAMP_MS;
+  }
+  return Math.max(Math.floor(input), TIKTOK_MIN_COVER_TIMESTAMP_MS);
+}
+
 /**
  * Handles video posting to TikTok using FILE_UPLOAD method
  */
@@ -25,6 +45,12 @@ export async function handleVideoPost({
   creatorInfo: CreatorInfoResponse;
 }): Promise<TikTokPostResult> {
   try {
+    const resolvedCoverTs = resolveTikTokVideoCoverTimestampMs(coverTimestamp);
+    console.log("[handleVideoPost] Resolved video_cover_timestamp_ms:", {
+      input: coverTimestamp,
+      resolved: resolvedCoverTs,
+    });
+
     // Initialize video post with PULL_FROM_URL
     const initResponse = await fetch(
       "https://open.tiktokapis.com/v2/post/publish/video/init/",
@@ -41,7 +67,7 @@ export async function handleVideoPost({
             disable_duet: tikTokOptions?.disableDuet || false,
             disable_comment: tikTokOptions?.disableComment || false,
             disable_stitch: tikTokOptions?.disableStitch || false,
-            video_cover_timestamp_ms: coverTimestamp,
+            video_cover_timestamp_ms: resolvedCoverTs,
           },
           source_info: {
             source: "PULL_FROM_URL",

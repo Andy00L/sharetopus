@@ -338,10 +338,13 @@ export async function callPlatformDirectPost(args: {
             message: "No board configured in post_options",
           };
         }
+        // FIX 17.2: fallback to 1000ms (1 second) instead of 0 because
+        // TikTok rejects 0 as "too small". Pinterest and Instagram
+        // tolerate it but the shared default keeps the value safe.
         result = await directPostForPinterestAccounts({
           account,
           mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 0,
+          coverTimestamp: post.cover_image_timestamp ?? 1000,
           boards: {
             boardID: options.board,
             boardName: options.boardName ?? "Board",
@@ -381,7 +384,7 @@ export async function callPlatformDirectPost(args: {
         result = await directPostForTikTokAccounts({
           account,
           mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 0,
+          coverTimestamp: post.cover_image_timestamp ?? 1000,
           tiktokMediaUrl: tiktokMediaUrl ?? "",
           mediaType,
           platformOptions,
@@ -401,7 +404,7 @@ export async function callPlatformDirectPost(args: {
         result = await directPostForInstagramAccounts({
           account,
           mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 0,
+          coverTimestamp: post.cover_image_timestamp ?? 1000,
           mediaType,
           accountContent,
           userId: post.principal_id,
