@@ -462,15 +462,17 @@ export type RecordStatusResult = {
 
 /**
  * Idempotent: only acts if the row is currently 'processing'.
- * Re-invocation after success is a no-op (row already deleted).
+ * Re-invocation after success is a no-op (row already posted/failed).
  *
  * For terminal failures, the directPostFor function already wrote to
  * failed_posts (via storeFailedPost when isCronJob:true). This step
  * only updates the scheduled_posts row to status='failed'.
  *
  * For success, content_history (with scheduled_post_id lineage) is
- * already written by the directPostFor function; this step deletes
- * the scheduled_posts row so the Scheduled UI no longer shows it.
+ * already written by the directPostFor function; this step marks the
+ * scheduled_posts row as status='posted'. The row stays alive so the
+ * FK on content_history.scheduled_post_id is not cascaded (ON DELETE
+ * SET NULL). The Scheduled UI filters out 'posted' rows by default.
  */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
@@ -483,22 +485,27 @@ export async function recordPostStatus(args: {
   if (result.ok) {
     const { data, error } = await adminSupabase
       .from("scheduled_posts")
-      .delete()
+      .update({
+        status: "posted" satisfies PostStatus,
+        posted_at: nowIso,
+        error_message: null,
+        updated_at: nowIso,
+      })
       .eq("id", post.id)
       .eq("status", "processing" satisfies PostStatus)
       .select("id");
 
     if (error) {
-      console.error("[recordPostStatus] delete posted row failed:", error.message);
+      console.error("[recordPostStatus] mark posted failed:", error.message);
       return {
         success: true,
-        message: `delete-posted error: ${error.message}`,
+        message: `mark-posted error: ${error.message}`,
         updated: false,
       };
     }
     return {
       success: true,
-      message: data && data.length > 0 ? "deleted posted row" : "already moved on",
+      message: data && data.length > 0 ? "marked posted" : "already moved on",
       updated: !!(data && data.length > 0),
     };
   }

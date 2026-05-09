@@ -55,6 +55,8 @@ export async function getScheduledPostsInternal(
     }
     if (filters?.status) {
       query = query.eq("status", filters.status);
+    } else {
+      query = query.neq("status", "posted");
     }
     if (filters?.limit) {
       query = query.limit(filters.limit);
