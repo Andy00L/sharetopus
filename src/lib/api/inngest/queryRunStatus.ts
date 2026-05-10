@@ -31,13 +31,11 @@ export type RunStatusResult =
 const INNGEST_API_BASE = "https://api.inngest.com/v1";
 
 export async function queryEventRunStatus(
-  eventId: string
+  eventId: string,
 ): Promise<RunStatusResult> {
   const signingKey = process.env.INNGEST_SIGNING_KEY;
   if (!signingKey) {
-    console.error(
-      "[queryEventRunStatus] INNGEST_SIGNING_KEY not configured"
-    );
+    console.error("[queryEventRunStatus] INNGEST_SIGNING_KEY not configured");
     return {
       success: false,
       message: "INNGEST_SIGNING_KEY not configured",
@@ -57,7 +55,7 @@ export async function queryEventRunStatus(
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(
-        `[queryEventRunStatus] Inngest API returned ${res.status}: ${body}`
+        `[queryEventRunStatus] Inngest API returned ${res.status}: ${body}`,
       );
       return {
         success: false,
@@ -67,6 +65,7 @@ export async function queryEventRunStatus(
 
     const json = await res.json();
 
+    console.log("[queryEventRunStatus] Raw response:", JSON.stringify(json));
     // The API returns { data: Run[] } or a bare array. Handle both.
     const rawRuns: unknown[] = Array.isArray(json)
       ? json
