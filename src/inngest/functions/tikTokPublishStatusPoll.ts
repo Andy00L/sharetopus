@@ -32,20 +32,17 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
   {
     id: "tiktok-publish-status-poll",
     name: "TikTok publish status poll",
-    concurrency: { limit: 50, key: "event.data.social_account_id" },
+    concurrency: { limit: 5, key: "event.data.social_account_id" },
     retries: 0,
     triggers: [{ event: "tiktok.publish.poll" }],
   },
   async ({ event, step }) => {
-    const {
-      publish_id,
-      social_account_id,
-      content_history_id,
-    } = event.data as {
-      publish_id: string;
-      social_account_id: string;
-      content_history_id: string | null;
-    };
+    const { publish_id, social_account_id, content_history_id } =
+      event.data as {
+        publish_id: string;
+        social_account_id: string;
+        content_history_id: string | null;
+      };
 
     const maxAttempts = RUNTIME.tikTokPublishPollMaxAttempts;
     const intervalMs = RUNTIME.tikTokPublishPollIntervalMs;
@@ -54,14 +51,9 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       // Resolve a fresh access token (handles refresh if expired)
-      const token = await step.run(
-        `resolve-token-${attempt}`,
-        async () => {
-          return await resolveTikTokAccessTokenForAccount(
-            social_account_id
-          );
-        }
-      );
+      const token = await step.run(`resolve-token-${attempt}`, async () => {
+        return await resolveTikTokAccessTokenForAccount(social_account_id);
+      });
 
       if (!token.success) {
         consecutiveErrors++;
@@ -69,13 +61,13 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
           await step.run("finalize-token-failure", async () => {
             await finalizeTikTokPullAsFailed(
               publish_id,
-              "Could not resolve access token for polling"
+              "Could not resolve access token for polling",
             );
           });
           await step.run("update-history-token-failure", async () => {
             await updateContentHistoryStatusToFailed(
               content_history_id,
-              "Token resolution failed during polling"
+              "Token resolution failed during polling",
             );
           });
           return {
@@ -83,10 +75,7 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
             reason: "token_resolution_exhausted",
           };
         }
-        await step.sleep(
-          `wait-token-error-${attempt}`,
-          `${intervalMs}ms`
-        );
+        await step.sleep(`wait-token-error-${attempt}`, `${intervalMs}ms`);
         continue;
       }
 
@@ -105,13 +94,13 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
           await step.run("finalize-poll-errors", async () => {
             await finalizeTikTokPullAsFailed(
               publish_id,
-              `Status fetch errors exceeded: ${status.message}`
+              `Status fetch errors exceeded: ${status.message}`,
             );
           });
           await step.run("update-history-poll-errors", async () => {
             await updateContentHistoryStatusToFailed(
               content_history_id,
-              "Status polling exceeded error threshold"
+              "Status polling exceeded error threshold",
             );
           });
           return {
@@ -119,10 +108,7 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
             reason: "poll_errors_exceeded",
           };
         }
-        await step.sleep(
-          `wait-poll-error-${attempt}`,
-          `${intervalMs}ms`
-        );
+        await step.sleep(`wait-poll-error-${attempt}`, `${intervalMs}ms`);
         continue;
       }
 
@@ -137,16 +123,12 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
       }
 
       if (status.terminal && status.kind === "failed") {
-        const reason =
-          status.reason ?? `TikTok status: ${status.raw_status}`;
+        const reason = status.reason ?? `TikTok status: ${status.raw_status}`;
         await step.run("finalize-failed", async () => {
           await finalizeTikTokPullAsFailed(publish_id, reason);
         });
         await step.run("update-history-failed", async () => {
-          await updateContentHistoryStatusToFailed(
-            content_history_id,
-            reason
-          );
+          await updateContentHistoryStatusToFailed(content_history_id, reason);
         });
         return {
           outcome: "failed",
@@ -163,16 +145,16 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     await step.run("finalize-timeout", async () => {
       await finalizeTikTokPullAsFailed(
         publish_id,
-        "Timeout waiting for TikTok publish status"
+        "Timeout waiting for TikTok publish status",
       );
     });
     await step.run("update-history-timeout", async () => {
       await updateContentHistoryStatusToFailed(
         content_history_id,
-        "Timeout waiting for TikTok publish status"
+        "Timeout waiting for TikTok publish status",
       );
     });
 
     return { outcome: "failed", reason: "timeout" };
-  }
+  },
 );
