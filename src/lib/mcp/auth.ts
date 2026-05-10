@@ -21,6 +21,7 @@ export type McpPrincipal =
       apiKeyId: string;
       scopes: string[];
       plan: PlanTier;
+      priceId: string | null;
       oauthClientId?: undefined;
     }
   | {
@@ -29,6 +30,7 @@ export type McpPrincipal =
       oauthClientId: string;
       scopes: string[];
       plan: PlanTier;
+      priceId: string | null;
       apiKeyId?: undefined;
     };
 
@@ -91,6 +93,7 @@ export async function resolveMcpPrincipal(
             oauthClientId: clerkClientId,
             scopes: authInfo.scopes ?? [],
             plan: "free",
+            priceId: null,
           };
         }
       }
@@ -116,6 +119,7 @@ export async function resolveMcpPrincipal(
     }
     // Translate the raw Stripe price ID to a tier name so entitlementFor
     // can compare tiers without knowing about price IDs.
+    candidate.priceId = sub.plan ?? null;
     candidate.plan = priceIdToTier(sub.plan);
   } catch (err) {
     // Treat any error as "not subscribed". Failing open would let
@@ -183,5 +187,6 @@ async function resolveApiKey(rawToken: string): Promise<McpPrincipal | null> {
     apiKeyId: key.id,
     scopes: key.scopes ?? [],
     plan: "free",
+    priceId: null,
   };
 }

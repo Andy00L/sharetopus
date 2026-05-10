@@ -13,11 +13,12 @@ import { registerDeleteScheduledPosts } from "./deleteScheduledPosts";
 import { registerGetAccountAnalytics } from "./getAccountAnalytics";
 import { registerGeneratePostDraft } from "./generatePostDraft";
 import { registerAttachMediaFromUrl } from "./attachMediaFromUrl";
+import { registerRequestUploadUrl } from "./requestUploadUrl";
 import { registerRequestAccountReauthLink } from "./requestAccountReauthLink";
 import { registerListBillingSummary } from "./listBillingSummary";
 
 /**
- * Registers all 14 MCP tool handlers on the server instance.
+ * Registers all 16 MCP tool handlers on the server instance.
  *
  * Each tool file exports a register function that calls server.tool()
  * with the tool name, schema, and handler callback.
@@ -38,6 +39,7 @@ export function registerTools(server: McpServer): void {
   registerGetAccountAnalytics(server);
   registerGeneratePostDraft(server);
   registerAttachMediaFromUrl(server);
+  registerRequestUploadUrl(server);
   registerRequestAccountReauthLink(server);
   registerListBillingSummary(server);
 }

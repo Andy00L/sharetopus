@@ -1,37 +1,24 @@
 // app/api/storage/generate-upload-url/route.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { STORAGE_LIMITS } from "@/lib/types/plans";
+import {
+  generateServerSignedUploadUrl,
+  type GenerateUploadUrlReason,
+} from "@/actions/server/data/generateServerSignedUploadUrl";
 import { auth } from "@clerk/nextjs/server";
-import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-// Helper function to get user's total file size
-async function getUserTotalFileSize(userId: string, bucketName: string): Promise<number> {
-  try {
-    const { data: files, error } = await adminSupabase.storage
-      .from(bucketName)
-      .list(userId);
 
-    if (error) {
-      console.error("[Storage Check] Error listing files:", error);
-      return 0;
-    }
-
-    const totalSize =
-      files?.reduce((total, file) => {
-        return total + (file.metadata?.size || 0);
-      }, 0) || 0;
-
-    return totalSize;
-  } catch (error) {
-    console.error("[Storage Check] Error calculating total size:", error);
-    return 0;
-  }
-}
+const REASON_TO_STATUS: Record<GenerateUploadUrlReason, number> = {
+  missing_bucket_env: 500,
+  invalid_input: 400,
+  content_type_not_allowed: 400,
+  file_too_large: 413,
+  storage_quota_exceeded: 413,
+  supabase_error: 500,
+};
 
 export async function POST(req: NextRequest) {
   try {
-    // Get authenticated user
+    // 1. Clerk auth
     const { userId } = await auth();
 
     if (!userId) {
@@ -46,29 +33,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const envBucket = process.env.SUPABASE_BUCKET_NAME;
-    if (!envBucket) {
-      console.error("[Generate Upload URL] SUPABASE_BUCKET_NAME not configured");
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Server misconfiguration",
-          message: "Upload service is not configured. Please contact support.",
-        },
-        { status: 500 }
-      );
-    }
-
+    // 2. Parse body (same shape as before for backward compat)
     const body = await req.json();
-
-    const {
-      filename,
-      contentType,
-      fileSize,
-      planId,
-      isScheduled,
-      bucketName = envBucket,
-    } = body;
+    const { filename, contentType, fileSize, isScheduled, bucketName } = body;
 
     if (!filename || !contentType || !fileSize) {
       console.error("[Generate Upload URL] Missing parameters:", {
@@ -85,7 +52,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check subscription status
+    // 3. Subscription check
     const subscriptionCheck = await checkActiveSubscription(userId);
     if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
       return NextResponse.json(
@@ -94,59 +61,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check storage limits only for scheduled posts (files that stay in storage)
-    if (isScheduled && planId && fileSize) {
-      const storageLimit = STORAGE_LIMITS[planId];
-      if (storageLimit) {
-        const currentTotalSize = await getUserTotalFileSize(userId, bucketName);
+    // 4. Delegate to shared helper
+    const result = await generateServerSignedUploadUrl({
+      principalId: userId,
+      priceId: subscriptionCheck.plan ?? null,
+      filename,
+      contentType,
+      fileSize,
+      countTowardStorage: isScheduled === true,
+      bucketName,
+    });
 
-        if (currentTotalSize + fileSize > storageLimit) {
-          const limitInGB = storageLimit / (1024 * 1024 * 1024);
-
-          return NextResponse.json(
-            {
-              success: false,
-              error: "Storage limit exceeded",
-              message: `This upload would exceed your ${limitInGB}GB storage limit. Please delete some Scheduled Posts or upgrade your plan to continue.`,
-            },
-            { status: 413 }
-          );
-        }
-      }
-    }
-
-    // Generate a unique filename to avoid collisions
-    const fileExtension = filename.split(".").pop() ?? "mp4";
-    const uniqueFilename = `${randomUUID()}.${fileExtension}`;
-
-    // Construct the path: user_id/unique_filename.ext
-    const filePath = `${userId}/${uniqueFilename}`;
-
-    // Generate a signed upload URL
-    const { data, error } = await adminSupabase.storage
-      .from(bucketName)
-      .createSignedUploadUrl(filePath);
-
-    if (error) {
+    if (!result.success) {
+      const status = result.reason
+        ? REASON_TO_STATUS[result.reason]
+        : 500;
       console.error(
-        "[Generate Upload URL] Error generating signed URL:",
-        error
+        `[Generate Upload URL] Helper rejected: ${result.reason} -- ${result.message}`
       );
       return NextResponse.json(
         {
           success: false,
-          error: "Upload preparation failed",
-          message: "We couldn't prepare your file upload. Please try again.",
+          error: result.message,
+          message: result.message,
         },
-        { status: 500 }
+        { status }
       );
     }
 
+    // 5. Success (same response shape as before)
     return NextResponse.json({
       success: true,
-      uploadUrl: data.signedUrl,
-      path: data.path,
-      token: data.token,
+      uploadUrl: result.uploadUrl,
+      path: result.path,
+      token: result.token,
     });
   } catch (err) {
     console.error("[Generate Upload URL] Unexpected error:", err);

@@ -37,6 +37,7 @@ const ACTION_PLAN_GATE: Record<string, PlanTier> = {
 
   // Write tools (starter+)
   attach_media_from_url: "starter",
+  request_upload_url: "starter",
   schedule_post: "starter",
   post_now: "starter",
   cancel_scheduled_posts: "starter",
