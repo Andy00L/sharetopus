@@ -65,7 +65,6 @@ export async function queryEventRunStatus(
 
     const json = await res.json();
 
-    console.log("[queryEventRunStatus] Raw response:", JSON.stringify(json));
     // The API returns { data: Run[] } or a bare array. Handle both.
     const rawRuns: unknown[] = Array.isArray(json)
       ? json

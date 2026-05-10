@@ -92,11 +92,22 @@ export async function GET(
     const run = result.runs[0];
 
     if (run.status === "Completed") {
-      const output = run.output as Record<string, unknown> | null;
-      const explicitlyFailed = output?.ok === false;
+      const outputArray = Array.isArray(run.output) ? run.output : null;
+      const runComplete = outputArray?.find(
+        (op): op is Record<string, unknown> =>
+          typeof op === "object" &&
+          op !== null &&
+          (op as Record<string, unknown>).op === "RunComplete",
+      );
+      const data = (runComplete?.data ?? null) as Record<
+        string,
+        unknown
+      > | null;
+
+      const explicitlyFailed = data?.ok === false;
       if (explicitlyFailed) {
         const errorMsg =
-          typeof output?.message === "string" ? output.message : "Post failed";
+          typeof data?.message === "string" ? data.message : "Post failed";
         jobs.push({
           event_id: eventId,
           status: "failed",
