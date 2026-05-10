@@ -64,15 +64,21 @@ export type SubscriptionStatus =
 export type PrivacyLevel =
   | "PUBLIC_TO_EVERYONE"
   | "MUTUAL_FOLLOW_FRIENDS"
+  | "FOLLOWER_OF_CREATOR"
   | "SELF_ONLY"
   | "PUBLIC"
   | "PROTECTED";
 
 export interface TikTokOptions {
-  privacyLevel: PrivacyLevel;
-  disableComment: boolean;
-  disableDuet: boolean;
-  disableStitch: boolean;
+  privacyLevel?: PrivacyLevel;
+  disableComment?: boolean;
+  disableDuet?: boolean;
+  disableStitch?: boolean;
+  // FIX TIKTOK-COMPLIANCE additions:
+  brandContentToggle?: boolean;
+  yourBrand?: boolean;
+  brandedContent?: boolean;
+  isAigc?: boolean;
 }
 
 export interface PinterestOptions {

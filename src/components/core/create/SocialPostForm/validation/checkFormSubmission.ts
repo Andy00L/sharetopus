@@ -1,3 +1,4 @@
+import type { TikTokOptions } from "@/lib/types/dbTypes";
 import {
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,
@@ -29,6 +30,10 @@ export interface CheckFormParams {
   scheduledTime: string;
   selectedPinterestAccounts: SelectedPinterestAccount[];
   boards: BoardInfo[];
+  // FIX TIKTOK-COMPLIANCE
+  tiktokComplianceEnabled: boolean;
+  selectedTikTokAccounts: { id: string }[];
+  tikTokOptions?: TikTokOptions;
 }
 
 export type CheckFormResult =
@@ -49,6 +54,9 @@ export function checkFormSubmission(params: CheckFormParams): CheckFormResult {
     scheduledTime,
     selectedPinterestAccounts,
     boards,
+    tiktokComplianceEnabled,
+    selectedTikTokAccounts,
+    tikTokOptions,
   } = params;
 
   if (!userId) {
@@ -167,6 +175,50 @@ export function checkFormSubmission(params: CheckFormParams): CheckFormResult {
           missingBoardAccount.username ??
           "your account"
         }`,
+      };
+    }
+  }
+
+  // TikTok compliance validation
+  if (
+    tiktokComplianceEnabled &&
+    selectedTikTokAccounts.length > 0 &&
+    (postType === "video" || postType === "image")
+  ) {
+    if (!tikTokOptions?.privacyLevel) {
+      console.error("[checkFormSubmission]: TikTok privacy level not selected");
+      return {
+        valid: false,
+        message: "Please select a privacy level for your TikTok post",
+      };
+    }
+
+    if (
+      tikTokOptions.brandContentToggle === true &&
+      tikTokOptions.yourBrand !== true &&
+      tikTokOptions.brandedContent !== true
+    ) {
+      console.error(
+        "[checkFormSubmission]: Commercial content toggle ON but no type selected"
+      );
+      return {
+        valid: false,
+        message:
+          "Please indicate if your content promotes yourself, a third party, or both",
+      };
+    }
+
+    if (
+      tikTokOptions.brandedContent === true &&
+      tikTokOptions.privacyLevel === "SELF_ONLY"
+    ) {
+      console.error(
+        "[checkFormSubmission]: Branded content cannot use SELF_ONLY privacy"
+      );
+      return {
+        valid: false,
+        message:
+          'Branded Content posts cannot use "Only me" privacy. Please select a different privacy level.',
       };
     }
   }

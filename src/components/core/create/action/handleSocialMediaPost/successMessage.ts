@@ -44,5 +44,13 @@ export function generateSuccessMessage(
     message += ` with ${errorCount} failed account${errorCount > 1 ? "s" : ""}`;
   }
 
-  return `Successfully ${action} ${message}`;
+  let result = `Successfully ${action} ${message}`;
+
+  // TikTok processing notice (applies regardless of compliance flag)
+  if (counts.tiktok > 0) {
+    result +=
+      ". Your TikTok post may take a few minutes to appear on your profile.";
+  }
+
+  return result;
 }

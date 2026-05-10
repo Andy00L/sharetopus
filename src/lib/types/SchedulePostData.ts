@@ -17,6 +17,10 @@ export interface SchedulePostData {
     disableComment?: boolean;
     disableDuet?: boolean;
     disableStitch?: boolean;
+    brandContentToggle?: boolean;
+    yourBrand?: boolean;
+    brandedContent?: boolean;
+    isAigc?: boolean;
 
     // Pinterest-specific options
     board_id?: string;

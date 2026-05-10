@@ -277,6 +277,10 @@ type PostOptions = {
   disableComment?: boolean;
   disableDuet?: boolean;
   disableStitch?: boolean;
+  brandContentToggle?: boolean;
+  yourBrand?: boolean;
+  brandedContent?: boolean;
+  isAigc?: boolean;
 };
 
 /**
@@ -321,6 +325,10 @@ export async function callPlatformDirectPost(args: {
       disableComment: options.disableComment ?? false,
       disableDuet: options.disableDuet ?? false,
       disableStitch: options.disableStitch ?? false,
+      brandContentToggle: options.brandContentToggle,
+      yourBrand: options.yourBrand,
+      brandedContent: options.brandedContent,
+      isAigc: options.isAigc,
     },
   };
 

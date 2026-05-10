@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import type { TikTokOptions } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 import {
   CalendarIcon,
@@ -29,6 +30,9 @@ interface SchedulingPanelProps {
   readonly uploadProgress: number;
   readonly onSubmit: () => void;
   readonly disabled: boolean;
+  readonly tiktokComplianceEnabled: boolean;
+  readonly hasTikTokAccounts: boolean;
+  readonly tikTokOptions?: TikTokOptions;
 }
 
 export default function SchedulingPanel({
@@ -46,7 +50,16 @@ export default function SchedulingPanel({
   uploadProgress,
   onSubmit,
   disabled,
+  tiktokComplianceEnabled,
+  hasTikTokAccounts,
+  tikTokOptions,
 }: SchedulingPanelProps) {
+  // TikTok declaration text (compliance mode only)
+  const showTikTokDeclaration =
+    tiktokComplianceEnabled && hasTikTokAccounts;
+  const showBrandedPolicyLink =
+    tikTokOptions?.brandContentToggle === true &&
+    tikTokOptions?.brandedContent === true;
   return (
     <>
       {/* Preview panel */}
@@ -131,6 +144,34 @@ export default function SchedulingPanel({
               ></div>
             </div>
           </div>
+        )}
+
+        {/* TikTok declaration text */}
+        {showTikTokDeclaration && (
+          <p className="text-xs text-muted-foreground pt-2">
+            By posting, you agree to TikTok&apos;s{" "}
+            {showBrandedPolicyLink && (
+              <>
+                <a
+                  href="https://www.tiktok.com/legal/page/global/bc-policy/en"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  Branded Content Policy
+                </a>
+                {" and "}
+              </>
+            )}
+            <a
+              href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-foreground"
+            >
+              Music Usage Confirmation
+            </a>
+          </p>
         )}
 
         {!isLoading && (

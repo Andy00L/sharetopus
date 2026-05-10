@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { SidebarGroup } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
 import { nanoid } from "nanoid";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -23,11 +23,14 @@ import { VideoUploads } from "../upload/VideoUpload";
 import { useAccountContent } from "./hooks/useAccountContent";
 import { usePinterestBoards } from "./hooks/usePinterestBoards";
 import { convertPngToJpeg } from "./media/convertPngToJpeg";
+import { useTikTokCreatorInfo } from "./hooks/useTikTokCreatorInfo";
 import AccountSelector from "./sections/AccountSelector";
 import CaptionsTab from "./sections/CaptionsTab";
 import PinterestSettingsTab from "./sections/PinterestSettingsTab";
 import SchedulingPanel from "./sections/SchedulingPanel";
+import TikTokSettingsTab from "./sections/TikTokSettingsTab";
 import {
+  TIKTOK_COMPLIANCE_UI_ENABLED,
   defaultPlatformOptions,
   defaultTextInputs,
   DEFAULT_SCHEDULED_TIME,
@@ -102,6 +105,11 @@ export default function SocialPostForm({
   );
   const selectedInstagramAccounts = accounts.filter(
     (acc) => selectedAccounts[acc.id] === true && acc.platform === "instagram"
+  );
+
+  const tikTokCreatorHook = useTikTokCreatorInfo(
+    selectedTikTokAccounts,
+    TIKTOK_COMPLIANCE_UI_ENABLED
   );
 
   // Legitimate useEffect: object URL lifecycle for preview
@@ -186,6 +194,13 @@ export default function SocialPostForm({
     );
   }
 
+  function handleTikTokOptionsChange(update: Partial<TikTokOptions>) {
+    setPlatformOptions((prev) => ({
+      ...prev,
+      tiktok: { ...prev.tiktok, ...update },
+    }));
+  }
+
   function resetForm() {
     setSelectedFile(null);
     setCoverTimestamp(0);
@@ -230,6 +245,9 @@ export default function SocialPostForm({
       scheduledTime,
       selectedPinterestAccounts,
       boards: pinterestHook.boards,
+      tiktokComplianceEnabled: TIKTOK_COMPLIANCE_UI_ENABLED,
+      selectedTikTokAccounts,
+      tikTokOptions: platformOptions.tiktok,
     });
 
     if (!validationResult.valid) {
@@ -460,9 +478,12 @@ export default function SocialPostForm({
           </div>
         </div>
 
-        {/* Tabs (captions + pinterest settings) */}
+        {/* Tabs (captions + pinterest/tiktok settings) */}
         {(postType === "video" || postType === "image") &&
-          (selectedPinterestAccounts.length > 0 || selectedCount > 1) && (
+          (selectedPinterestAccounts.length > 0 ||
+            selectedCount > 1 ||
+            (TIKTOK_COMPLIANCE_UI_ENABLED &&
+              selectedTikTokAccounts.length > 0)) && (
             <Tabs
               value={openTab}
               onValueChange={(value) => {
@@ -490,6 +511,12 @@ export default function SocialPostForm({
                     Pinterest Settings
                   </TabsTrigger>
                 )}
+                {TIKTOK_COMPLIANCE_UI_ENABLED &&
+                  selectedTikTokAccounts.length > 0 && (
+                    <TabsTrigger value="tiktok" className="cursor-pointer">
+                      TikTok Settings
+                    </TabsTrigger>
+                  )}
               </TabsList>
 
               <TabsContent value="captions" className="mt-4">
@@ -529,6 +556,21 @@ export default function SocialPostForm({
                   />
                 </TabsContent>
               )}
+
+              {TIKTOK_COMPLIANCE_UI_ENABLED &&
+                selectedTikTokAccounts.length > 0 && (
+                  <TabsContent value="tiktok" className="mt-4">
+                    <TikTokSettingsTab
+                      selectedTikTokAccounts={selectedTikTokAccounts}
+                      creatorInfo={tikTokCreatorHook.creatorInfo}
+                      isLoadingCreatorInfo={tikTokCreatorHook.isLoading}
+                      creatorInfoErrors={tikTokCreatorHook.errors}
+                      postType={postType}
+                      tikTokOptions={platformOptions.tiktok ?? {}}
+                      onOptionsChange={handleTikTokOptionsChange}
+                    />
+                  </TabsContent>
+                )}
             </Tabs>
           )}
       </SidebarGroup>
@@ -549,6 +591,9 @@ export default function SocialPostForm({
           uploadProgress={uploadProgress}
           onSubmit={handleSubmit}
           disabled={selectedCount === 0}
+          tiktokComplianceEnabled={TIKTOK_COMPLIANCE_UI_ENABLED}
+          hasTikTokAccounts={selectedTikTokAccounts.length > 0}
+          tikTokOptions={platformOptions.tiktok}
         />
       </SidebarGroup>
     </>

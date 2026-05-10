@@ -68,6 +68,9 @@ export async function handleVideoPost({
             disable_comment: tikTokOptions?.disableComment || false,
             disable_stitch: tikTokOptions?.disableStitch || false,
             video_cover_timestamp_ms: resolvedCoverTs,
+            brand_content_toggle: tikTokOptions?.brandedContent === true,
+            brand_organic_toggle: tikTokOptions?.yourBrand === true,
+            is_aigc: tikTokOptions?.isAigc === true,
           },
           source_info: {
             source: "PULL_FROM_URL",

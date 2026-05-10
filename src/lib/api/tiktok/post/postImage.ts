@@ -43,6 +43,8 @@ export async function handleImagePost({
             privacy_level: tikTokOptions?.privacyLevel || "PUBLIC_TO_EVERYONE",
             disable_comment: tikTokOptions?.disableComment || false,
             auto_add_music: autoAddMusic,
+            brand_content_toggle: tikTokOptions?.brandedContent === true,
+            brand_organic_toggle: tikTokOptions?.yourBrand === true,
           },
           source_info: {
             source: "PULL_FROM_URL",
