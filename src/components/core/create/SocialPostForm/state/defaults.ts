@@ -9,7 +9,7 @@ import { format } from "date-fns";
 // privacy SELF_ONLY, no settings tab, no declarations).
 // Flip to true when re-recording the TikTok demo video.
 // See change/REPORT.md "FIX TIKTOK-COMPLIANCE" entry.
-export const TIKTOK_COMPLIANCE_UI_ENABLED = false;
+export const TIKTOK_COMPLIANCE_UI_ENABLED = true;
 
 export const defaultPlatformOptions: PlatformOptions = {
   tiktok: TIKTOK_COMPLIANCE_UI_ENABLED
@@ -46,7 +46,11 @@ export function getDefaultScheduledDate(): string {
 
 export const DEFAULT_SCHEDULED_TIME = "12:00" as const;
 
-export const defaultTextInputs: { title: string; description: string; link: string } = {
+export const defaultTextInputs: {
+  title: string;
+  description: string;
+  link: string;
+} = {
   title: "",
   description: "",
   link: "",
