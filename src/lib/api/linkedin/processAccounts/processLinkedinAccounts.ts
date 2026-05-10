@@ -3,7 +3,7 @@ import {
   AccountError,
   ContentInfo,
 } from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
-import { scheduleForLinkedInAccounts } from "../schedule/scheduledForLinkedinAccounts";
+import { scheduleForLinkedInAccounts } from "../schedule/scheduleForLinkedInAccounts";
 
 /**
  * Process LinkedIn accounts individually with robust error handling for each account

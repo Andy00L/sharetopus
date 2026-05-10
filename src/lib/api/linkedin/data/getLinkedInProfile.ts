@@ -1,7 +1,7 @@
 // lib/api/linkedin/getLinkedInProfile.ts
 import "server-only";
 
-import { LinkedInProfile } from "@/lib/types/LinkedinProfile";
+import { LinkedInProfile } from "@/lib/types/socialProfiles";
 
 export async function getLinkedInProfile(
   accessToken: string,

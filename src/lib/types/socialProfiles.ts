@@ -1,4 +1,33 @@
-// actions/types/TikTokProfile.ts
+// ----- LinkedIn -----
+
+export interface LinkedInProfile {
+  id: string;
+  name: string;
+  given_name: string;
+  family_name: string;
+  email: string;
+  picture: string;
+  locale: string;
+  email_verified: boolean;
+}
+
+// ----- Pinterest -----
+
+export type PinterestProfile = {
+  id: string;
+  username: string;
+  first_name: string;
+  last_name: string;
+  full_name: string;
+  profile_image_url: string | null;
+  follower_count: number | null;
+  following_count: number | null;
+  is_verified: boolean;
+  bio: string | null;
+  business_name: string | null;
+};
+
+// ----- TikTok -----
 
 /**
  * Represents a TikTok user profile as returned by the TikTok API

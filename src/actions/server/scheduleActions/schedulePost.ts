@@ -13,7 +13,7 @@ import type { SchedulePostData } from "@/lib/types/SchedulePostData";
  *
  * Tables touched (via _internal): scheduled_posts, social_accounts
  * Called by: scheduleForPinterestAccounts, scheduleForTikTokAccounts,
- *            scheduledForLinkedinAccounts, scheduleForInstagramAccounts
+ *            scheduleForLinkedInAccounts, scheduleForInstagramAccounts
  */
 export async function schedulePost(
   data: SchedulePostData,
