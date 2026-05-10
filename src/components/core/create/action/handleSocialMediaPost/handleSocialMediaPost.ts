@@ -10,6 +10,8 @@ import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
 import { generateSuccessMessage } from "./successMessage";
 import { validateAccountContent } from "./validateContent";
+import { inngest } from "@/inngest/client";
+import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -47,17 +49,17 @@ type PostResult = {
   success: boolean;
   counts: PlatformCounts;
   message: string;
-  errors?: AccountError[]; // Add detailed errors for failed accounts
-  resetIn?: number; // Rate limit reset time
+  errors?: AccountError[];
+  resetIn?: number;
+  // FIX 26: for direct posts through Inngest
+  batch_id?: string;
+  event_ids?: string[];
 };
 
 /**
- * Unified function to handle both direct posting and scheduling across different platforms
- * Processes all platforms in parallel for maximum performance with robust error handling
- * and comprehensive security checks.
- *
- * @param config Configuration object containing all necessary parameters
- * @returns Object with success status, platform-specific counts, and a user-friendly message
+ * Unified function to handle both direct posting and scheduling across different platforms.
+ * Direct posts (isScheduled=false) are dispatched through Inngest workers.
+ * Scheduled posts (isScheduled=true) flow through the existing /api/social routes.
  */
 export async function handleSocialMediaPost(config: {
   pinterestAccounts: SocialAccount[];
@@ -79,8 +81,6 @@ export async function handleSocialMediaPost(config: {
   cleanupFiles?: boolean;
   cronSecret?: string;
 }): Promise<PostResult> {
-  // Start tracking execution time
-  const startTime = performance.now();
   const {
     pinterestAccounts,
     linkedinAccounts,
@@ -102,494 +102,546 @@ export async function handleSocialMediaPost(config: {
     cronSecret,
   } = config;
 
-  // Initialize results object
-  const results: PostResult = {
-    success: false,
-    counts: {
-      pinterest: 0,
-      linkedin: 0,
-      tiktok: 0,
-      instagram: 0,
-      total: 0,
-    },
-    message: "",
-    errors: [], // Track individual account errors
+  const zeroCounts: PlatformCounts = {
+    pinterest: 0,
+    linkedin: 0,
+    tiktok: 0,
+    instagram: 0,
+    total: 0,
   };
 
-  try {
-    // Early validation: Check if there are any accounts to process
-    const totalAccounts =
-      pinterestAccounts.length +
-      linkedinAccounts.length +
-      instagramAccounts.length +
-      tiktokAccounts.length;
+  // Step 1: Check if there are any accounts to process
+  const totalAccounts =
+    pinterestAccounts.length +
+    linkedinAccounts.length +
+    instagramAccounts.length +
+    tiktokAccounts.length;
 
-    if (totalAccounts === 0) {
-      console.error(
-        `[handleSocialMediaPost]: No accounts provided for processing`
-      );
-      return {
-        success: false,
-        counts: results.counts,
-        message:
-          "No accounts selected for posting. Please select at least one account.",
-        errors: [],
-      };
-    }
-
-    console.log(
-      `[handleSocialMediaPost]: Starting ${
-        isScheduled ? "scheduled" : "direct"
-      } post process for ${totalAccounts} total accounts`
-    );
-
-    // Step 1: Verify user is properly authenticated
-    const authResult = cronSecret
-      ? await authCheckCronJob(userId, cronSecret)
-      : await authCheck(userId);
-
-    if (!authResult) {
-      const errorMessage = cronSecret
-        ? "Cron job authentication failed. Invalid secret key."
-        : "Authentication validation failed. Please sign in again.";
-
-      console.error(
-        `[handleSocialMediaPost]: Authentication failed for user ID: ${userId}`
-      );
-
-      return {
-        success: false,
-        counts: results.counts,
-        message: errorMessage,
-        errors: [],
-      };
-    }
-
-    // Step 2: Check rate limits to prevent abuse
-    const rateCheck = await checkRateLimit(
-      "handleSocialMediaPost", // Unique identifier for this operation
-      userId, // User identifier
-      30, // Limit (30 requests)
-      60, // Window (60 seconds),
-      cronSecret
-    );
-
-    if (!rateCheck.success) {
-      console.warn(
-        `[handleSocialMediaPost]: Rate limit exceeded for user: ${userId}. Reset in: ${
-          rateCheck.resetIn ?? "unknown"
-        } seconds`
-      );
-
-      return {
-        success: false,
-        counts: results.counts,
-        message: "Too many requests. Please try again later.",
-        resetIn: rateCheck.resetIn,
-        errors: [],
-      };
-    }
-
-    // Step 3: Pre-process media if needed - do this ONCE instead of in each platform handler
-    let mediaType: string = "";
-
-    // Early return if media is missing but required
-    const requiresMedia =
-      (postType === "image" || postType === "video") &&
-      (pinterestAccounts.length > 0 ||
-        (tiktokAccounts.length > 0 && postType === "video"));
-
-    if (!mediaPath && requiresMedia) {
-      console.error(
-        `[handleSocialMediaPost]: Media required for ${postType} posts on Pinterest/TikTok`
-      );
-      return {
-        success: false,
-        counts: results.counts,
-        message: `${postType} posts require media files for Pinterest${
-          postType === "video" ? " and TikTok" : ""
-        }`,
-        errors: [],
-      };
-    }
-
-    // Process media file if provided
-    if (mediaPath && fileName) {
-      const mimeResult = getMimeTypeFromFileName(fileName);
-
-      if (!mimeResult.success) {
-        console.error(
-          `[handleSocialMediaPost]: Error processing file: ${mimeResult.message}`
-        );
-
-        // Clean up file on error if needed
-        if (cleanupFiles) {
-          try {
-            await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret);
-            console.log(
-              `[handleSocialMediaPost]: Cleaned up media file after error: ${mediaPath}`
-            );
-          } catch (cleanupError) {
-            console.error(
-              `[handleSocialMediaPost]: Failed to clean up media file:`,
-              cleanupError
-            );
-          }
-        }
-
-        return {
-          success: false,
-          counts: results.counts,
-          message: mimeResult.message || "Failed to process media file.",
-          errors: [
-            {
-              accountId: "none",
-              platform: "system",
-              displayName: "Media Processing",
-              error: mimeResult.message || "Unknown file type error",
-            },
-          ],
-        };
-      }
-
-      mediaType = mimeResult.mimeType;
-    }
-
-    // Step 4: Verify content for each account
-    const missingContentAccounts: AccountError[] = [
-      ...validateAccountContent(
-        pinterestAccounts,
-        accountContent,
-        "pinterest",
-        boards,
-        postType
-      ),
-      ...validateAccountContent(linkedinAccounts, accountContent, "linkedin"),
-      ...validateAccountContent(tiktokAccounts, accountContent, "tiktok"),
-      ...validateAccountContent(instagramAccounts, accountContent, "instagram"),
-    ];
-
-    if (missingContentAccounts.length > 0) {
-      console.error(
-        `[handleSocialMediaPost]: ${missingContentAccounts.length} accounts have invalid configuration`
-      );
-      return {
-        success: false,
-        counts: results.counts,
-        message:
-          "Some accounts have invalid configuration. Please check your settings.",
-        errors: missingContentAccounts,
-      };
-    }
-
-    // Step 5: ENHANCED ERROR HANDLING: Process each platform's accounts individually
-    // Log start time of processing
-    const processingStartTime = performance.now();
-    console.log(
-      `[handleSocialMediaPost]: Starting parallel account processing`
-    );
-
-    let mediaUrl;
-    let tiktokMediaUrl;
-
-    // Generate TikTok proxy URL if we have TikTok accounts
-    if (tiktokAccounts.length > 0 && mediaPath && !isScheduled) {
-      const tiktokUrlResult = buildProxiedTikTokMediaUrl({
-        mediaPath,
-        principalId: userId!,
-      });
-      if (!tiktokUrlResult.success) {
-        return {
-          success: false,
-          counts: results.counts,
-          message: tiktokUrlResult.message,
-          errors: [],
-        };
-      }
-      tiktokMediaUrl = tiktokUrlResult.url;
-      console.log(
-        `[handleSocialMediaPost] TikTok proxy URL created for ${tiktokAccounts.length} accounts`
-      );
-    }
-
-    // Generate regular signed URL for non-TikTok platforms (Instagram, LinkedIn, Pinterest)
-    const hasNonTikTokPlatforms =
-      instagramAccounts.length > 0 ||
-      linkedinAccounts.length > 0 ||
-      pinterestAccounts.length > 0;
-
-    if (
-      !isScheduled &&
-      hasNonTikTokPlatforms &&
-      mediaPath &&
-      (postType === "video" || postType === "image")
-    ) {
-      const signedUrlResult = await getServerSignedViewUrl(mediaPath);
-
-      if (!signedUrlResult.success) {
-        console.error(
-          `[handleSocialMediaPost] Failed to create signed URL: ${signedUrlResult.message}`
-        );
-        return {
-          success: false,
-          counts: results.counts,
-          message: signedUrlResult.message,
-          errors: [],
-        };
-      }
-
-      mediaUrl = signedUrlResult.url;
-      console.log(
-        `[handleSocialMediaPost] Signed URL created for non-TikTok platforms`
-      );
-    }
-
-    // Internal route calls use the server's own cron secret since
-    // the caller was already authenticated above (Clerk or cronSecret).
-    const routeSecret = process.env.CRON_SECRET_KEY;
-
-    // Process each platform in parallel for maximum performance
-    const [
-      tiktokAccountResults,
-      pinterestAccountResults,
-      linkedinAccountResults,
-      instagramAccountResults,
-    ] = await Promise.all([
-      // Process TikTok accounts (if any and not image posts)
-      tiktokAccounts.length > 0
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/tiktok/process`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts: tiktokAccounts,
-              mediaPath,
-              mediaType,
-              fileName: fileName ?? "",
-              platformOptions,
-              accountContent,
-              isScheduled,
-              tiktokMediaUrl,
-              scheduledDate: scheduledDate ?? "",
-              scheduledTime: scheduledTime ?? "",
-              postType,
-              coverTimestamp,
-              userId,
-              batchId,
-              cronSecret: routeSecret,
-            }),
-          }).then((res) => res.json())
-        : Promise.resolve({ successCount: 0, errors: [] }),
-
-      // Process Pinterest accounts (if any and not text posts)
-      pinterestAccounts.length > 0 && postType !== "text"
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/pinterest/process`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts: pinterestAccounts,
-              mediaPath,
-              coverTimestamp,
-              mediaType,
-              fileName: fileName ?? "",
-              boards: boards || [],
-              platformOptions,
-              accountContent,
-              isScheduled,
-              scheduledDate: scheduledDate ?? "",
-              scheduledTime: scheduledTime ?? "",
-              postType,
-              userId,
-              batchId,
-              cronSecret: routeSecret,
-              mediaUrl,
-            }),
-          }).then((res) => res.json())
-        : Promise.resolve({ successCount: 0, errors: [] }),
-
-      // Process LinkedIn accounts (if any)
-      linkedinAccounts.length > 0
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/linkedin/process`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts: linkedinAccounts,
-              mediaPath,
-              coverTimestamp,
-              fileName: fileName ?? "",
-              platformOptions,
-              accountContent,
-              isScheduled,
-              scheduledDate: scheduledDate ?? "",
-              scheduledTime: scheduledTime ?? "",
-              postType,
-              userId,
-              batchId,
-              mediaType,
-              cronSecret: routeSecret,
-            }),
-          }).then((res) => res.json())
-        : Promise.resolve({ successCount: 0, errors: [] }),
-      instagramAccounts.length > 0 && postType !== "text"
-        ? fetch(`${process.env.FRONTEND_URL}/api/social/instagram/process`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts: instagramAccounts,
-              mediaPath,
-              coverTimestamp,
-              mediaType,
-              mediaUrl,
-              fileName: fileName ?? "",
-              accountContent,
-              isScheduled,
-              scheduledDate: scheduledDate ?? "",
-              scheduledTime: scheduledTime ?? "",
-              postType,
-              userId,
-              batchId,
-              cronSecret: routeSecret,
-            }),
-          }).then((res) => res.json())
-        : Promise.resolve({ successCount: 0, errors: [] }),
-    ]);
-
-    // Log processing time
-    const processingTime = performance.now() - processingStartTime;
-    console.log(
-      `[handleSocialMediaPost]: Parallel processing completed in ${processingTime.toFixed(
-        2
-      )}ms`
-    );
-
-    // Step 6: Collect all account-level errors
-    results.errors = [
-      ...tiktokAccountResults.errors,
-      ...pinterestAccountResults.errors,
-      ...linkedinAccountResults.errors,
-      ...instagramAccountResults.errors,
-    ];
-
-    // Collect success counts
-    results.counts.pinterest = pinterestAccountResults.successCount;
-    results.counts.linkedin = linkedinAccountResults.successCount;
-    results.counts.tiktok = tiktokAccountResults.successCount;
-    results.counts.instagram = instagramAccountResults.successCount;
-
-    results.counts.total =
-      results.counts.pinterest +
-      results.counts.linkedin +
-      results.counts.tiktok +
-      results.counts.instagram;
-
-    // Mark success if ANY account succeeded
-    results.success = results.counts.total > 0;
-
-    // Log account-level failures for debugging
-    if (results.errors.length > 0) {
-      console.log(
-        `[handleSocialMediaPost]: ${results.errors.length} account-level errors occurred:`
-      );
-      results.errors.forEach((err, index) => {
-        console.log(
-          `  [${index + 1}] ${err.platform}/${err.displayName}: ${err.error}`
-        );
-      });
-    }
-
-    // Step 7: Clean up media file if direct posting and cleanup is requested
-    const shouldCleanup = !isScheduled && cleanupFiles && mediaPath;
-
-    if (shouldCleanup) {
-      const hasExternalDownloads =
-        tiktokAccounts.length > 0 || instagramAccounts.length > 0;
-
-      if (hasExternalDownloads) {
-        console.log(
-          `[Cleanup] Waiting 30s for external downloads to complete...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, 30 * 1000));
-      }
-
-      try {
-        await deleteSupabaseFileAction(userId, mediaPath, false, cronSecret);
-        console.log(
-          `[handleSocialMediaPost]: Cleaned up temporary media file: ${mediaPath}`
-        );
-      } catch (cleanupError) {
-        console.error(
-          `[handleSocialMediaPost]: Error cleaning up media file:`,
-          cleanupError
-        );
-      }
-    }
-
-    // Step 8: Generate appropriate success message
-    results.message = generateSuccessMessage(
-      results.counts,
-      isScheduled,
-      results.errors.length
-    );
-
-    // Step 9: Log total processing time for performance monitoring
-    const totalTime = performance.now() - startTime;
-    console.log(
-      `[handleSocialMediaPost]: Total processing completed in ${totalTime.toFixed(
-        2
-      )}ms with ${results.counts.total} successes and ${
-        results.errors.length
-      } failures`
-    );
-
-    // If there were no successful posts but we didn't catch it earlier, ensure success is false
-    if (results.counts.total === 0) {
-      results.success = false;
-      if (results.message === "") {
-        results.message = "No posts were processed successfully.";
-      }
-    }
-
-    return results;
-  } catch (error) {
-    // Step 10: Handle unexpected errors with detailed logging
-    console.error(`[handleSocialMediaPost]: Unexpected error:`, error);
+  if (totalAccounts === 0) {
     console.error(
-      error instanceof Error ? error.stack : "No stack trace available"
+      "[handleSocialMediaPost] No accounts provided for processing"
     );
-
-    // Clean up media on error for direct posts
-    const shouldCleanupOnError = !isScheduled && cleanupFiles && mediaPath;
-
-    if (shouldCleanupOnError) {
-      try {
-        await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret);
-        console.log(
-          `[handleSocialMediaPost]: Cleaned up media file after unexpected error`
-        );
-      } catch (cleanupError) {
-        console.error(
-          `[handleSocialMediaPost]: Error cleaning up media file after error:`,
-          cleanupError
-        );
-      }
-    }
-
     return {
       success: false,
-      counts: results.counts,
+      counts: zeroCounts,
       message:
-        error instanceof Error
-          ? `An error occurred: ${error.message.substring(0, 100)}${
-              error.message.length > 100 ? "..." : ""
-            }`
-          : `An unexpected error occurred. Please try again.`,
-      errors: [
-        {
-          accountId: "none",
-          platform: "system",
-          displayName: "System Error",
-          error: error instanceof Error ? error.message : String(error),
-        },
-      ],
+        "No accounts selected for posting. Please select at least one account.",
+      errors: [],
+    };
+  }
+
+  console.log(
+    `[handleSocialMediaPost] Starting ${
+      isScheduled ? "scheduled" : "direct"
+    } post for ${totalAccounts} accounts`
+  );
+
+  // Step 2: Verify authentication
+  const authResult = cronSecret
+    ? await authCheckCronJob(userId, cronSecret)
+    : await authCheck(userId);
+
+  if (!authResult) {
+    const errorMessage = cronSecret
+      ? "Cron job authentication failed. Invalid secret key."
+      : "Authentication validation failed. Please sign in again.";
+    console.error(
+      `[handleSocialMediaPost] Authentication failed for user: ${userId}`
+    );
+    return { success: false, counts: zeroCounts, message: errorMessage, errors: [] };
+  }
+
+  // Step 3: Rate limit
+  const rateCheck = await checkRateLimit(
+    "handleSocialMediaPost",
+    userId,
+    30,
+    60,
+    cronSecret
+  );
+  if (!rateCheck.success) {
+    console.warn(
+      `[handleSocialMediaPost] Rate limit exceeded for user: ${userId}`
+    );
+    return {
+      success: false,
+      counts: zeroCounts,
+      message: "Too many requests. Please try again later.",
+      resetIn: rateCheck.resetIn,
+      errors: [],
+    };
+  }
+
+  // Step 4: Media validation
+  const requiresMedia =
+    (postType === "image" || postType === "video") &&
+    (pinterestAccounts.length > 0 ||
+      (tiktokAccounts.length > 0 && postType === "video"));
+
+  if (!mediaPath && requiresMedia) {
+    console.error(
+      `[handleSocialMediaPost] Media required for ${postType} posts`
+    );
+    return {
+      success: false,
+      counts: zeroCounts,
+      message: `${postType} posts require media files for Pinterest${
+        postType === "video" ? " and TikTok" : ""
+      }`,
+      errors: [],
+    };
+  }
+
+  let mediaType = "";
+  if (mediaPath && fileName) {
+    const mimeResult = getMimeTypeFromFileName(fileName);
+    if (!mimeResult.success) {
+      console.error(
+        `[handleSocialMediaPost] Error processing file: ${mimeResult.message}`
+      );
+      if (cleanupFiles) {
+        await deleteSupabaseFileAction(userId, mediaPath, true, cronSecret).catch(
+          (e: unknown) =>
+            console.error("[handleSocialMediaPost] Cleanup failed:", e)
+        );
+      }
+      return {
+        success: false,
+        counts: zeroCounts,
+        message: mimeResult.message || "Failed to process media file.",
+        errors: [],
+      };
+    }
+    mediaType = mimeResult.mimeType;
+  }
+
+  // Step 5: Content validation
+  const missingContentAccounts: AccountError[] = [
+    ...validateAccountContent(
+      pinterestAccounts,
+      accountContent,
+      "pinterest",
+      boards,
+      postType
+    ),
+    ...validateAccountContent(linkedinAccounts, accountContent, "linkedin"),
+    ...validateAccountContent(tiktokAccounts, accountContent, "tiktok"),
+    ...validateAccountContent(instagramAccounts, accountContent, "instagram"),
+  ];
+
+  if (missingContentAccounts.length > 0) {
+    console.error(
+      `[handleSocialMediaPost] ${missingContentAccounts.length} accounts have invalid configuration`
+    );
+    return {
+      success: false,
+      counts: zeroCounts,
+      message:
+        "Some accounts have invalid configuration. Please check your settings.",
+      errors: missingContentAccounts,
+    };
+  }
+
+  // Step 6: Mint URLs (only for direct posts)
+  let mediaUrl: string | undefined;
+  let tiktokMediaUrl: string | undefined;
+
+  if (!isScheduled && tiktokAccounts.length > 0 && mediaPath) {
+    const tiktokUrlResult = buildProxiedTikTokMediaUrl({
+      mediaPath,
+      principalId: userId!,
+    });
+    if (!tiktokUrlResult.success) {
+      return {
+        success: false,
+        counts: zeroCounts,
+        message: tiktokUrlResult.message,
+        errors: [],
+      };
+    }
+    tiktokMediaUrl = tiktokUrlResult.url;
+    console.log(
+      `[handleSocialMediaPost] TikTok proxy URL created for ${tiktokAccounts.length} accounts`
+    );
+  }
+
+  const hasNonTikTokPlatforms =
+    instagramAccounts.length > 0 ||
+    linkedinAccounts.length > 0 ||
+    pinterestAccounts.length > 0;
+
+  if (
+    !isScheduled &&
+    hasNonTikTokPlatforms &&
+    mediaPath &&
+    (postType === "video" || postType === "image")
+  ) {
+    const signedUrlResult = await getServerSignedViewUrl(mediaPath);
+    if (!signedUrlResult.success) {
+      console.error(
+        `[handleSocialMediaPost] Failed to create signed URL: ${signedUrlResult.message}`
+      );
+      return {
+        success: false,
+        counts: zeroCounts,
+        message: signedUrlResult.message,
+        errors: [],
+      };
+    }
+    mediaUrl = signedUrlResult.url;
+    console.log(
+      "[handleSocialMediaPost] Signed URL created for non-TikTok platforms"
+    );
+  }
+
+  // ────────────────────────────────────────────────────────
+  // DIRECT POST PATH (FIX 26): dispatch through Inngest
+  // ────────────────────────────────────────────────────────
+  if (!isScheduled) {
+    return dispatchDirectPostEvents({
+      pinterestAccounts,
+      linkedinAccounts,
+      tiktokAccounts,
+      instagramAccounts,
+      mediaPath,
+      coverTimestamp,
+      fileName: fileName ?? "",
+      boards,
+      platformOptions,
+      accountContent,
+      postType,
+      userId: userId!,
+      batchId,
+      mediaType,
+      mediaUrl: mediaUrl ?? null,
+      tiktokMediaUrl: tiktokMediaUrl ?? null,
+    });
+  }
+
+  // ────────────────────────────────────────────────────────
+  // SCHEDULED POST PATH: existing behavior (unchanged)
+  // ────────────────────────────────────────────────────────
+  const routeSecret = process.env.CRON_SECRET_KEY;
+  const startTime = performance.now();
+
+  const [
+    tiktokAccountResults,
+    pinterestAccountResults,
+    linkedinAccountResults,
+    instagramAccountResults,
+  ] = await Promise.all([
+    tiktokAccounts.length > 0
+      ? fetch(`${process.env.FRONTEND_URL}/api/social/tiktok/process`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accounts: tiktokAccounts,
+            mediaPath,
+            mediaType,
+            fileName: fileName ?? "",
+            platformOptions,
+            accountContent,
+            isScheduled,
+            tiktokMediaUrl,
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
+            postType,
+            coverTimestamp,
+            userId,
+            batchId,
+            cronSecret: routeSecret,
+          }),
+        }).then((res) => res.json())
+      : Promise.resolve({ successCount: 0, errors: [] }),
+
+    pinterestAccounts.length > 0 && postType !== "text"
+      ? fetch(`${process.env.FRONTEND_URL}/api/social/pinterest/process`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accounts: pinterestAccounts,
+            mediaPath,
+            coverTimestamp,
+            mediaType,
+            fileName: fileName ?? "",
+            boards: boards || [],
+            platformOptions,
+            accountContent,
+            isScheduled,
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
+            postType,
+            userId,
+            batchId,
+            cronSecret: routeSecret,
+            mediaUrl,
+          }),
+        }).then((res) => res.json())
+      : Promise.resolve({ successCount: 0, errors: [] }),
+
+    linkedinAccounts.length > 0
+      ? fetch(`${process.env.FRONTEND_URL}/api/social/linkedin/process`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accounts: linkedinAccounts,
+            mediaPath,
+            coverTimestamp,
+            fileName: fileName ?? "",
+            platformOptions,
+            accountContent,
+            isScheduled,
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
+            postType,
+            userId,
+            batchId,
+            mediaType,
+            cronSecret: routeSecret,
+          }),
+        }).then((res) => res.json())
+      : Promise.resolve({ successCount: 0, errors: [] }),
+
+    instagramAccounts.length > 0 && postType !== "text"
+      ? fetch(`${process.env.FRONTEND_URL}/api/social/instagram/process`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            accounts: instagramAccounts,
+            mediaPath,
+            coverTimestamp,
+            mediaType,
+            mediaUrl,
+            fileName: fileName ?? "",
+            accountContent,
+            isScheduled,
+            scheduledDate: scheduledDate ?? "",
+            scheduledTime: scheduledTime ?? "",
+            postType,
+            userId,
+            batchId,
+            cronSecret: routeSecret,
+          }),
+        }).then((res) => res.json())
+      : Promise.resolve({ successCount: 0, errors: [] }),
+  ]);
+
+  const processingTime = performance.now() - startTime;
+  console.log(
+    `[handleSocialMediaPost] Scheduled processing completed in ${processingTime.toFixed(2)}ms`
+  );
+
+  const errors: AccountError[] = [
+    ...tiktokAccountResults.errors,
+    ...pinterestAccountResults.errors,
+    ...linkedinAccountResults.errors,
+    ...instagramAccountResults.errors,
+  ];
+
+  const counts: PlatformCounts = {
+    pinterest: pinterestAccountResults.successCount,
+    linkedin: linkedinAccountResults.successCount,
+    tiktok: tiktokAccountResults.successCount,
+    instagram: instagramAccountResults.successCount,
+    total: 0,
+  };
+  counts.total =
+    counts.pinterest + counts.linkedin + counts.tiktok + counts.instagram;
+
+  if (errors.length > 0) {
+    console.log(
+      `[handleSocialMediaPost] ${errors.length} account-level errors occurred`
+    );
+  }
+
+  const success = counts.total > 0;
+  const message = generateSuccessMessage(counts, isScheduled, errors.length);
+
+  return {
+    success,
+    counts,
+    message: counts.total === 0 && !message
+      ? "No posts were processed successfully."
+      : message,
+    errors,
+  };
+}
+
+// ────────────────────────────────────────────────────────
+// Direct-post Inngest event dispatch (FIX 26)
+// ────────────────────────────────────────────────────────
+
+async function dispatchDirectPostEvents(args: {
+  pinterestAccounts: SocialAccount[];
+  linkedinAccounts: SocialAccount[];
+  tiktokAccounts: SocialAccount[];
+  instagramAccounts: SocialAccount[];
+  mediaPath: string;
+  coverTimestamp: number;
+  fileName: string;
+  boards?: BoardInfo[];
+  platformOptions: PlatformOptions;
+  accountContent: ContentInfo[];
+  postType: "image" | "video" | "text";
+  userId: string;
+  batchId: string;
+  mediaType: string;
+  mediaUrl: string | null;
+  tiktokMediaUrl: string | null;
+}): Promise<PostResult> {
+  const zeroCounts: PlatformCounts = {
+    pinterest: 0,
+    linkedin: 0,
+    tiktok: 0,
+    instagram: 0,
+    total: 0,
+  };
+
+  const events: { name: "post.now"; data: PostNowEventData }[] = [];
+
+  const findContent = (accountId: string) =>
+    args.accountContent.find((c) => c.accountId === accountId);
+
+  // Build events for each platform x account pair
+  for (const account of args.linkedinAccounts) {
+    const content = findContent(account.id);
+    if (!content) continue;
+    events.push({
+      name: "post.now",
+      data: {
+        batch_id: args.batchId,
+        principal_id: args.userId,
+        social_account_id: account.id,
+        platform: "linkedin",
+        post_type: args.postType,
+        account_content: content,
+        platform_options: args.platformOptions,
+        board: null,
+        cover_timestamp: args.coverTimestamp,
+        file_name: args.fileName,
+        media_type: args.mediaType,
+        media_path: args.mediaPath,
+        media_url: args.mediaUrl,
+        tiktok_media_url: null,
+      },
+    });
+  }
+
+  for (const account of args.pinterestAccounts) {
+    const content = findContent(account.id);
+    if (!content) continue;
+    const selectedBoard = args.boards?.find(
+      (b) => b.accountId === account.id && b.isSelected
+    );
+    events.push({
+      name: "post.now",
+      data: {
+        batch_id: args.batchId,
+        principal_id: args.userId,
+        social_account_id: account.id,
+        platform: "pinterest",
+        post_type: args.postType,
+        account_content: content,
+        platform_options: args.platformOptions,
+        board: selectedBoard ?? null,
+        cover_timestamp: args.coverTimestamp,
+        file_name: args.fileName,
+        media_type: args.mediaType,
+        media_path: args.mediaPath,
+        media_url: args.mediaUrl,
+        tiktok_media_url: null,
+      },
+    });
+  }
+
+  for (const account of args.tiktokAccounts) {
+    const content = findContent(account.id);
+    if (!content) continue;
+    events.push({
+      name: "post.now",
+      data: {
+        batch_id: args.batchId,
+        principal_id: args.userId,
+        social_account_id: account.id,
+        platform: "tiktok",
+        post_type: args.postType,
+        account_content: content,
+        platform_options: args.platformOptions,
+        board: null,
+        cover_timestamp: args.coverTimestamp,
+        file_name: args.fileName,
+        media_type: args.mediaType,
+        media_path: args.mediaPath,
+        media_url: null,
+        tiktok_media_url: args.tiktokMediaUrl,
+      },
+    });
+  }
+
+  for (const account of args.instagramAccounts) {
+    const content = findContent(account.id);
+    if (!content) continue;
+    events.push({
+      name: "post.now",
+      data: {
+        batch_id: args.batchId,
+        principal_id: args.userId,
+        social_account_id: account.id,
+        platform: "instagram",
+        post_type: args.postType,
+        account_content: content,
+        platform_options: args.platformOptions,
+        board: null,
+        cover_timestamp: args.coverTimestamp,
+        file_name: args.fileName,
+        media_type: args.mediaType,
+        media_path: args.mediaPath,
+        media_url: args.mediaUrl,
+        tiktok_media_url: null,
+      },
+    });
+  }
+
+  if (events.length === 0) {
+    console.error("[handleSocialMediaPost] No events to dispatch");
+    return {
+      success: false,
+      counts: zeroCounts,
+      message: "No accounts to post to.",
+      errors: [],
+    };
+  }
+
+  try {
+    const sendResult = await inngest.send(events);
+
+    console.log(
+      `[handleSocialMediaPost] Dispatched ${events.length} post.now events, ids: ${sendResult.ids.join(", ")}`
+    );
+
+    const counts: PlatformCounts = {
+      linkedin: args.linkedinAccounts.length,
+      pinterest: args.pinterestAccounts.length,
+      tiktok: args.tiktokAccounts.length,
+      instagram: args.instagramAccounts.length,
+      total: events.length,
+    };
+
+    return {
+      success: true,
+      counts,
+      message: `Posting to ${events.length} account${events.length > 1 ? "s" : ""}`,
+      batch_id: args.batchId,
+      event_ids: sendResult.ids,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[handleSocialMediaPost] Failed to dispatch events:", message);
+    return {
+      success: false,
+      counts: zeroCounts,
+      message: "Failed to start posting. Please try again.",
+      errors: [],
     };
   }
 }

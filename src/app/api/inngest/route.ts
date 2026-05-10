@@ -2,6 +2,7 @@ import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
 import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
 import { processSinglePost } from "@/inngest/functions/processSinglePost";
+import { processDirectPost } from "@/inngest/functions/processDirectPost";
 import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
 
 export const runtime = "nodejs";
@@ -15,5 +16,5 @@ export const maxDuration = 300;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [scheduledPostsTick, processSinglePost, tikTokPublishStatusPollWorker],
+  functions: [scheduledPostsTick, processSinglePost, processDirectPost, tikTokPublishStatusPollWorker],
 });
