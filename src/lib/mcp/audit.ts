@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { upsertMcpSession } from "@/actions/server/data/mcpSessions";
 import type { Json } from "@/lib/types/database.types";
 import type { McpPrincipal } from "./auth";
 
@@ -48,7 +49,26 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
     const redacted = entry.args ? redactSecrets(entry.args) : null;
     const argsJson = redacted ? truncateJson(redacted) : null;
 
-    const { error } = await adminSupabase.from("mcp_audit_log").insert({
+    const sessionPromise =
+      entry.sessionId && entry.principal?.principalId
+        ? upsertMcpSession({
+            id: entry.sessionId,
+            principal_id: entry.principal.principalId,
+            api_key_id:
+              entry.principal.kind === "apikey"
+                ? entry.principal.apiKeyId
+                : null,
+            oauth_client_id:
+              entry.principal.kind === "oauth"
+                ? entry.principal.oauthClientId
+                : null,
+            ip_hash: entry.ipHash ?? null,
+            client_name: null,
+            client_version: null,
+          })
+        : Promise.resolve({ success: true as const });
+
+    const auditPromise = adminSupabase.from("mcp_audit_log").insert({
       principal_id: entry.principal?.principalId ?? null,
       oauth_client_id:
         entry.principal?.kind === "oauth"
@@ -65,10 +85,36 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
       user_agent: entry.userAgent ?? null,
     });
 
-    if (error) {
+    const [sessionResult, auditResult] = await Promise.allSettled([
+      sessionPromise,
+      auditPromise,
+    ]);
+
+    if (sessionResult.status === "rejected") {
+      console.error(
+        `[logToolCall] Session upsert threw for ${entry.toolName}:`,
+        sessionResult.reason
+      );
+    } else if (
+      sessionResult.value &&
+      "success" in sessionResult.value &&
+      !sessionResult.value.success
+    ) {
+      console.error(
+        `[logToolCall] Session upsert failed for ${entry.toolName}:`,
+        "message" in sessionResult.value ? sessionResult.value.message : ""
+      );
+    }
+
+    if (auditResult.status === "rejected") {
+      console.error(
+        `[logToolCall] Audit insert threw for ${entry.toolName}:`,
+        auditResult.reason
+      );
+    } else if (auditResult.value?.error) {
       console.error(
         `[logToolCall] Failed to insert audit row for ${entry.toolName}:`,
-        error.message
+        auditResult.value.error.message
       );
     }
   } catch (err) {

@@ -24,10 +24,23 @@ export function extractPrincipal(extra: Record<string, unknown>): McpPrincipal {
 
 /**
  * Extracts session ID from the extra context if available.
+ *
+ * Priority:
+ *   1. SDK-provided sessionId (real for SSE, null for stateless Streamable HTTP)
+ *   2. Synthetic per-request UUID stashed by withMcpAuth in stateless mode
  */
 export function extractSessionId(extra: Record<string, unknown>): string | null {
-  const sessionId = (extra.sessionId as string) ?? null;
-  return sessionId;
+  // SDK-provided session ID (populated when the transport supports sessions)
+  const sdkSessionId =
+    typeof extra.sessionId === "string" ? extra.sessionId : null;
+  if (sdkSessionId) return sdkSessionId;
+
+  // Synthetic per-request UUID from withMcpAuth (stateless Streamable HTTP)
+  const authInfo = extra.authInfo as
+    | { extra?: { requestSessionId?: unknown } }
+    | undefined;
+  const stashed = authInfo?.extra?.requestSessionId;
+  return typeof stashed === "string" ? stashed : null;
 }
 
 /**

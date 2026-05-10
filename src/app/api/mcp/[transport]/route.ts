@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { McpPrincipal } from "@/lib/mcp/auth";
 import { resolveMcpPrincipal } from "@/lib/mcp/auth";
 import { registerPrompts } from "@/lib/mcp/prompts";
@@ -25,12 +26,14 @@ export const maxDuration = 300;
  *      Clerk userId becomes the principalId.
  *   4. If neither works, the request gets a 401.
  *
- * The principal (including cached plan tier) is stashed in
- * authInfo.extra so tool handlers can retrieve it without
- * re-resolving on every call.
+ * The principal (including cached plan tier) and a synthetic
+ * requestSessionId are stashed in authInfo.extra so tool handlers
+ * can retrieve them without re-resolving on every call.
  *
  * Called by: MCP clients (Claude Desktop, Cursor, ChatGPT, etc.)
- * Tables touched: api_keys (via resolveMcpPrincipal), mcp_sessions (read/write)
+ * Tables touched: api_keys (read, via resolveMcpPrincipal),
+ *   mcp_sessions (UPSERT per request via logToolCall),
+ *   mcp_audit_log (insert per tool call)
  */
 const handler = createMcpHandler(
   (server) => {
@@ -61,6 +64,12 @@ const authHandler = withMcpAuth(
     const principal = await resolveMcpPrincipal(bearerToken);
     if (!principal) return undefined;
 
+    // Synthetic per-request session ID. mcp-handler v1.1.0 forces stateless
+    // Streamable HTTP (sessionIdGenerator is typed undefined), so the SDK
+    // never produces a real session ID. This UUID serves as the session
+    // identity until mcp-handler exposes real session lifecycle.
+    const requestSessionId = randomUUID();
+
     return {
       token: bearerToken,
       scopes: principal.scopes,
@@ -68,7 +77,10 @@ const authHandler = withMcpAuth(
         principal.kind === "oauth"
           ? principal.oauthClientId
           : (principal.apiKeyId ?? ""),
-      extra: { principal: principal satisfies McpPrincipal },
+      extra: {
+        principal: principal satisfies McpPrincipal,
+        requestSessionId,
+      },
     };
   },
   {
