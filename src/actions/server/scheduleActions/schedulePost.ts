@@ -3,6 +3,7 @@
 import { authCheck } from "@/actions/server/authCheck";
 import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions/schedulePost";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
+import type { CreatedVia } from "@/lib/types/database.types";
 
 /**
  * Schedules a post for publishing at a specified future time.
@@ -12,12 +13,11 @@ import type { SchedulePostData } from "@/lib/types/SchedulePostData";
  * should use the internal version directly.
  *
  * Tables touched (via _internal): scheduled_posts, social_accounts
- * Called by: scheduleForPinterestAccounts, scheduleForTikTokAccounts,
- *            scheduleForLinkedInAccounts, scheduleForInstagramAccounts
  */
 export async function schedulePost(
   data: SchedulePostData,
-  userId: string | null
+  userId: string | null,
+  createdVia: CreatedVia
 ): Promise<{
   success: boolean;
   message: string;
@@ -36,5 +36,5 @@ export async function schedulePost(
     };
   }
 
-  return schedulePostInternal(data, userId);
+  return schedulePostInternal(data, userId, createdVia);
 }

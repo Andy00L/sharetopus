@@ -78,7 +78,7 @@ export async function scheduleForPinterestAccount(config: {
     console.log(
       `[Schedule For Pinterest Account] Scheduling Pinterest post for: ${account.display_name}`
     );
-    const result = await schedulePostInternal(scheduleData, userId);
+    const result = await schedulePostInternal(scheduleData, userId, "web");
 
     if (!result.success) {
       return {

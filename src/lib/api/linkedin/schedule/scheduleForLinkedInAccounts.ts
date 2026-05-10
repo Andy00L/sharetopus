@@ -64,7 +64,7 @@ export async function scheduleForLinkedInAccounts(config: {
     console.log(
       `[Schedule For Linkedin Accounts] Scheduling LinkedIn post for: ${account.display_name}`
     );
-    const result = await schedulePostInternal(scheduleData, userId);
+    const result = await schedulePostInternal(scheduleData, userId, "web");
 
     if (!result.success) {
       console.log(result.message);

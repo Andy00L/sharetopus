@@ -58,7 +58,7 @@ export async function scheduleForTikTokAccounts(config: {
       `[Schedule For Tiktok Accounts] Scheduling TikTok post for: ${account.display_name}`
     );
 
-    const result = await schedulePostInternal(scheduleData, userId);
+    const result = await schedulePostInternal(scheduleData, userId, "web");
 
     if (!result.success) {
       return {

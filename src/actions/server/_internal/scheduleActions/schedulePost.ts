@@ -2,21 +2,22 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
-import type { Json } from "@/lib/types/database.types";
+import type { Json, CreatedVia } from "@/lib/types/database.types";
 
 /**
- * Creates a scheduled post without authCheck. The MCP route has already
- * verified the principal.
+ * Creates a scheduled post without authCheck.
  *
- * Mirrors the logic in src/actions/server/scheduleActions/schedulePost.ts
- * but skips Clerk auth. Rate limiting is handled by the MCP entitlement layer.
+ * Skips Clerk auth. Rate limiting is handled by the MCP entitlement layer
+ * or the caller's own auth check.
  *
  * Tables touched: scheduled_posts (insert), social_accounts (read for ownership check)
- * Called by: src/lib/mcp/tools/schedulePost.ts
+ * Called by: web schedule helpers (scheduleFor{LinkedIn,Pinterest,TikTok,Instagram}Accounts)
+ *            and the MCP schedule_post tool. Channel passed via `createdVia`.
  */
 export async function schedulePostInternal(
   data: SchedulePostData,
-  principalId: string
+  principalId: string,
+  createdVia: CreatedVia
 ): Promise<{
   success: boolean;
   message: string;
@@ -74,7 +75,7 @@ export async function schedulePostInternal(
       media_storage_path: data.mediaStoragePath,
       cover_image_timestamp: data.coverTimestamp,
       batch_id: data.batch_id,
-      created_via: "mcp" as const,
+      created_via: createdVia,
     };
 
     const { data: newSchedule, error } = await adminSupabase

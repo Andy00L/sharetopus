@@ -55,7 +55,7 @@ export async function scheduleForInstagramAccounts(config: {
       `[Schedule For Instagram Accounts] Scheduling Instagram post for: ${account.display_name}`
     );
 
-    const result = await schedulePostInternal(scheduleData, userId);
+    const result = await schedulePostInternal(scheduleData, userId, "web");
 
     if (!result.success) {
       return {

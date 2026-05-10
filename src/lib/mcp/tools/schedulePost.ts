@@ -82,7 +82,8 @@ export function registerSchedulePost(server: McpServer): void {
           batch_id: args.batch_id,
           postOptions: null,
         },
-        principal.principalId
+        principal.principalId,
+        "mcp"
       );
 
       await logToolCall({
