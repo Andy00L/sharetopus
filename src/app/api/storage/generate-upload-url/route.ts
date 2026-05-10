@@ -6,10 +6,10 @@ import { auth } from "@clerk/nextjs/server";
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 // Helper function to get user's total file size
-async function getUserTotalFileSize(userId: string): Promise<number> {
+async function getUserTotalFileSize(userId: string, bucketName: string): Promise<number> {
   try {
     const { data: files, error } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(bucketName)
       .list(userId);
 
     if (error) {
@@ -46,6 +46,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const envBucket = process.env.SUPABASE_BUCKET_NAME;
+    if (!envBucket) {
+      console.error("[Generate Upload URL] SUPABASE_BUCKET_NAME not configured");
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Server misconfiguration",
+          message: "Upload service is not configured. Please contact support.",
+        },
+        { status: 500 }
+      );
+    }
+
     const body = await req.json();
 
     const {
@@ -54,8 +67,7 @@ export async function POST(req: NextRequest) {
       fileSize,
       planId,
       isScheduled,
-
-      bucketName = "scheduled-videos",
+      bucketName = envBucket,
     } = body;
 
     if (!filename || !contentType || !fileSize) {
@@ -86,7 +98,7 @@ export async function POST(req: NextRequest) {
     if (isScheduled && planId && fileSize) {
       const storageLimit = STORAGE_LIMITS[planId];
       if (storageLimit) {
-        const currentTotalSize = await getUserTotalFileSize(userId);
+        const currentTotalSize = await getUserTotalFileSize(userId, bucketName);
 
         if (currentTotalSize + fileSize > storageLimit) {
           const limitInGB = storageLimit / (1024 * 1024 * 1024);
@@ -109,58 +121,6 @@ export async function POST(req: NextRequest) {
 
     // Construct the path: user_id/unique_filename.ext
     const filePath = `${userId}/${uniqueFilename}`;
-
-    // Verify the bucket exists in Supabase
-
-    const { data: buckets, error: bucketError } =
-      await adminSupabase.storage.listBuckets();
-
-    if (bucketError) {
-      console.error(
-        "[Generate Upload URL] Error listing buckets:",
-        bucketError
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Upload service temporarily unavailable",
-          message:
-            "Please try again in a few moments. If the problem persists, contact support.",
-        },
-        { status: 500 }
-      );
-    }
-
-    const bucketExists = buckets.some((b) => b.name === bucketName);
-
-    if (!bucketExists) {
-      console.error(`[Generate Upload URL] Bucket '${bucketName}' not found`);
-
-      const { error: createError } = await adminSupabase.storage.createBucket(
-        bucketName,
-        {
-          public: false,
-        }
-      );
-
-      if (createError) {
-        console.error(
-          "[Generate Upload URL] Failed to create bucket:",
-          createError
-        );
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Upload service setup failed",
-            message:
-              "We're having trouble setting up your upload. Please try again or contact support if this continues.",
-          },
-          { status: 500 }
-        );
-      }
-
-      console.log(`[Generate Upload URL] Created bucket '${bucketName}'`);
-    }
 
     // Generate a signed upload URL
     const { data, error } = await adminSupabase.storage
