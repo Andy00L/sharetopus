@@ -155,6 +155,10 @@ export interface TokenExchangeResponse {
   open_id?: string;
 }
 
+export type TokenExchangeResult =
+  | { success: true; data: TokenExchangeResponse }
+  | { success: false; message: string };
+
 export interface InstagramProfile {
   id: string;
   username: string;

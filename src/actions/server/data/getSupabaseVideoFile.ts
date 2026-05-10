@@ -69,6 +69,12 @@ export async function getSupabaseVideoFile(
       `[Get Supabase video File]  Unexpected error retrieving ${filePath}:`,
       err
     );
-    throw err;
+    return {
+      success: false,
+      message:
+        err instanceof Error
+          ? err.message
+          : "Unexpected error retrieving file",
+    };
   }
 }

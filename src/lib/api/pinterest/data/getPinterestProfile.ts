@@ -26,9 +26,19 @@ export async function getPinterestProfile(
       data = JSON.parse(responseText);
     } catch (parseError) {
       console.error("[Pinterest] Failed to parse API response:", parseError);
-      throw new Error(
-        `Failed to parse Pinterest profile response: ${responseText}`,
-      );
+      return {
+        id: userId ?? "",
+        username: "",
+        first_name: "",
+        last_name: "",
+        full_name: "Pinterest User (Error)",
+        profile_image_url: "",
+        is_verified: false,
+        bio: "Error fetching profile",
+        business_name: "",
+        follower_count: null,
+        following_count: null,
+      };
     }
 
     if (!response.ok || data.error) {

@@ -129,10 +129,13 @@ export async function GET(request: NextRequest) {
 
     // Exchange code for tokens
     console.log("[Pinterest Connect route] Exchanging code for tokens...");
-    const tokenResponse = await exchangePinterestCode(code);
+    const exchangeResult = await exchangePinterestCode(code);
 
-    if (!tokenResponse?.access_token) {
-      console.error("[Pinterest Connect route] Token exchange failed");
+    if (!exchangeResult.success) {
+      console.error(
+        "[Pinterest Connect route] Token exchange failed:",
+        exchangeResult.message
+      );
       return new Response(
         `
         <!DOCTYPE html>
@@ -160,6 +163,8 @@ export async function GET(request: NextRequest) {
         }
       );
     }
+
+    const tokenResponse = exchangeResult.data;
 
     console.log(
       "[Pinterest Connect route] Token exchange successful:",

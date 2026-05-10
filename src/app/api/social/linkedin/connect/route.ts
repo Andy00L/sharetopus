@@ -126,10 +126,14 @@ export async function GET(request: NextRequest) {
     // Cette vérification devrait être implémentée en comparant avec un state stocké côté serveur
     // Pour simplifier, nous supposons que cette vérification est effectuée ailleurs
 
-    // Échanger le code contre un token
-    const tokenResponse = await exchangeLinkedInCode(code);
+    // Exchange code for tokens
+    const exchangeResult = await exchangeLinkedInCode(code);
 
-    if (!tokenResponse?.access_token) {
+    if (!exchangeResult.success) {
+      console.error(
+        "[LinkedIn Connect] Exchange failed:",
+        exchangeResult.message
+      );
       return new Response(
         `
        <!DOCTYPE html>
@@ -157,6 +161,8 @@ export async function GET(request: NextRequest) {
         }
       );
     }
+
+    const tokenResponse = exchangeResult.data;
 
     // Récupérer les informations du profil LinkedIn
     const linkedInProfile = await getLinkedInProfile(

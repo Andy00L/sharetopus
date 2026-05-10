@@ -1,10 +1,13 @@
-import { TokenExchangeResponse } from "@/lib/types/dbTypes";
+import {
+  TokenExchangeResponse,
+  TokenExchangeResult,
+} from "@/lib/types/dbTypes";
 import "server-only";
 
 // lib/api/tiktok/auth.ts
 export async function exchangeTikTokCode(
   code: string
-): Promise<TokenExchangeResponse> {
+): Promise<TokenExchangeResult> {
   // Get configuration from environment variables
   const client_id =
     process.env.NODE_ENV === "development"
@@ -19,9 +22,11 @@ export async function exchangeTikTokCode(
   const redirect_uri = process.env.TIKTOK_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {
-    throw new Error(
-      "TikTok configuration missing. Check environment variables."
-    );
+    console.error("[exchangeTikTokCode] TikTok configuration missing");
+    return {
+      success: false,
+      message: "TikTok configuration missing. Check environment variables.",
+    };
   }
 
   // TikTok API endpoint for token exchange (V2)
@@ -36,7 +41,7 @@ export async function exchangeTikTokCode(
   params.append("redirect_uri", redirect_uri);
 
   try {
-    console.log("[TikTok] Exchanging code for tokens...");
+    console.log("[exchangeTikTokCode] Exchanging code for tokens...");
 
     // Make token exchange request
     const response = await fetch(url, {
@@ -49,12 +54,16 @@ export async function exchangeTikTokCode(
 
     // Get raw response text for error handling
     const responseText = await response.text();
-    console.log("[TikTok] Token response:", responseText);
+    console.log("[exchangeTikTokCode] Token response:", responseText);
 
     if (!response.ok) {
-      throw new Error(
-        `TikTok code exchange failed (${response.status}): ${responseText}`
+      console.error(
+        `[exchangeTikTokCode] HTTP ${response.status}: ${responseText}`
       );
+      return {
+        success: false,
+        message: `TikTok code exchange failed (${response.status})`,
+      };
     }
 
     // Parse response as JSON
@@ -62,27 +71,48 @@ export async function exchangeTikTokCode(
     try {
       data = JSON.parse(responseText);
     } catch (parseError) {
-      throw new Error(
-        `Failed to parse TikTok token response: ${responseText}+${parseError}`
+      console.error(
+        "[exchangeTikTokCode] Failed to parse token response:",
+        parseError
       );
+      return {
+        success: false,
+        message: "Failed to parse TikTok token response",
+      };
     }
 
     // Validate response contains required fields
     if (!data || data.error) {
-      throw new Error(`Invalid TikTok token response: ${JSON.stringify(data)}`);
+      console.error(
+        "[exchangeTikTokCode] Invalid token response:",
+        JSON.stringify(data)
+      );
+      return {
+        success: false,
+        message: "Invalid TikTok token response",
+      };
     }
 
     if (!data.access_token || !data.open_id) {
-      throw new Error(
-        `Missing required fields in TikTok token response: ${JSON.stringify(
-          data
-        )}`
+      console.error(
+        "[exchangeTikTokCode] Missing required fields in response:",
+        JSON.stringify(data)
       );
+      return {
+        success: false,
+        message: "Missing required fields in TikTok token response",
+      };
     }
 
-    return data as TokenExchangeResponse;
+    return { success: true, data: data as TokenExchangeResponse };
   } catch (error) {
-    console.error("Error exchanging TikTok code:", error);
-    throw error;
+    console.error("[exchangeTikTokCode] Unexpected error:", error);
+    return {
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unexpected error during TikTok code exchange",
+    };
   }
 }

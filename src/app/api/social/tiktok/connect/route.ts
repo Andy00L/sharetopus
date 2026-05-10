@@ -121,10 +121,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Exchange authorization code for tokens
+    console.log("[TikTok Connect Route] Exchanging code for tokens...");
+    const exchangeResult = await exchangeTikTokCode(code);
+
+    if (!exchangeResult.success) {
+      console.error(
+        "[TikTok Connect Route] Exchange failed:",
+        exchangeResult.message
+      );
+      const errorHtml = `
+        <!DOCTYPE html><html><body>
+        <p>Erreur lors de la connexion: ${exchangeResult.message}</p>
+        <script>window.close();</script>
+        </body></html>`;
+      return new NextResponse(errorHtml, {
+        status: 500,
+        headers: { "Content-Type": "text/html" },
+      });
+    }
+
+    const tokenResponse = exchangeResult.data;
+
     try {
-      // Exchange authorization code for tokens
-      console.log("[TikTok Connect Route] Exchanging code for tokens...");
-      const tokenResponse = await exchangeTikTokCode(code);
       console.log(
         "[TikTok Connect Route]  Token exchange successful:",
         tokenResponse.access_token.substring(0, 10) + "..."

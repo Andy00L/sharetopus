@@ -1,27 +1,32 @@
 // lib/api/pinterest/exchangePinterestCode.ts
 import "server-only";
 
-import { TokenExchangeResponse } from "@/lib/types/dbTypes";
+import {
+  TokenExchangeResponse,
+  TokenExchangeResult,
+} from "@/lib/types/dbTypes";
 
 export async function exchangePinterestCode(
   code: string
-): Promise<TokenExchangeResponse> {
+): Promise<TokenExchangeResult> {
   // Get configuration from environment variables
   const client_id = process.env.PINTEREST_CLIENT_ID;
   const client_secret = process.env.PINTEREST_CLIENT_SECRET;
   const redirect_uri = process.env.PINTEREST_REDIRECT_URL;
 
   if (!client_id || !client_secret || !redirect_uri) {
-    throw new Error(
-      "Pinterest configuration missing. Check environment variables."
-    );
+    console.error("[exchangePinterestCode] Pinterest configuration missing");
+    return {
+      success: false,
+      message: "Pinterest configuration missing. Check environment variables.",
+    };
   }
 
   // Pinterest API endpoint for token exchange
   const url = "https://api.pinterest.com/v5/oauth/token";
 
   try {
-    console.log("[Pinterest] Exchanging code for tokens...");
+    console.log("[exchangePinterestCode] Exchanging code for tokens...");
 
     // Create Basic Auth token from client_id and client_secret
     const basicAuth = Buffer.from(`${client_id}:${client_secret}`).toString(
@@ -34,7 +39,7 @@ export async function exchangePinterestCode(
     params.append("code", code);
     params.append("redirect_uri", redirect_uri);
 
-    console.log("[Pinterest] Request params:", params.toString());
+    console.log("[exchangePinterestCode] Request params:", params.toString());
 
     // Make token exchange request
     const response = await fetch(url, {
@@ -48,12 +53,16 @@ export async function exchangePinterestCode(
 
     // Get raw response text for error handling
     const responseText = await response.text();
-    console.log("[Pinterest] Token response:", responseText);
+    console.log("[exchangePinterestCode] Token response:", responseText);
 
     if (!response.ok) {
-      throw new Error(
-        `Pinterest code exchange failed (${response.status}): ${responseText}`
+      console.error(
+        `[exchangePinterestCode] HTTP ${response.status}: ${responseText}`
       );
+      return {
+        success: false,
+        message: `Pinterest code exchange failed (${response.status})`,
+      };
     }
 
     // Parse response as JSON
@@ -61,29 +70,48 @@ export async function exchangePinterestCode(
     try {
       data = JSON.parse(responseText);
     } catch (parseError) {
-      throw new Error(
-        `Failed to parse Pinterest token response: ${responseText}+${parseError}`
+      console.error(
+        "[exchangePinterestCode] Failed to parse token response:",
+        parseError
       );
+      return {
+        success: false,
+        message: "Failed to parse Pinterest token response",
+      };
     }
 
     // Check for valid response
     if (!data || data.error) {
-      throw new Error(
-        `Invalid Pinterest token response: ${JSON.stringify(data)}`
+      console.error(
+        "[exchangePinterestCode] Invalid token response:",
+        JSON.stringify(data)
       );
+      return {
+        success: false,
+        message: "Invalid Pinterest token response",
+      };
     }
 
     if (!data.access_token) {
-      throw new Error(
-        `Missing required fields in Pinterest token response: ${JSON.stringify(
-          data
-        )}`
+      console.error(
+        "[exchangePinterestCode] Missing access_token in response:",
+        JSON.stringify(data)
       );
+      return {
+        success: false,
+        message: "Missing access_token in Pinterest token response",
+      };
     }
 
-    return data as TokenExchangeResponse;
+    return { success: true, data: data as TokenExchangeResponse };
   } catch (error) {
-    console.error("Error exchanging Pinterest code:", error);
-    throw error;
+    console.error("[exchangePinterestCode] Unexpected error:", error);
+    return {
+      success: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "Unexpected error during Pinterest code exchange",
+    };
   }
 }

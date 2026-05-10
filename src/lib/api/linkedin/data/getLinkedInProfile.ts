@@ -29,9 +29,16 @@ export async function getLinkedInProfile(
         "[getLinkedInProfile] Failed to parse API response:",
         parseError
       );
-      throw new Error(
-        `Failed to parse getLinkedInProfile profile response: ${responseText}`
-      );
+      return {
+        id: userId ?? "",
+        name: "Linkedin User (Error)",
+        given_name: "",
+        family_name: "",
+        email: "",
+        picture: "",
+        locale: "",
+        email_verified: false,
+      };
     }
 
     if (!response.ok || data.error) {

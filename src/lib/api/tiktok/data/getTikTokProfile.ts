@@ -32,9 +32,16 @@ export async function getTikTokProfile(
       data = JSON.parse(responseText);
     } catch (parseError) {
       console.error("[TikTok] Failed to parse API response:", parseError);
-      throw new Error(
-        `Failed to parse TikTok profile response: ${responseText}`
-      );
+      return {
+        id: openId,
+        username: `tiktok_user_${openId?.substring(0, 6)}`,
+        display_name: "TikTok User (Error)",
+        avatar_url: "",
+        is_verified: false,
+        bio_description: "Error parsing TikTok profile response",
+        follower_count: null,
+        following_count: null,
+      };
     }
     // --- FIX: Check for error object AND error code !== 'ok' ---
     if (data.error && data.error.code !== "ok") {
@@ -58,9 +65,16 @@ export async function getTikTokProfile(
         };
       }
       // Throw other actual API errors
-      throw new Error(
-        `TikTok API error (${data.error.code}): ${data.error.message}`
-      );
+      return {
+        id: openId,
+        username: `tiktok_user_${openId?.substring(0, 6)}`,
+        display_name: "TikTok User (Error)",
+        avatar_url: "",
+        is_verified: false,
+        bio_description: `TikTok API error (${data.error.code}): ${data.error.message}`,
+        follower_count: null,
+        following_count: null,
+      };
     }
 
     // Extract user data - handle the case where data.data or data.data.user might be missing
