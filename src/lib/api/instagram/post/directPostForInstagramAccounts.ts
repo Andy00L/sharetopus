@@ -28,6 +28,7 @@ export async function directPostForInstagramAccounts(config: {
   fileName: string;
   batchId: string;
   scheduledPostId?: string;
+  createdVia: "web" | "mcp" | "x402" | "api";
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -139,6 +140,7 @@ export async function directPostForInstagramAccounts(config: {
             post_type: postType,
             posted_at: new Date().toISOString(),
           },
+          created_via: config.createdVia,
         },
         userId
       );

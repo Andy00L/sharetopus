@@ -36,6 +36,7 @@ export async function directPostForPinterestAccounts(config: {
   postType: "image" | "video" | "text";
   mediaUrl: string;
   scheduledPostId?: string;
+  createdVia: "web" | "mcp" | "x402" | "api";
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -132,6 +133,7 @@ export async function directPostForPinterestAccounts(config: {
             board_id: boards.boardID,
             board_name: boards.boardName,
           },
+          created_via: config.createdVia,
         },
         userId
       );

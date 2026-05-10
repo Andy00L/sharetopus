@@ -6,6 +6,7 @@ import {
   type PostNowEventData,
 } from "./processDirectPostHelpers";
 import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
+import { finalizePendingDirectPost } from "@/actions/server/data/pendingDirectPosts";
 
 /**
  * Processes ONE direct-post item for ONE social_account on ONE platform.
@@ -52,7 +53,20 @@ export const processDirectPost = inngest.createFunction(
       callDirectPostFromEvent(data, fetched.account)
     );
 
-    // Step 3: cleanup media
+    // Step 3: finalize THIS worker's lock (release self before cleanup check).
+    // dispatch_id may be undefined for legacy in-flight events that predate
+    // the FIX RACE-1 deploy. Skip finalize in that case.
+    if (data.dispatch_id) {
+      await step.run("finalize-pending-direct-post", () =>
+        finalizePendingDirectPost(
+          data.dispatch_id!,
+          result.success ? "completed" : "failed",
+          result.success ? null : (result.message?.slice(0, 1000) ?? null)
+        )
+      );
+    }
+
+    // Step 4: cleanup media
     // For TikTok success: do NOT cleanup here. The tikTokPublishStatusPollWorker
     // handles cleanup after the publish reaches a terminal state.
     // For TikTok failure (init failed): cleanup here because no pending pull was created.

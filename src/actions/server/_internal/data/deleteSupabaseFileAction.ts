@@ -2,6 +2,7 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { countPendingTikTokPullsForMediaPath } from "@/actions/server/data/pendingTikTokPulls";
+import { countPendingDirectPostsForMediaPath } from "@/actions/server/data/pendingDirectPosts";
 
 /**
  * Deletes files from Supabase Storage with reference checking. No auth.
@@ -139,6 +140,24 @@ export async function deleteSupabaseFileActionInternal(
           if (pendingPulls.count > 0) {
             console.log(
               `[deleteSupabaseFileInternal]: File has ${pendingPulls.count} pending TikTok pull(s), preserving: ${path}`
+            );
+            referencedFiles++;
+            continue;
+          }
+
+          // Check pending direct post workers (race-safe cleanup gate)
+          const pendingDirect = await countPendingDirectPostsForMediaPath(path);
+          if (!pendingDirect.success) {
+            console.error(
+              `[deleteSupabaseFileInternal]: Failed to count pending direct posts for ${path}:`,
+              pendingDirect.message
+            );
+            referencedFiles++;
+            continue;
+          }
+          if (pendingDirect.count > 0) {
+            console.log(
+              `[deleteSupabaseFileInternal]: File has ${pendingDirect.count} active direct post worker(s), preserving: ${path}`
             );
             referencedFiles++;
             continue;
@@ -288,6 +307,28 @@ export async function deleteSupabaseFileActionInternal(
         return {
           success: true,
           message: `Cannot delete: File has ${pendingPullsResult.count} pending TikTok pull(s).`,
+        };
+      }
+
+      // Check pending direct post workers (race-safe cleanup gate)
+      const pendingDirectResult = await countPendingDirectPostsForMediaPath(filePath);
+      if (!pendingDirectResult.success) {
+        console.error(
+          "[deleteSupabaseFileInternal] Failed to count pending direct posts:",
+          pendingDirectResult.message
+        );
+        return {
+          success: false,
+          message: "Could not verify safe-to-delete; preserving file",
+        };
+      }
+      if (pendingDirectResult.count > 0) {
+        console.log(
+          `[deleteSupabaseFileInternal]: File has ${pendingDirectResult.count} active direct post worker(s), preserving: ${filePath}`
+        );
+        return {
+          success: true,
+          message: `Cannot delete: File has ${pendingDirectResult.count} active direct post worker(s).`,
         };
       }
 

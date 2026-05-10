@@ -16,6 +16,7 @@ export type StoreContentHistoryInput = {
   batch_id?: string | null;
   scheduled_post_id?: string | null;
   extra?: Record<string, unknown>;
+  created_via: "web" | "mcp" | "x402" | "api";
 };
 
 /**
@@ -61,6 +62,7 @@ export async function storeContentHistory(
       scheduled_post_id: data.scheduled_post_id ?? null,
       social_account_id: data.social_account_id,
       extra: (data.extra ?? {}) as Json,
+      created_via: data.created_via,
     };
 
     // Insert the record into the content_history table

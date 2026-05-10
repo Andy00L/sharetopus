@@ -32,6 +32,7 @@ export async function directPostForTikTokAccounts(config: {
   fileName: string;
   batchId: string;
   scheduledPostId?: string;
+  createdVia: "web" | "mcp" | "x402" | "api";
 }): Promise<ScheduleResult> {
   const {
     account,
@@ -128,6 +129,7 @@ export async function directPostForTikTokAccounts(config: {
             posted_at: new Date().toISOString(),
             privacy_level: platformOptions.tiktok,
           },
+          created_via: config.createdVia,
         },
         userId
       );

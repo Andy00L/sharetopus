@@ -10,8 +10,10 @@ import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
 import { generateSuccessMessage } from "./successMessage";
 import { validateAccountContent } from "./validateContent";
+import { randomUUID } from "crypto";
 import { inngest } from "@/inngest/client";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
+import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -612,11 +614,45 @@ async function dispatchDirectPostEvents(args: {
     };
   }
 
+  // Generate dispatch IDs and INSERT lock rows BEFORE dispatching.
+  const eventsWithDispatch = events.map((evt) => ({
+    ...evt,
+    data: {
+      ...evt.data,
+      dispatch_id: randomUUID(),
+      created_via: "web" as const,
+    },
+  }));
+
+  const lockRows = eventsWithDispatch.map((evt) => ({
+    event_id: evt.data.dispatch_id,
+    batch_id: evt.data.batch_id,
+    principal_id: evt.data.principal_id,
+    social_account_id: evt.data.social_account_id,
+    platform: evt.data.platform,
+    media_storage_path: evt.data.media_path ?? "",
+  }));
+
+  const lockResult = await insertPendingDirectPosts(lockRows);
+  if (!lockResult.success) {
+    console.error(
+      "[handleSocialMediaPost] Failed to acquire dispatch locks:",
+      lockResult.message
+    );
+    return {
+      success: false,
+      counts: zeroCounts,
+      message:
+        "Could not initialize post dispatch. Please try again in a moment.",
+      errors: [],
+    };
+  }
+
   try {
-    const sendResult = await inngest.send(events);
+    const sendResult = await inngest.send(eventsWithDispatch);
 
     console.log(
-      `[handleSocialMediaPost] Dispatched ${events.length} post.now events, ids: ${sendResult.ids.join(", ")}`
+      `[handleSocialMediaPost] Dispatched ${eventsWithDispatch.length} post.now events, ids: ${sendResult.ids.join(", ")}`
     );
 
     const counts: PlatformCounts = {
@@ -624,13 +660,13 @@ async function dispatchDirectPostEvents(args: {
       pinterest: args.pinterestAccounts.length,
       tiktok: args.tiktokAccounts.length,
       instagram: args.instagramAccounts.length,
-      total: events.length,
+      total: eventsWithDispatch.length,
     };
 
     return {
       success: true,
       counts,
-      message: `Posting to ${events.length} account${events.length > 1 ? "s" : ""}`,
+      message: `Posting to ${eventsWithDispatch.length} account${eventsWithDispatch.length > 1 ? "s" : ""}`,
       batch_id: args.batchId,
       event_ids: sendResult.ids,
     };

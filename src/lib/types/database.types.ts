@@ -594,6 +594,62 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      pending_direct_posts: {
+        Row: {
+          event_id: string;
+          batch_id: string;
+          principal_id: string;
+          social_account_id: string;
+          platform: string;
+          media_storage_path: string;
+          status: "processing" | "completed" | "failed";
+          failure_reason: string | null;
+          created_at: string;
+          finished_at: string | null;
+        };
+        Insert: {
+          event_id: string;
+          batch_id: string;
+          principal_id: string;
+          social_account_id: string;
+          platform: string;
+          media_storage_path: string;
+          status?: "processing" | "completed" | "failed";
+          failure_reason?: string | null;
+          created_at?: string;
+          finished_at?: string | null;
+        };
+        Update: {
+          event_id?: string;
+          batch_id?: string;
+          principal_id?: string;
+          social_account_id?: string;
+          platform?: string;
+          media_storage_path?: string;
+          status?: "processing" | "completed" | "failed";
+          failure_reason?: string | null;
+          created_at?: string;
+          finished_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "pending_direct_posts_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "pending_direct_posts_social_account_id_fkey";
+            columns: ["social_account_id"];
+            isOneToOne: false;
+            referencedRelation: "social_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
       pricing_actions: {
         Row: {
           action: string;

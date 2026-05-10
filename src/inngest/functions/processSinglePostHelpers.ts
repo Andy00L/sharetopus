@@ -299,6 +299,8 @@ export async function callPlatformDirectPost(args: {
   const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } =
     args;
 
+  const createdVia = (post.created_via ?? "web") as "web" | "mcp" | "x402" | "api";
+
   const options = (post.post_options ?? {}) as PostOptions;
   const accountContent = {
     accountId: account.id,
@@ -367,6 +369,7 @@ export async function callPlatformDirectPost(args: {
           postType: post.media_type,
           mediaUrl: mediaUrl ?? "",
           scheduledPostId: post.id,
+          createdVia,
         });
         break;
       }
@@ -384,6 +387,7 @@ export async function callPlatformDirectPost(args: {
           postType: post.media_type,
           isCronJob: true,
           scheduledPostId: post.id,
+          createdVia,
         });
         break;
       }
@@ -401,6 +405,7 @@ export async function callPlatformDirectPost(args: {
           fileName,
           batchId,
           scheduledPostId: post.id,
+          createdVia,
         });
         break;
       }
@@ -420,6 +425,7 @@ export async function callPlatformDirectPost(args: {
           fileName,
           batchId,
           scheduledPostId: post.id,
+          createdVia,
         });
         break;
       }
@@ -569,6 +575,7 @@ export async function recordPostStatus(args: {
         message: result.message,
         timestamp: nowIso,
       },
+      created_via: (post.created_via ?? "web") as "web" | "mcp" | "x402" | "api",
     });
 
     if (!storeResult.success) {

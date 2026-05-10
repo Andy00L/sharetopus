@@ -31,6 +31,7 @@ interface DirectPostConfig {
   isCronJob?: boolean;
   scheduledPostId?: string;
   cronSecret?: string;
+  createdVia: "web" | "mcp" | "x402" | "api";
 }
 
 /**
@@ -198,6 +199,7 @@ export async function directPostForLinkedInAccounts(
             post_type: postType,
             posted_at: new Date().toISOString(),
           },
+          created_via: config.createdVia,
         },
         userId
       );

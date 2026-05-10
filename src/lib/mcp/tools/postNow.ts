@@ -14,6 +14,7 @@ import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
 import { randomUUID } from "crypto";
+import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 
 /**
  * Posts immediately (no scheduled_at) by dispatching a "post.now" event
@@ -316,6 +317,8 @@ export function registerPostNow(server: McpServer): void {
             }
           : null;
 
+      const dispatchId = randomUUID();
+
       const eventData: PostNowEventData = {
         batch_id: batchId,
         principal_id: principal.principalId,
@@ -337,9 +340,46 @@ export function registerPostNow(server: McpServer): void {
         media_path: args.media_storage_path,
         media_url: mediaUrl,
         tiktok_media_url: tiktokMediaUrl,
+        dispatch_id: dispatchId,
+        created_via: "mcp",
       };
 
-      // 8. Send Inngest event
+      // 8. Insert lock row, then send Inngest event
+      const lockResult = await insertPendingDirectPosts([
+        {
+          event_id: dispatchId,
+          batch_id: batchId,
+          principal_id: principal.principalId,
+          social_account_id: args.social_account_id,
+          platform: args.platform,
+          media_storage_path: args.media_storage_path,
+        },
+      ]);
+
+      if (!lockResult.success) {
+        console.error(
+          "[mcp/post_now] Failed to acquire dispatch lock:",
+          lockResult.message
+        );
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "post_now",
+          args,
+          resultStatus: "error",
+          latencyMs: Date.now() - start,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "Could not initialize post dispatch. Please retry.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
       try {
         const sendResult = await inngest.send({
           name: "post.now",

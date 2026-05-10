@@ -35,6 +35,8 @@ export type PostNowEventData = {
   media_path: string;
   media_url: string | null;
   tiktok_media_url: string | null;
+  dispatch_id?: string;
+  created_via?: "web" | "mcp" | "x402" | "api";
 };
 
 // ---------- fetch-account ----------
@@ -107,7 +109,10 @@ export async function callDirectPostFromEvent(
     media_url,
     tiktok_media_url,
     batch_id,
+    created_via,
   } = data;
+
+  const createdVia = created_via ?? "web";
 
   try {
     let result: { success: boolean; count: number; message?: string };
@@ -134,6 +139,7 @@ export async function callDirectPostFromEvent(
           mediaType: media_type,
           postType: post_type,
           mediaUrl: media_url ?? "",
+          createdVia,
         });
         break;
       }
@@ -150,6 +156,7 @@ export async function callDirectPostFromEvent(
           batchId: batch_id,
           postType: post_type,
           isCronJob: true, // skip rate limiting in worker context
+          createdVia,
         });
         break;
       }
@@ -166,6 +173,7 @@ export async function callDirectPostFromEvent(
           postType: post_type,
           fileName: file_name,
           batchId: batch_id,
+          createdVia,
         });
         break;
       }
@@ -182,6 +190,7 @@ export async function callDirectPostFromEvent(
           postType: igPostType,
           fileName: file_name,
           batchId: batch_id,
+          createdVia,
         });
         break;
       }

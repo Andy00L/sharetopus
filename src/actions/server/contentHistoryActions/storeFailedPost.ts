@@ -17,6 +17,7 @@ type FailedPostData = {
   batch_id: string;
   scheduled_at?: string;
   extra_data?: Record<string, unknown>;
+  created_via: "web" | "mcp" | "x402" | "api";
 };
 
 /**
@@ -55,6 +56,7 @@ export async function storeFailedPost(
       cover_image_timestamp: data.coverTimestamp,
       batch_id: data.batch_id,
       error_message: errorMsg,
+      created_via: data.created_via,
     };
 
     const { data: newRecord, error } = await adminSupabase
