@@ -17,7 +17,6 @@ export default function NavPost() {
       <SidebarGroupLabel>Posts</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          <SidebarMenuItem></SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild

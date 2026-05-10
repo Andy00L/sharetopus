@@ -88,7 +88,7 @@ export async function scheduleForTikTokAccounts(config: {
     return {
       success: false,
       count: 0,
-      message: `Failed to schedule Pinterest posts  for ${account.display_name}`,
+      message: `Failed to schedule TikTok posts for ${account.display_name}`,
     };
   }
 }

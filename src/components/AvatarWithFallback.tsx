@@ -13,7 +13,7 @@ interface Props {
   readonly alt: string;
   /** Optional Tailwind classes applied to BOTH img & icon. */
   readonly className?: string;
-  /** Width / height — defaults to 64 × 64 (px) like your design. */
+  /** Width / height, defaults to 64 x 64 (px) like your design. */
   readonly size?: number;
   readonly isSelected?: boolean;
 }

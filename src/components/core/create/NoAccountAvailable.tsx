@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import Link from "next/link";
 
-export default function NoAccountAvaible() {
+export default function NoAccountAvailable() {
   return (
     <div className="text-center mx-auto p-8 border rounded-lg">
       <AlertCircle className="mx-auto h-12 w-12 text-muted-foreground mb-4" />

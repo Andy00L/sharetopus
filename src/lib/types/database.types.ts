@@ -1,5 +1,5 @@
 /**
- * Sharetopus DB types — mirrors the schema in supabase/migrations/.
+ * Sharetopus DB types. Mirrors the schema in supabase/migrations/.
  *
  * Generated to match what `supabase gen types typescript` produces.
  * After you wire up the Supabase CLI, regenerate with:
@@ -227,7 +227,7 @@ export type Database = {
             | "cancelled";
           scheduled_at: string;
           posted_at: string | null;
-          /** GENERATED — never include in Insert/Update */
+          /** GENERATED, never include in Insert/Update */
           scheduled_at_date: string;
           post_title: string | null;
           post_description: string | null;
@@ -327,7 +327,7 @@ export type Database = {
           latency_ms: number | null;
           ip_hash: string | null;
           user_agent: string | null;
-          /** GENERATED — never include in Insert/Update */
+          /** GENERATED, never include in Insert/Update */
           month: string;
           created_at: string;
         };
@@ -743,7 +743,7 @@ export type Database = {
             | "cancelled";
           scheduled_at: string;
           posted_at: string | null;
-          /** GENERATED — never include in Insert/Update */
+          /** GENERATED, never include in Insert/Update */
           scheduled_at_date: string;
           post_title: string | null;
           post_description: string | null;
@@ -1443,7 +1443,7 @@ export type Database = {
           latency_ms: number | null;
           ip_hash: string | null;
           user_agent: string | null;
-          /** GENERATED — never include in Insert/Update */
+          /** GENERATED, never include in Insert/Update */
           month: string;
           created_at: string;
         };
@@ -1679,7 +1679,7 @@ export type Database = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────
-// Convenience helper types — the same shape supabase-js generators emit
+// Convenience helper types, the same shape supabase-js generators emit
 // ─────────────────────────────────────────────────────────────────────────
 
 type DefaultSchema = Database["public"];
@@ -1754,7 +1754,7 @@ export type TablesUpdate<
 // ─────────────────────────────────────────────────────────────────────────
 // Hand-curated enum aliases (CHECK-constraint values, not Postgres ENUMs).
 // Import these in app code instead of inlining string unions.
-// These are NOT auto-generated — keep in sync manually if you change the schema.
+// These are NOT auto-generated. Keep in sync manually if you change the schema.
 // ─────────────────────────────────────────────────────────────────────────
 
 export type PrincipalKind = "clerk" | "wallet";

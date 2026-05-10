@@ -20,7 +20,7 @@ export async function ensureUserExists() {
     .single();
 
   if (existingUser) {
-    // User exists — sync subscriptions + invoices if needed
+    // User exists, sync subscriptions + invoices if needed
     if (existingUser.stripe_customer_id) {
       await Promise.all([
         syncStripeSubscriptions(user.id, existingUser.stripe_customer_id),

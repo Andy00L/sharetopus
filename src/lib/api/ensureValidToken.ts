@@ -56,6 +56,11 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
     // Appeler la fonction de rafraîchissement appropriée selon la plateforme
     let newTokens: TokenExchangeResponse | null = null;
 
+    // TODO(future): Instagram tokens (long-lived) last 60 days and need refresh
+    // before expiry. The original refreshInstagramToken implementation was deleted
+    // in FIX 18 because it was dead code with no caller and no tests. When Instagram
+    // goes to production, write a tested refresh path against Instagram Graph API
+    // /refresh_access_token endpoint and add `case "instagram"` to the switch.
     switch (account.platform) {
       case "tiktok":
         newTokens = await refreshTikTokToken(account.refresh_token);

@@ -137,16 +137,6 @@ export interface SocialAccountAccessible {
 // API Request/Response types
 // ─────────────────────────────────────────────────────────────────────
 
-export interface SchedulePostData {
-  socialAccountId: string;
-  platform: string;
-  scheduledAt: string | Date;
-  title: string | null;
-  mediaType: MediaType;
-  mediaStoragePath: string;
-  postOptions: PlatformOptions | null;
-}
-
 export interface TokenExchangeResponse {
   error?: string;
   token_type?: string;

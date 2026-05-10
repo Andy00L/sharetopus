@@ -16,8 +16,8 @@ import {
   ALLOWED_VIDEO_TYPES,
 } from "../constants/constants";
 import { CAPTION_LIMITS } from "../constants/captionLimits";
-import NoAccountAvaible from "../NoAccountAvaible";
-import { ImageUploads } from "../upload/ImageUpload ";
+import NoAccountAvailable from "../NoAccountAvailable";
+import { ImageUploads } from "../upload/ImageUpload";
 import { VideoCoverSelector } from "../upload/VideoCoverSelector";
 import { VideoUploads } from "../upload/VideoUpload";
 import { useAccountContent } from "./hooks/useAccountContent";
@@ -353,7 +353,7 @@ export default function SocialPostForm({
 
   // Render
   if (accounts.length === 0) {
-    return <NoAccountAvaible />;
+    return <NoAccountAvailable />;
   }
 
   const selectedCount =
