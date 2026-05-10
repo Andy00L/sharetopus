@@ -4,6 +4,7 @@ import { registerListConnections } from "./listConnections";
 import { registerListScheduledPosts } from "./listScheduledPosts";
 import { registerListContentHistory } from "./listContentHistory";
 import { registerSchedulePost } from "./schedulePost";
+import { registerPostNow } from "./postNow";
 import { registerBulkSchedule } from "./bulkSchedule";
 import { registerCancelScheduledPosts } from "./cancelScheduledPosts";
 import { registerResumeScheduledPosts } from "./resumeScheduledPosts";
@@ -28,6 +29,7 @@ export function registerTools(server: McpServer): void {
   registerListScheduledPosts(server);
   registerListContentHistory(server);
   registerSchedulePost(server);
+  registerPostNow(server);
   registerBulkSchedule(server);
   registerCancelScheduledPosts(server);
   registerResumeScheduledPosts(server);
