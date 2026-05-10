@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Returns the re-authentication URL for a social account whose token has expired.
@@ -28,6 +28,8 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "request_account_reauth_link");
@@ -39,6 +41,8 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
           args,
           resultStatus: "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -62,6 +66,8 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: "Social account not found or does not belong to you." }],
@@ -79,6 +85,8 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
         args,
         resultStatus: "ok",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

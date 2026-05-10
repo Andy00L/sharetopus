@@ -12,7 +12,7 @@ import type { PlatformOptions } from "@/lib/types/dbTypes";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 import { randomUUID } from "crypto";
 import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 
@@ -74,6 +74,8 @@ export function registerPostNow(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       // 1. Entitlement check
@@ -89,6 +91,8 @@ export function registerPostNow(server: McpServer): void {
               ? "quota_exceeded"
               : "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text" as const, text: `Denied: ${ent.detail}` }],
@@ -108,6 +112,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -132,6 +138,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -153,6 +161,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -186,6 +196,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -206,6 +218,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -240,6 +254,8 @@ export function registerPostNow(server: McpServer): void {
               args,
               resultStatus: "error",
               latencyMs: Date.now() - start,
+              ipHash,
+              userAgent,
             });
             return {
               content: [
@@ -266,6 +282,8 @@ export function registerPostNow(server: McpServer): void {
               args,
               resultStatus: "error",
               latencyMs: Date.now() - start,
+              ipHash,
+              userAgent,
             });
             return {
               content: [
@@ -368,6 +386,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -399,6 +419,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "ok",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
 
         return {
@@ -433,6 +455,8 @@ export function registerPostNow(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [

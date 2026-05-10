@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { deleteScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/deleteScheduledPostBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Permanently deletes scheduled posts and cleans up orphaned media.
@@ -30,6 +30,8 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "delete_scheduled_posts");
@@ -41,6 +43,8 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
           args,
           resultStatus: "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -60,6 +64,8 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
         args,
         resultStatus: result.success ? "ok" : "error",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

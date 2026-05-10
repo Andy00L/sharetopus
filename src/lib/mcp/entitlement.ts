@@ -61,6 +61,7 @@ const ACTION_PLAN_GATE: Record<string, PlanTier> = {
 const MONTHLY_CAPS: Record<string, Record<PlanTier, number | null>> = {
   schedule_post: { free: 10, starter: 100, creator: 500, pro: null },
   post_now: { free: 0, starter: 100, creator: 500, pro: null },
+  request_upload_url: { free: 0, starter: 100, creator: 500, pro: null },
   bulk_schedule: { free: 0, starter: 0, creator: 200, pro: null },
   generate_post_draft: { free: 0, starter: 0, creator: 0, pro: 100 },
 };

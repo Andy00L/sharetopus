@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { updateScheduledTimeBatchInternal } from "@/actions/server/_internal/scheduleActions/updateScheduledTimeBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Reschedules posts to a new time. Cancelled posts get resumed automatically.
@@ -29,6 +29,8 @@ export function registerReschedulePosts(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "reschedule_posts");
@@ -40,6 +42,8 @@ export function registerReschedulePosts(server: McpServer): void {
           args,
           resultStatus: "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -60,6 +64,8 @@ export function registerReschedulePosts(server: McpServer): void {
         args,
         resultStatus: result.success ? "ok" : "error",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

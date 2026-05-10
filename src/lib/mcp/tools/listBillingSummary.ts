@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 import { tierLabel } from "@/lib/types/plans";
 
 /**
@@ -61,6 +61,8 @@ export function registerListBillingSummary(server: McpServer): void {
     async (_args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "list_billing_summary");
@@ -72,6 +74,8 @@ export function registerListBillingSummary(server: McpServer): void {
           args: null,
           resultStatus: "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -96,6 +100,8 @@ export function registerListBillingSummary(server: McpServer): void {
         args: null,
         resultStatus: "ok",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

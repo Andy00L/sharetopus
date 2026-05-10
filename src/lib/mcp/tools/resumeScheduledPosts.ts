@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resumeScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/resumeScheduledPostBatch";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Resumes cancelled posts back to "scheduled" status.
@@ -28,6 +28,8 @@ export function registerResumeScheduledPosts(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "resume_scheduled_posts");
@@ -39,6 +41,8 @@ export function registerResumeScheduledPosts(server: McpServer): void {
           args,
           resultStatus: "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -58,6 +62,8 @@ export function registerResumeScheduledPosts(server: McpServer): void {
         args,
         resultStatus: result.success ? "ok" : "error",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

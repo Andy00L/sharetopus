@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions/schedulePost";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Schedules a single post for publishing.
@@ -48,6 +48,8 @@ export function registerSchedulePost(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "schedule_post");
@@ -59,6 +61,8 @@ export function registerSchedulePost(server: McpServer): void {
           args,
           resultStatus: ent.reason === "platform_quota" ? "quota_exceeded" : "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -88,6 +92,8 @@ export function registerSchedulePost(server: McpServer): void {
         args,
         resultStatus: result.success ? "ok" : "error",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

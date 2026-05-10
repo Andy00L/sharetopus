@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Generates a post draft using MCP sampling.
@@ -51,6 +51,8 @@ export function registerGeneratePostDraft(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "generate_post_draft");
@@ -62,6 +64,8 @@ export function registerGeneratePostDraft(server: McpServer): void {
           args: { platform: args.platform, topic: args.topic },
           resultStatus: ent.reason === "platform_quota" ? "quota_exceeded" : "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -108,6 +112,8 @@ export function registerGeneratePostDraft(server: McpServer): void {
         args: { platform: args.platform, topic: args.topic },
         resultStatus: "ok",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {

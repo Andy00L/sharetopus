@@ -1,4 +1,6 @@
+import { headers } from "next/headers";
 import type { McpPrincipal } from "./auth";
+import { hashClientIp } from "./ipHash";
 
 /**
  * Helper to extract the McpPrincipal from the tool handler's extra context.
@@ -26,4 +28,28 @@ export function extractPrincipal(extra: Record<string, unknown>): McpPrincipal {
 export function extractSessionId(extra: Record<string, unknown>): string | null {
   const sessionId = (extra.sessionId as string) ?? null;
   return sessionId;
+}
+
+/**
+ * Reads the client IP from request headers (x-forwarded-for first, then
+ * x-real-ip), hashes it, and returns the hex digest. Returns null if no
+ * IP header is present.
+ */
+export async function extractIpHash(): Promise<string | null> {
+  const h = await headers();
+  const fwd = h.get("x-forwarded-for");
+  const real = h.get("x-real-ip");
+  const raw = fwd ? fwd.split(",")[0].trim() : (real ?? null);
+  return hashClientIp(raw);
+}
+
+/**
+ * Reads User-Agent from request headers. Truncates to 512 chars to match
+ * mcp_audit_log column behavior.
+ */
+export async function extractUserAgent(): Promise<string | null> {
+  const h = await headers();
+  const ua = h.get("user-agent");
+  if (!ua) return null;
+  return ua.length > 512 ? ua.slice(0, 512) : ua;
 }

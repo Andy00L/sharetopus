@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 import type { McpPrincipal } from "../auth";
 import type { TablesInsert } from "@/lib/types/database.types";
 
@@ -82,6 +82,8 @@ type PerPostResult = {
 type BulkScheduleContext = {
   principal: McpPrincipal;
   sessionId: string | null;
+  ipHash: string | null;
+  userAgent: string | null;
   startedAt: number;
 };
 
@@ -95,12 +97,14 @@ type McpToolResponse = {
 // ---------------------------------------------------------------------------
 
 /** Wraps extractPrincipal + extractSessionId + Date.now(). */
-function buildBulkScheduleContext(
+async function buildBulkScheduleContext(
   extra: Record<string, unknown>
-): BulkScheduleContext {
+): Promise<BulkScheduleContext> {
   return {
     principal: extractPrincipal(extra),
     sessionId: extractSessionId(extra),
+    ipHash: await extractIpHash(),
+    userAgent: await extractUserAgent(),
     startedAt: Date.now(),
   };
 }
@@ -459,6 +463,8 @@ async function recordBulkScheduleAudit(
       },
       resultStatus: insertResult.success ? "ok" : "error",
       latencyMs: Date.now() - ctx.startedAt,
+      ipHash: ctx.ipHash,
+      userAgent: ctx.userAgent,
     });
   } catch (err) {
     console.error("[recordBulkScheduleAudit] unexpected:", err);
@@ -479,6 +485,8 @@ async function recordPreflightDeny(
       args: { count: totalCount },
       resultStatus: denyResult.auditStatus,
       latencyMs: Date.now() - ctx.startedAt,
+      ipHash: ctx.ipHash,
+      userAgent: ctx.userAgent,
     });
   } catch (err) {
     console.error("[recordPreflightDeny] unexpected:", err);
@@ -580,7 +588,7 @@ export function registerBulkSchedule(server: McpServer): void {
         .describe("Optional batch ID to group all posts in this call"),
     },
     async (args, extra) => {
-      const ctx = buildBulkScheduleContext(extra);
+      const ctx = await buildBulkScheduleContext(extra);
 
       const entitlement = await checkBulkScheduleEntitlement(ctx);
       if (entitlement.success === false) {

@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { generateServerSignedUploadUrl } from "@/actions/server/data/generateServerSignedUploadUrl";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 
 /**
  * Mints a Supabase signed upload URL so agents can upload media
@@ -46,6 +47,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
     async (args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
       const start = Date.now();
 
       // 1. Entitlement check
@@ -61,10 +64,41 @@ export function registerRequestUploadUrl(server: McpServer): void {
               ? "quota_exceeded"
               : "denied",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
             { type: "text" as const, text: `Denied: ${ent.detail}` },
+          ],
+          isError: true,
+        };
+      }
+
+      // 1b. Rate limit
+      const rateCheck = await checkRateLimit(
+        "mcp_request_upload_url",
+        principal.principalId,
+        20,
+        60
+      );
+      if (!rateCheck.success) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "request_upload_url",
+          args,
+          resultStatus: "rate_limited",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: rateCheck.message ?? "Rate limit exceeded. Please slow down and retry.",
+            },
           ],
           isError: true,
         };
@@ -91,6 +125,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
           args,
           resultStatus: "error",
           latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
         });
         return {
           content: [
@@ -108,6 +144,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
         args,
         resultStatus: "ok",
         latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
       });
 
       return {
