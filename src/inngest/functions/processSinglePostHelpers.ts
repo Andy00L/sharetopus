@@ -1,6 +1,6 @@
 import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
+import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
 import { deleteSupabaseFileActionInternal } from "@/actions/server/_internal/data/deleteSupabaseFileAction";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
@@ -159,7 +159,7 @@ export type SignedUrlsResult =
 
 /**
  * Mirrors handleSocialMediaPost URL-minting logic:
- *   - Pinterest/LinkedIn/Instagram: getSignedViewUrl (Supabase 5 min)
+ *   - Pinterest/LinkedIn/Instagram: getServerSignedViewUrl (admin Supabase direct)
  *   - TikTok: buildTikTokMediaUrl (proxy or supabase_direct per env)
  * For text posts (no media_storage_path) both are null.
  */
@@ -192,9 +192,8 @@ export async function buildPlatformSignedUrls(
     };
   }
 
-  const signed = await getSignedViewUrl(
+  const signed = await getServerSignedViewUrl(
     post.media_storage_path,
-    post.principal_id,
     RUNTIME.signedUrlTtlS
   );
   if (!signed.success) {

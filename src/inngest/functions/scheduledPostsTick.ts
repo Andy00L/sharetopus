@@ -17,14 +17,14 @@ export const scheduledPostsTick = inngest.createFunction(
     name: "Scheduled posts dispatcher",
     concurrency: { limit: 1 },
     retries: 0,
-    triggers: [{ cron: "* * * * *" }],
+    triggers: [{ cron: "*/5 * * * *" }],
   },
   async ({ step }) => {
     const due = await step.run("fetch-due-posts", () =>
       fetchDueScheduledPosts(
         new Date().toISOString(),
-        RUNTIME.dispatcherBatchSize
-      )
+        RUNTIME.dispatcherBatchSize,
+      ),
     );
 
     if (!due.success) {
@@ -53,7 +53,7 @@ export const scheduledPostsTick = inngest.createFunction(
     await step.sendEvent("dispatch-due-posts", events);
 
     const marked = await step.run("mark-queued", () =>
-      markPostsAsQueued(due.posts.map((p) => p.id))
+      markPostsAsQueued(due.posts.map((p) => p.id)),
     );
 
     return {
@@ -61,5 +61,5 @@ export const scheduledPostsTick = inngest.createFunction(
       marked: marked.updated,
       message: `Dispatched ${events.length}, marked ${marked.updated} queued`,
     };
-  }
+  },
 );

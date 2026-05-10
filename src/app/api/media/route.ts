@@ -1,23 +1,82 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { createHmac, timingSafeEqual } from "crypto";
 import { NextRequest } from "next/server";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
-  console.log(`[Media Proxy] Incoming signed request: ${request.url}`);
+  const filePath = searchParams.get("file") ?? "";
+  const userId = searchParams.get("user") ?? "";
+  const expiresRaw = searchParams.get("expires") ?? "";
+  const sig = searchParams.get("sig") ?? "";
 
-  // Extract parameters (already validated in verifySignature)
-  const filePath = decodeURIComponent(searchParams.get("file") || "");
-  const userId = decodeURIComponent(searchParams.get("user") || "");
+  console.log("[Media Proxy] Incoming request", {
+    user: userId,
+    file: filePath,
+  });
 
-  if (!filePath || !userId) {
+  // SECURITY CHECK 1: All params must be present
+  if (!filePath || !userId || !expiresRaw || !sig) {
     console.warn("[Media Proxy] Missing required parameters");
-    return new Response("Missing parameters", {
-      status: 400,
+    return new Response("Missing required parameters", {
+      status: 401,
       headers: { "Content-Type": "application/json" },
     });
   }
-  // 🛡️ SECURITY CHECK 2: Path Validation (defense in depth)
+
+  // SECURITY CHECK 2: Expiry
+  const expires = parseInt(expiresRaw, 10);
+  if (Number.isNaN(expires) || Math.floor(Date.now() / 1000) >= expires) {
+    console.warn("[Media Proxy] URL expired", { user: userId, file: filePath });
+    return new Response("URL expired", {
+      status: 410,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // SECURITY CHECK 3: HMAC signature verification
+  const secret = process.env.MEDIA_PROXY_HMAC_SECRET;
+  if (!secret) {
+    console.error("[Media Proxy] HMAC secret not configured");
+    return new Response("Server misconfiguration", {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const payload = `${userId}:${filePath}:${expires}`;
+  const expected = createHmac("sha256", secret).update(payload).digest("hex");
+
+  const sigBuf = Buffer.from(sig, "hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+
+  if (
+    sigBuf.length !== expectedBuf.length ||
+    !timingSafeEqual(sigBuf, expectedBuf)
+  ) {
+    console.warn("[Media Proxy] Signature mismatch", {
+      user: userId,
+      file: filePath,
+    });
+    return new Response("Invalid signature", {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // SECURITY CHECK 4: Path ownership (defense in depth)
+  if (!filePath.startsWith(`${userId}/`)) {
+    console.warn("[Media Proxy] Path does not belong to user", {
+      user: userId,
+      file: filePath,
+    });
+    return new Response("Invalid file path", {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // SECURITY CHECK 5: Path traversal prevention
   if (
     filePath.includes("..") ||
     filePath.includes("//") ||
@@ -30,11 +89,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  try {
-    console.log(
-      `[Media Proxy] Processing request for file: ${filePath}, user: ${userId}`
-    );
+  console.log("[Media Proxy] Signature verified", {
+    user: userId,
+    file: filePath,
+  });
 
+  try {
     const { data, error } = await adminSupabase.storage
       .from("scheduled-videos")
       .createSignedUrl(filePath, 600); // 10 minutes
@@ -42,7 +102,6 @@ export async function GET(request: NextRequest) {
     if (error) {
       console.error("[Media Proxy] Supabase error:", error);
 
-      // Handle specific error cases
       if (
         error.message.includes("not found") ||
         error.message.includes("404")

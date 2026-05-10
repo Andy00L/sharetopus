@@ -1,10 +1,10 @@
 "use server";
 
-import { getSignedViewUrl } from "@/actions/client/getSignedViewUrl";
+import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
-import { createSecureMediaUrlSigned } from "@/actions/server/data/mediaURL";
+import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
@@ -294,7 +294,19 @@ export async function handleSocialMediaPost(config: {
 
     // Generate TikTok proxy URL if we have TikTok accounts
     if (tiktokAccounts.length > 0 && mediaPath && !isScheduled) {
-      tiktokMediaUrl = createSecureMediaUrlSigned(mediaPath, userId!);
+      const tiktokUrlResult = buildProxiedTikTokMediaUrl({
+        mediaPath,
+        principalId: userId!,
+      });
+      if (!tiktokUrlResult.success) {
+        return {
+          success: false,
+          counts: results.counts,
+          message: tiktokUrlResult.message,
+          errors: [],
+        };
+      }
+      tiktokMediaUrl = tiktokUrlResult.url;
       console.log(
         `[handleSocialMediaPost] TikTok proxy URL created for ${tiktokAccounts.length} accounts`
       );
@@ -312,12 +324,7 @@ export async function handleSocialMediaPost(config: {
       mediaPath &&
       (postType === "video" || postType === "image")
     ) {
-      const expiresIn = 300; // 5 minutes
-      const signedUrlResult = await getSignedViewUrl(
-        mediaPath,
-        userId!,
-        expiresIn
-      );
+      const signedUrlResult = await getServerSignedViewUrl(mediaPath);
 
       if (!signedUrlResult.success) {
         console.error(
@@ -333,7 +340,7 @@ export async function handleSocialMediaPost(config: {
 
       mediaUrl = signedUrlResult.url;
       console.log(
-        `[handleSocialMediaPost] Signed URL created with ${expiresIn}s expiry for non-TikTok platforms`
+        `[handleSocialMediaPost] Signed URL created for non-TikTok platforms`
       );
     }
 
