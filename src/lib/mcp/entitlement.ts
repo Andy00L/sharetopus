@@ -48,6 +48,7 @@ const ACTION_PLAN_GATE: Record<string, PlanTier> = {
 
   // Advanced tools (creator+)
   bulk_schedule: "creator",
+  bulk_post_now: "creator",
   get_account_analytics: "creator",
 
   // AI tools (pro)
@@ -64,6 +65,7 @@ const MONTHLY_CAPS: Record<string, Record<PlanTier, number | null>> = {
   post_now: { free: 0, starter: 100, creator: 500, pro: null },
   request_upload_url: { free: 0, starter: 100, creator: 500, pro: null },
   bulk_schedule: { free: 0, starter: 0, creator: 200, pro: null },
+  bulk_post_now: { free: 0, starter: 0, creator: 500, pro: null },
   generate_post_draft: { free: 0, starter: 0, creator: 0, pro: 100 },
 };
 

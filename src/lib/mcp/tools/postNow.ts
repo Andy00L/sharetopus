@@ -35,7 +35,7 @@ import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPos
 export function registerPostNow(server: McpServer): void {
   server.tool(
     "post_now",
-    "Publish a post immediately (not scheduled). For media posts, call attach_media_from_url first to get a media_storage_path. Returns an event_id; check list_content_history in 30-60s to confirm.",
+    "Publish ONE post to ONE platform immediately. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
     {
       social_account_id: z
         .string()
@@ -70,6 +70,14 @@ export function registerPostNow(server: McpServer): void {
         .string()
         .optional()
         .describe("Pinterest board display name. Optional, for content_history."),
+      pinterest_link: z
+        .string()
+        .url()
+        .max(2048)
+        .optional()
+        .describe(
+          "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
+        ),
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);
@@ -169,6 +177,29 @@ export function registerPostNow(server: McpServer): void {
             {
               type: "text" as const,
               text: "pinterest_board_id is required for Pinterest posts.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // 4b. pinterest_link only valid for Pinterest
+      if (args.pinterest_link && args.platform !== "pinterest") {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "post_now",
+          args,
+          resultStatus: "error",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "pinterest_link is only valid when platform = 'pinterest'.",
             },
           ],
           isError: true,
@@ -318,7 +349,7 @@ export function registerPostNow(server: McpServer): void {
         pinterest: {
           privacyLevel: "PUBLIC",
           board: args.pinterest_board_id ?? "",
-          link: "",
+          link: args.pinterest_link ?? "",
         },
         linkedin: {
           visibility: "PUBLIC",
@@ -347,7 +378,7 @@ export function registerPostNow(server: McpServer): void {
           accountId: args.social_account_id,
           title: args.title ?? "",
           description: args.description ?? "",
-          link: "",
+          link: args.pinterest_link ?? "",
           isCustomized: true,
         },
         platform_options: platformOptions,

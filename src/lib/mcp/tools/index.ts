@@ -6,6 +6,7 @@ import { registerListContentHistory } from "./listContentHistory";
 import { registerSchedulePost } from "./schedulePost";
 import { registerPostNow } from "./postNow";
 import { registerBulkSchedule } from "./bulkSchedule";
+import { registerBulkPostNow } from "./bulkPostNow";
 import { registerCancelScheduledPosts } from "./cancelScheduledPosts";
 import { registerResumeScheduledPosts } from "./resumeScheduledPosts";
 import { registerReschedulePosts } from "./reschedulePosts";
@@ -19,7 +20,7 @@ import { registerListBillingSummary } from "./listBillingSummary";
 import { registerListPinterestBoards } from "./listPinterestBoards";
 
 /**
- * Registers all 17 MCP tool handlers on the server instance.
+ * Registers all 18 MCP tool handlers on the server instance.
  *
  * Each tool file exports a register function that calls server.tool()
  * with the tool name, schema, and handler callback.
@@ -34,6 +35,7 @@ export function registerTools(server: McpServer): void {
   registerSchedulePost(server);
   registerPostNow(server);
   registerBulkSchedule(server);
+  registerBulkPostNow(server);
   registerCancelScheduledPosts(server);
   registerResumeScheduledPosts(server);
   registerReschedulePosts(server);

@@ -20,7 +20,7 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
 export function registerSchedulePost(server: McpServer): void {
   server.tool(
     "schedule_post",
-    "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first.",
+    "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first. For Pinterest, provide pinterest_board_id and optionally pinterest_link.",
     {
       social_account_id: z.string().uuid().describe("ID of the social account to post to"),
       platform: z
@@ -44,6 +44,26 @@ export function registerSchedulePost(server: McpServer): void {
         .optional()
         .default("")
         .describe("Optional batch ID to group related posts"),
+      pinterest_board_id: z
+        .string()
+        .optional()
+        .describe(
+          "Pinterest board ID. Required when platform = 'pinterest'."
+        ),
+      pinterest_board_name: z
+        .string()
+        .optional()
+        .describe(
+          "Pinterest board display name. Optional."
+        ),
+      pinterest_link: z
+        .string()
+        .url()
+        .max(2048)
+        .optional()
+        .describe(
+          "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
+        ),
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);
@@ -70,6 +90,66 @@ export function registerSchedulePost(server: McpServer): void {
         };
       }
 
+      // Pinterest board required
+      if (args.platform === "pinterest" && !args.pinterest_board_id) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "schedule_post",
+          args,
+          resultStatus: "error",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: "pinterest_board_id is required for Pinterest posts. Use list_pinterest_boards to find one.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // pinterest_* fields only valid for Pinterest
+      if (
+        (args.pinterest_link ||
+          args.pinterest_board_id ||
+          args.pinterest_board_name) &&
+        args.platform !== "pinterest"
+      ) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "schedule_post",
+          args,
+          resultStatus: "error",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: "pinterest_* fields are only valid when platform = 'pinterest'.",
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const postOptions =
+        args.platform === "pinterest"
+          ? {
+              privacyLevel: "PUBLIC" as const,
+              board: args.pinterest_board_id ?? "",
+              link: args.pinterest_link ?? "",
+            }
+          : null;
+
       const result = await schedulePostInternal(
         {
           socialAccountId: args.social_account_id,
@@ -80,7 +160,7 @@ export function registerSchedulePost(server: McpServer): void {
           description: args.description,
           mediaStoragePath: args.media_storage_path,
           batch_id: args.batch_id,
-          postOptions: null,
+          postOptions,
         },
         principal.principalId,
         "mcp"

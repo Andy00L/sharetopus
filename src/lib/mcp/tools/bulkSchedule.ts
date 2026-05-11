@@ -21,6 +21,9 @@ const postSchema = z.object({
   title: z.string().optional(),
   description: z.string().nullable(),
   media_storage_path: z.string().optional().default(""),
+  pinterest_board_id: z.string().optional(),
+  pinterest_board_name: z.string().optional(),
+  pinterest_link: z.string().url().max(2048).optional(),
 });
 
 type PostInput = z.infer<typeof postSchema>;
@@ -288,6 +291,63 @@ async function verifyAccountOwnership(
 }
 
 // ---------------------------------------------------------------------------
+// Pinterest preflight
+// ---------------------------------------------------------------------------
+
+type PinterestFieldsCheckResult =
+  | { success: true }
+  | {
+      success: false;
+      message: string;
+      auditStatus: "denied";
+      invalidIndexes: number[];
+    };
+
+/**
+ * Validates Pinterest-specific fields per post:
+ *   - pinterest_board_id is required when platform = 'pinterest'
+ *   - pinterest_* fields are only valid when platform = 'pinterest'
+ */
+function validatePinterestFieldsPerPost(
+  posts: PostInput[]
+): PinterestFieldsCheckResult {
+  const invalidIndexes: number[] = [];
+  const reasons: string[] = [];
+
+  posts.forEach((post, i) => {
+    const hasPinterestField =
+      Boolean(post.pinterest_board_id) ||
+      Boolean(post.pinterest_board_name) ||
+      Boolean(post.pinterest_link);
+
+    if (post.platform === "pinterest" && !post.pinterest_board_id) {
+      invalidIndexes.push(i);
+      reasons.push(
+        `Post #${i}: pinterest_board_id is required for Pinterest.`
+      );
+      return;
+    }
+    if (post.platform !== "pinterest" && hasPinterestField) {
+      invalidIndexes.push(i);
+      reasons.push(
+        `Post #${i}: pinterest_* fields are only valid when platform = 'pinterest'.`
+      );
+    }
+  });
+
+  if (invalidIndexes.length > 0) {
+    return {
+      success: false,
+      message: reasons.join(" "),
+      auditStatus: "denied",
+      invalidIndexes,
+    };
+  }
+
+  return { success: true };
+}
+
+// ---------------------------------------------------------------------------
 // Insert helpers
 // ---------------------------------------------------------------------------
 
@@ -301,22 +361,33 @@ function buildScheduledPostRows(
   batchId: string,
   createdVia: CreatedVia
 ): ScheduledPostInsertRow[] {
-  return posts.map((post, i) => ({
-    principal_id: principalId,
-    social_account_id: post.social_account_id,
-    platform: post.platform,
-    status: "scheduled" as const,
-    scheduled_at: new Date(post.scheduled_at).toISOString(),
-    post_title: post.title ?? "",
-    post_description: post.description,
-    post_options: null,
-    media_type: post.post_type,
-    media_storage_path: post.media_storage_path,
-    cover_image_timestamp: null,
-    batch_id: batchId,
-    created_via: createdVia,
-    idempotency_key: `${batchId}:${i}`,
-  }));
+  return posts.map((post, i) => {
+    const postOptions =
+      post.platform === "pinterest"
+        ? {
+            privacyLevel: "PUBLIC" as const,
+            board: post.pinterest_board_id ?? "",
+            link: post.pinterest_link ?? "",
+          }
+        : null;
+
+    return {
+      principal_id: principalId,
+      social_account_id: post.social_account_id,
+      platform: post.platform,
+      status: "scheduled" as const,
+      scheduled_at: new Date(post.scheduled_at).toISOString(),
+      post_title: post.title ?? "",
+      post_description: post.description,
+      post_options: postOptions,
+      media_type: post.post_type,
+      media_storage_path: post.media_storage_path,
+      cover_image_timestamp: null,
+      batch_id: batchId,
+      created_via: createdVia,
+      idempotency_key: `${batchId}:${i}`,
+    };
+  });
 }
 
 /**
@@ -576,7 +647,7 @@ function buildInsertFailureResponse(
 export function registerBulkSchedule(server: McpServer): void {
   server.tool(
     "bulk_schedule",
-    `Schedule up to ${MAX_POSTS_PER_CALL} posts at once. Requires Creator plan or higher.`,
+    `Schedule up to ${MAX_POSTS_PER_CALL} posts for future publishing. Requires Creator plan or higher. For Pinterest posts, include pinterest_board_id per post. For immediate multi-platform posting, use bulk_post_now.`,
     {
       posts: z
         .array(postSchema)
@@ -607,6 +678,12 @@ export function registerBulkSchedule(server: McpServer): void {
       if (ownership.success === false) {
         await recordPreflightDeny(ctx, ownership, args.posts.length);
         return buildDenyResponse(ownership.message);
+      }
+
+      const pinterestCheck = validatePinterestFieldsPerPost(args.posts);
+      if (pinterestCheck.success === false) {
+        await recordPreflightDeny(ctx, pinterestCheck, args.posts.length);
+        return buildDenyResponse(pinterestCheck.message);
       }
 
       const batchId = args.batch_id ?? crypto.randomUUID();
