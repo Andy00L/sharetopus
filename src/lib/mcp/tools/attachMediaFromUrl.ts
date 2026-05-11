@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
 import { safeUserFetch } from "../_shared/safeUserFetch";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
 
@@ -84,6 +86,37 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         };
       }
 
+      // Rate limit (before any network I/O)
+      const rateCheck = await checkRateLimit(
+        "mcp_attach_media_from_url",
+        principal.principalId,
+        10,
+        60,
+      );
+      if (!rateCheck.success) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "attach_media_from_url",
+          args: { url: args.url },
+          resultStatus: "rate_limited",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+          clientName,
+          clientVersion,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: rateCheck.message ?? `Rate limit exceeded. Try again in ${rateCheck.resetIn ?? 60}s.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       // Per-user upload size caps (MB -> bytes)
       const limits = getUploadLimitsForPrincipal(principal.priceId);
       const maxBytes = Math.max(limits.image, limits.video) * 1024 * 1024;
@@ -149,6 +182,31 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
                 `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
             },
           ],
+          isError: true,
+        };
+      }
+
+      // Aggregate storage quota check (after download, before upload)
+      const quota = await enforceStorageQuota(
+        principal.principalId,
+        principal.priceId,
+        result.bytes.length,
+      );
+      if (!quota.success) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "attach_media_from_url",
+          args: { url: args.url },
+          resultStatus: quota.reason === "quota_exceeded" ? "denied" : "error",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+          clientName,
+          clientVersion,
+        });
+        return {
+          content: [{ type: "text", text: quota.message }],
           isError: true,
         };
       }

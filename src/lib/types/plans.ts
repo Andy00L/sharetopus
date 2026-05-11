@@ -205,9 +205,12 @@ const DEV_PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
 };
 
 // Export based on environment
-export const STORAGE_LIMITS = isProd
+export const STORAGE_LIMITS: Record<string, number> = isProd
   ? PRICE_ID_STORAGE_LIMITS
   : DEV_PRICE_ID_STORAGE_LIMITS;
+
+// Default storage limit for unknown/missing price IDs (most restrictive tier)
+export const DEFAULT_STORAGE_LIMIT: number = 5 * 1024 * 1024 * 1024; // 5 GB
 
 // Export the right account limits based on environment
 export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = isProd

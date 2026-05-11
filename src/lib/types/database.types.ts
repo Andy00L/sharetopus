@@ -1727,6 +1727,13 @@ export type Database = {
         };
         Returns: number | null;
       };
+      get_user_storage_bytes: {
+        Args: {
+          _bucket: string;
+          _prefix: string;
+        };
+        Returns: number;
+      };
     };
     Enums: {
       [_ in never]: never;

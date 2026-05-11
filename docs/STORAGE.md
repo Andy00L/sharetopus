@@ -54,7 +54,7 @@ Same validation pipeline as the web UI, but authenticated via MCP Bearer token i
 
 Server-side download and upload. The MCP server fetches the file from the provided public URL and uploads it to Supabase Storage on behalf of the user.
 
-**Size limit:** 100 MB
+**Size limit:** 250 MB (video) / 8 MB (image)
 **Allowed MIME types:** image/jpeg, image/png, image/gif, image/webp, video/mp4, video/quicktime, video/webm
 
 ## View URLs

@@ -9,7 +9,7 @@ import {
   PRICE_ID_UPLOAD_LIMITS,
   DEFAULT_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
-import { STORAGE_LIMITS } from "@/lib/types/plans";
+import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
 import { randomUUID } from "crypto";
 
 /**
@@ -50,42 +50,6 @@ export interface GenerateUploadUrlResult {
 }
 
 /**
- * Sums the metadata.size of all files in a user's storage folder.
- *
- * Fails open (returns 0) on error, matching the web route's original
- * behavior. A transient Supabase error lets the upload through rather
- * than blocking the user.
- */
-async function getUserTotalFileSize(
-  userId: string,
-  bucketName: string
-): Promise<number> {
-  try {
-    const { data: files, error } = await adminSupabase.storage
-      .from(bucketName)
-      .list(userId);
-
-    if (error) {
-      console.warn(
-        "[generateServerSignedUploadUrl] Error listing files, treating as 0:",
-        error.message
-      );
-      return 0;
-    }
-
-    return (
-      files?.reduce((total, file) => total + (file.metadata?.size || 0), 0) ?? 0
-    );
-  } catch (err) {
-    console.warn(
-      "[generateServerSignedUploadUrl] Error calculating total size, treating as 0:",
-      err instanceof Error ? err.message : err
-    );
-    return 0;
-  }
-}
-
-/**
  * Server-side helper that validates an upload request and mints a
  * Supabase signed upload URL.
  *
@@ -101,7 +65,7 @@ async function getUserTotalFileSize(
  *   2. Bucket env configured
  *   3. Content type in allow-list
  *   4. Per-file size cap (from PRICE_ID_UPLOAD_LIMITS)
- *   5. Storage quota (from STORAGE_LIMITS, only when countTowardStorage)
+ *   5. Storage quota (via enforceStorageQuota RPC, when countTowardStorage)
  *   6. Mint signed upload URL via adminSupabase
  */
 export async function generateServerSignedUploadUrl(
@@ -161,23 +125,19 @@ export async function generateServerSignedUploadUrl(
     };
   }
 
-  // 5. Storage quota (only when countTowardStorage and priceId is known)
-  if (input.countTowardStorage && input.priceId) {
-    const storageLimit = STORAGE_LIMITS[input.priceId];
-    if (storageLimit) {
-      const currentTotalSize = await getUserTotalFileSize(
-        input.principalId,
-        bucket
-      );
-
-      if (currentTotalSize + input.fileSize > storageLimit) {
-        const limitInGB = storageLimit / (1024 * 1024 * 1024);
-        return {
-          success: false,
-          message: `This upload would exceed your ${limitInGB}GB storage limit. Please delete some files or upgrade your plan.`,
-          reason: "storage_quota_exceeded",
-        };
-      }
+  // 5. Aggregate storage quota (RPC-based, accurate for any file count)
+  if (input.countTowardStorage) {
+    const check = await enforceStorageQuota(
+      input.principalId,
+      input.priceId,
+      input.fileSize,
+    );
+    if (!check.success) {
+      return {
+        success: false,
+        message: check.message,
+        reason: "storage_quota_exceeded",
+      };
     }
   }
 
