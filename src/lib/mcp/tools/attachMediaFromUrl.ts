@@ -4,8 +4,9 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { safeUserFetch } from "../_shared/safeUserFetch";
+import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const ALLOWED_CONTENT_TYPES = [
   "image/jpeg",
   "image/png",
@@ -16,6 +17,8 @@ const ALLOWED_CONTENT_TYPES = [
   "video/webm",
 ];
 
+const ALLOWED_CONTENT_TYPE_PREFIXES = ["image/", "video/"];
+
 /**
  * Fetches a media file from a public URL and uploads it to Supabase Storage.
  *
@@ -25,8 +28,10 @@ const ALLOWED_CONTENT_TYPES = [
  * The returned storage path can be passed to schedule_post or bulk_schedule
  * as the media_storage_path field.
  *
- * Only accepts image and video content types. Rejects files over 100 MB.
- * Does not accept file:// or other non-HTTP schemes.
+ * Only accepts image and video content types. Per-user size caps are enforced
+ * via streaming byte count (Content-Length is not trusted). URLs are validated
+ * against SSRF attacks: DNS-resolved IPs are checked against private/reserved
+ * ranges, redirects are rejected, and non-http(s) schemes are blocked.
  */
 export function registerAttachMediaFromUrl(server: McpServer): void {
   server.registerTool(
@@ -79,78 +84,94 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         };
       }
 
-      // Validate URL scheme
+      // Per-user upload size caps (MB -> bytes)
+      const limits = getUploadLimitsForPrincipal(principal.priceId);
+      const maxBytes = Math.max(limits.image, limits.video) * 1024 * 1024;
+
+      const result = await safeUserFetch(args.url, {
+        maxBytes,
+        allowedContentTypePrefixes: ALLOWED_CONTENT_TYPE_PREFIXES,
+        allowedContentTypes: ALLOWED_CONTENT_TYPES,
+        connectTimeoutMs: 5_000,
+        totalTimeoutMs: 30_000,
+      });
+
+      if (!result.success) {
+        const isDenied =
+          result.reason === "blocked_scheme" ||
+          result.reason === "blocked_host" ||
+          result.reason === "blocked_ip" ||
+          result.reason === "redirect_not_allowed" ||
+          result.reason === "content_type_not_allowed" ||
+          result.reason === "too_large" ||
+          result.reason === "invalid_url";
+
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "attach_media_from_url",
+          args: { url: args.url },
+          resultStatus: isDenied ? "denied" : "error",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+          clientName,
+          clientVersion,
+        });
+        return {
+          content: [{ type: "text", text: result.message }],
+          isError: true,
+        };
+      }
+
+      // Type-specific size cap (image vs video)
+      const isVideo = result.contentType.startsWith("video/");
+      const specificCapMb = isVideo ? limits.video : limits.image;
+      const specificCapBytes = specificCapMb * 1024 * 1024;
+      if (result.bytes.length > specificCapBytes) {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "attach_media_from_url",
+          args: { url: args.url },
+          resultStatus: "denied",
+          latencyMs: Date.now() - start,
+          ipHash,
+          userAgent,
+          clientName,
+          clientVersion,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `File too large: ${Math.round(result.bytes.length / 1024 / 1024)} MB. ` +
+                `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // Determine filename
       let parsedUrl: URL;
       try {
         parsedUrl = new URL(args.url);
       } catch {
-        return {
-          content: [{ type: "text", text: "Invalid URL format." }],
-          isError: true,
-        };
+        parsedUrl = new URL("https://unknown/media");
       }
-      if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-        return {
-          content: [{ type: "text", text: "Only HTTP and HTTPS URLs are accepted." }],
-          isError: true,
-        };
-      }
+      const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
+      const ext = result.contentType.startsWith("video/") ? ".mp4" : ".jpg";
+      const filename =
+        args.filename ?? (urlBasename.includes(".") ? urlBasename : `${urlBasename}${ext}`);
+
+      const storagePath = `${principal.principalId}/${Date.now()}_${filename}`;
 
       try {
-        // Fetch the file
-        const response = await fetch(args.url, {
-          headers: { "User-Agent": "Sharetopus-MCP/1.0" },
-        });
-
-        if (!response.ok) {
-          return {
-            content: [
-              { type: "text", text: `Failed to fetch URL: HTTP ${response.status}` },
-            ],
-            isError: true,
-          };
-        }
-
-        const contentType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-        if (!ALLOWED_CONTENT_TYPES.includes(contentType)) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Unsupported content type: ${contentType}. Allowed: ${ALLOWED_CONTENT_TYPES.join(", ")}`,
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const contentLength = parseInt(response.headers.get("content-length") ?? "0", 10);
-        if (contentLength > MAX_FILE_SIZE) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `File too large: ${Math.round(contentLength / 1024 / 1024)}MB. Max is ${MAX_FILE_SIZE / 1024 / 1024}MB.`,
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const buffer = Buffer.from(await response.arrayBuffer());
-
-        // Determine filename
-        const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
-        const ext = contentType.startsWith("video/") ? ".mp4" : ".jpg";
-        const filename =
-          args.filename ?? (urlBasename.includes(".") ? urlBasename : `${urlBasename}${ext}`);
-
-        const storagePath = `${principal.principalId}/${Date.now()}_${filename}`;
-
         const { error: uploadError } = await adminSupabase.storage
           .from("scheduled-videos")
-          .upload(storagePath, buffer, {
-            contentType,
+          .upload(storagePath, result.bytes, {
+            contentType: result.contentType,
             upsert: false,
           });
 
@@ -172,39 +193,6 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
             isError: true,
           };
         }
-
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url, storagePath },
-          resultStatus: "ok",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  storage_path: storagePath,
-                  content_type: contentType,
-                  size_bytes: buffer.length,
-                  message:
-                    "Media uploaded. Use this storage_path as media_storage_path in schedule_post.",
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
       } catch (err) {
         await logToolCall({
           principal,
@@ -222,12 +210,45 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           content: [
             {
               type: "text",
-              text: `Failed to fetch or upload media: ${err instanceof Error ? err.message : "unknown error"}`,
+              text: `Failed to upload media: ${err instanceof Error ? err.message : "unknown error"}`,
             },
           ],
           isError: true,
         };
       }
+
+      await logToolCall({
+        principal,
+        sessionId,
+        toolName: "attach_media_from_url",
+        args: { url: args.url, storagePath },
+        resultStatus: "ok",
+        latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
+        clientName,
+        clientVersion,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                storage_path: storagePath,
+                content_type: result.contentType,
+                size_bytes: result.bytes.length,
+                message:
+                  "Media uploaded. Use this storage_path as media_storage_path in schedule_post.",
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
     }
   );
 }
