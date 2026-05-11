@@ -1,135 +1,290 @@
-![Next.js](https://img.shields.io/badge/Next.js-16.1.6-black?logo=next.js)
-![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.2-06B6D4?logo=tailwindcss)
-![Clerk](https://img.shields.io/badge/Auth-Clerk_v7-6C47FF?logo=clerk)
-![Stripe](https://img.shields.io/badge/Payments-Stripe-635BFF?logo=stripe)
-![Supabase](https://img.shields.io/badge/Database-Supabase-3FCF8E?logo=supabase)
-![Vercel](https://img.shields.io/badge/Deployed-Vercel-000000?logo=vercel)
-![Status](https://img.shields.io/badge/Status-Production-brightgreen)
-
 # Sharetopus
 
-A SaaS social media publishing tool. Create a post once, customize it per platform, and publish or schedule it to LinkedIn, TikTok, Pinterest, and Instagram from a single dashboard. Runs in production at [sharetopus.com](https://sharetopus.com).
+Social media scheduling tool with an MCP server. Create a post once, customize it per platform, and publish or schedule it to LinkedIn, TikTok, Pinterest, and Instagram from a single dashboard. AI agents (Claude Desktop, Cursor) can manage posts through the MCP server on behalf of subscribers.
+
+Production: [sharetopus.com](https://sharetopus.com)
 
 ![Landing Page](./public/landing.png)
 ![Dashboard](./public/dashboard.png)
 ![Create Post](./public/create-post.png)
 
-## Quick Start
+## What it does
+
+- Publishes text, image, and video posts to 4 platforms (LinkedIn, TikTok, Pinterest, Instagram)
+- Schedules posts for future dates. Inngest cron dispatches due posts every 5 minutes.
+- Exposes 16 MCP tools, 3 resources, and 3 prompts to AI agents via Streamable HTTP
+- Three Stripe subscription tiers: Starter ($9/mo), Creator ($18/mo), Pro ($27/mo) with ~40% yearly discounts
+- 6 Inngest background functions: post dispatcher, post worker, TikTok poll, direct post worker, stuck-post sweep, orphan storage sweep
+- Per-account content customization, batch grouping, and content history tracking
+- Media uploads to Supabase Storage: images (JPEG/PNG, 8 MB) and videos (MP4/MOV, 250 MB)
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Client
+        Browser["Browser (Next.js App Router)"]
+    end
+
+    subgraph Server["Next.js Server (Vercel)"]
+        Actions["Server Actions"]
+        APIRoutes["API Routes (24 endpoints)"]
+        MCPHandler["MCP Handler (mcp-handler 1.1.0)"]
+    end
+
+    subgraph External
+        Clerk["Clerk (Auth)"]
+        Supabase["Supabase (Postgres + Storage)"]
+        Stripe["Stripe (Billing)"]
+        Inngest["Inngest (Background Jobs)"]
+        Upstash["Upstash Redis (Rate Limiting)"]
+    end
+
+    subgraph Platforms
+        LinkedIn["LinkedIn v2 API"]
+        TikTok["TikTok v2 API"]
+        Pinterest["Pinterest v5 API"]
+        Instagram["Instagram Graph API v23"]
+    end
+
+    subgraph AIClients["AI Clients"]
+        Claude["Claude Desktop"]
+        Cursor["Cursor"]
+    end
+
+    Browser --> Clerk
+    Browser --> Actions
+    AIClients --> MCPHandler
+    Clerk --> Server
+    Actions --> Supabase
+    Actions --> Inngest
+    MCPHandler --> Supabase
+    MCPHandler --> Inngest
+    APIRoutes --> Supabase
+    APIRoutes --> Stripe
+    APIRoutes --> Upstash
+    Inngest -->|"cron + events"| APIRoutes
+    Stripe -->|"webhooks"| APIRoutes
+    Clerk -->|"webhooks"| APIRoutes
+    Actions --> Platforms
+    Inngest --> Platforms
+```
+
+## MCP server
+
+Two transports: Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Both stateless (mcp-handler 1.1.0). Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
+
+```mermaid
+sequenceDiagram
+    participant Agent as AI Agent
+    participant MCP as /api/mcp/mcp
+    participant Auth as withMcpAuth
+    participant Tool as Tool Handler
+    participant DB as Supabase
+
+    Agent->>MCP: POST (Bearer token)
+    MCP->>Auth: resolveMcpPrincipal(token)
+    alt stp_mcp_* API key
+        Auth->>DB: lookup token_hash in api_keys
+    else Clerk OAuth
+        Auth->>Auth: verify JWT via Clerk
+    end
+    Auth-->>MCP: McpPrincipal (principalId, plan, scopes)
+    MCP->>Tool: execute tool(args, principal)
+    Tool->>DB: query/mutate
+    DB-->>Tool: result
+    Tool-->>MCP: tool response
+    MCP-->>Agent: JSON result
+```
+
+16 tools across 4 tiers. See [docs/MCP.md](./docs/MCP.md) for the full tool inventory, parameter schemas, and 3+ usage examples.
+
+| Tier | Tools |
+|------|-------|
+| Free | list_connections, list_scheduled_posts, list_content_history, list_billing_summary, request_account_reauth_link |
+| Starter+ | schedule_post, post_now, cancel_scheduled_posts, resume_scheduled_posts, reschedule_posts, delete_scheduled_posts, attach_media_from_url, request_upload_url |
+| Creator+ | bulk_schedule, get_account_analytics |
+| Pro | generate_post_draft |
+
+## Platforms
+
+| Platform | OAuth Scopes | Media Types | Post Model |
+|----------|-------------|-------------|------------|
+| LinkedIn | openid, profile, email, w_member_social | text, image, video | Direct upload to LinkedIn CDN |
+| TikTok | user.info.basic, user.info.profile, video.publish, video.upload, user.info.stats | image, video | Async pull (TikTok fetches media from URL, poll for completion) |
+| Pinterest | boards:read/write, pins:read/write, user_accounts:read, catalogs:read/write | image, video | Image: direct URL. Video: streaming multipart S3 upload, then poll |
+| Instagram | instagram_business_basic, instagram_business_content_publish | image, reel | Container model (create container, poll status, publish) |
+
+Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
+
+## Quick start
 
 ```bash
 git clone <repo-url>
 cd sharetopus
-bun install
-cp .env.example .env.local   # fill in all required values
-bun dev                       # http://localhost:3000
+npm install              # or bun install
+cp .env.example .env.local
+# Fill in all required values (see Configuration below)
+npm run dev              # http://localhost:3000
 ```
 
-Full setup instructions (Supabase tables, Stripe products, Clerk config, OAuth apps): [docs/getting-started/installation.md](./docs/getting-started/installation.md).
+Prerequisites: Node.js 20+, a Supabase project, a Clerk application, a Stripe account, Inngest account, Upstash Redis instance, and OAuth apps for each platform you want to test.
 
-## What It Does
+Full setup: [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
 
-- **Multi-platform posting.** Publish text, image, or video content to LinkedIn, TikTok, Pinterest, and Instagram in one action. Per-account content customization supported.
-- **Scheduling.** Pick a future date and time. QStash fires a cron job at the scheduled moment to publish the batch.
-- **Social account management.** Connect accounts via OAuth. Plan-based limits (5 / 15 / unlimited).
-- **Subscription billing.** Three Stripe-powered tiers (Starter $9/mo, Creator $18/mo, Pro $27/mo) with yearly discounts around 40%.
-- **Content history.** View every published post grouped by batch, with per-platform status and external links.
-- **MCP server.** 14 tools, 3 resources, and 3 prompts exposed via the Model Context Protocol. AI clients (Claude Desktop, Cursor) can manage posts on behalf of subscribers.
-- **Media handling.** Upload images (JPEG/PNG, 8 MB max) and videos (MP4/MOV, 250 MB max) to Supabase Storage with signed URLs.
+## Project structure
 
-```mermaid
-graph TD
-    Browser["Browser (Next.js App Router, React 19)"]
-    Clerk["Clerk Auth"]
-    Server["Next.js Server (Vercel)"]
-    Supabase["Supabase (PostgreSQL + Storage)"]
-    Social["Social Platform APIs"]
-    Stripe["Stripe (Billing)"]
-    Upstash["Upstash (Redis + QStash)"]
-
-    Browser --> Clerk
-    Browser --> Server
-    Clerk --> Server
-    Server --> Supabase
-    Server --> Social
-    Server --> Stripe
-    Server --> Upstash
-    Upstash -->|"cron trigger"| Server
-    Stripe -->|"webhooks"| Server
-    Clerk -->|"webhooks"| Server
-
-    Social --- LinkedIn["LinkedIn v2"]
-    Social --- TikTok["TikTok v2"]
-    Social --- Pinterest["Pinterest v5"]
-    Social --- Instagram["Instagram Graph API v23"]
 ```
+src/
+  actions/
+    api/                        # adminSupabase client (RLS bypass)
+    client/                     # Client-side helpers (signed URL upload)
+    server/
+      _internal/                # Auth-free actions for MCP layer
+      accounts/                 # Social account disconnect
+      connections/              # Account limit checks
+      contentHistoryActions/    # Content history CRUD
+      data/                     # Storage, pending posts, orphan sweep helpers
+      mcp/                      # API key CRUD
+      rateLimit/                # Upstash rate limiter
+      scheduleActions/          # Schedule CRUD (thin wrappers over _internal)
+      stripe/                   # Checkout, subscription check, portal
+  app/
+    (marketing)/                # Landing, privacy, ToS pages
+    (protected)/                # Authenticated UI (create, scheduled, posted, etc.)
+    api/
+      auth/                     # Clerk auth routes
+      inngest/                  # Inngest serve endpoint
+      mcp/[transport]/          # MCP Streamable HTTP + SSE
+      media/                    # HMAC-signed media proxy
+      posts/status/             # Inngest job status polling
+      social/{platform}/        # OAuth + posting routes per platform
+      storage/                  # Signed upload/view URL generation
+      webhooks/clerk/           # User lifecycle webhooks
+      webhooks/stripe/          # Subscription + invoice webhooks
+  components/
+    core/                       # Feature components (create, scheduled, posted, etc.)
+    marketing-page/             # Landing page sections
+    sidebar/                    # Navigation
+    ui/                         # shadcn/ui primitives
+  inngest/
+    functions/                  # 6 background functions (crons + event handlers)
+  lib/
+    api/
+      _shared/                  # Streaming multipart builder
+      instagram/                # Instagram Graph API integration
+      linkedin/                 # LinkedIn v2 integration
+      pinterest/                # Pinterest v5 integration
+      tiktok/                   # TikTok v2 integration
+    mcp/
+      auth.ts                   # resolveMcpPrincipal, API key + OAuth
+      audit.ts                  # logToolCall, IP hashing, arg redaction
+      context.ts                # extractPrincipal, extractSessionId
+      entitlement.ts            # Plan gating + monthly quotas
+      tools/                    # 16 MCP tool definitions
+      resources/                # 3 MCP resources
+      prompts/                  # 3 MCP prompts
+    types/                      # Database types, plan config
+```
+
+## Configuration
+
+Every environment variable referenced in the source code. See [.env.example](./.env.example) for placeholder values.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Yes | | Clerk publishable key |
+| `CLERK_SECRET_KEY` | Yes | | Clerk secret key |
+| `CLERK_WEBHOOK_SECRET` | Yes | | Clerk webhook signing secret (prod) |
+| `CLERK_WEBHOOK_SECRET_DEV` | Dev only | | Clerk webhook signing secret (local) |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | | Supabase anonymous key |
+| `SUPABASE_SERVICE_ROLE` | Yes | | Supabase service role key (bypasses RLS) |
+| `SUPABASE_BUCKET_NAME` | No | `scheduled-videos` | Storage bucket name |
+| `SUPABASE_CUSTOM_STORAGE_DOMAIN` | No | | Custom domain for TikTok direct media mode |
+| `STRIPE_SECRET_KEY` | Yes | | Stripe secret key |
+| `STRIPE_PUBLISHABLE_KEY` | Yes | | Stripe publishable key |
+| `STRIPE_WEBHOOK_SECRET` | Yes | | Stripe webhook signing secret (prod) |
+| `STRIPE_WEBHOOK_SECRET_DEV` | Dev only | | Stripe webhook signing secret (local) |
+| `UPSTASH_REDIS_REST_URL` | Yes | | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | Yes | | Upstash Redis auth token |
+| `INNGEST_EVENT_KEY` | Yes | | Inngest event key |
+| `INNGEST_SIGNING_KEY` | Yes | | Inngest signing key |
+| `LINKEDIN_CLIENT_ID` | Yes | | LinkedIn OAuth app client ID |
+| `LINKEDIN_CLIENT_SECRET` | Yes | | LinkedIn OAuth app client secret |
+| `LINKEDIN_REDIRECT_URL` | Yes | `http://localhost:3000/api/social/linkedin/connect` | LinkedIn OAuth callback |
+| `TIKTOK_CLIENT_KEY` | Yes | | TikTok OAuth client key (prod) |
+| `TIKTOK_CLIENT_SECRET` | Yes | | TikTok OAuth client secret (prod) |
+| `TIKTOK_CLIENT_KEY_DEV` | Dev only | | TikTok OAuth client key (dev sandbox) |
+| `TIKTOK_CLIENT_SECRET_DEV` | Dev only | | TikTok OAuth client secret (dev sandbox) |
+| `TIKTOK_REDIRECT_URL` | Yes | `http://localhost:3000/api/social/tiktok/connect` | TikTok OAuth callback |
+| `TIKTOK_MEDIA_SOURCE` | No | `proxy` | TikTok media delivery mode: `proxy` or `supabase_direct` |
+| `PINTEREST_CLIENT_ID` | Yes | | Pinterest OAuth app ID |
+| `PINTEREST_CLIENT_SECRET` | Yes | | Pinterest OAuth app secret |
+| `PINTEREST_REDIRECT_URL` | Yes | `http://localhost:3000/api/social/pinterest/connect` | Pinterest OAuth callback |
+| `INSTAGRAM_CLIENT_ID` | Yes | | Instagram (Meta) OAuth app ID |
+| `INSTAGRAM_CLIENT_SECRET` | Yes | | Instagram (Meta) OAuth app secret |
+| `INSTAGRAM_REDIRECT_URL` | Yes | `http://localhost:3000/api/social/instagram/connect` | Instagram OAuth callback |
+| `FRONTEND_URL` | Yes | `http://localhost:3000` | Base URL for webhooks and redirects |
+| `NEXT_PUBLIC_BASE_URL` | No | `https://sharetopus.com` | Public base URL shown in MCP docs |
+| `CRON_SECRET_KEY` | Yes | | Secret for cron job auth bypass |
+| `MEDIA_PROXY_HMAC_SECRET` | Yes | | HMAC key for signing /api/media URLs (64 hex chars) |
+| `MCP_IP_HASH_SALT` | Prod | | Salt for hashing client IPs in MCP audit log (32 bytes, base64) |
 
 ## Documentation
 
-| Section | Description |
-|---------|-------------|
-| [Getting Started](./docs/getting-started/README.md) | Install, configure, run |
-| [Architecture](./docs/architecture/README.md) | System design, components, data flow |
-| [Features](./docs/features/README.md) | Per-feature deep dives |
-| [Integrations](./docs/integrations/README.md) | External services and social platform APIs |
-| [Reference](./docs/reference/README.md) | API routes, env vars, database schema |
-| [Operations](./docs/operations/README.md) | Deployment, troubleshooting |
-| [Development](./docs/development/README.md) | Local setup, testing |
+| Document | Description |
+|----------|-------------|
+| [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System map, component interactions, data flows, state diagrams |
+| [docs/MCP.md](./docs/MCP.md) | MCP server: all 16 tools, auth, 3+ usage examples |
+| [docs/PLATFORMS.md](./docs/PLATFORMS.md) | Per-platform OAuth, posting flows, quirks |
+| [docs/SCHEDULING.md](./docs/SCHEDULING.md) | Schedule lifecycle, locks, retries, created_via |
+| [docs/DATABASE.md](./docs/DATABASE.md) | All 29 tables, relationships, RLS posture |
+| [docs/AUTH.md](./docs/AUTH.md) | Clerk, MCP API keys, principal model |
+| [docs/INNGEST.md](./docs/INNGEST.md) | 6 background functions, cron schedules, sweep jobs |
+| [docs/STORAGE.md](./docs/STORAGE.md) | Supabase Storage, signed URLs, orphan sweep |
+| [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
+| [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
+| [docs/ROADMAP.md](./docs/ROADMAP.md) | Deferred features, open issues |
 
-Additional docs:
-
-- [ARCHITECTURE.md](./ARCHITECTURE.md) (redirects to docs/architecture/)
-- [MCP Server](./src/lib/mcp/README.md) (subsystem README)
-- [Internal Actions](./src/actions/server/_internal/README.md) (subsystem README)
-
-## Tech Stack
+## Tech stack
 
 | Category | Technology | Version |
 |----------|-----------|---------|
 | Framework | Next.js (App Router, Turbopack) | 16.1.6 |
-| Language | TypeScript | 5.9 |
+| Language | TypeScript | 5.9.3 |
 | UI | React | 19.2.0 |
-| Styling | Tailwind CSS + shadcn/ui | 4.2 |
-| Auth | Clerk (`@clerk/nextjs`) | 7.3 |
-| Database | Supabase (`@supabase/supabase-js`) | 2.105 |
-| Payments | Stripe | 18.5 |
-| Rate Limiting | Upstash Redis + Ratelimit | 1.38 / 2.0 |
-| Scheduling | Upstash QStash | 2.10 |
-| MCP | `@modelcontextprotocol/sdk` + `mcp-handler` | 1.29 / 1.1 |
+| Styling | Tailwind CSS + shadcn/ui | 4.2.4 |
+| Auth | Clerk (`@clerk/nextjs`) | 7.3.2 |
+| Database + Storage | Supabase (`@supabase/supabase-js`) | 2.105.3 |
+| Payments | Stripe | 18.5.0 |
+| Background Jobs | Inngest | 4.3.0 |
+| Rate Limiting | Upstash Redis + `@upstash/ratelimit` | 1.38.0 / 2.0.8 |
+| MCP | `@modelcontextprotocol/sdk` + `mcp-handler` | 1.29.0 / 1.1.0 |
 | Deployment | Vercel | |
-| Package Manager | Bun | |
 
-Full dependency list with versions: [package.json](./package.json).
+Full dependency list: [package.json](./package.json).
 
-## Scripts
+## Known limitations
 
-| Script | Command | What it does |
-|--------|---------|-------------|
-| `dev` | `next dev --turbopack` | Development server with Turbopack |
-| `build` | `next build` | Production build |
-| `start` | `next start` | Production server |
-| `lint` | `next lint` | ESLint |
-
-## Known Limitations
-
-- **Facebook and Twitter/X** have stub files only (`src/lib/api/facebook/facebook.ts`, `src/lib/api/twitter/twitter.ts`). No implementation.
-- **Threads, YouTube, Bluesky** appear in type definitions and the landing page platform list, but have no backend support.
-- **Instagram connect button** is commented out in the connections page UI. The backend OAuth and posting routes work.
-- **i18n** is declared (`i18n-config.ts` with `fr`, `en`, `es`) and dependencies are installed, but no translation files exist. The entire UI is English.
-- **Studio/Analytics** page shows a "Coming Soon" placeholder. The `analytics_metrics` table exists but is not populated.
-- **TikTok default privacy** is `SELF_ONLY` (private). Users must change this in the create form for public posts.
+- Threads, YouTube, X/Twitter, and Facebook appear in platform type definitions but have no backend integration code.
+- Instagram connect button is commented out in the connections UI. The backend OAuth and posting routes work.
+- i18n is declared (`i18n-config.ts` with fr, en, es) and dependencies are installed, but no translation files exist. UI is English only.
+- Studio/Analytics page shows a "Coming Soon" placeholder. The `analytics_metrics` table exists but is not populated by any cron.
+- TikTok default privacy level is `SELF_ONLY` (private). Users must change this in the create form.
+- No `list_pinterest_boards` MCP tool yet. Pinterest board selection requires the web UI.
+- `@upstash/qstash` is listed in dependencies but is not imported anywhere in the source. Scheduling uses Inngest.
 
 ## Live
 
 **Production:** [https://sharetopus.com](https://sharetopus.com)
 
-**Demo video:** [https://x.com/Andy00L/status/2033366044941643828](https://x.com/Andy00L/status/2033366044941643828)
+**Demo:** [https://x.com/Andy00L/status/2033366044941643828](https://x.com/Andy00L/status/2033366044941643828)
 
 ## License
 
-No LICENSE file found in the repository.
+No LICENSE file in the repository.
 
 ---
 
-[Back to top](#sharetopus) | [Full documentation](./docs/README.md)
+[Back to top](#sharetopus) | [Full documentation](./docs/ARCHITECTURE.md)

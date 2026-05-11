@@ -1,14 +1,5 @@
 # Architecture
 
-This document redirects to the full architecture documentation.
-
-See [docs/architecture/README.md](./docs/architecture/README.md) for:
-
-- System overview and main architecture diagram
-- Component breakdown
-- Data flow sequence diagrams
-- State management
-- Lifecycle diagrams (startup, shutdown, background tasks)
-- Design decisions and tradeoffs
+Moved to [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 [Back to README](./README.md)
