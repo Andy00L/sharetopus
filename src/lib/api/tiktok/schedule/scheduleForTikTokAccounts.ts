@@ -1,11 +1,7 @@
 "use server";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-import {
-  scheduleForAccountGeneric,
-  type ScheduleResult,
-} from "@/lib/api/_shared/scheduleForAccountGeneric";
-
-export type { ScheduleResult };
+import type { ScheduleResult } from "@/lib/api/_shared/scheduleForAccountGeneric";
+import { scheduleForAccountGeneric } from "@/lib/api/_shared/scheduleForAccountGeneric";
 
 export async function scheduleForTikTokAccounts(config: {
   account: SocialAccount;

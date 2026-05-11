@@ -5,7 +5,7 @@ import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
 import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-import { ScheduleResult } from "../../pinterest/schedule/scheduleForPinterestAccounts";
+import type { ScheduleResult } from "@/lib/api/_shared/scheduleForAccountGeneric";
 
 /**
  * Directly posts content to Instagram accounts without scheduling
