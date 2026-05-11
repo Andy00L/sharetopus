@@ -1,12 +1,12 @@
 "use server";
-import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions/schedulePost";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import {
+  scheduleForAccountGeneric,
+  type ScheduleResult,
+} from "@/lib/api/_shared/scheduleForAccountGeneric";
 
-export interface ScheduleResult {
-  success: boolean;
-  count: number;
-  message?: string;
-}
+export type { ScheduleResult };
+
 export async function scheduleForPinterestAccount(config: {
   account: SocialAccount;
   mediaPath: string;
@@ -25,90 +25,35 @@ export async function scheduleForPinterestAccount(config: {
     link: string;
     isCustomized: boolean;
   };
-
   scheduledDate: string;
   scheduledTime: string;
-
   postType: "image" | "video" | "text";
   userId: string | null;
   batchId: string;
 }): Promise<ScheduleResult> {
-  const {
-    account,
-    mediaPath,
-    boards,
-    platformOptions,
-    scheduledDate,
-    scheduledTime,
-    accountContent,
-    postType,
-    userId,
-    batchId,
-  } = config;
+  const postOptions = config.platformOptions.pinterest
+    ? {
+        ...config.platformOptions.pinterest,
+        board: config.boards?.boardID,
+        link: config.accountContent.link,
+      }
+    : null;
 
-  let successCount = 0;
-  try {
-    console.log("[Schedule For Pinterest Account] Starting to schedule posts");
-
-    const postOptions = platformOptions.pinterest
-      ? {
-          ...platformOptions.pinterest,
-          board: boards?.boardID,
-          link: accountContent.link,
-        }
-      : null;
-
-    const scheduleData = {
-      socialAccountId: account.id,
-      platform: account.platform,
-      scheduledAt: new Date(`${scheduledDate}T${scheduledTime}`),
-      title: accountContent.title, // Use account-specific title
-      description: accountContent.description, // Use account-specific description
-      postType: postType,
-      mediaStoragePath: mediaPath,
-      coverTimestamp: config.coverTimestamp,
-      postOptions: postOptions,
-      batch_id: batchId,
-    };
-
-    if (!userId) {
-      return { success: false, count: 0, message: "Authentication required." };
-    }
-
-    console.log(
-      `[Schedule For Pinterest Account] Scheduling Pinterest post for: ${account.display_name}`
-    );
-    const result = await schedulePostInternal(scheduleData, userId, "web");
-
-    if (!result.success) {
-      return {
-        success: false,
-        count: successCount,
-        message: `Failed to schedule for ${account.display_name}`,
-      };
-    } else {
-      successCount++;
-      console.log(
-        `[Schedule For Pinterest Account] Successfully scheduled post for ${account.platform}:`,
-        result
-      );
-    }
-
-    return {
-      success: true,
-      count: successCount,
-      message: `${successCount} Pinterest posts scheduled successfully`,
-    };
-  } catch (e) {
-    console.error(
-      `[Schedule For Pinterest Account] Schedule error for account ${account.id}:`,
-      e
-    );
-
-    return {
-      success: false,
-      count: 0,
-      message: `Failed to schedule Pinterest posts for ${account.display_name}`,
-    };
-  }
+  return scheduleForAccountGeneric({
+    platform: "pinterest",
+    logPrefix: "[Schedule For Pinterest Account]",
+    socialAccountId: config.account.id,
+    accountDisplayName:
+      config.account.display_name ?? config.account.username ?? config.account.id,
+    scheduledDate: config.scheduledDate,
+    scheduledTime: config.scheduledTime,
+    title: config.accountContent.title,
+    description: config.accountContent.description,
+    postType: config.postType,
+    mediaStoragePath: config.mediaPath,
+    coverTimestamp: config.coverTimestamp,
+    userId: config.userId,
+    batchId: config.batchId,
+    postOptions,
+  });
 }
