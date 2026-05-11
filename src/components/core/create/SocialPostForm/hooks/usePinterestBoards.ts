@@ -25,6 +25,7 @@ export function usePinterestBoards(userId: string | null) {
    * Idempotent: skips if boards for this account are already loaded.
    */
   async function loadBoardsForAccount(account: SocialAccount) {
+    if (!userId) return;
     if (!account.access_token) return;
     if (checkedAccountIds.includes(account.id)) return;
     if (boards.some((b) => b.accountId === account.id)) return;

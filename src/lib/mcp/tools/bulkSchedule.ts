@@ -5,7 +5,7 @@ import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 import type { McpPrincipal } from "../auth";
-import type { TablesInsert } from "@/lib/types/database.types";
+import type { TablesInsert, CreatedVia } from "@/lib/types/database.types";
 
 // ---------------------------------------------------------------------------
 // Constants & schema
@@ -298,7 +298,8 @@ async function verifyAccountOwnership(
 function buildScheduledPostRows(
   posts: PostInput[],
   principalId: string,
-  batchId: string
+  batchId: string,
+  createdVia: CreatedVia
 ): ScheduledPostInsertRow[] {
   return posts.map((post, i) => ({
     principal_id: principalId,
@@ -313,7 +314,7 @@ function buildScheduledPostRows(
     media_storage_path: post.media_storage_path,
     cover_image_timestamp: null,
     batch_id: batchId,
-    created_via: "mcp" as const,
+    created_via: createdVia,
     idempotency_key: `${batchId}:${i}`,
   }));
 }
@@ -612,7 +613,8 @@ export function registerBulkSchedule(server: McpServer): void {
       const rows = buildScheduledPostRows(
         args.posts,
         ctx.principal.principalId,
-        batchId
+        batchId,
+        "mcp"
       );
       const insertOutcome = await insertScheduledPostsIdempotent(rows);
 

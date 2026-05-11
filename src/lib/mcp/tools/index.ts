@@ -16,9 +16,10 @@ import { registerAttachMediaFromUrl } from "./attachMediaFromUrl";
 import { registerRequestUploadUrl } from "./requestUploadUrl";
 import { registerRequestAccountReauthLink } from "./requestAccountReauthLink";
 import { registerListBillingSummary } from "./listBillingSummary";
+import { registerListPinterestBoards } from "./listPinterestBoards";
 
 /**
- * Registers all 16 MCP tool handlers on the server instance.
+ * Registers all 17 MCP tool handlers on the server instance.
  *
  * Each tool file exports a register function that calls server.tool()
  * with the tool name, schema, and handler callback.
@@ -27,6 +28,7 @@ import { registerListBillingSummary } from "./listBillingSummary";
  */
 export function registerTools(server: McpServer): void {
   registerListConnections(server);
+  registerListPinterestBoards(server);
   registerListScheduledPosts(server);
   registerListContentHistory(server);
   registerSchedulePost(server);

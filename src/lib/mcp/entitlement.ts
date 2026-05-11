@@ -34,6 +34,7 @@ const ACTION_PLAN_GATE: Record<string, PlanTier> = {
   list_content_history: "free",
   list_billing_summary: "free",
   request_account_reauth_link: "free",
+  list_pinterest_boards: "free",
 
   // Write tools (starter+)
   attach_media_from_url: "starter",
