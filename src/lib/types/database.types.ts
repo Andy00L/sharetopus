@@ -604,6 +604,7 @@ export type Database = {
           media_storage_path: string;
           status: "processing" | "completed" | "failed";
           failure_reason: string | null;
+          idempotency_key: string | null;
           created_at: string;
           finished_at: string | null;
         };
@@ -616,6 +617,7 @@ export type Database = {
           media_storage_path: string;
           status?: "processing" | "completed" | "failed";
           failure_reason?: string | null;
+          idempotency_key?: string | null;
           created_at?: string;
           finished_at?: string | null;
         };
@@ -628,6 +630,7 @@ export type Database = {
           media_storage_path?: string;
           status?: "processing" | "completed" | "failed";
           failure_reason?: string | null;
+          idempotency_key?: string | null;
           created_at?: string;
           finished_at?: string | null;
         };

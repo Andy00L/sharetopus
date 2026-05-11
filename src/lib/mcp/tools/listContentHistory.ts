@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getContentHistoryInternal } from "@/actions/server/_internal/contentHistoryActions/getContentHistory";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 
 /**
  * Lists content that has already been posted.
@@ -46,6 +46,8 @@ export function registerListContentHistory(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "list_content_history");
@@ -59,6 +61,8 @@ export function registerListContentHistory(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -77,6 +81,8 @@ export function registerListContentHistory(server: McpServer): void {
         latencyMs: Date.now() - start,
         ipHash,
         userAgent,
+        clientName,
+        clientVersion,
       });
 
       if (!result.success) {

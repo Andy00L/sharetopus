@@ -76,13 +76,58 @@ export async function schedulePostInternal(
       cover_image_timestamp: data.coverTimestamp,
       batch_id: data.batch_id,
       created_via: createdVia,
+      idempotency_key: data.idempotency_key ?? null,
     };
 
-    const { data: newSchedule, error } = await adminSupabase
+    // If no idempotency_key, use the existing insert path (web callers).
+    if (!data.idempotency_key) {
+      const { data: newSchedule, error } = await adminSupabase
+        .from("scheduled_posts")
+        .insert(insertData)
+        .select("id")
+        .single();
+
+      if (error) {
+        return {
+          success: false,
+          message: `Failed to schedule post: ${error.message}`,
+        };
+      }
+
+      if (!newSchedule?.id) {
+        return {
+          success: false,
+          message: "Insert succeeded but no ID returned.",
+        };
+      }
+
+      const formattedDate = scheduledDate.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        hour12: true,
+      });
+      const platformName =
+        data.platform.charAt(0).toUpperCase() + data.platform.slice(1);
+
+      return {
+        success: true,
+        message: `${platformName} post scheduled for ${formattedDate}.`,
+        scheduleId: newSchedule.id,
+      };
+    }
+
+    // With idempotency_key: upsert with ON CONFLICT DO NOTHING on the
+    // partial unique index (principal_id, idempotency_key).
+    const { data: upserted, error } = await adminSupabase
       .from("scheduled_posts")
-      .insert(insertData)
-      .select("id")
-      .single();
+      .upsert(insertData, {
+        onConflict: "principal_id,idempotency_key",
+        ignoreDuplicates: true,
+      })
+      .select("id, idempotency_key, status");
 
     if (error) {
       return {
@@ -91,13 +136,31 @@ export async function schedulePostInternal(
       };
     }
 
-    if (!newSchedule?.id) {
+    // Insert returned nothing because the row already existed (idempotent retry).
+    if (!upserted || upserted.length === 0) {
+      const { data: existing, error: fetchErr } = await adminSupabase
+        .from("scheduled_posts")
+        .select("id")
+        .eq("principal_id", principalId)
+        .eq("idempotency_key", data.idempotency_key)
+        .maybeSingle();
+
+      if (fetchErr || !existing) {
+        return {
+          success: false,
+          message: `Idempotent retry: existing post lookup failed${fetchErr ? `: ${fetchErr.message}` : ""}.`,
+        };
+      }
+
       return {
-        success: false,
-        message: "Insert succeeded but no ID returned.",
+        success: true,
+        message: "Already scheduled (idempotent retry).",
+        scheduleId: existing.id,
       };
     }
 
+    // New insert succeeded.
+    const newSchedule = upserted[0];
     const formattedDate = scheduledDate.toLocaleString("en-US", {
       month: "short",
       day: "numeric",

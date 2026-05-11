@@ -28,4 +28,5 @@ export interface SchedulePostData {
 
     // Add other platform options here as needed
   } | null;
+  idempotency_key?: string;
 }

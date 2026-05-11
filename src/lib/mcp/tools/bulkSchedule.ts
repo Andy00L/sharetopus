@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 import type { McpPrincipal } from "../auth";
 import type { TablesInsert, CreatedVia } from "@/lib/types/database.types";
 
@@ -87,6 +87,8 @@ type BulkScheduleContext = {
   sessionId: string | null;
   ipHash: string | null;
   userAgent: string | null;
+  clientName: string | null;
+  clientVersion: string | null;
   startedAt: number;
 };
 
@@ -108,6 +110,8 @@ async function buildBulkScheduleContext(
     sessionId: extractSessionId(extra),
     ipHash: await extractIpHash(),
     userAgent: await extractUserAgent(),
+    clientName: extractClientName(extra),
+    clientVersion: extractClientVersion(extra),
     startedAt: Date.now(),
   };
 }
@@ -537,6 +541,8 @@ async function recordBulkScheduleAudit(
       latencyMs: Date.now() - ctx.startedAt,
       ipHash: ctx.ipHash,
       userAgent: ctx.userAgent,
+      clientName: ctx.clientName,
+      clientVersion: ctx.clientVersion,
     });
   } catch (err) {
     console.error("[recordBulkScheduleAudit] unexpected:", err);
@@ -559,6 +565,8 @@ async function recordPreflightDeny(
       latencyMs: Date.now() - ctx.startedAt,
       ipHash: ctx.ipHash,
       userAgent: ctx.userAgent,
+      clientName: ctx.clientName,
+      clientVersion: ctx.clientVersion,
     });
   } catch (err) {
     console.error("[recordPreflightDeny] unexpected:", err);

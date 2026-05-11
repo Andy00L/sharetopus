@@ -56,13 +56,46 @@ const handler = createMcpHandler(
 
 const authHandler = withMcpAuth(
   handler,
-  async (_req: Request, bearerToken?: string) => {
+  async (req: Request, bearerToken?: string) => {
     if (!bearerToken) return undefined;
 
     // resolveMcpPrincipal handles both API key and Clerk OAuth paths,
     // including the subscription gate. See src/lib/mcp/auth.ts.
     const principal = await resolveMcpPrincipal(bearerToken);
     if (!principal) return undefined;
+
+    // Best-effort clientInfo extraction from MCP initialize requests.
+    // Only the initialize JSON-RPC body carries params.clientInfo; tool-call
+    // requests do not. So mcp_sessions gets client_name/client_version
+    // populated on the first row only.
+    let clientName: string | null = null;
+    let clientVersion: string | null = null;
+    try {
+      if (req.method === "POST") {
+        const clone = req.clone();
+        const text = await clone.text();
+        if (
+          text.includes('"method":"initialize"') ||
+          text.includes('"method": "initialize"')
+        ) {
+          const parsed = JSON.parse(text);
+          if (parsed?.method === "initialize") {
+            const ci = parsed?.params?.clientInfo;
+            if (ci && typeof ci === "object") {
+              if (typeof ci.name === "string")
+                clientName = ci.name.slice(0, 200);
+              if (typeof ci.version === "string")
+                clientVersion = ci.version.slice(0, 50);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(
+        "[mcp/route] clientInfo extraction failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
 
     // Synthetic per-request session ID. mcp-handler v1.1.0 forces stateless
     // Streamable HTTP (sessionIdGenerator is typed undefined), so the SDK
@@ -80,6 +113,8 @@ const authHandler = withMcpAuth(
       extra: {
         principal: principal satisfies McpPrincipal,
         requestSessionId,
+        clientName,
+        clientVersion,
       },
     };
   },

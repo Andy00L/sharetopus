@@ -10,6 +10,8 @@ import {
   extractSessionId,
   extractIpHash,
   extractUserAgent,
+  extractClientName,
+  extractClientVersion,
 } from "@/lib/mcp/context";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
@@ -63,6 +65,8 @@ export function registerListPinterestBoards(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       // 1. Entitlement check
@@ -77,6 +81,8 @@ export function registerListPinterestBoards(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -112,6 +118,8 @@ export function registerListPinterestBoards(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -131,6 +139,8 @@ export function registerListPinterestBoards(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -157,6 +167,8 @@ export function registerListPinterestBoards(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -200,6 +212,8 @@ export function registerListPinterestBoards(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
 
         const message = result.expired
@@ -237,6 +251,8 @@ export function registerListPinterestBoards(server: McpServer): void {
         latencyMs: Date.now() - start,
         ipHash,
         userAgent,
+        clientName,
+        clientVersion,
       });
 
       return {

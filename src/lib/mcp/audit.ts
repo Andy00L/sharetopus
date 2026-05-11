@@ -29,6 +29,8 @@ interface AuditEntry {
   latencyMs?: number;
   ipHash?: string | null;
   userAgent?: string | null;
+  clientName?: string | null;
+  clientVersion?: string | null;
 }
 
 /**
@@ -63,8 +65,8 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
                 ? entry.principal.oauthClientId
                 : null,
             ip_hash: entry.ipHash ?? null,
-            client_name: null,
-            client_version: null,
+            client_name: entry.clientName ?? null,
+            client_version: entry.clientVersion ?? null,
           })
         : Promise.resolve({ success: true as const });
 

@@ -8,6 +8,7 @@ export type PendingDirectPostInput = {
   social_account_id: string;
   platform: "linkedin" | "pinterest" | "tiktok" | "instagram";
   media_storage_path: string;
+  idempotency_key?: string | null;
 };
 
 export type InsertPendingDirectPostsResult =
@@ -37,6 +38,7 @@ export async function insertPendingDirectPosts(
     platform: r.platform,
     media_storage_path: r.media_storage_path,
     status: "processing" as const,
+    idempotency_key: r.idempotency_key ?? null,
   }));
 
   const { error } = await adminSupabase
@@ -44,10 +46,13 @@ export async function insertPendingDirectPosts(
     .insert(insertRows);
 
   if (error) {
-    // 23505 = unique_violation (replay / idempotent retry)
+    // 23505 = unique_violation on either event_id PK (replay) or
+    // (principal_id, idempotency_key) partial unique index (retry).
+    // Both mean "already dispatched, do not re-dispatch."
     if (error.code === "23505") {
       console.warn(
-        "[insertPendingDirectPosts] One or more event_ids already exist (replay?), proceeding"
+        "[insertPendingDirectPosts] Unique violation (event_id PK or idempotency_key), treating as idempotent:",
+        error.message
       );
       return {
         success: true,

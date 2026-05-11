@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { fetchSocialAccountsInternal } from "@/actions/server/_internal/data/fetchSocialAccounts";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 
 /**
  * Lists the user's connected social accounts.
@@ -40,6 +40,8 @@ export function registerListConnections(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "list_connections");
@@ -53,6 +55,8 @@ export function registerListConnections(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -74,6 +78,8 @@ export function registerListConnections(server: McpServer): void {
         latencyMs: Date.now() - start,
         ipHash,
         userAgent,
+        clientName,
+        clientVersion,
       });
 
       if (!result.success) {

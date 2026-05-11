@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 const ALLOWED_CONTENT_TYPES = [
@@ -55,6 +55,8 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "attach_media_from_url");
@@ -68,6 +70,8 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -178,6 +182,8 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
 
         return {
@@ -209,6 +215,8 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [

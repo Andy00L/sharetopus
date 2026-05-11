@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions/schedulePost";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 
 /**
  * Schedules a single post for publishing.
@@ -67,6 +67,14 @@ export function registerSchedulePost(server: McpServer): void {
           .describe(
             "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
           ),
+        idempotency_key: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            "Optional client-supplied key for safe retries. Same key + same principal returns the existing post instead of inserting a duplicate. Recommended for agent retries on network errors."
+          ),
       },
       annotations: {
         title: "Schedule Post",
@@ -81,6 +89,8 @@ export function registerSchedulePost(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       const ent = await entitlementFor(principal, "schedule_post");
@@ -94,6 +104,8 @@ export function registerSchedulePost(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
@@ -112,6 +124,8 @@ export function registerSchedulePost(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -140,6 +154,8 @@ export function registerSchedulePost(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -172,6 +188,7 @@ export function registerSchedulePost(server: McpServer): void {
           mediaStoragePath: args.media_storage_path,
           batch_id: args.batch_id,
           postOptions,
+          idempotency_key: args.idempotency_key,
         },
         principal.principalId,
         "mcp"

@@ -37,6 +37,7 @@ export type PostNowEventData = {
   tiktok_media_url: string | null;
   dispatch_id?: string;
   created_via?: "web" | "mcp" | "x402" | "api";
+  idempotency_key?: string;
 };
 
 // ---------- fetch-account ----------

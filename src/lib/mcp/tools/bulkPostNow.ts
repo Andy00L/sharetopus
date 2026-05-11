@@ -17,6 +17,8 @@ import {
   extractSessionId,
   extractIpHash,
   extractUserAgent,
+  extractClientName,
+  extractClientVersion,
 } from "@/lib/mcp/context";
 import type { McpPrincipal } from "../auth";
 import { randomUUID } from "crypto";
@@ -60,6 +62,8 @@ type Ctx = {
   sessionId: string | null;
   ipHash: string | null;
   userAgent: string | null;
+  clientName: string | null;
+  clientVersion: string | null;
   startedAt: number;
 };
 
@@ -403,9 +407,10 @@ function buildEventPayloads(
   batchId: string,
   signedByPath: Map<string, string>,
   tiktokByPath: Map<string, string>,
-  principalId: string
+  principalId: string,
+  agentSuppliedBatchId: boolean
 ): { name: "post.now"; data: PostNowEventData }[] {
-  return posts.map((post) => {
+  return posts.map((post, index) => {
     const fileName = post.media_storage_path
       ? post.media_storage_path.split("/").pop() ?? ""
       : "";
@@ -470,6 +475,9 @@ function buildEventPayloads(
       tiktok_media_url: tiktokMediaUrl,
       dispatch_id: randomUUID(),
       created_via: "mcp",
+      idempotency_key: agentSuppliedBatchId
+        ? `${batchId}:${index}`
+        : undefined,
     };
 
     return { name: "post.now" as const, data };
@@ -513,6 +521,8 @@ async function recordPreflightDeny(
       latencyMs: Date.now() - ctx.startedAt,
       ipHash: ctx.ipHash,
       userAgent: ctx.userAgent,
+      clientName: ctx.clientName,
+      clientVersion: ctx.clientVersion,
     });
   } catch (err) {
     console.error("[recordPreflightDeny] unexpected:", err);
@@ -534,6 +544,8 @@ async function recordSuccess(
       latencyMs: Date.now() - ctx.startedAt,
       ipHash: ctx.ipHash,
       userAgent: ctx.userAgent,
+      clientName: ctx.clientName,
+      clientVersion: ctx.clientVersion,
     });
   } catch (err) {
     console.error("[recordSuccess] unexpected:", err);
@@ -551,7 +563,8 @@ function buildDenyResponse(message: string): McpToolResponse {
 function buildSuccessResponse(
   batchId: string,
   posts: PostInput[],
-  eventIds: string[]
+  eventIds: string[],
+  freshCount: number
 ): McpToolResponse {
   const results = posts.map((post, i) => ({
     index: i,
@@ -559,6 +572,8 @@ function buildSuccessResponse(
     social_account_id: post.social_account_id,
     event_id: eventIds[i] ?? null,
   }));
+
+  const isIdempotentRetry = freshCount < posts.length;
 
   return {
     content: [
@@ -568,11 +583,13 @@ function buildSuccessResponse(
           {
             success: true,
             batch_id: batchId,
-            dispatched: results.length,
+            dispatched: freshCount,
+            total: posts.length,
             results,
-            message:
-              "All posts dispatched. Check list_content_history in 30-60s. " +
-              "TikTok posts may take up to 2 minutes (async pull).",
+            message: isIdempotentRetry
+              ? `${freshCount} new post(s) dispatched, ${posts.length - freshCount} already existed (idempotent retry). Check list_content_history in 30-60s.`
+              : "All posts dispatched. Check list_content_history in 30-60s. " +
+                "TikTok posts may take up to 2 minutes (async pull).",
           },
           null,
           2
@@ -628,8 +645,12 @@ export function registerBulkPostNow(server: McpServer): void {
           ),
         batch_id: z
           .string()
+          .min(1)
+          .max(200)
           .optional()
-          .describe("Optional batch ID to group all events in this call"),
+          .describe(
+            "Optional batch ID. When supplied, each post gets idempotency_key = `${batch_id}:${index}`, making retries safe. Without it, retries may create duplicates."
+          ),
       },
       annotations: {
         title: "Bulk Post Now",
@@ -645,6 +666,8 @@ export function registerBulkPostNow(server: McpServer): void {
         sessionId: extractSessionId(extra),
         ipHash: await extractIpHash(),
         userAgent: await extractUserAgent(),
+        clientName: extractClientName(extra),
+        clientVersion: extractClientVersion(extra),
         startedAt: Date.now(),
       };
 
@@ -701,13 +724,15 @@ export function registerBulkPostNow(server: McpServer): void {
       }
 
       // 7. Build event payloads (pure)
+      const agentSuppliedBatchId = Boolean(args.batch_id);
       const batchId = args.batch_id ?? `mcp_${randomUUID()}`;
       const events = buildEventPayloads(
         args.posts,
         batchId,
         urls.signedByPath,
         urls.tiktokByPath,
-        ctx.principal.principalId
+        ctx.principal.principalId,
+        agentSuppliedBatchId
       );
 
       // 8. Insert locks + dispatch
@@ -723,7 +748,12 @@ export function registerBulkPostNow(server: McpServer): void {
 
       // 9. Audit success and return
       await recordSuccess(ctx, batchId, args.posts.length);
-      return buildSuccessResponse(batchId, args.posts, dispatch.eventIds);
+      return buildSuccessResponse(
+        batchId,
+        args.posts,
+        dispatch.eventIds,
+        dispatch.freshCount
+      );
     }
   );
 }

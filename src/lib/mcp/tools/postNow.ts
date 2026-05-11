@@ -11,7 +11,7 @@ import type { PlatformOptions } from "@/lib/types/dbTypes";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 import { randomUUID } from "crypto";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 
@@ -80,6 +80,14 @@ export function registerPostNow(server: McpServer): void {
           .describe(
             "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
           ),
+        idempotency_key: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe(
+            "Optional client-supplied key for safe retries. Same key + same principal returns the existing event_id instead of dispatching a duplicate. Recommended for agent retries on network errors."
+          ),
       },
       annotations: {
         title: "Post Now",
@@ -94,6 +102,8 @@ export function registerPostNow(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       // 1. Entitlement check
@@ -111,6 +121,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [{ type: "text" as const, text: `Denied: ${ent.detail}` }],
@@ -132,6 +144,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -158,6 +172,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -181,6 +197,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -204,6 +222,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -239,6 +259,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -261,6 +283,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -297,6 +321,8 @@ export function registerPostNow(server: McpServer): void {
               latencyMs: Date.now() - start,
               ipHash,
               userAgent,
+              clientName,
+              clientVersion,
             });
             return {
               content: [
@@ -325,6 +351,8 @@ export function registerPostNow(server: McpServer): void {
               latencyMs: Date.now() - start,
               ipHash,
               userAgent,
+              clientName,
+              clientVersion,
             });
             return {
               content: [
@@ -401,6 +429,7 @@ export function registerPostNow(server: McpServer): void {
         tiktok_media_url: tiktokMediaUrl,
         dispatch_id: dispatchId,
         created_via: "mcp",
+        idempotency_key: args.idempotency_key,
       };
 
       // 8. Insert lock row + dispatch via shared helper
@@ -422,6 +451,8 @@ export function registerPostNow(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         const userText =
           dispatch.phase === "lock_insert"
@@ -444,7 +475,11 @@ export function registerPostNow(server: McpServer): void {
         latencyMs: Date.now() - start,
         ipHash,
         userAgent,
+        clientName,
+        clientVersion,
       });
+
+      const isIdempotentRetry = dispatch.freshCount === 0;
 
       return {
         content: [
@@ -458,9 +493,10 @@ export function registerPostNow(server: McpServer): void {
                 platform: args.platform,
                 account_display_name:
                   account.display_name ?? account.username ?? account.id,
-                message:
-                  "Post dispatched. Check list_content_history in 30-60s to confirm. " +
-                  "TikTok posts may take up to 2 minutes (async pull).",
+                message: isIdempotentRetry
+                  ? "Idempotent retry: returning existing event_id. No new post dispatched."
+                  : "Post dispatched. Check list_content_history in 30-60s to confirm. " +
+                    "TikTok posts may take up to 2 minutes (async pull).",
               },
               null,
               2

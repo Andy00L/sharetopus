@@ -66,3 +66,27 @@ export async function extractUserAgent(): Promise<string | null> {
   if (!ua) return null;
   return ua.length > 512 ? ua.slice(0, 512) : ua;
 }
+
+/**
+ * Extracts client_name from the extra context. Only present on initialize
+ * requests; tool-call requests will return null (MCP protocol limitation).
+ */
+export function extractClientName(extra: Record<string, unknown>): string | null {
+  const authInfo = extra.authInfo as
+    | { extra?: { clientName?: unknown } }
+    | undefined;
+  const value = authInfo?.extra?.clientName;
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * Extracts client_version from the extra context. Only present on initialize
+ * requests; tool-call requests will return null (MCP protocol limitation).
+ */
+export function extractClientVersion(extra: Record<string, unknown>): string | null {
+  const authInfo = extra.authInfo as
+    | { extra?: { clientVersion?: unknown } }
+    | undefined;
+  const value = authInfo?.extra?.clientVersion;
+  return typeof value === "string" ? value : null;
+}

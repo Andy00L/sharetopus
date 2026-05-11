@@ -4,7 +4,7 @@ import { generateServerSignedUploadUrl } from "@/actions/server/data/generateSer
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 
 /**
  * Mints a Supabase signed upload URL so agents can upload media
@@ -60,6 +60,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
       const sessionId = extractSessionId(extra);
       const ipHash = await extractIpHash();
       const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
       const start = Date.now();
 
       // 1. Entitlement check
@@ -77,6 +79,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -103,6 +107,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -138,6 +144,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
           latencyMs: Date.now() - start,
           ipHash,
           userAgent,
+          clientName,
+          clientVersion,
         });
         return {
           content: [
@@ -157,6 +165,8 @@ export function registerRequestUploadUrl(server: McpServer): void {
         latencyMs: Date.now() - start,
         ipHash,
         userAgent,
+        clientName,
+        clientVersion,
       });
 
       return {
