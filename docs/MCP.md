@@ -80,24 +80,26 @@ The server publishes an RFC 9728 OAuth Protected Resource metadata endpoint at `
 
 ## Tool inventory
 
-16 tools across 4 tiers. Quota enforcement is atomic (Postgres RPC `atomic_increment_quota`).
+18 tools across 4 tiers. Quota enforcement is atomic (Postgres RPC `atomic_increment_quota`). Write tools that create posts support idempotent retries via `idempotency_key` (see [Idempotency](#idempotency) below). All tools carry [Connectors Directory annotations](#tool-annotations).
 
 | Tool | Type | Tier | Monthly Quota | Rate Limit | Description |
 |------|------|------|---------------|------------|-------------|
 | `list_connections` | Read | Free | - | - | List connected social accounts with platform and status |
+| `list_pinterest_boards` | Read | Free | - | - | List Pinterest boards for an account (paginated) |
 | `list_scheduled_posts` | Read | Free | - | - | List scheduled posts, optional filter by platform/status |
 | `list_content_history` | Read | Free | - | - | View posted content history, optional platform filter |
 | `list_billing_summary` | Read | Free | - | - | View subscription plan, status, and monthly usage counts |
 | `request_account_reauth_link` | Read | Free | - | - | Get re-auth URL for an account with expired token |
-| `schedule_post` | Write | Starter+ | 100 (starter), 500 (creator), unlimited (pro) | - | Schedule a post for future publishing |
-| `post_now` | Write | Starter+ | 100 (starter), 500 (creator), unlimited (pro) | - | Publish a post immediately via Inngest event |
+| `schedule_post` | Write | Starter+ | 100 / 500 / unlimited | - | Schedule a post for future publishing |
+| `post_now` | Write | Starter+ | 100 / 500 / unlimited | - | Publish a post immediately via Inngest event |
 | `cancel_scheduled_posts` | Write | Starter+ | - | - | Cancel 1-50 scheduled posts |
 | `resume_scheduled_posts` | Write | Starter+ | - | - | Resume cancelled posts (past dates rescheduled +1h) |
 | `reschedule_posts` | Write | Starter+ | - | - | Change scheduled time for 1-50 posts |
 | `delete_scheduled_posts` | Write | Starter+ | - | - | Permanently delete 1-50 posts + cleanup orphan media |
-| `attach_media_from_url` | Write | Starter+ | - | - | Download from URL, upload to storage (100 MB max) |
-| `request_upload_url` | Write | Starter+ | 100 (starter), 500 (creator), unlimited (pro) | 20/60s | Get signed upload URL for direct media upload |
-| `bulk_schedule` | Write | Creator+ | 200 (creator), unlimited (pro) | - | Schedule up to 30 posts at once with idempotency |
+| `attach_media_from_url` | Write | Starter+ | 100 / 500 / unlimited | 10/60s | Download from URL, upload to storage. SSRF-guarded. |
+| `request_upload_url` | Write | Starter+ | 100 / 500 / unlimited | 20/60s | Get signed upload URL for direct media upload |
+| `bulk_schedule` | Write | Creator+ | 200 / unlimited | - | Schedule up to 30 posts at once with idempotency |
+| `bulk_post_now` | Write | Creator+ | 500 / unlimited | - | Publish up to 30 posts immediately with idempotency |
 | `get_account_analytics` | Read | Creator+ | - | - | Fetch metrics (views, likes, comments, shares) |
 | `generate_post_draft` | Read | Pro | 100/mo | - | Generate draft via client LLM (zero API cost) |
 
@@ -179,25 +181,35 @@ Schedule a post for future publishing. For media posts, call `attach_media_from_
 
 **Parameters:**
 ```
-social_account_id   string (UUID)  required
+social_account_id    string (UUID)  required
   ID of the social account to post to
-platform            "linkedin" | "tiktok" | "pinterest" | "instagram"  required
+platform             "linkedin" | "tiktok" | "pinterest" | "instagram"  required
   Target platform
-scheduled_at        string (ISO 8601)  required
+scheduled_at         string (ISO 8601)  required
   When to publish (must be in the future)
-post_type           "text" | "image" | "video"  required
+post_type            "text" | "image" | "video"  required
   Type of post
-title               string  optional
+title                string  optional
   Post title (used by some platforms)
-description         string | null  required
+description          string | null  required
   Post body text / caption
-media_storage_path  string  optional  default: ""
+media_storage_path   string  optional  default: ""
   Supabase Storage path. Required for image/video posts.
-batch_id            string  optional  default: ""
+batch_id             string  optional  default: ""
   Optional batch ID to group related posts
+pinterest_board_id   string  optional
+  Required for Pinterest posts. Get via list_pinterest_boards.
+pinterest_board_name string  optional
+  Display name for content_history records
+pinterest_link       string (URL, max 2048)  optional
+  Destination URL for Pinterest pin
+idempotency_key      string (1-200 chars)  optional
+  Client-supplied key for safe retries. Same key + same principal
+  returns the existing scheduleId instead of inserting a duplicate.
+  DB-enforced via UNIQUE constraint on (principal_id, idempotency_key).
 ```
 
-**Returns:** `{ success, message, scheduleId }`. The post enters `scheduled` status and will be dispatched by the `scheduled-posts-tick` cron when its time arrives.
+**Returns:** `{ success, message, scheduleId }`. The post enters `scheduled` status and will be dispatched by the `scheduled-posts-tick` cron when its time arrives. If the idempotency_key already exists for this principal, returns the existing scheduleId with a message indicating it was already created.
 
 **Failure modes:** quota exceeded (monthly cap), account not found, account not owned by principal, invalid scheduled_at, missing media for image/video post.
 
@@ -221,9 +233,16 @@ pinterest_board_id   string  optional
   Required for Pinterest posts
 pinterest_board_name string  optional
   Display name for content_history
+pinterest_link       string (URL, max 2048)  optional
+  Destination URL for Pinterest pin
+idempotency_key      string (1-200 chars)  optional
+  Client-supplied key for safe retries. Same key + same principal
+  returns the existing event_id instead of dispatching a duplicate.
+  DB-enforced via UNIQUE constraint on (principal_id, idempotency_key)
+  on the pending_direct_posts table.
 ```
 
-**Returns:** `{ success, event_id, batch_id, message }`. Use the event_id to poll status.
+**Returns:** `{ success, event_id, batch_id, message }`. Use the event_id to poll status. If the idempotency_key already exists, returns the existing event_id with a message indicating it was already dispatched.
 
 **Failure modes:** same as schedule_post, plus caption validation per platform.
 
@@ -285,7 +304,7 @@ post_ids  string[] (UUIDs, 1-50 items)  required
 
 ### attach_media_from_url
 
-Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with `schedule_post` or `post_now`.
+Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with `schedule_post` or `post_now`. The download is SSRF-guarded via `safeUserFetch` (see [docs/SECURITY.md](./SECURITY.md#ssrf-guard)).
 
 **Parameters:**
 ```
@@ -295,9 +314,15 @@ filename  string  optional
   Override filename (defaults to URL basename)
 ```
 
-**Size limit:** 100 MB.
+**Size limits:** 8 MB (image), 250 MB (video). Enforced by stream-based byte counter (Content-Length header is not trusted).
+
+**Rate limit:** 10 requests per 60 seconds per principal.
+
+**Monthly quota:** 100 (starter), 500 (creator), unlimited (pro).
 
 **Allowed MIME types:** image/jpeg, image/png, image/gif, image/webp, video/mp4, video/quicktime, video/webm.
+
+**SSRF protections:** Blocks loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved ranges. Rejects non-http(s) schemes and 3xx redirects. DNS resolution validated before connect.
 
 **Returns:** `{ success, storage_path, content_type, size_bytes }`.
 
@@ -346,6 +371,54 @@ batch_id  string  optional
 **Preflight checks:** entitlement verification, platform daily quota enforcement (next 24h), social account ownership (single bulk query).
 
 **Returns:** `{ batch_id, total, succeeded, failed, results: [...] }`.
+
+---
+
+### list_pinterest_boards
+
+List Pinterest boards for a connected account. Use this to get the `board_id` required by `schedule_post` and `post_now` when targeting Pinterest.
+
+**Parameters:**
+```
+social_account_id  string (UUID)  required
+  ID of the Pinterest social_accounts row
+page_size          number (1-100)  optional  default: 25
+  Number of boards per page
+bookmark           string  optional
+  Pagination cursor from a previous response
+```
+
+**Returns:** `{ success, boards: [{ id, name, description, privacy, pin_count }], bookmark }`. If the account token is expired, returns `{ success: false, expired: true, reauth_url }`.
+
+---
+
+### bulk_post_now
+
+Publish up to 30 posts immediately in one call. Each post dispatches a separate Inngest `post.now` event. Requires Creator plan or higher.
+
+**Parameters:**
+```
+posts  Array (1-30 items)  required
+  Each item:
+    social_account_id   string (UUID)
+    platform            "linkedin" | "tiktok" | "pinterest" | "instagram"
+    post_type           "text" | "image" | "video"
+    title               string  optional
+    description         string | null
+    media_storage_path  string  optional  default: ""
+    cover_timestamp     number (min: 1000)  optional
+    pinterest_board_id  string  optional
+    pinterest_board_name string  optional
+    pinterest_link      string (URL, max 2048)  optional
+
+batch_id  string (1-200 chars)  optional
+  When supplied, each post gets idempotency_key = "${batch_id}:${index}",
+  making retries safe. Same pattern as bulk_schedule.
+```
+
+**Preflight checks:** entitlement verification, social account ownership (single bulk query), caption length validation per platform, Pinterest board requirement.
+
+**Returns:** `{ success, batch_id, dispatched, total, results: [{ index, platform, social_account_id, event_id }] }`.
 
 ---
 
@@ -446,6 +519,82 @@ The agent can use the `plan_week_for_platform` prompt:
 3. Agent generates drafts (optionally using `generate_post_draft` for Pro users)
 4. Agent calls `bulk_schedule` to schedule all posts at once
 
+## MCP request lifecycle
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant R as /api/mcp/[transport]
+    participant Auth as resolveMcpPrincipal
+    participant Ent as entitlementFor
+    participant Tool as Tool handler
+    participant DB as Supabase
+    participant Audit as logToolCall
+
+    A->>R: POST initialize {clientInfo}
+    R->>R: Parse body, extract clientName + clientVersion
+    R->>Auth: Resolve principal (API key or OAuth)
+    Auth-->>R: McpPrincipal
+    R->>DB: Upsert mcp_sessions (client_name, client_version)
+    R-->>A: Server capabilities
+
+    A->>R: POST tools/call {name, arguments}
+    R->>Auth: Resolve principal
+    R->>Ent: entitlementFor(principal, action)
+    alt deny (no_subscription / plan_too_low / monthly_quota)
+        Ent-->>R: deny
+        R->>Audit: Log denied / quota_exceeded
+        R-->>A: Error with deny reason
+    else allow
+        R->>Tool: Execute tool(args, principal)
+        Tool->>Tool: Rate limit check (if applicable)
+        Tool->>Tool: Idempotency pre-check (if key provided)
+        Tool->>DB: Query / mutate
+        DB-->>Tool: Result
+        Tool-->>R: Tool result
+        R->>Audit: Log ok + latency_ms
+        R-->>A: JSON result
+    end
+```
+
+## Tool annotations
+
+All 18 tools carry MCP Connectors Directory annotations via `registerTool`. Read-only tools set `readOnlyHint: true`. Write tools set `destructiveHint` and `idempotentHint` as appropriate.
+
+| Tool | readOnlyHint | destructiveHint | idempotentHint | openWorldHint |
+|------|:---:|:---:|:---:|:---:|
+| list_connections | true | - | - | false |
+| list_pinterest_boards | true | - | - | true |
+| list_scheduled_posts | true | - | - | false |
+| list_content_history | true | - | - | false |
+| list_billing_summary | true | - | - | false |
+| request_account_reauth_link | true | - | - | true |
+| get_account_analytics | true | - | - | true |
+| generate_post_draft | true | - | - | false |
+| schedule_post | false | true | false | true |
+| post_now | false | true | false | true |
+| bulk_schedule | false | true | false | true |
+| bulk_post_now | false | true | false | true |
+| cancel_scheduled_posts | false | true | true | false |
+| resume_scheduled_posts | false | false | true | false |
+| reschedule_posts | false | true | true | false |
+| delete_scheduled_posts | false | true | true | false |
+| attach_media_from_url | false | false | false | true |
+| request_upload_url | false | false | false | false |
+
+## Idempotency
+
+Three tools accept an explicit `idempotency_key` parameter for safe retries. A fourth uses a derived key.
+
+| Tool | Key source | DB constraint |
+|------|-----------|---------------|
+| `schedule_post` | `idempotency_key` param | UNIQUE on `(principal_id, idempotency_key)` in `scheduled_posts` |
+| `post_now` | `idempotency_key` param | UNIQUE on `(principal_id, idempotency_key)` in `pending_direct_posts` |
+| `bulk_post_now` | Derived: `${batch_id}:${index}` | Same as `post_now` |
+| `bulk_schedule` | Derived: `${batch_id}:${index}` | Same as `schedule_post` |
+
+All four use `INSERT ... ON CONFLICT DO NOTHING`. If the insert conflicts, the handler fetches the existing row and returns its ID with a message like "already dispatched". Network retries with the same key are safe. See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
+
 ## Audit and session tracking
 
 Every tool call is logged to `mcp_audit_log` with:
@@ -455,19 +604,20 @@ Every tool call is logged to `mcp_audit_log` with:
 - result_status: `ok`, `error`, `denied`, `rate_limited`, `quota_exceeded`
 - latency_ms, ip_hash (SHA-256 of IP + salt, raw IP never stored), user_agent
 
-The `mcp_sessions` table tracks session metadata (client_name, client_version, last_activity_at) via best-effort upserts.
+The `mcp_sessions` table tracks session metadata via best-effort upserts. On `initialize` requests, the route handler extracts `clientInfo.name` (capped at 200 chars) and `clientInfo.version` (capped at 50 chars) from the JSON-RPC params and stores them as `client_name` and `client_version`. This identifies which AI client (Claude Desktop, Cursor, etc.) made each session.
 
 The `mcp_audit_log` table has an update-blocking trigger. Rows are append-only.
 
 ## Known limitations
 
-- **No `list_pinterest_boards` tool.** Pinterest board selection currently requires the web UI. If the agent doesn't know the board ID, it cannot post to Pinterest.
 - **Stateless mode only.** mcp-handler 1.1.0 forces stateless mode on both Streamable HTTP and SSE transports. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
 - **`generate_post_draft` requires sampling.** Clients without MCP sampling/createMessage support (some older clients) will get an error.
 - **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function polls for completion.
-- **`bulk_schedule` is MCP-only.** No REST or web UI equivalent exists yet.
+- **`bulk_schedule` and `bulk_post_now` are MCP-only.** No REST or web UI equivalent exists yet.
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
 
 ---
+
+**See also:** [docs/SECURITY.md](./SECURITY.md) (SSRF guard, idempotency, storage quotas), [docs/AUTH.md](./AUTH.md) (principal model, auth paths), [docs/BILLING.md](./BILLING.md) (plan gates, monthly caps)
 
 [Back to README](../README.md)

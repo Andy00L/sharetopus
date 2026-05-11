@@ -112,6 +112,22 @@ erDiagram
 | Function | Purpose |
 |----------|---------|
 | `atomic_increment_quota` | Atomically increment usage_quotas.count, preventing race conditions in concurrent MCP requests |
+| `get_user_storage_bytes` | Return total storage bytes for a principal in a given bucket. Reads `storage.objects` directly (no pagination). Used by `enforceStorageQuota`. |
+
+## Append-only tables
+
+Six tables block UPDATE operations at the database layer (`Update: never` in generated types). Rows can be inserted but never modified or deleted via application code.
+
+| Table | Purpose |
+|-------|---------|
+| `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency) |
+| `stripe_invoices` | Payment records |
+| `wallet_credits_ledger` | Credit transaction history (x402, deferred) |
+| `x402_access_log` | Access audit trail (x402, deferred) |
+| `x402_refunds` | Refund records (x402, deferred) |
+| `sanctions_screenings` | Wallet sanctions check results (x402, deferred) |
+
+This pattern ensures financial and audit records are tamper-proof. The `mcp_audit_log` insert happens fire-and-forget in `logToolCall` (`src/lib/mcp/audit.ts`). See [docs/SECURITY.md](./SECURITY.md#append-only-audit) for details on arg redaction and PII handling.
 
 ## Status CHECK constraints
 
@@ -142,5 +158,7 @@ This means:
 Tradeoff: simpler than managing per-table RLS policies, but the application layer is the only access control boundary. A bug in a server action could expose data across principals.
 
 ---
+
+**See also:** [docs/SECURITY.md](./SECURITY.md) (append-only tables, idempotency constraints), [docs/BILLING.md](./BILLING.md) (quota enforcement via atomic_increment_quota), [docs/SCHEDULING.md](./SCHEDULING.md) (post status transitions)
 
 [Back to README](../README.md)

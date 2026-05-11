@@ -185,4 +185,6 @@ This code path is not built. See [docs/ROADMAP.md](./ROADMAP.md).
 
 ---
 
+**See also:** [docs/MCP.md](./MCP.md) (tool inventory, entitlement), [docs/SECURITY.md](./SECURITY.md) (identity flow diagram, audit log), [docs/BILLING.md](./BILLING.md) (plan tier definitions)
+
 [Back to README](../README.md)

@@ -12,7 +12,7 @@ Production: [sharetopus.com](https://sharetopus.com)
 
 - Publishes text, image, and video posts to 4 platforms (LinkedIn, TikTok, Pinterest, Instagram)
 - Schedules posts for future dates. Inngest cron dispatches due posts every 5 minutes.
-- Exposes 16 MCP tools, 3 resources, and 3 prompts to AI agents via Streamable HTTP
+- Exposes 18 MCP tools, 3 resources, and 3 prompts to AI agents via Streamable HTTP
 - Three Stripe subscription tiers: Starter ($9/mo), Creator ($18/mo), Pro ($27/mo) with ~40% yearly discounts
 - 6 Inngest background functions: post dispatcher, post worker, TikTok poll, direct post worker, stuck-post sweep, orphan storage sweep
 - Per-account content customization, batch grouping, and content history tracking
@@ -97,13 +97,13 @@ sequenceDiagram
     MCP-->>Agent: JSON result
 ```
 
-16 tools across 4 tiers. See [docs/MCP.md](./docs/MCP.md) for the full tool inventory, parameter schemas, and 3+ usage examples.
+18 tools across 4 tiers. Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](./docs/MCP.md) for the full tool inventory, parameter schemas, and usage examples.
 
 | Tier | Tools |
 |------|-------|
-| Free | list_connections, list_scheduled_posts, list_content_history, list_billing_summary, request_account_reauth_link |
+| Free | list_connections, list_pinterest_boards, list_scheduled_posts, list_content_history, list_billing_summary, request_account_reauth_link |
 | Starter+ | schedule_post, post_now, cancel_scheduled_posts, resume_scheduled_posts, reschedule_posts, delete_scheduled_posts, attach_media_from_url, request_upload_url |
-| Creator+ | bulk_schedule, get_account_analytics |
+| Creator+ | bulk_schedule, bulk_post_now, get_account_analytics |
 | Pro | generate_post_draft |
 
 ## Platforms
@@ -116,6 +116,17 @@ sequenceDiagram
 | Instagram | instagram_business_basic, instagram_business_content_publish | image, reel | Container model (create container, poll status, publish) |
 
 Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
+
+## Channels
+
+| Channel | Status | Auth | Description |
+|---------|--------|------|-------------|
+| Web UI | Shipped | Clerk session | Browser-based dashboard at sharetopus.com |
+| MCP | Shipped | Clerk OAuth / API key | 18 tools for AI agents (Claude Desktop, Cursor) |
+| REST API | Deferred | `stp_rest_*` API key | Mirrors MCP tools. Schema ready (`api_keys.kind=rest`, `created_via=api`). |
+| x402 Wallet | Deferred | SIWE signature | Per-action payments with USDC credits. Schema ready, code path not built. |
+
+Security architecture for all channels: [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## Quick start
 
@@ -181,7 +192,7 @@ src/
       audit.ts                  # logToolCall, IP hashing, arg redaction
       context.ts                # extractPrincipal, extractSessionId
       entitlement.ts            # Plan gating + monthly quotas
-      tools/                    # 16 MCP tool definitions
+      tools/                    # 18 MCP tool definitions
       resources/                # 3 MCP resources
       prompts/                  # 3 MCP prompts
     types/                      # Database types, plan config
@@ -236,7 +247,8 @@ Every environment variable referenced in the source code. See [.env.example](./.
 | Document | Description |
 |----------|-------------|
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System map, component interactions, data flows, state diagrams |
-| [docs/MCP.md](./docs/MCP.md) | MCP server: all 16 tools, auth, 3+ usage examples |
+| [docs/SECURITY.md](./docs/SECURITY.md) | Security architecture: SSRF guard, idempotency, storage quotas, HMAC media proxy |
+| [docs/MCP.md](./docs/MCP.md) | MCP server: all 18 tools, auth, annotations, usage examples |
 | [docs/PLATFORMS.md](./docs/PLATFORMS.md) | Per-platform OAuth, posting flows, quirks |
 | [docs/SCHEDULING.md](./docs/SCHEDULING.md) | Schedule lifecycle, locks, retries, created_via |
 | [docs/DATABASE.md](./docs/DATABASE.md) | All 29 tables, relationships, RLS posture |
@@ -272,7 +284,7 @@ Full dependency list: [package.json](./package.json).
 - i18n is declared (`i18n-config.ts` with fr, en, es) and dependencies are installed, but no translation files exist. UI is English only.
 - Studio/Analytics page shows a "Coming Soon" placeholder. The `analytics_metrics` table exists but is not populated by any cron.
 - TikTok default privacy level is `SELF_ONLY` (private). Users must change this in the create form.
-- No `list_pinterest_boards` MCP tool yet. Pinterest board selection requires the web UI.
+- Pinterest board selection via MCP requires calling `list_pinterest_boards` first to get a board ID.
 - `@upstash/qstash` is listed in dependencies but is not imported anywhere in the source. Scheduling uses Inngest.
 
 ## Live

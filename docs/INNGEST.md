@@ -163,4 +163,6 @@ flowchart TD
 
 ---
 
+**See also:** [docs/SCHEDULING.md](./SCHEDULING.md) (post lifecycle, lock tables), [docs/STORAGE.md](./STORAGE.md) (orphan sweep details), [docs/PLATFORMS.md](./PLATFORMS.md) (per-platform posting flows)
+
 [Back to README](../README.md)

@@ -146,7 +146,7 @@ sequenceDiagram
 
 **Board listing:** `GET /v5/boards`, rate limited at 15 requests/60 seconds.
 
-**No `list_pinterest_boards` MCP tool yet.** Board selection for MCP agents requires knowing the board ID in advance.
+**MCP board discovery:** The `list_pinterest_boards` tool lets agents discover board IDs. Parameters: `social_account_id`, `page_size` (1-100), `bookmark` (pagination cursor).
 
 ---
 
@@ -211,5 +211,7 @@ These platforms appear in type definitions (`social_accounts.platform` enum) but
 No OAuth flows, posting helpers, or schedule functions exist for any of these. Bluesky is not in the database type definitions.
 
 ---
+
+**See also:** [docs/SCHEDULING.md](./SCHEDULING.md) (post lifecycle, retry strategy), [docs/INNGEST.md](./INNGEST.md) (worker details, TikTok poll), [docs/STORAGE.md](./STORAGE.md) (TikTok media delivery modes)
 
 [Back to README](../README.md)

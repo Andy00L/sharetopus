@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, Inngest background jobs, and integrations with 4 social platforms.
 
-292 TypeScript source files. 24 API routes. 29 database tables. 16 MCP tools.
+292 TypeScript source files. 24 API routes. 29 database tables. 18 MCP tools.
 
 [Back to README](../README.md)
 
@@ -33,7 +33,7 @@ graph TD
         subgraph MCP["MCP Server"]
             MCPRoute["POST /api/mcp/mcp"]
             MCPAuth["withMcpAuth (Bearer token)"]
-            MCPTools["16 Tools"]
+            MCPTools["18 Tools"]
             MCPRes["3 Resources"]
             MCPPrompts["3 Prompts"]
         end
@@ -164,6 +164,9 @@ src/
     api/
       _shared/
         buildStreamingMultipartFormDataBody.ts  # Streaming S3 upload for Pinterest
+        directPostForAccountsGeneric.ts        # Generic direct-post adapter (all 4 platforms)
+        processAccountsGeneric.ts              # Generic multi-account processor
+        scheduleForAccountGeneric.ts           # Generic scheduler
       instagram/                # OAuth, posting, scheduling, data helpers
       linkedin/                 # OAuth, posting, scheduling, data helpers
       pinterest/                # OAuth, posting (streaming video), scheduling
@@ -177,7 +180,8 @@ src/
       context.ts                # extractPrincipal, extractSessionId, extractIpHash
       entitlement.ts            # Plan gating + monthly quota enforcement
       ipHash.ts                 # SHA-256 IP hashing with configurable salt
-      tools/                    # 16 tool definitions (one file per tool)
+      _shared/                  # safeUserFetch, enforceStorageQuota, currentQuotaPeriod
+      tools/                    # 18 tool definitions (one file per tool)
       resources/                # 3 resource definitions
       prompts/                  # 3 prompt definitions
     types/
@@ -399,5 +403,7 @@ Platform errors are classified in `src/inngest/functions/platformErrors.ts`:
 | Deployment | Vercel | |
 
 ---
+
+**See also:** [docs/SECURITY.md](./SECURITY.md) (security architecture, threat model), [docs/MCP.md](./MCP.md) (tool inventory, auth flow), [docs/DATABASE.md](./DATABASE.md) (schema details)
 
 [Back to README](../README.md)

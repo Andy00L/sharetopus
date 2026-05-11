@@ -6,6 +6,8 @@ How posts move from creation to publication. Covers the scheduled post lifecycle
 
 ## Lifecycle
 
+### State machine
+
 ```mermaid
 stateDiagram-v2
     [*] --> scheduled: User or agent creates post
@@ -21,6 +23,37 @@ stateDiagram-v2
     note right of queued: Dedup via event ID = postId:scheduledAt (24h window)
     note right of processing: Retryable errors (auth_expired, rate_limited, transient) throw for Inngest retry
     note left of failed: Failed posts also INSERT into failed_posts table
+```
+
+### Full lifecycle (creation to cleanup)
+
+```mermaid
+flowchart TD
+    A["Agent or web calls schedule_post"] --> B["schedulePostInternal"]
+    B --> C{"idempotency_key provided?"}
+    C -- yes --> D["INSERT ... ON CONFLICT DO NOTHING"]
+    D --> E{"Conflict?"}
+    E -- yes --> F["SELECT existing row, return scheduleId"]
+    E -- no --> G["Row inserted, return new scheduleId"]
+    C -- no --> H["Plain INSERT"]
+    H --> G
+
+    G --> I["scheduled_posts row (status=scheduled)"]
+    I --> J["scheduledPostsTick cron (every 5 min)"]
+    J --> K{"scheduled_at <= now?"}
+    K -- no --> J
+    K -- yes --> L["UPDATE status=queued, dispatch Inngest post.due event"]
+    L --> M["processSinglePost worker"]
+    M --> N{"Platform call succeeds?"}
+    N -- yes --> O["UPDATE status=posted, INSERT content_history"]
+    N -- "terminal error" --> P["UPDATE status=failed, INSERT failed_posts"]
+    N -- "retryable" --> Q["throw for Inngest retry (max 3)"]
+    Q --> M
+    O --> R["cleanupMediaIfUnreferenced"]
+    P --> R
+    R --> S{"Other refs to media?"}
+    S -- no --> T["storage.remove file"]
+    S -- yes --> U["Keep file (orphan sweeper handles later)"]
 ```
 
 ### Status transitions
@@ -137,7 +170,37 @@ Terminal failures record the error in `scheduled_posts.error_message` and insert
 
 ## Idempotency
 
-`bulk_schedule` uses `idempotency_key = ${batchId}:${index}` with a unique index on `(principal_id, idempotency_key)`. Retrying a bulk_schedule call with the same batch_id is safe: duplicate rows are detected via `onConflict` and existing IDs are looked up.
+Four MCP tools support idempotent retries, protecting against duplicate posts when an agent retries after a network error.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant T as Tool handler
+    participant DB as Supabase
+
+    A->>T: schedule_post {idempotency_key: "abc"}
+    T->>DB: INSERT scheduled_posts ON CONFLICT DO NOTHING
+    DB-->>T: 1 row inserted
+    T->>A: { success, scheduleId: "new-id" }
+
+    Note over A: Network blip, agent retries
+
+    A->>T: schedule_post {idempotency_key: "abc"}
+    T->>DB: INSERT scheduled_posts ON CONFLICT DO NOTHING
+    DB-->>T: 0 rows inserted (conflict)
+    T->>DB: SELECT WHERE principal_id=? AND idempotency_key="abc"
+    DB-->>T: existing row
+    T->>A: { success, scheduleId: "new-id", message: "already created" }
+```
+
+| Tool | Key source | Target table | Constraint |
+|------|-----------|-------------|------------|
+| `schedule_post` | `idempotency_key` param (optional, 1-200 chars) | `scheduled_posts` | UNIQUE on `(principal_id, idempotency_key)` |
+| `post_now` | `idempotency_key` param (optional, 1-200 chars) | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
+| `bulk_schedule` | Derived: `${batchId}:${index}` | `scheduled_posts` | Same |
+| `bulk_post_now` | Derived: `${batch_id}:${index}` | `pending_direct_posts` | Same |
+
+All four use `INSERT ... ON CONFLICT DO NOTHING` (Supabase `ignoreDuplicates: true`). If the insert conflicts, the handler fetches the existing row and returns its ID. The key is optional; omitting it means no deduplication (every call creates a new row).
 
 The `scheduled-posts-tick` dispatcher uses `eventId = ${postId}:${scheduledAt}` with a 24-hour dedup window in Inngest, preventing duplicate dispatch if the cron fires twice for the same batch.
 
@@ -149,5 +212,7 @@ Two crons clean up stuck or orphaned data:
 - **sweep-orphan-storage-files** (daily 03:00 UTC): Deletes storage files older than 24 hours not referenced by any of the 4 media tables. See [docs/INNGEST.md](./INNGEST.md).
 
 ---
+
+**See also:** [docs/SECURITY.md](./SECURITY.md) (idempotency deep dive), [docs/INNGEST.md](./INNGEST.md) (worker details, retry config), [docs/MCP.md](./MCP.md) (schedule_post and post_now tool params)
 
 [Back to README](../README.md)

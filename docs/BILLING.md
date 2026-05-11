@@ -83,7 +83,9 @@ Enforced atomically via `atomic_increment_quota` Postgres RPC:
 | schedule_post | 100/mo | 500/mo | unlimited |
 | post_now | 100/mo | 500/mo | unlimited |
 | request_upload_url | 100/mo | 500/mo | unlimited |
+| attach_media_from_url | 100/mo | 500/mo | unlimited |
 | bulk_schedule | blocked | 200/mo | unlimited |
+| bulk_post_now | blocked | 500/mo | unlimited |
 | generate_post_draft | blocked | blocked | 100/mo |
 
 ### Upload limits
@@ -127,5 +129,7 @@ Schema tables exist for wallet-based anonymous payments:
 No code path is built for these. See [docs/ROADMAP.md](./ROADMAP.md).
 
 ---
+
+**See also:** [docs/AUTH.md](./AUTH.md) (subscription gate in auth flow), [docs/MCP.md](./MCP.md) (per-tool quotas and tier gates), [docs/STORAGE.md](./STORAGE.md) (storage caps per plan)
 
 [Back to README](../README.md)

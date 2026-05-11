@@ -10,7 +10,7 @@ Features and improvements that are deferred, in-progress, or blocked. This refle
 graph LR
     subgraph Shipped["Shipped"]
         WebUI["Web UI"]
-        MCP["MCP Server (16 tools)"]
+        MCP["MCP Server (18 tools)"]
         Billing["Stripe Billing"]
         Inngest["Inngest Crons (6)"]
         Platforms["4 Platforms"]
@@ -24,7 +24,6 @@ graph LR
     subgraph NotStarted["Not Started"]
         NewPlatforms["Threads, YouTube, X"]
         Analytics["Analytics Pipeline"]
-        PinBoards["list_pinterest_boards"]
     end
 
     MCP -.->|"mirrors"| REST
@@ -50,21 +49,43 @@ The `principals.kind=wallet` path and `created_via=x402` enum are wired but no c
 
 **Status:** Deferred. Schema ready, code path not started.
 
-### Platform deduplication refactors (FIXes 22-26)
+### Platform deduplication refactors
 
-The 4 platform integrations (LinkedIn, TikTok, Pinterest, Instagram) share similar patterns for OAuth, token refresh, and posting. The code is currently duplicated across platforms. A planned refactor would extract common logic into shared helpers.
+The 4 platform integrations share similar patterns for OAuth, token refresh, and posting. Three generic helpers now handle the common logic (`directPostForAccountsGeneric.ts`, `processAccountsGeneric.ts`, `scheduleForAccountGeneric.ts` in `src/lib/api/_shared/`). The 9 platform-specific wrappers are now thin adapters over these generics.
 
-**Status:** Open. Low priority, functional as-is.
+**Status:** Shipped. Remaining platform-specific duplication is minimal.
 
-## Open issues
+## Recently shipped
 
 ### list_pinterest_boards MCP tool
 
-Pinterest posting requires a board ID, but there's no MCP tool to list available boards. MCP agents cannot post to Pinterest without knowing the board ID in advance.
+The `list_pinterest_boards` tool lets MCP agents discover board IDs for Pinterest posting. Parameters: `social_account_id` (required), `page_size` (1-100, default 25), `bookmark` (pagination cursor). Returns board id, name, description, privacy, pin_count.
 
-The `GET /v5/boards` endpoint is already called from the web UI. Wrapping it as an MCP tool is straightforward.
+### bulk_post_now MCP tool
 
-**Status:** Not implemented. Tracked for next MCP tool batch.
+The `bulk_post_now` tool publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent retry pattern as `bulk_schedule` (batch_id derives per-post idempotency keys).
+
+### Idempotent retries on MCP write tools
+
+`schedule_post`, `post_now`, and `bulk_post_now` accept an optional `idempotency_key` parameter. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors.
+
+### SSRF guard on attach_media_from_url
+
+`safeUserFetch` (`src/lib/mcp/_shared/safeUserFetch.ts`) blocks 14 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved), rejects non-http(s) schemes, blocks redirects, validates content-type, and enforces a stream-based byte counter (Content-Length untrusted). Rate limited at 10/60s per principal.
+
+### Storage quota enforcement parity
+
+`enforceStorageQuota` (`src/lib/mcp/_shared/enforceStorageQuota.ts`) calls the `get_user_storage_bytes` Postgres RPC to read actual bytes from `storage.objects`. Used by both `generateServerSignedUploadUrl` (web/MCP upload) and `attach_media_from_url`.
+
+### MCP tool annotations
+
+All 18 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`.
+
+### clientInfo capture
+
+The MCP route handler extracts `clientInfo.name` and `clientInfo.version` from the initialize handshake and stores them in `mcp_sessions.client_name` and `mcp_sessions.client_version`.
+
+## Open issues
 
 ### Analytics metrics population
 
@@ -114,5 +135,7 @@ Threads, YouTube, X/Twitter, and Facebook appear in type definitions (`social_ac
 `@upstash/qstash` is listed as a dependency but is not imported in any source file. It was likely used before the migration to Inngest. Removing it is low-risk but low priority.
 
 ---
+
+**See also:** [docs/ARCHITECTURE.md](./ARCHITECTURE.md) (system overview), [docs/MCP.md](./MCP.md) (tool inventory), [docs/SECURITY.md](./SECURITY.md) (security mechanisms)
 
 [Back to README](../README.md)

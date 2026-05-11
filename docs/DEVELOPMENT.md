@@ -154,4 +154,6 @@ The `vercel.json` at the repo root only configures `src/app/api/direct/**/*.ts` 
 
 ---
 
+**See also:** [docs/ARCHITECTURE.md](./ARCHITECTURE.md) (system overview, directory structure), [docs/MCP.md](./MCP.md) (MCP server setup), [docs/ROADMAP.md](./ROADMAP.md) (deferred features, open issues)
+
 [Back to README](../README.md)
