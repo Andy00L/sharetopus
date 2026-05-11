@@ -70,7 +70,7 @@ export async function schedulePostInternal(
       scheduled_at: scheduledDate.toISOString(),
       post_title: data.title ?? "",
       post_description: data.description,
-      post_options: data.postOptions as Json,
+      post_options: (data.postOptions ?? {}) as Json,
       media_type: data.postType,
       media_storage_path: data.mediaStoragePath,
       cover_image_timestamp: data.coverTimestamp,
