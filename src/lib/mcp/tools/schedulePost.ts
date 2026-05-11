@@ -18,52 +18,63 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Text posts do not require media.
  */
 export function registerSchedulePost(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "schedule_post",
-    "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first. For Pinterest, provide pinterest_board_id and optionally pinterest_link.",
     {
-      social_account_id: z.string().uuid().describe("ID of the social account to post to"),
-      platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
-        .describe("Target platform"),
-      scheduled_at: z
-        .string()
-        .describe("ISO 8601 datetime for when to publish (must be in the future)"),
-      post_type: z
-        .enum(["text", "image", "video"])
-        .describe("Type of post"),
-      title: z.string().optional().describe("Post title (used by some platforms)"),
-      description: z.string().nullable().describe("Post body text / caption"),
-      media_storage_path: z
-        .string()
-        .optional()
-        .default("")
-        .describe("Supabase Storage path for media. Required for image/video posts."),
-      batch_id: z
-        .string()
-        .optional()
-        .default("")
-        .describe("Optional batch ID to group related posts"),
-      pinterest_board_id: z
-        .string()
-        .optional()
-        .describe(
-          "Pinterest board ID. Required when platform = 'pinterest'."
-        ),
-      pinterest_board_name: z
-        .string()
-        .optional()
-        .describe(
-          "Pinterest board display name. Optional."
-        ),
-      pinterest_link: z
-        .string()
-        .url()
-        .max(2048)
-        .optional()
-        .describe(
-          "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
-        ),
+      title: "Schedule Post",
+      description:
+        "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first. For Pinterest, provide pinterest_board_id and optionally pinterest_link.",
+      inputSchema: {
+        social_account_id: z.string().uuid().describe("ID of the social account to post to"),
+        platform: z
+          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .describe("Target platform"),
+        scheduled_at: z
+          .string()
+          .describe("ISO 8601 datetime for when to publish (must be in the future)"),
+        post_type: z
+          .enum(["text", "image", "video"])
+          .describe("Type of post"),
+        title: z.string().optional().describe("Post title (used by some platforms)"),
+        description: z.string().nullable().describe("Post body text / caption"),
+        media_storage_path: z
+          .string()
+          .optional()
+          .default("")
+          .describe("Supabase Storage path for media. Required for image/video posts."),
+        batch_id: z
+          .string()
+          .optional()
+          .default("")
+          .describe("Optional batch ID to group related posts"),
+        pinterest_board_id: z
+          .string()
+          .optional()
+          .describe(
+            "Pinterest board ID. Required when platform = 'pinterest'."
+          ),
+        pinterest_board_name: z
+          .string()
+          .optional()
+          .describe(
+            "Pinterest board display name. Optional."
+          ),
+        pinterest_link: z
+          .string()
+          .url()
+          .max(2048)
+          .optional()
+          .describe(
+            "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
+          ),
+      },
+      annotations: {
+        title: "Schedule Post",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

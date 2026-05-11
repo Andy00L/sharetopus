@@ -16,14 +16,23 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * The agent should tell the user to open this link.
  */
 export function registerRequestAccountReauthLink(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "request_account_reauth_link",
-    "Get a re-authentication link for a social account with an expired token. The user must open this link in their browser.",
     {
-      social_account_id: z
-        .string()
-        .uuid()
-        .describe("ID of the social account to re-authenticate"),
+      title: "Request Account Reauth Link",
+      description:
+        "Get a re-authentication link for a social account with an expired token. The user must open this link in their browser.",
+      inputSchema: {
+        social_account_id: z
+          .string()
+          .uuid()
+          .describe("ID of the social account to re-authenticate"),
+      },
+      annotations: {
+        title: "Request Account Reauth Link",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

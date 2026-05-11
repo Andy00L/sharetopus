@@ -15,22 +15,31 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Output is JSON.stringify. No free-form user text.
  */
 export function registerListContentHistory(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_content_history",
-    "View your posted content history. Optional filter by platform.",
     {
-      platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
-        .optional()
-        .describe("Filter by platform"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Max results to return (1-100)"),
+      title: "List Content History",
+      description:
+        "View your posted content history. Optional filter by platform.",
+      inputSchema: {
+        platform: z
+          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .optional()
+          .describe("Filter by platform"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(20)
+          .describe("Max results to return (1-100)"),
+      },
+      annotations: {
+        title: "List Content History",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

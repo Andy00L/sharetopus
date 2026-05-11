@@ -13,18 +13,29 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Calls: src/actions/server/_internal/scheduleActions/updateScheduledTimeBatch.ts
  */
 export function registerReschedulePosts(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "reschedule_posts",
-    "Change the scheduled time for one or more posts. Cancelled posts are automatically resumed.",
     {
-      post_ids: z
-        .array(z.string().uuid())
-        .min(1)
-        .max(50)
-        .describe("Array of post IDs to reschedule"),
-      new_scheduled_time: z
-        .string()
-        .describe("New ISO 8601 datetime (must be in the future)"),
+      title: "Reschedule Posts",
+      description:
+        "Change the scheduled time for one or more posts. Cancelled posts are automatically resumed.",
+      inputSchema: {
+        post_ids: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(50)
+          .describe("Array of post IDs to reschedule"),
+        new_scheduled_time: z
+          .string()
+          .describe("New ISO 8601 datetime (must be in the future)"),
+      },
+      annotations: {
+        title: "Reschedule Posts",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

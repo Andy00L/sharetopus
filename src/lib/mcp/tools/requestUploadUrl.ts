@@ -24,25 +24,36 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * job should sweep unreferenced files older than 24h.
  */
 export function registerRequestUploadUrl(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "request_upload_url",
-    "Get a signed upload URL for uploading media (image/video) directly to Sharetopus storage. Returns a URL + storage_path for use with post_now or schedule_post.",
     {
-      filename: z
-        .string()
-        .min(1)
-        .describe("Filename including extension (e.g. photo.jpg, clip.mp4)"),
-      content_type: z
-        .string()
-        .min(1)
-        .describe(
-          "MIME type of the file. Allowed: image/jpeg, image/png, video/mp4, video/mov, video/quicktime"
-        ),
-      size_bytes: z
-        .number()
-        .int()
-        .positive()
-        .describe("File size in bytes"),
+      title: "Request Upload URL",
+      description:
+        "Get a signed upload URL for uploading media (image/video) directly to Sharetopus storage. Returns a URL + storage_path for use with post_now or schedule_post.",
+      inputSchema: {
+        filename: z
+          .string()
+          .min(1)
+          .describe("Filename including extension (e.g. photo.jpg, clip.mp4)"),
+        content_type: z
+          .string()
+          .min(1)
+          .describe(
+            "MIME type of the file. Allowed: image/jpeg, image/png, video/mp4, video/mov, video/quicktime"
+          ),
+        size_bytes: z
+          .number()
+          .int()
+          .positive()
+          .describe("File size in bytes"),
+      },
+      annotations: {
+        title: "Request Upload URL",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

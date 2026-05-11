@@ -645,19 +645,30 @@ function buildInsertFailureResponse(
  * partial unique index idx_scheduled_posts_idempotency.
  */
 export function registerBulkSchedule(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "bulk_schedule",
-    `Schedule up to ${MAX_POSTS_PER_CALL} posts for future publishing. Requires Creator plan or higher. For Pinterest posts, include pinterest_board_id per post. For immediate multi-platform posting, use bulk_post_now.`,
     {
-      posts: z
-        .array(postSchema)
-        .min(1)
-        .max(MAX_POSTS_PER_CALL)
-        .describe(`Array of posts to schedule (max ${MAX_POSTS_PER_CALL})`),
-      batch_id: z
-        .string()
-        .optional()
-        .describe("Optional batch ID to group all posts in this call"),
+      title: "Bulk Schedule",
+      description:
+        `Schedule up to ${MAX_POSTS_PER_CALL} posts for future publishing. Requires Creator plan or higher. For Pinterest posts, include pinterest_board_id per post. For immediate multi-platform posting, use bulk_post_now.`,
+      inputSchema: {
+        posts: z
+          .array(postSchema)
+          .min(1)
+          .max(MAX_POSTS_PER_CALL)
+          .describe(`Array of posts to schedule (max ${MAX_POSTS_PER_CALL})`),
+        batch_id: z
+          .string()
+          .optional()
+          .describe("Optional batch ID to group all posts in this call"),
+      },
+      annotations: {
+        title: "Bulk Schedule",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const ctx = await buildBulkScheduleContext(extra);

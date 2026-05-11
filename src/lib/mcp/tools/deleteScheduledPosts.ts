@@ -17,15 +17,26 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * by any remaining post.
  */
 export function registerDeleteScheduledPosts(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "delete_scheduled_posts",
-    "Permanently delete one or more scheduled posts. This action cannot be undone.",
     {
-      post_ids: z
-        .array(z.string().uuid())
-        .min(1)
-        .max(50)
-        .describe("Array of post IDs to delete"),
+      title: "Delete Scheduled Posts",
+      description:
+        "Permanently delete one or more scheduled posts. This action cannot be undone.",
+      inputSchema: {
+        post_ids: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(50)
+          .describe("Array of post IDs to delete"),
+      },
+      annotations: {
+        title: "Delete Scheduled Posts",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

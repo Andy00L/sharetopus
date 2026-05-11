@@ -169,13 +169,17 @@ async function checkAndIncrementQuota(
  * existed in the old read-then-upsert approach.
  *
  * When the function returns null, the cap was already reached.
+ *
+ * The `_period` RPC parameter is typed `date` in Postgres, so the value
+ * must be a valid YYYY-MM-DD string (first of month, UTC).
  */
 async function incrementQuota(
   principalId: string,
   action: string,
   cap: number
 ): Promise<{ allowed: boolean; currentCount: number }> {
-  const period = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const now = new Date();
+  const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`; // YYYY-MM-DD (first of month, matches RPC _period date param)
 
   const { data, error } = await adminSupabase.rpc("atomic_increment_quota", {
     _principal_id: principalId,

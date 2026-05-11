@@ -13,15 +13,26 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Calls: src/actions/server/_internal/scheduleActions/cancelScheduledPostBatch.ts
  */
 export function registerCancelScheduledPosts(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "cancel_scheduled_posts",
-    "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
     {
-      post_ids: z
-        .array(z.string().uuid())
-        .min(1)
-        .max(50)
-        .describe("Array of post IDs to cancel"),
+      title: "Cancel Scheduled Posts",
+      description:
+        "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
+      inputSchema: {
+        post_ids: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(50)
+          .describe("Array of post IDs to cancel"),
+      },
+      annotations: {
+        title: "Cancel Scheduled Posts",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

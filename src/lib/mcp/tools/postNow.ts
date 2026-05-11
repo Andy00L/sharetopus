@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { inngest } from "@/inngest/client";
 import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import {
@@ -14,7 +13,7 @@ import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } from "@/lib/mcp/context";
 import { randomUUID } from "crypto";
-import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
+import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 
 /**
  * Posts immediately (no scheduled_at) by dispatching a "post.now" event
@@ -33,51 +32,62 @@ import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPos
  * Agent confirms via list_content_history if needed.
  */
 export function registerPostNow(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "post_now",
-    "Publish ONE post to ONE platform immediately. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
     {
-      social_account_id: z
-        .string()
-        .uuid()
-        .describe("ID of the social account to post to"),
-      platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
-        .describe("Target platform"),
-      post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
-      title: z.string().optional().describe("Post title (used by some platforms)"),
-      description: z.string().nullable().describe("Post body text / caption"),
-      media_storage_path: z
-        .string()
-        .optional()
-        .default("")
-        .describe(
-          "Supabase Storage path. Required for image/video. Get it from attach_media_from_url."
-        ),
-      cover_timestamp: z
-        .number()
-        .int()
-        .min(1000)
-        .optional()
-        .describe(
-          "For TikTok video: cover frame at this millisecond mark (>=1000)"
-        ),
-      pinterest_board_id: z
-        .string()
-        .optional()
-        .describe("Pinterest board ID. Required for Pinterest posts."),
-      pinterest_board_name: z
-        .string()
-        .optional()
-        .describe("Pinterest board display name. Optional, for content_history."),
-      pinterest_link: z
-        .string()
-        .url()
-        .max(2048)
-        .optional()
-        .describe(
-          "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
-        ),
+      title: "Post Now",
+      description:
+        "Publish ONE post to ONE platform immediately. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
+      inputSchema: {
+        social_account_id: z
+          .string()
+          .uuid()
+          .describe("ID of the social account to post to"),
+        platform: z
+          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .describe("Target platform"),
+        post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
+        title: z.string().optional().describe("Post title (used by some platforms)"),
+        description: z.string().nullable().describe("Post body text / caption"),
+        media_storage_path: z
+          .string()
+          .optional()
+          .default("")
+          .describe(
+            "Supabase Storage path. Required for image/video. Get it from attach_media_from_url."
+          ),
+        cover_timestamp: z
+          .number()
+          .int()
+          .min(1000)
+          .optional()
+          .describe(
+            "For TikTok video: cover frame at this millisecond mark (>=1000)"
+          ),
+        pinterest_board_id: z
+          .string()
+          .optional()
+          .describe("Pinterest board ID. Required for Pinterest posts."),
+        pinterest_board_name: z
+          .string()
+          .optional()
+          .describe("Pinterest board display name. Optional, for content_history."),
+        pinterest_link: z
+          .string()
+          .url()
+          .max(2048)
+          .optional()
+          .describe(
+            "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional."
+          ),
+      },
+      annotations: {
+        title: "Post Now",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);
@@ -393,22 +403,15 @@ export function registerPostNow(server: McpServer): void {
         created_via: "mcp",
       };
 
-      // 8. Insert lock row, then send Inngest event
-      const lockResult = await insertPendingDirectPosts([
-        {
-          event_id: dispatchId,
-          batch_id: batchId,
-          principal_id: principal.principalId,
-          social_account_id: args.social_account_id,
-          platform: args.platform,
-          media_storage_path: args.media_storage_path,
-        },
+      // 8. Insert lock row + dispatch via shared helper
+      const dispatch = await dispatchPostNowEvents([
+        { name: "post.now", data: eventData },
       ]);
 
-      if (!lockResult.success) {
+      if (!dispatch.success) {
         console.error(
-          "[mcp/post_now] Failed to acquire dispatch lock:",
-          lockResult.message
+          `[mcp/post_now] Dispatch failed (${dispatch.phase}):`,
+          dispatch.message
         );
         await logToolCall({
           principal,
@@ -420,82 +423,51 @@ export function registerPostNow(server: McpServer): void {
           ipHash,
           userAgent,
         });
+        const userText =
+          dispatch.phase === "lock_insert"
+            ? "Could not initialize post dispatch. Please retry."
+            : dispatch.message;
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: "Could not initialize post dispatch. Please retry.",
-            },
-          ],
+          content: [{ type: "text" as const, text: userText }],
           isError: true,
         };
       }
 
-      try {
-        const sendResult = await inngest.send({
-          name: "post.now",
-          data: eventData,
-        });
+      const eventId = dispatch.eventIds[0] ?? "";
 
-        const eventId = sendResult.ids[0] ?? "";
+      await logToolCall({
+        principal,
+        sessionId,
+        toolName: "post_now",
+        args,
+        resultStatus: "ok",
+        latencyMs: Date.now() - start,
+        ipHash,
+        userAgent,
+      });
 
-        console.log(
-          `[mcp/post_now] Dispatched post.now event: ${eventId}, batch: ${batchId}`
-        );
-
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "post_now",
-          args,
-          resultStatus: "ok",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-        });
-
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(
-                {
-                  success: true,
-                  event_id: eventId,
-                  batch_id: batchId,
-                  platform: args.platform,
-                  account_display_name:
-                    account.display_name ?? account.username ?? account.id,
-                  message:
-                    "Post dispatched. Check list_content_history in 30-60s to confirm. " +
-                    "TikTok posts may take up to 2 minutes (async pull).",
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error("[mcp/post_now] inngest.send failed:", message);
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "post_now",
-          args,
-          resultStatus: "error",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-        });
-        return {
-          content: [
-            { type: "text" as const, text: `Failed to dispatch post: ${message}` },
-          ],
-          isError: true,
-        };
-      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(
+              {
+                success: true,
+                event_id: eventId,
+                batch_id: batchId,
+                platform: args.platform,
+                account_display_name:
+                  account.display_name ?? account.username ?? account.id,
+                message:
+                  "Post dispatched. Check list_content_history in 30-60s to confirm. " +
+                  "TikTok posts may take up to 2 minutes (async pull).",
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
     }
   );
 }

@@ -16,15 +16,24 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * text that the user authored.
  */
 export function registerListConnections(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_connections",
-    "List your connected social accounts. Shows platform, display name, and availability status.",
     {
-      include_unavailable: z
-        .boolean()
-        .optional()
-        .default(false)
-        .describe("Include accounts that are disconnected or expired"),
+      title: "List Social Connections",
+      description:
+        "List your connected social accounts. Shows platform, display name, and availability status.",
+      inputSchema: {
+        include_unavailable: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Include accounts that are disconnected or expired"),
+      },
+      annotations: {
+        title: "List Social Connections",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
     },
     async ({ include_unavailable }, extra) => {
       const principal = extractPrincipal(extra);

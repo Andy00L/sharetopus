@@ -1,9 +1,8 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { inngest } from "@/inngest/client";
-import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
 import {
   CAPTION_LIMITS,
@@ -105,14 +104,6 @@ type UrlBuildResult =
       signedByPath: Map<string, string>;
       tiktokByPath: Map<string, string>;
     }
-  | {
-      success: false;
-      message: string;
-      auditStatus: "error";
-    };
-
-type DispatchResult =
-  | { success: true; eventIds: string[] }
   | {
       success: false;
       message: string;
@@ -504,58 +495,6 @@ function deriveMediaType(
 }
 
 // ---------------------------------------------------------------------------
-// Lock insert + dispatch
-// ---------------------------------------------------------------------------
-
-/**
- * Inserts pending_direct_posts lock rows (one per event), then dispatches
- * all events in a single inngest.send(array) call.
- *
- * On lock failure: returns error, no events dispatched.
- * On dispatch failure after lock insert: locks stay in 'processing' state.
- * The sweepStuckDirectPosts cron finalizes them as 'failed' after 10 min,
- * freeing storage for cleanup. Matches dispatchDirectPostEvents behavior.
- */
-async function insertLocksAndDispatch(
-  events: { name: "post.now"; data: PostNowEventData }[]
-): Promise<DispatchResult> {
-  const lockRows = events.map((evt) => ({
-    event_id: evt.data.dispatch_id!,
-    batch_id: evt.data.batch_id,
-    principal_id: evt.data.principal_id,
-    social_account_id: evt.data.social_account_id,
-    platform: evt.data.platform,
-    media_storage_path: evt.data.media_path ?? "",
-  }));
-
-  const lockResult = await insertPendingDirectPosts(lockRows);
-  if (!lockResult.success) {
-    console.error(
-      "[insertLocksAndDispatch] Lock insert failed:",
-      lockResult.message
-    );
-    return {
-      success: false,
-      message: `Could not acquire dispatch locks: ${lockResult.message}`,
-      auditStatus: "error",
-    };
-  }
-
-  try {
-    const sendResult = await inngest.send(events);
-    return { success: true, eventIds: sendResult.ids };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[insertLocksAndDispatch] Inngest send failed:", message);
-    return {
-      success: false,
-      message: `Failed to dispatch events: ${message}`,
-      auditStatus: "error",
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Audit helpers
 // ---------------------------------------------------------------------------
 
@@ -670,24 +609,35 @@ function buildSuccessResponse(
  * because the first call's worker cleaned up the file.
  */
 export function registerBulkPostNow(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "bulk_post_now",
-    `Publish up to ${MAX_POSTS_PER_CALL} posts immediately across multiple platforms and accounts. ` +
-      "Requires Creator plan or higher. Reuses one media upload across N posts " +
-      "(one entry in the array = one platform+account combo). For Pinterest entries, " +
-      "include pinterest_board_id. Returns event IDs; check list_content_history in 30-60s to confirm.",
     {
-      posts: z
-        .array(postNowItemSchema)
-        .min(1)
-        .max(MAX_POSTS_PER_CALL)
-        .describe(
-          `Array of posts to publish immediately (max ${MAX_POSTS_PER_CALL}). Each entry = one platform + one social account.`
-        ),
-      batch_id: z
-        .string()
-        .optional()
-        .describe("Optional batch ID to group all events in this call"),
+      title: "Bulk Post Now",
+      description:
+        `Publish up to ${MAX_POSTS_PER_CALL} posts immediately across multiple platforms and accounts. ` +
+        "Requires Creator plan or higher. Reuses one media upload across N posts " +
+        "(one entry in the array = one platform+account combo). For Pinterest entries, " +
+        "include pinterest_board_id. Returns event IDs; check list_content_history in 30-60s to confirm.",
+      inputSchema: {
+        posts: z
+          .array(postNowItemSchema)
+          .min(1)
+          .max(MAX_POSTS_PER_CALL)
+          .describe(
+            `Array of posts to publish immediately (max ${MAX_POSTS_PER_CALL}). Each entry = one platform + one social account.`
+          ),
+        batch_id: z
+          .string()
+          .optional()
+          .describe("Optional batch ID to group all events in this call"),
+      },
+      annotations: {
+        title: "Bulk Post Now",
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const ctx: Ctx = {
@@ -761,9 +711,13 @@ export function registerBulkPostNow(server: McpServer): void {
       );
 
       // 8. Insert locks + dispatch
-      const dispatch = await insertLocksAndDispatch(events);
-      if (dispatch.success === false) {
-        await recordPreflightDeny(ctx, dispatch, args.posts.length);
+      const dispatch = await dispatchPostNowEvents(events);
+      if (!dispatch.success) {
+        await recordPreflightDeny(
+          ctx,
+          { auditStatus: "error" },
+          args.posts.length
+        );
         return buildDenyResponse(dispatch.message);
       }
 

@@ -28,26 +28,35 @@ import type { SocialAccount } from "@/lib/types/dbTypes";
  * next page. Page size defaults to 25 (Pinterest default), max 100.
  */
 export function registerListPinterestBoards(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_pinterest_boards",
-    "List Pinterest boards for a connected Pinterest account. Returns board id, name, description, privacy, and pin_count. Supports pagination via the bookmark cursor.",
     {
-      social_account_id: z
-        .string()
-        .uuid()
-        .describe("ID of the Pinterest social_accounts row"),
-      page_size: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(25)
-        .describe("Number of boards to return per page (1-100, default 25)"),
-      bookmark: z
-        .string()
-        .optional()
-        .describe("Pagination cursor from a previous response"),
+      title: "List Pinterest Boards",
+      description:
+        "List Pinterest boards for a connected Pinterest account. Returns board id, name, description, privacy, and pin_count. Supports pagination via the bookmark cursor.",
+      inputSchema: {
+        social_account_id: z
+          .string()
+          .uuid()
+          .describe("ID of the Pinterest social_accounts row"),
+        page_size: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(25)
+          .describe("Number of boards to return per page (1-100, default 25)"),
+        bookmark: z
+          .string()
+          .optional()
+          .describe("Pagination cursor from a previous response"),
+      },
+      annotations: {
+        title: "List Pinterest Boards",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

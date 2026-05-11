@@ -22,8 +22,9 @@ import { registerListPinterestBoards } from "./listPinterestBoards";
 /**
  * Registers all 18 MCP tool handlers on the server instance.
  *
- * Each tool file exports a register function that calls server.tool()
- * with the tool name, schema, and handler callback.
+ * Each tool file exports a register function that calls server.registerTool()
+ * with the tool name, config (title, description, inputSchema, annotations),
+ * and handler callback.
  *
  * Called by: src/app/api/mcp/[transport]/route.ts
  */

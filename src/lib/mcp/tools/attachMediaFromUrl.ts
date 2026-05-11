@@ -29,15 +29,26 @@ const ALLOWED_CONTENT_TYPES = [
  * Does not accept file:// or other non-HTTP schemes.
  */
 export function registerAttachMediaFromUrl(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "attach_media_from_url",
-    "Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with schedule_post.",
     {
-      url: z.string().url().describe("Public HTTP(S) URL of the media file"),
-      filename: z
-        .string()
-        .optional()
-        .describe("Override filename (defaults to URL basename)"),
+      title: "Attach Media From URL",
+      description:
+        "Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with schedule_post.",
+      inputSchema: {
+        url: z.string().url().describe("Public HTTP(S) URL of the media file"),
+        filename: z
+          .string()
+          .optional()
+          .describe("Override filename (defaults to URL basename)"),
+      },
+      annotations: {
+        title: "Attach Media From URL",
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

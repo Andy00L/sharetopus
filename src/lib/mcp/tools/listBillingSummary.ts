@@ -54,10 +54,19 @@ async function fetchSubscription(userId: string): Promise<{
  * No free-form user text in the output.
  */
 export function registerListBillingSummary(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_billing_summary",
-    "View your current subscription plan, status, and usage quota counts for the current month.",
-    {},
+    {
+      title: "List Billing Summary",
+      description:
+        "View your current subscription plan, status, and usage quota counts for the current month.",
+      inputSchema: {},
+      annotations: {
+        title: "List Billing Summary",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    },
     async (_args, extra) => {
       const principal = extractPrincipal(extra);
       const sessionId = extractSessionId(extra);

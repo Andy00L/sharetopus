@@ -15,26 +15,35 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Output is JSON.stringify of the rows. No free-form user text returned.
  */
 export function registerListScheduledPosts(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "list_scheduled_posts",
-    "List your scheduled posts. Optional filter by platform or status.",
     {
-      platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
-        .optional()
-        .describe("Filter by platform"),
-      status: z
-        .enum(["scheduled", "processing", "posted", "failed", "cancelled"])
-        .optional()
-        .describe("Filter by post status"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Max results to return (1-100)"),
+      title: "List Scheduled Posts",
+      description:
+        "List your scheduled posts. Optional filter by platform or status.",
+      inputSchema: {
+        platform: z
+          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .optional()
+          .describe("Filter by platform"),
+        status: z
+          .enum(["scheduled", "processing", "posted", "failed", "cancelled"])
+          .optional()
+          .describe("Filter by post status"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(20)
+          .describe("Max results to return (1-100)"),
+      },
+      annotations: {
+        title: "List Scheduled Posts",
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

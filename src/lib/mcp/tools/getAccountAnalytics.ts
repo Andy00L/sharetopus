@@ -18,34 +18,43 @@ import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent } f
  * Output is JSON.stringify. No free-form user text.
  */
 export function registerGetAccountAnalytics(server: McpServer): void {
-  server.tool(
+  server.registerTool(
     "get_account_analytics",
-    "Fetch performance metrics (views, likes, comments, shares) for your content. Data may be up to 24h old.",
     {
-      platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
-        .optional()
-        .describe("Filter by platform"),
-      content_id: z
-        .string()
-        .optional()
-        .describe("Filter by specific content ID"),
-      days: z
-        .number()
-        .int()
-        .min(1)
-        .max(90)
-        .optional()
-        .default(30)
-        .describe("Number of days to look back (1-90)"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .default(20)
-        .describe("Max results to return"),
+      title: "Get Account Analytics",
+      description:
+        "Fetch performance metrics (views, likes, comments, shares) for your content. Data may be up to 24h old.",
+      inputSchema: {
+        platform: z
+          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .optional()
+          .describe("Filter by platform"),
+        content_id: z
+          .string()
+          .optional()
+          .describe("Filter by specific content ID"),
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(90)
+          .optional()
+          .default(30)
+          .describe("Number of days to look back (1-90)"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(20)
+          .describe("Max results to return"),
+      },
+      annotations: {
+        title: "Get Account Analytics",
+        readOnlyHint: true,
+        openWorldHint: true,
+      },
     },
     async (args, extra) => {
       const principal = extractPrincipal(extra);

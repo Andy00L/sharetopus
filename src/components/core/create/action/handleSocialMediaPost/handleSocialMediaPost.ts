@@ -11,9 +11,8 @@ import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
 import { generateSuccessMessage } from "./successMessage";
 import { validateAccountContent } from "./validateContent";
 import { randomUUID } from "crypto";
-import { inngest } from "@/inngest/client";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
-import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
+import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 
 // Shared types for better code organization
 export type BoardInfo = {
@@ -624,60 +623,37 @@ async function dispatchDirectPostEvents(args: {
     },
   }));
 
-  const lockRows = eventsWithDispatch.map((evt) => ({
-    event_id: evt.data.dispatch_id,
-    batch_id: evt.data.batch_id,
-    principal_id: evt.data.principal_id,
-    social_account_id: evt.data.social_account_id,
-    platform: evt.data.platform,
-    media_storage_path: evt.data.media_path ?? "",
-  }));
-
-  const lockResult = await insertPendingDirectPosts(lockRows);
-  if (!lockResult.success) {
+  const dispatch = await dispatchPostNowEvents(eventsWithDispatch);
+  if (!dispatch.success) {
     console.error(
-      "[handleSocialMediaPost] Failed to acquire dispatch locks:",
-      lockResult.message
+      `[handleSocialMediaPost] Dispatch failed (${dispatch.phase}):`,
+      dispatch.message
     );
+    const userMessage =
+      dispatch.phase === "lock_insert"
+        ? "Could not initialize post dispatch. Please try again in a moment."
+        : "Failed to start posting. Please try again.";
     return {
       success: false,
       counts: zeroCounts,
-      message:
-        "Could not initialize post dispatch. Please try again in a moment.",
+      message: userMessage,
       errors: [],
     };
   }
 
-  try {
-    const sendResult = await inngest.send(eventsWithDispatch);
+  const counts: PlatformCounts = {
+    linkedin: args.linkedinAccounts.length,
+    pinterest: args.pinterestAccounts.length,
+    tiktok: args.tiktokAccounts.length,
+    instagram: args.instagramAccounts.length,
+    total: eventsWithDispatch.length,
+  };
 
-    console.log(
-      `[handleSocialMediaPost] Dispatched ${eventsWithDispatch.length} post.now events, ids: ${sendResult.ids.join(", ")}`
-    );
-
-    const counts: PlatformCounts = {
-      linkedin: args.linkedinAccounts.length,
-      pinterest: args.pinterestAccounts.length,
-      tiktok: args.tiktokAccounts.length,
-      instagram: args.instagramAccounts.length,
-      total: eventsWithDispatch.length,
-    };
-
-    return {
-      success: true,
-      counts,
-      message: `Posting to ${eventsWithDispatch.length} account${eventsWithDispatch.length > 1 ? "s" : ""}`,
-      batch_id: args.batchId,
-      event_ids: sendResult.ids,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[handleSocialMediaPost] Failed to dispatch events:", message);
-    return {
-      success: false,
-      counts: zeroCounts,
-      message: "Failed to start posting. Please try again.",
-      errors: [],
-    };
-  }
+  return {
+    success: true,
+    counts,
+    message: `Posting to ${eventsWithDispatch.length} account${eventsWithDispatch.length > 1 ? "s" : ""}`,
+    batch_id: args.batchId,
+    event_ids: dispatch.eventIds,
+  };
 }
