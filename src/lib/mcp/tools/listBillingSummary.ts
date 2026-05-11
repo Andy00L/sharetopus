@@ -4,6 +4,7 @@ import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 import { tierLabel } from "@/lib/types/plans";
+import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
 
 /**
  * Fetches the raw subscription row for a user.
@@ -98,13 +99,15 @@ export function registerListBillingSummary(server: McpServer): void {
 
       const subResult = await fetchSubscription(principal.principalId);
 
-      // Fetch current month usage
-      const period = new Date().toISOString().slice(0, 7);
+      // Fetch current month usage.
+      // Query filter uses YYYY-MM-DD (matches the date column in usage_quotas).
+      // The display `period` field below stays YYYY-MM because it's user-facing.
+      const periodFilter = currentQuotaPeriod();
       const { data: quotas } = await adminSupabase
         .from("usage_quotas")
         .select("action, count")
         .eq("principal_id", principal.principalId)
-        .eq("period", period);
+        .eq("period", periodFilter);
 
       await logToolCall({
         principal,
@@ -142,7 +145,8 @@ export function registerListBillingSummary(server: McpServer): void {
                   },
                   {} as Record<string, number>
                 ),
-                period,
+                // Display YYYY-MM (user-facing); the DB filter above uses YYYY-MM-DD.
+                period: periodFilter.slice(0, 7),
               },
               null,
               2

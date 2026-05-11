@@ -3,6 +3,7 @@ import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { McpPrincipal } from "./auth";
 import { type PlanTier, tierMeets, tierLabel } from "@/lib/types/plans";
+import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
 
 /**
  * Result of an entitlement check. Tool handlers branch on `mode`.
@@ -179,8 +180,7 @@ async function incrementQuota(
   action: string,
   cap: number
 ): Promise<{ allowed: boolean; currentCount: number }> {
-  const now = new Date();
-  const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-01`; // YYYY-MM-DD (first of month, matches RPC _period date param)
+  const period = currentQuotaPeriod();
 
   const { data, error } = await adminSupabase.rpc("atomic_increment_quota", {
     _principal_id: principalId,

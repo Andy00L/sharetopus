@@ -108,7 +108,7 @@ The `usage_quotas` table stores per-principal monthly counts:
 | Column | Description |
 |--------|-------------|
 | principal_id | FK to principals |
-| period | Year-month string (e.g., "2026-05") |
+| period | Date, first of month (e.g., "2026-05-01"). All readers use `currentQuotaPeriod()` from `src/lib/mcp/_shared/currentQuotaPeriod.ts`. |
 | action | Action name (e.g., "schedule_post") |
 | count | Current count for this period |
 
