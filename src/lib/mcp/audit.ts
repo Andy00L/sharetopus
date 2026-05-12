@@ -73,6 +73,32 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
     const redacted = entry.args ? redactSecrets(entry.args) : null;
     const argsJson = redacted ? truncateJson(redacted) : null;
 
+    // Hydrate client_name from mcp_oauth_clients when the current request
+    // did not carry clientInfo (true for every tool call; only the initial
+    // handshake carries it, and that handshake never triggers logToolCall).
+    let resolvedClientName = entry.clientName ?? null;
+    if (!resolvedClientName && entry.principal?.kind === "oauth") {
+      try {
+        const { data, error } = await adminSupabase
+          .from("mcp_oauth_clients")
+          .select("client_name")
+          .eq("client_id", entry.principal.oauthClientId)
+          .maybeSingle();
+        if (error) {
+          console.warn(
+            `[logToolCall] client_name hydration failed for ${entry.principal.oauthClientId}: ${error.message}`
+          );
+        } else {
+          resolvedClientName = data?.client_name ?? null;
+        }
+      } catch (err) {
+        console.warn(
+          "[logToolCall] client_name hydration unexpected error:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
     const sessionPromise =
       entry.sessionId && entry.principal?.principalId
         ? upsertMcpSession({
@@ -81,7 +107,7 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
             api_key_id: apiKeyIdFromPrincipal(entry.principal),
             oauth_client_id: oauthClientIdFromPrincipal(entry.principal),
             ip_hash: entry.ipHash ?? null,
-            client_name: entry.clientName ?? null,
+            client_name: resolvedClientName,
             client_version: entry.clientVersion ?? null,
           })
         : Promise.resolve({ success: true as const });

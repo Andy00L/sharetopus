@@ -1,5 +1,6 @@
 import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { extractIpHash } from "@/lib/mcp/context";
 import { hashToken } from "@/lib/mcp/tokens";
 import type { McpPrincipal } from "../types";
 
@@ -45,9 +46,13 @@ export async function resolveApiKey(
   // Update last_used_at. Awaited so it lands before the serverless
   // function freezes. (@vercel/functions is not installed, so we
   // cannot use waitUntil here.)
+  const ipHash = await extractIpHash();
   await adminSupabase
     .from("api_keys")
-    .update({ last_used_at: new Date().toISOString() })
+    .update({
+      last_used_at: new Date().toISOString(),
+      last_used_ip: ipHash,
+    })
     .eq("id", key.id);
 
   return {
