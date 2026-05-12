@@ -101,24 +101,18 @@ async function handleSubscriptionEvent(
       console.error("[Stripe route.ts] Error updating the subscription status:", error);
     }
 
-    // Demote OAuth clients on subscription cancel
-    const { data: subRow } = await adminSupabase
-      .from("stripe_subscriptions")
-      .select("user_id")
-      .eq("stripe_subscription_id", subscription.id)
-      .maybeSingle();
-
-    if (subRow?.user_id) {
-      const { demoteOauthClientsOnCancel } = await import(
-        "@/actions/server/data/demoteOauthClientsOnCancel"
+    // Demote OAuth clients on subscription cancel.
+    // userId is already in scope from the lookup at the top of
+    // handleSubscriptionEvent. No need to re-query stripe_subscriptions.
+    const { demoteOauthClientsOnCancel } = await import(
+      "@/actions/server/data/demoteOauthClientsOnCancel"
+    );
+    const demoteResult = await demoteOauthClientsOnCancel(userId);
+    if (!demoteResult.success) {
+      console.error(
+        `[handleSubscriptionEvent] OAuth demotion failed: ${demoteResult.message}`
       );
-      const result = await demoteOauthClientsOnCancel(subRow.user_id);
-      if (!result.success) {
-        console.error(
-          `[handleSubscriptionEvent] OAuth demotion failed: ${result.message}`
-        );
-        // Do not fail the webhook. Sub cancel is the primary event.
-      }
+      // Do not fail the webhook. Sub cancel is the primary event.
     }
   } else if (type === "created") {
     const { error } = await adminSupabase
