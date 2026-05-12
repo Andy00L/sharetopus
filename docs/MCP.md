@@ -608,6 +608,36 @@ The `mcp_sessions` table tracks session metadata via best-effort upserts. On `in
 
 The `mcp_audit_log` table has an update-blocking trigger. Rows are append-only.
 
+## OAuth client management
+
+OAuth clients (Claude Desktop, Cursor, etc.) are tracked in
+`mcp_oauth_clients`. Population is lazy: the first time a client_id
+authenticates via Clerk, Sharetopus inserts a row with the auto-verify
+rule applied.
+
+Manual promote:
+```sql
+UPDATE mcp_oauth_clients
+SET trust_level = 'verified'
+WHERE client_id = 'claude_desktop_xxx';
+```
+
+Block:
+```sql
+UPDATE mcp_oauth_clients
+SET trust_level = 'blocked'
+WHERE client_id = 'malicious_client_xxx';
+```
+
+Revoke (more permanent than blocking):
+```sql
+UPDATE mcp_oauth_clients
+SET revoked_at = now()
+WHERE client_id = 'leaked_client_xxx';
+```
+
+Auth resolver refuses both `blocked` and `revoked_at IS NOT NULL`.
+
 ## Known limitations
 
 - **Stateless mode only.** mcp-handler 1.1.0 forces stateless mode on both Streamable HTTP and SSE transports. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.

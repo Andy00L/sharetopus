@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { McpPrincipal } from "@/lib/mcp/auth";
-import { resolveMcpPrincipal } from "@/lib/mcp/auth";
+import {
+  resolveMcpPrincipal,
+  assertExhaustiveKind,
+  type McpPrincipal,
+} from "@/lib/mcp/auth";
 import { registerPrompts } from "@/lib/mcp/prompts";
 import { registerResources } from "@/lib/mcp/resources";
 import { registerTools } from "@/lib/mcp/tools";
@@ -59,15 +62,10 @@ const authHandler = withMcpAuth(
   async (req: Request, bearerToken?: string) => {
     if (!bearerToken) return undefined;
 
-    // resolveMcpPrincipal handles both API key and Clerk OAuth paths,
-    // including the subscription gate. See src/lib/mcp/auth.ts.
-    const principal = await resolveMcpPrincipal(bearerToken);
-    if (!principal) return undefined;
-
     // Best-effort clientInfo extraction from MCP initialize requests.
     // Only the initialize JSON-RPC body carries params.clientInfo; tool-call
-    // requests do not. So mcp_sessions gets client_name/client_version
-    // populated on the first row only.
+    // requests do not. Extracted before resolveMcpPrincipal so the OAuth
+    // trust check can use hints for first-sight INSERT into mcp_oauth_clients.
     let clientName: string | null = null;
     let clientVersion: string | null = null;
     try {
@@ -97,6 +95,15 @@ const authHandler = withMcpAuth(
       );
     }
 
+    // resolveMcpPrincipal handles both API key and Clerk OAuth paths,
+    // including the subscription gate. Hints carry clientInfo for the
+    // OAuth trust check's first-sight INSERT.
+    const principal = await resolveMcpPrincipal(bearerToken, {
+      clientName,
+      clientVersion,
+    });
+    if (!principal) return undefined;
+
     // Synthetic per-request session ID. mcp-handler v1.1.0 forces stateless
     // Streamable HTTP (sessionIdGenerator is typed undefined), so the SDK
     // never produces a real session ID. This UUID serves as the session
@@ -106,10 +113,7 @@ const authHandler = withMcpAuth(
     return {
       token: bearerToken,
       scopes: principal.scopes,
-      clientId:
-        principal.kind === "oauth"
-          ? principal.oauthClientId
-          : (principal.apiKeyId ?? ""),
+      clientId: clientIdForAuthInfo(principal),
       extra: {
         principal: principal satisfies McpPrincipal,
         requestSessionId,
@@ -125,3 +129,14 @@ const authHandler = withMcpAuth(
 );
 
 export { authHandler as GET, authHandler as POST };
+
+function clientIdForAuthInfo(principal: McpPrincipal): string {
+  switch (principal.kind) {
+    case "oauth":
+      return principal.oauthClientId;
+    case "apikey":
+      return principal.apiKeyId ?? "";
+    default:
+      return assertExhaustiveKind(principal);
+  }
+}

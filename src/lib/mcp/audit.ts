@@ -3,7 +3,7 @@ import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { upsertMcpSession } from "@/actions/server/data/mcpSessions";
 import type { Json } from "@/lib/types/database.types";
-import type { McpPrincipal } from "./auth";
+import { assertExhaustiveKind, type McpPrincipal } from "./auth";
 
 /**
  * Fields that get scrubbed from tool arguments before persisting.
@@ -33,6 +33,28 @@ interface AuditEntry {
   clientVersion?: string | null;
 }
 
+function apiKeyIdFromPrincipal(principal: McpPrincipal): string | null {
+  switch (principal.kind) {
+    case "apikey":
+      return principal.apiKeyId;
+    case "oauth":
+      return null;
+    default:
+      return assertExhaustiveKind(principal);
+  }
+}
+
+function oauthClientIdFromPrincipal(principal: McpPrincipal): string | null {
+  switch (principal.kind) {
+    case "oauth":
+      return principal.oauthClientId;
+    case "apikey":
+      return null;
+    default:
+      return assertExhaustiveKind(principal);
+  }
+}
+
 /**
  * Appends a row to mcp_audit_log. Fire-and-forget in most call sites,
  * but we still await to make sure it lands.
@@ -56,14 +78,8 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
         ? upsertMcpSession({
             id: entry.sessionId,
             principal_id: entry.principal.principalId,
-            api_key_id:
-              entry.principal.kind === "apikey"
-                ? entry.principal.apiKeyId
-                : null,
-            oauth_client_id:
-              entry.principal.kind === "oauth"
-                ? entry.principal.oauthClientId
-                : null,
+            api_key_id: apiKeyIdFromPrincipal(entry.principal),
+            oauth_client_id: oauthClientIdFromPrincipal(entry.principal),
             ip_hash: entry.ipHash ?? null,
             client_name: entry.clientName ?? null,
             client_version: entry.clientVersion ?? null,
@@ -72,12 +88,12 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
 
     const auditPromise = adminSupabase.from("mcp_audit_log").insert({
       principal_id: entry.principal?.principalId ?? null,
-      oauth_client_id:
-        entry.principal?.kind === "oauth"
-          ? entry.principal.oauthClientId
-          : null,
-      api_key_id:
-        entry.principal?.kind === "apikey" ? entry.principal.apiKeyId : null,
+      oauth_client_id: entry.principal
+        ? oauthClientIdFromPrincipal(entry.principal)
+        : null,
+      api_key_id: entry.principal
+        ? apiKeyIdFromPrincipal(entry.principal)
+        : null,
       session_id: entry.sessionId,
       tool_name: entry.toolName,
       args_redacted: argsJson as Json,

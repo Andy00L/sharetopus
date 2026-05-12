@@ -21,7 +21,7 @@ export type Database = {
       analytics_metrics: {
         Row: {
           id: string;
-          principal_id: string;
+          principal_id: string | null;
           platform: string;
           content_id: string | null;
           metric_date: string;
@@ -36,7 +36,7 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          principal_id: string;
+          principal_id?: string | null;
           platform: string;
           content_id?: string | null;
           metric_date?: string;
@@ -305,7 +305,15 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [
+          {
+            foreignKeyName: "failed_posts_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
       };
 
       // ────────────────────────────────────────────────────────────────

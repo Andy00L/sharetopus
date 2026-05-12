@@ -158,6 +158,34 @@ Stored in the `api_keys` table.
 
 Handled by `@clerk/mcp-tools/next`. Reads `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from env to construct the metadata response.
 
+## OAuth client trust enforcement
+
+Phase 1 (2026-05-11) added trust enforcement for OAuth clients. The
+auth resolver consults `mcp_oauth_clients` on every OAuth auth.
+
+Trust levels:
+- `unverified`: default. Auth allowed; client has not been promoted.
+- `verified`: auto-assigned on first sight if the registering user has
+  fewer than 5 verified clients already. Otherwise assigned manually.
+- `blocked`: auth refused. Set via SQL or future admin UI.
+
+Trust state changes:
+- First sight: INSERT with auto-verify rule (see
+  `src/lib/mcp/auth/oauthClientTrust.ts`).
+- Subscription cancel: all verified clients of the user demote to
+  unverified (see `src/actions/server/data/demoteOauthClientsOnCancel.ts`).
+- Manual: SQL UPDATE on `mcp_oauth_clients.trust_level`.
+
+Stale unverified clients (older than 90 days, no recent sessions) are
+purged by the daily Inngest cron `sweep-stale-oauth-clients` at 04:00 UTC.
+
+Rate limits for first-sight registration:
+- 1 new client per minute per IP
+- 10 new clients per day per IP
+
+Rate-limit hits logged to `rate_limit_events` with scope columns
+`dcr_register` and `dcr_register_daily`.
+
 ## Entitlement and plan gating
 
 `src/lib/mcp/entitlement.ts` enforces tier requirements and monthly quotas.

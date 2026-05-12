@@ -6,6 +6,7 @@ import { processDirectPost } from "@/inngest/functions/processDirectPost";
 import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
 import { sweepOrphanStorageFiles } from "@/inngest/functions/sweepOrphanStorageFiles";
+import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthClientsCron";
 
 export const runtime = "nodejs";
 
@@ -25,5 +26,6 @@ export const { GET, POST, PUT } = serve({
     tikTokPublishStatusPollWorker,
     sweepStuckDirectPosts,
     sweepOrphanStorageFiles,
+    sweepStaleOauthClientsCron,
   ],
 });
