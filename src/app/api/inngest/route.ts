@@ -7,6 +7,7 @@ import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublish
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
 import { sweepOrphanStorageFiles } from "@/inngest/functions/sweepOrphanStorageFiles";
 import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthClientsCron";
+import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanupCancelledPostsAfterGraceCron";
 
 export const runtime = "nodejs";
 
@@ -27,5 +28,6 @@ export const { GET, POST, PUT } = serve({
     sweepStuckDirectPosts,
     sweepOrphanStorageFiles,
     sweepStaleOauthClientsCron,
+    cleanupCancelledPostsAfterGraceCron,
   ],
 });

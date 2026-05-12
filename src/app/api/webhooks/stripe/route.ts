@@ -114,6 +114,22 @@ async function handleSubscriptionEvent(
       );
       // Do not fail the webhook. Sub cancel is the primary event.
     }
+
+    // Cancel all future scheduled posts. They are tagged with
+    // cancelled_by_sub_at so the resume-on-resubscribe path can restore
+    // them and the 7-day cleanup cron can delete them if the user does
+    // not resubscribe.
+    const { cancelFutureScheduledPostsOnSubCancel } = await import(
+      "@/actions/server/data/cancelFutureScheduledPostsOnSubCancel"
+    );
+    const cancelResult = await cancelFutureScheduledPostsOnSubCancel(userId);
+    if (!cancelResult.success) {
+      console.error(
+        `[handleSubscriptionEvent] Scheduled-post cancel failed: ${cancelResult.message}`
+      );
+      // Do not fail the webhook. The cleanup cron will eventually
+      // delete stale posts even if this call fails.
+    }
   } else if (type === "created") {
     const { error } = await adminSupabase
       .from("stripe_subscriptions")
@@ -124,6 +140,30 @@ async function handleSubscriptionEvent(
         status: 500,
         error: "Error during subscription insert",
       });
+    }
+
+    // Resume any system-cancelled posts (posts tagged with
+    // cancelled_by_sub_at). User-cancelled posts are not touched.
+    const { resumeCancelledPostsOnResubscribe } = await import(
+      "@/actions/server/data/resumeCancelledPostsOnResubscribe"
+    );
+    const resumeResult = await resumeCancelledPostsOnResubscribe(userId);
+    if (!resumeResult.success) {
+      console.error(
+        `[handleSubscriptionEvent] Scheduled-post resume failed: ${resumeResult.message}`
+      );
+    }
+
+    // Promote previously-demoted OAuth clients back to verified, subject
+    // to the per-user cap of 5.
+    const { promoteOauthClientsOnResubscribe } = await import(
+      "@/actions/server/data/promoteOauthClientsOnResubscribe"
+    );
+    const promoteResult = await promoteOauthClientsOnResubscribe(userId);
+    if (!promoteResult.success) {
+      console.error(
+        `[handleSubscriptionEvent] OAuth promotion failed: ${promoteResult.message}`
+      );
     }
   } else {
     const { error } = await adminSupabase

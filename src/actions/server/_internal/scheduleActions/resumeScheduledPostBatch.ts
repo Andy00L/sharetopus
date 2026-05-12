@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
 
 /**
  * Resumes cancelled posts without authCheck. Principal already verified.
@@ -43,13 +44,14 @@ export async function resumeScheduledPostBatchInternal(
       return { success: false, message: "No posts are in a resumable (cancelled) state." };
     }
 
-    const now = new Date();
     const pastIds: string[] = [];
     const futureIds: string[] = [];
     let timeUpdated = 0;
 
     for (const post of resumable) {
-      if (new Date(post.scheduled_at) <= now) {
+      const original = new Date(post.scheduled_at);
+      const bumped = bumpPastScheduleToFuture(original);
+      if (bumped.getTime() !== original.getTime()) {
         pastIds.push(post.id);
         timeUpdated++;
       } else {
@@ -59,7 +61,7 @@ export async function resumeScheduledPostBatchInternal(
 
     let ok = true;
     if (pastIds.length > 0) {
-      const newTime = new Date(now.getTime() + 60 * 60 * 1000);
+      const newTime = bumpPastScheduleToFuture(new Date(0));
       const { error } = await adminSupabase
         .from("scheduled_posts")
         .update({ status: "scheduled", scheduled_at: newTime.toISOString() })

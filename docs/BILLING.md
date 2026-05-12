@@ -45,9 +45,9 @@ sequenceDiagram
 
 | Event | Action |
 |-------|--------|
-| `customer.subscription.created` | Insert into stripe_subscriptions |
+| `customer.subscription.created` | Insert into stripe_subscriptions, resume system-cancelled posts, promote OAuth clients |
 | `customer.subscription.updated` | Update stripe_subscriptions (status, period, plan) |
-| `customer.subscription.deleted` | Set status to `cancelled` |
+| `customer.subscription.deleted` | Set status to `cancelled`, demote OAuth clients, cancel future scheduled posts |
 | `invoice.payment_succeeded` | Insert into stripe_invoices with amount_paid_cents |
 | `invoice.payment_failed` | Insert into stripe_invoices with status `failed` |
 
@@ -115,6 +115,43 @@ The `usage_quotas` table stores per-principal monthly counts:
 | count | Current count for this period |
 
 Incremented atomically by `atomic_increment_quota` on every quota-gated MCP tool call.
+
+## Subscription lifecycle
+
+### Cancel (period_end, customer.subscription.deleted)
+
+When a user's Stripe subscription reaches period_end, the webhook handler:
+
+1. Sets `stripe_subscriptions.status = 'cancelled'`
+2. Demotes the user's verified OAuth clients to unverified
+   (`demoteOauthClientsOnCancel`)
+3. Cancels all future scheduled posts, tagging each with
+   `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
+
+The user retains access to the dashboard and can resubscribe.
+Manual cancellations of posts made before the sub cancel are left
+untouched (they have `cancelled_by_sub_at IS NULL`).
+
+### Resubscribe (customer.subscription.created)
+
+When the user resubscribes, the webhook handler:
+
+1. INSERTs the new `stripe_subscriptions` row
+2. Resumes system-cancelled posts (`resumeCancelledPostsOnResubscribe`).
+   Posts whose original `scheduled_at` has elapsed are bumped to
+   `now() + 1 hour` via `bumpPastScheduleToFuture`.
+3. Re-promotes previously-demoted OAuth clients
+   (`promoteOauthClientsOnResubscribe`) up to the per-user cap of 5.
+
+### Grace period (7 days)
+
+If the user does not resubscribe within 7 days, the daily cron
+`cleanup-cancelled-posts-after-grace` (05:00 UTC) deletes their
+system-cancelled posts. Orphan media in storage is picked up by
+`sweep-orphan-storage-files` (03:00 UTC) the following day.
+
+The cron re-checks subscription status before deletion as a guard
+against webhook delivery failures.
 
 ## Future: x402 (deferred)
 

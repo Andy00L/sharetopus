@@ -826,6 +826,7 @@ export type Database = {
           x402_charge_id: string | null;
           metadata: Json;
           created_at: string;
+          cancelled_by_sub_at: string | null;
           updated_at: string;
         };
         Insert: {
@@ -855,6 +856,7 @@ export type Database = {
           idempotency_key?: string | null;
           x402_charge_id?: string | null;
           metadata?: Json;
+          cancelled_by_sub_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -885,6 +887,7 @@ export type Database = {
           idempotency_key?: string | null;
           x402_charge_id?: string | null;
           metadata?: Json;
+          cancelled_by_sub_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
