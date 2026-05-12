@@ -4,6 +4,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // The MCP handler does its own auth via Bearer tokens.
 const isPublicRoute = createRouteMatcher([
   "/api/mcp/(.*)",
+  "/api/x402/(.*)",
   "/.well-known/oauth-protected-resource(.*)",
   "/.well-known/oauth-authorization-server(.*)",
 ]);

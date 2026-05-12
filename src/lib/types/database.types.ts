@@ -1451,7 +1451,13 @@ export type Database = {
         Row: {
           id: string;
           address: string;
-          chain: "base" | "base-sepolia" | "polygon" | "arbitrum";
+          chain:
+            | "base"
+            | "base-sepolia"
+            | "polygon"
+            | "arbitrum"
+            | "solana"
+            | "solana-devnet";
           display_name: string | null;
           ens_name: string | null;
           sanctions_status: "unchecked" | "clean" | "sanctioned";
@@ -1463,7 +1469,13 @@ export type Database = {
         Insert: {
           id: string;
           address: string;
-          chain?: "base" | "base-sepolia" | "polygon" | "arbitrum";
+          chain?:
+            | "base"
+            | "base-sepolia"
+            | "polygon"
+            | "arbitrum"
+            | "solana"
+            | "solana-devnet";
           display_name?: string | null;
           ens_name?: string | null;
           sanctions_status?: "unchecked" | "clean" | "sanctioned";
@@ -1475,7 +1487,13 @@ export type Database = {
         Update: {
           id?: string;
           address?: string;
-          chain?: "base" | "base-sepolia" | "polygon" | "arbitrum";
+          chain?:
+            | "base"
+            | "base-sepolia"
+            | "polygon"
+            | "arbitrum"
+            | "solana"
+            | "solana-devnet";
           display_name?: string | null;
           ens_name?: string | null;
           sanctions_status?: "unchecked" | "clean" | "sanctioned";
@@ -1836,7 +1854,13 @@ export type TablesUpdate<
 
 export type PrincipalKind = "clerk" | "wallet";
 export type ApiKeyKind = "rest" | "mcp" | "wallet";
-export type WalletChain = "base" | "base-sepolia" | "polygon" | "arbitrum";
+export type WalletChain =
+  | "base"
+  | "base-sepolia"
+  | "polygon"
+  | "arbitrum"
+  | "solana"
+  | "solana-devnet";
 export type SanctionsStatus = "unchecked" | "clean" | "sanctioned";
 export type SanctionsResult = "clean" | "sanctioned" | "error";
 export type TrustLevel = "unverified" | "verified" | "blocked";
