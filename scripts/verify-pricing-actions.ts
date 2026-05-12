@@ -14,6 +14,7 @@
  *   2 = config error or can't connect
  */
 
+import type { Database } from "@/lib/types/database.types";
 import { createClient } from "@supabase/supabase-js";
 
 // The `server-only` guard in adminSupabase.ts blocks non-Next.js usage.
@@ -53,11 +54,13 @@ async function main(): Promise<void> {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE;
 
   if (!supabaseUrl || !serviceRole) {
-    console.error("[verifyPricingActions] NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE are required.");
+    console.error(
+      "[verifyPricingActions] NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE are required.",
+    );
     process.exit(2);
   }
 
-  const supabase = createClient(supabaseUrl, serviceRole);
+  const supabase = createClient<Database>(supabaseUrl, serviceRole);
 
   // Fetch all pricing_actions rows
   const { data, error } = await supabase
@@ -70,7 +73,9 @@ async function main(): Promise<void> {
   }
 
   if (!data) {
-    console.error("[verifyPricingActions] No data returned from pricing_actions.");
+    console.error(
+      "[verifyPricingActions] No data returned from pricing_actions.",
+    );
     process.exit(2);
   }
 
@@ -89,7 +94,9 @@ async function main(): Promise<void> {
     const dbPrice = dbMap.get(expected.action);
 
     if (dbPrice === undefined) {
-      console.log(`[verifyPricingActions]   x ${expected.action}: MISSING (expected ${expected.expectedUsdcPrice.toFixed(2)} USDC)`);
+      console.log(
+        `[verifyPricingActions]   x ${expected.action}: MISSING (expected ${expected.expectedUsdcPrice.toFixed(2)} USDC)`,
+      );
       missingRows.push(expected.action);
       hasDrift = true;
       continue;
@@ -97,10 +104,14 @@ async function main(): Promise<void> {
 
     const priceDiff = Math.abs(dbPrice - expected.expectedUsdcPrice);
     if (priceDiff > PRICE_TOLERANCE) {
-      console.log(`[verifyPricingActions]   x ${expected.action}: ${dbPrice.toFixed(6)} USDC (expected ${expected.expectedUsdcPrice.toFixed(2)})   <- DRIFT`);
+      console.log(
+        `[verifyPricingActions]   x ${expected.action}: ${dbPrice.toFixed(6)} USDC (expected ${expected.expectedUsdcPrice.toFixed(2)})   <- DRIFT`,
+      );
       hasDrift = true;
     } else {
-      console.log(`[verifyPricingActions]   + ${expected.action}: ${dbPrice.toFixed(6)} USDC (expected ${expected.expectedUsdcPrice.toFixed(2)})`);
+      console.log(
+        `[verifyPricingActions]   + ${expected.action}: ${dbPrice.toFixed(6)} USDC (expected ${expected.expectedUsdcPrice.toFixed(2)})`,
+      );
     }
   }
 
@@ -108,26 +119,37 @@ async function main(): Promise<void> {
   const expectedKeys = new Set(EXPECTED_ACTIONS.map((e) => e.action));
   const extraRows = data.filter((row) => !expectedKeys.has(row.action));
   if (extraRows.length > 0) {
-    console.log("[verifyPricingActions] Extra rows in pricing_actions (not in expected list):");
+    console.log(
+      "[verifyPricingActions] Extra rows in pricing_actions (not in expected list):",
+    );
     for (const row of extraRows) {
-      console.log(`[verifyPricingActions]     ? ${row.action}: ${Number(row.usdc_price).toFixed(6)} USDC`);
+      console.log(
+        `[verifyPricingActions]     ? ${row.action}: ${Number(row.usdc_price).toFixed(6)} USDC`,
+      );
     }
   }
 
   if (missingRows.length > 0) {
-    console.log(`[verifyPricingActions] Missing rows: [${missingRows.join(", ")}]`);
+    console.log(
+      `[verifyPricingActions] Missing rows: [${missingRows.join(", ")}]`,
+    );
   }
 
   if (hasDrift || missingRows.length > 0) {
     console.log("[verifyPricingActions] FAIL: drift or missing rows detected.");
     process.exit(1);
   } else {
-    console.log(`[verifyPricingActions] PASS: all ${EXPECTED_ACTIONS.length} rows present and prices match.`);
+    console.log(
+      `[verifyPricingActions] PASS: all ${EXPECTED_ACTIONS.length} rows present and prices match.`,
+    );
     process.exit(0);
   }
 }
 
 main().catch((err) => {
-  console.error("[verifyPricingActions] Fatal error:", err instanceof Error ? err.message : err);
+  console.error(
+    "[verifyPricingActions] Fatal error:",
+    err instanceof Error ? err.message : err,
+  );
   process.exit(2);
 });
