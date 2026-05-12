@@ -1,6 +1,7 @@
 // app/api/stripe/webhook/route.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import stripe from "@/lib/stripe";
+import { priceIdToTier } from "@/lib/types/plans";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -78,18 +79,21 @@ async function handleSubscriptionEvent(
   }
 
   const userId = userData.id;
+  const priceId = subscription.items.data[0]?.price?.id ?? null;
+  const periodEndMs =
+    Math.min(...subscription.items.data.map((i) => i.current_period_end)) * 1000;
+  const periodEndIso = new Date(periodEndMs).toISOString();
+
   const subscriptionData = {
     user_id: userId,
     stripe_customer_id: stripeCustomerId,
     stripe_subscription_id: subscription.id,
     status: subscription.status,
     start_date: new Date(subscription.created * 1000).toISOString(),
-    end_date: new Date(
-      Math.min(...subscription.items.data.map((i) => i.current_period_end)) *
-        1000
-    ).toISOString(),
-
-    plan: subscription.items.data[0]?.plan.id,
+    end_date: periodEndIso,
+    current_period_end: periodEndIso,
+    stripe_price_id: priceId,
+    plan: priceIdToTier(priceId),
   };
 
   if (type === "deleted") {
