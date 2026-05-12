@@ -21,8 +21,57 @@ export function usePinterestBoards(userId: string | null) {
   const [isLoadingBoards, setIsLoadingBoards] = useState(false);
 
   /**
+   * Private. Fetches boards for an account and rewrites the local
+   * `boards` state so this account's entries reflect the latest server
+   * response. Idempotent at the state level: existing rows for the
+   * account are replaced, not appended. Does not consult dedup guards;
+   * callers decide whether to dedupe.
+   *
+   * Uses functional setState everywhere to avoid stale closures.
+   */
+  async function fetchAndSetBoards(account: SocialAccount) {
+    if (!userId || !account.access_token) return;
+
+    setIsLoadingBoards(true);
+    try {
+      const result = await getPinterestBoards(account.access_token, userId);
+
+      if (result.success && result.boards.length > 0) {
+        const formatted: BoardEntry[] = result.boards.map((board) => ({
+          boardID: board.id,
+          boardName: board.name,
+          accountId: account.id,
+          isSelected: false,
+        }));
+
+        setBoards((prev) => [
+          ...prev.filter((b) => b.accountId !== account.id),
+          ...formatted,
+        ]);
+      } else {
+        setBoards((prev) => [
+          ...prev.filter((b) => b.accountId !== account.id),
+          {
+            boardID: `no-boards-${account.id}`,
+            boardName: "no-boards",
+            accountId: account.id,
+            isSelected: false,
+          },
+        ]);
+      }
+
+      setCheckedAccountIds((prev) =>
+        prev.includes(account.id) ? prev : [...prev, account.id]
+      );
+    } finally {
+      setIsLoadingBoards(false);
+    }
+  }
+
+  /**
    * Called from handleAccountToggle when a Pinterest account is checked.
-   * Idempotent: skips if boards for this account are already loaded.
+   * Idempotent on repeated toggles: skips if boards for this account
+   * are already loaded. First-time loads delegate to fetchAndSetBoards.
    */
   async function loadBoardsForAccount(account: SocialAccount) {
     if (!userId) return;
@@ -30,32 +79,7 @@ export function usePinterestBoards(userId: string | null) {
     if (checkedAccountIds.includes(account.id)) return;
     if (boards.some((b) => b.accountId === account.id)) return;
 
-    setIsLoadingBoards(true);
-    setCheckedAccountIds((prev) => [...prev, account.id]);
-
-    const result = await getPinterestBoards(account.access_token, userId);
-
-    if (result.success && result.boards.length > 0) {
-      const formattedBoards = result.boards.map((board) => ({
-        boardID: board.id,
-        boardName: board.name,
-        accountId: account.id,
-        isSelected: false,
-      }));
-      setBoards((prev) => [...prev, ...formattedBoards]);
-    } else {
-      setBoards((prev) => [
-        ...prev,
-        {
-          boardID: `no-boards-${account.id}`,
-          boardName: "no-boards",
-          accountId: account.id,
-          isSelected: false,
-        },
-      ]);
-    }
-
-    setIsLoadingBoards(false);
+    await fetchAndSetBoards(account);
   }
 
   /** Called when a Pinterest account is unchecked. */
@@ -77,7 +101,12 @@ export function usePinterestBoards(userId: string | null) {
     );
   }
 
-  /** Creates a new Pinterest board and reloads boards for the account. */
+  /**
+   * Creates a new Pinterest board and forces a board refetch for the
+   * account. Calls fetchAndSetBoards directly, bypassing
+   * loadBoardsForAccount's dedup guards since we know the server data
+   * just changed.
+   */
   async function handleCreateBoard(
     accountId: string,
     accounts: SocialAccount[]
@@ -101,17 +130,7 @@ export function usePinterestBoards(userId: string | null) {
       if (result) {
         toast.success("Board created successfully!");
         setNewBoardName("");
-
-        // Remove the "no-boards" placeholder and trigger refetch
-        setBoards((prev) =>
-          prev.filter(
-            (b) => !(b.accountId === accountId && b.boardName === "no-boards")
-          )
-        );
-        setCheckedAccountIds((prev) => prev.filter((id) => id !== accountId));
-
-        // Reload boards for this account
-        await loadBoardsForAccount(account);
+        await fetchAndSetBoards(account);
       } else {
         toast.error("Failed to create board");
       }
