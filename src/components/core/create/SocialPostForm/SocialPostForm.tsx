@@ -6,7 +6,7 @@ import { SidebarGroup } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
-import { nanoid } from "nanoid";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { handleSocialMediaPost } from "../action/handleSocialMediaPost/handleSocialMediaPost";
@@ -302,7 +302,7 @@ export default function SocialPostForm({
     setError(null);
     setUploadProgress(0);
 
-    const batchId = nanoid(32);
+    const batchId = generateBatchId();
     let mediaStoragePath = "";
 
     try {

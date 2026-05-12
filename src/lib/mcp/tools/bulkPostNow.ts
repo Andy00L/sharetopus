@@ -22,6 +22,7 @@ import {
 } from "@/lib/mcp/context";
 import type { McpPrincipal } from "../auth";
 import { randomUUID } from "crypto";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 
 // ---------------------------------------------------------------------------
 // Constants & schema
@@ -725,7 +726,7 @@ export function registerBulkPostNow(server: McpServer): void {
 
       // 7. Build event payloads (pure)
       const agentSuppliedBatchId = Boolean(args.batch_id);
-      const batchId = args.batch_id ?? `mcp_${randomUUID()}`;
+      const batchId = args.batch_id ?? generateBatchId();
       const events = buildEventPayloads(
         args.posts,
         batchId,

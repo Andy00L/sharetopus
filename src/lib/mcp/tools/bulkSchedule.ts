@@ -4,6 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpPrincipal } from "../auth";
 import type { TablesInsert, CreatedVia } from "@/lib/types/database.types";
 
@@ -705,7 +706,7 @@ export function registerBulkSchedule(server: McpServer): void {
         return buildDenyResponse(pinterestCheck.message);
       }
 
-      const batchId = args.batch_id ?? crypto.randomUUID();
+      const batchId = args.batch_id ?? generateBatchId();
       const rows = buildScheduledPostRows(
         args.posts,
         ctx.principal.principalId,

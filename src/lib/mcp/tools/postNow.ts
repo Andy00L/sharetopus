@@ -13,6 +13,7 @@ import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
 import { randomUUID } from "crypto";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 
 /**
@@ -369,7 +370,7 @@ export function registerPostNow(server: McpServer): void {
       }
 
       // 7. Build event payload (exact PostNowEventData shape)
-      const batchId = `mcp_${randomUUID()}`;
+      const batchId = generateBatchId();
 
       const fileName = args.media_storage_path
         ? args.media_storage_path.split("/").pop() ?? ""

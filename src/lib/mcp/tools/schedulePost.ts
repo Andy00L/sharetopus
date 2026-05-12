@@ -4,6 +4,7 @@ import { schedulePostInternal } from "@/actions/server/_internal/scheduleActions
 import { entitlementFor } from "../entitlement";
 import { logToolCall } from "../audit";
 import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 
 /**
  * Schedules a single post for publishing.
@@ -45,7 +46,6 @@ export function registerSchedulePost(server: McpServer): void {
         batch_id: z
           .string()
           .optional()
-          .default("")
           .describe("Optional batch ID to group related posts"),
         pinterest_board_id: z
           .string()
@@ -186,7 +186,7 @@ export function registerSchedulePost(server: McpServer): void {
           title: args.title ?? null,
           description: args.description,
           mediaStoragePath: args.media_storage_path,
-          batch_id: args.batch_id,
+          batch_id: args.batch_id ?? generateBatchId(),
           postOptions,
           idempotency_key: args.idempotency_key,
         },
