@@ -62,17 +62,6 @@ export const RUNTIME = {
   // Total ceiling = maxAttempts x intervalMs = 60 x 10s = 10 minutes.
   tikTokPublishPollMaxAttempts: 60,
   tikTokPublishPollIntervalMs: 10_000,
-
-  // Direct-post status polling (FIX 26).
-  // Client polls /api/posts/status to check Inngest run state.
-  directPostStatusPollIntervalMs: readPositiveInt(
-    "DIRECT_POST_POLL_INTERVAL_MS",
-    1500
-  ),
-  directPostStatusPollMaxAttempts: readPositiveInt(
-    "DIRECT_POST_POLL_MAX_ATTEMPTS",
-    120
-  ),
 } as const;
 
 function readPositiveInt(key: string, fallback: number): number {

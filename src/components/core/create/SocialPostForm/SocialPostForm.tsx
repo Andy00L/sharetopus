@@ -37,6 +37,7 @@ import {
   getDefaultScheduledDate,
 } from "./state/defaults";
 import { checkFormSubmission } from "./validation/checkFormSubmission";
+import { pollDirectPostStatus } from "./polling/pollDirectPostStatus";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -217,48 +218,6 @@ export default function SocialPostForm({
     setOpenTab(undefined);
     resetContent();
     pinterestHook.resetBoards();
-  }
-
-  async function pollDirectPostStatus(eventIds: string[]) {
-    const maxAttempts = 120; // 3 min at 1.5s intervals
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const res = await fetch(
-          `/api/posts/status?event_ids=${eventIds.join(",")}`
-        );
-        if (!res.ok) continue;
-        const status = await res.json();
-        if (!status.success) continue;
-        if (status.allTerminal) {
-          const succeeded = status.jobs.filter(
-            (j: { status: string }) => j.status === "success"
-          ).length;
-          const failed = status.jobs.filter(
-            (j: { status: string }) => j.status === "failed"
-          );
-          if (succeeded > 0 && failed.length === 0) {
-            toast.success(
-              `Posted to ${succeeded} account${succeeded > 1 ? "s" : ""}`
-            );
-          } else if (succeeded > 0 && failed.length > 0) {
-            toast.success(
-              `Posted to ${succeeded} account${succeeded > 1 ? "s" : ""}`
-            );
-            toast.warning(`${failed.length} account(s) failed`);
-          } else {
-            const firstError = failed[0]?.error_message;
-            toast.error(firstError || "All posts failed");
-          }
-          return;
-        }
-      } catch {
-        // Transient fetch error; continue polling
-      }
-    }
-    toast.warning(
-      "Posts are taking longer than expected. They will continue in the background."
-    );
   }
 
   async function handleSubmit() {

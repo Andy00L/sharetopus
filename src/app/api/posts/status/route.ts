@@ -1,136 +1,148 @@
-import { queryEventRunStatus } from "@/lib/api/inngest/queryRunStatus";
+import "server-only";
+
+import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { NextRequest, NextResponse } from "next/server";
+import { adminSupabase } from "@/actions/api/adminSupabase";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import type {
+  PostStatusJob,
+  PostStatusJobStatus,
+  PostStatusResponse,
+} from "@/lib/types/postStatus";
+import { isJobTerminal } from "@/lib/types/postStatus";
 
 export const runtime = "nodejs";
 
-type JobStatus = {
-  event_id: string;
-  status: "pending" | "success" | "failed";
-  error_message?: string;
-};
-
-type StatusResponse =
-  | {
-      success: true;
-      jobs: JobStatus[];
-      allTerminal: boolean;
-    }
-  | { success: false; message: string };
+/**
+ * Maps the DB status enum ("processing"|"completed"|"failed") to the
+ * public API values ("pending"|"success"|"failed"). The public shape
+ * is unchanged from the Inngest-backed version so existing clients
+ * keep working.
+ */
+function mapDbStatusToPublic(
+  dbStatus: "processing" | "completed" | "failed",
+): PostStatusJobStatus {
+  if (dbStatus === "completed") return "success";
+  if (dbStatus === "failed") return "failed";
+  return "pending";
+}
 
 /**
- * GET /api/posts/status?event_ids=evt_1,evt_2,evt_3
+ * GET /api/posts/status?event_ids=evt1,evt2,evt3
  *
- * Polls the Inngest API for run states of direct-post events.
- * Requires Clerk auth.
+ * Returns the current status of every event_id requested, scoped to
+ * the authenticated user. Backed by pending_direct_posts which the
+ * direct-post worker maintains via finalizePendingDirectPost.
+ *
+ * Previously queried Inngest's REST API per event_id. Switched to the
+ * local DB to remove N external HTTP calls per poll iteration.
  */
-export async function GET(
-  req: NextRequest,
-): Promise<NextResponse<StatusResponse>> {
+export async function GET(request: Request): Promise<NextResponse> {
   const { userId } = await auth();
   if (!userId) {
-    return NextResponse.json(
-      { success: false, message: "Not authenticated" },
-      { status: 401 },
-    );
+    const body: PostStatusResponse = {
+      success: false,
+      message: "Unauthorized.",
+    };
+    return NextResponse.json(body, { status: 401 });
   }
 
-  const eventIdsParam = req.nextUrl.searchParams.get("event_ids");
-  if (!eventIdsParam) {
-    return NextResponse.json(
-      { success: false, message: "Missing event_ids parameter" },
-      { status: 400 },
-    );
+  const rateCheck = await checkRateLimit(
+    "postsStatusPoll",
+    userId,
+    240,
+    60,
+    undefined,
+  );
+  if (!rateCheck.success) {
+    const body: PostStatusResponse = {
+      success: false,
+      message: "Too many status checks. Please slow down.",
+    };
+    return NextResponse.json(body, { status: 429 });
   }
 
-  const eventIds = eventIdsParam
+  const url = new URL(request.url);
+  const raw = url.searchParams.get("event_ids");
+  if (!raw) {
+    const body: PostStatusResponse = {
+      success: false,
+      message: "event_ids query parameter is required.",
+    };
+    return NextResponse.json(body, { status: 400 });
+  }
+
+  const eventIds = raw
     .split(",")
-    .map((id) => id.trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 
   if (eventIds.length === 0) {
-    return NextResponse.json(
-      { success: false, message: "No event IDs provided" },
-      { status: 400 },
-    );
+    const body: PostStatusResponse = {
+      success: true,
+      jobs: [],
+      allTerminal: true,
+    };
+    return NextResponse.json(body);
   }
 
-  if (eventIds.length > 50) {
-    return NextResponse.json(
-      { success: false, message: "Too many event IDs (max 50)" },
-      { status: 400 },
-    );
+  if (eventIds.length > 100) {
+    const body: PostStatusResponse = {
+      success: false,
+      message: "Too many event_ids in a single request.",
+    };
+    return NextResponse.json(body, { status: 400 });
   }
 
-  const jobs: JobStatus[] = [];
+  const { data, error } = await adminSupabase
+    .from("pending_direct_posts")
+    .select("event_id, status, platform, failure_reason")
+    .in("event_id", eventIds)
+    .eq("principal_id", userId);
 
-  // Fan out queries in parallel
-  const results = await Promise.all(
-    eventIds.map((eventId) => queryEventRunStatus(eventId)),
+  if (error) {
+    console.error(
+      `[postsStatusRoute] DB query failed for ${eventIds.length} event(s): ${error.message}`,
+    );
+    const body: PostStatusResponse = {
+      success: false,
+      message: "Failed to read post status.",
+    };
+    return NextResponse.json(body, { status: 500 });
+  }
+
+  // Build a row lookup keyed by event_id. Missing event_ids are
+  // treated as still "pending" (lock row insert and Inngest send are
+  // sequential but not transactional; a rare race could leave a row
+  // momentarily missing).
+  const rowByEventId = new Map(
+    (data ?? []).map((row) => [row.event_id, row]),
   );
 
-  for (let i = 0; i < eventIds.length; i++) {
-    const eventId = eventIds[i];
-    const result = results[i];
-
-    if (!result.success) {
-      // Inngest API error for this event; treat as pending (may be transient)
-      console.warn(
-        `[postsStatus] Failed to query event ${eventId}: ${result.message}`,
-      );
-      jobs.push({ event_id: eventId, status: "pending" });
-      continue;
-    }
-
-    if (result.runs.length === 0) {
-      // No runs yet; event may still be queued
-      jobs.push({ event_id: eventId, status: "pending" });
-      continue;
-    }
-
-    // For direct posts there is one run per event
-    const run = result.runs[0];
-
-    if (run.status === "Completed") {
-      const outputArray = Array.isArray(run.output) ? run.output : null;
-      const runComplete = outputArray?.find(
-        (op): op is Record<string, unknown> =>
-          typeof op === "object" &&
-          op !== null &&
-          (op as Record<string, unknown>).op === "RunComplete",
-      );
-      const data = (runComplete?.data ?? null) as Record<
-        string,
-        unknown
-      > | null;
-
-      const explicitlyFailed = data?.ok === false;
-      if (explicitlyFailed) {
-        const errorMsg =
-          typeof data?.message === "string" ? data.message : "Post failed";
-        jobs.push({
-          event_id: eventId,
-          status: "failed",
-          error_message: errorMsg,
-        });
-      } else {
-        jobs.push({ event_id: eventId, status: "success" });
-      }
-    } else if (run.status === "Failed" || run.status === "Cancelled") {
-      jobs.push({
+  const jobs: PostStatusJob[] = eventIds.map((eventId) => {
+    const row = rowByEventId.get(eventId);
+    if (!row) {
+      return {
         event_id: eventId,
-        status: "failed",
-        error_message: `Run ${run.status.toLowerCase()}`,
-      });
-    } else {
-      // Running, Scheduled, Unknown
-      jobs.push({ event_id: eventId, status: "pending" });
+        status: "pending" as const,
+        platform: "unknown",
+        error_message: null,
+      };
     }
-  }
+    return {
+      event_id: row.event_id,
+      status: mapDbStatusToPublic(row.status),
+      platform: row.platform,
+      error_message: row.failure_reason ?? null,
+    };
+  });
 
-  const allTerminal = jobs.every(
-    (j) => j.status === "success" || j.status === "failed",
-  );
+  const allTerminal = jobs.every((j) => isJobTerminal(j.status));
 
-  return NextResponse.json({ success: true, jobs, allTerminal });
+  const body: PostStatusResponse = {
+    success: true,
+    jobs,
+    allTerminal,
+  };
+  return NextResponse.json(body);
 }
