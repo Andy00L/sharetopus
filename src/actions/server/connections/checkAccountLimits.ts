@@ -1,20 +1,17 @@
-// actions/checkAccountLimits.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import {
-  DEFAULT_ACCOUNT_LIMIT,
-  PRICE_ID_ACCOUNT_LIMITS,
-} from "@/lib/types/plans";
+import { TIER_ACCOUNT_LIMITS, type PlanTier } from "@/lib/types/plans";
 import "server-only";
 
 export async function checkAccountLimits(
   userId: string | null,
-  priceId: string | null
+  plan: PlanTier | string | null,
 ): Promise<{
   success: boolean;
   message: string;
   canAddMore: boolean;
   currentCount: number;
   maxAllowed: number;
+  isUnlimited: boolean;
 }> {
   if (!userId) {
     return {
@@ -23,68 +20,55 @@ export async function checkAccountLimits(
       canAddMore: false,
       currentCount: 0,
       maxAllowed: 0,
+      isUnlimited: false,
     };
   }
 
+  const tier = (plan as PlanTier) ?? "free";
+  const maxAllowed = TIER_ACCOUNT_LIMITS[tier] ?? 0;
+  const isUnlimited = !Number.isFinite(maxAllowed);
+
   try {
-    // Validate price ID
-    if (!priceId) {
-      console.error("[CheckAccountLimits] No price id provided");
-      return {
-        success: false,
-        message: "No subscription price ID provided",
-        canAddMore: false,
-        currentCount: 0,
-        maxAllowed: 0,
-      };
-    }
-
-    // Look up the account limit for this price ID
-    const maxAllowed =
-      PRICE_ID_ACCOUNT_LIMITS[priceId] || DEFAULT_ACCOUNT_LIMIT;
-
-    // Count current social accounts
-    const { data: accountsData, error: accountsError } = await adminSupabase
+    const { data, error } = await adminSupabase
       .from("social_accounts")
       .select("id")
-      .eq("principal_id", userId);
+      .eq("principal_id", userId)
+      .is("deleted_at", null);
 
-    if (accountsError) {
-      console.error(
-        "[checkAccountLimits] Accounts query error:",
-        accountsError
-      );
+    if (error) {
+      console.error("[checkAccountLimits] DB error:", error.message);
       return {
         success: false,
-        message: `Database error: ${accountsError.message}`,
+        message: `Database error: ${error.message}`,
         canAddMore: false,
         currentCount: 0,
         maxAllowed,
+        isUnlimited: false,
       };
     }
 
-    const currentCount = accountsData?.length || 0;
-
-    // Determine if user can connect another account
+    const currentCount = data?.length ?? 0;
     const canAddMore = currentCount < maxAllowed;
 
     return {
       success: true,
       message: canAddMore
-        ? `User can connect more accounts (${currentCount}/${maxAllowed})`
-        : `User has reached account limit (${currentCount}/${maxAllowed})`,
-      canAddMore,
+        ? `User can connect more (${currentCount}/${maxAllowed})`
+        : `Account limit reached (${currentCount}/${maxAllowed})`,
+      canAddMore: isUnlimited || currentCount < maxAllowed,
       currentCount,
-      maxAllowed,
+      maxAllowed: isUnlimited ? Infinity : maxAllowed,
+      isUnlimited,
     };
   } catch (err) {
-    console.error("[checkAccountLimits] Unexpected error:", err);
+    console.error("[checkAccountLimits] Unexpected:", err);
     return {
       success: false,
       message: "An unexpected error occurred",
       canAddMore: false,
       currentCount: 0,
       maxAllowed: 0,
+      isUnlimited: false,
     };
   }
 }

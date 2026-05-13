@@ -71,8 +71,10 @@ const AccountsPageWithData = async () => {
           >
             <p className="text-sm">
               <span className="font-medium">
-                {limitsCheck.currentCount}{" "}
-                {limitsCheck.maxAllowed < 30 && ` / ${limitsCheck.maxAllowed}`}
+                {limitsCheck.currentCount}
+                {limitsCheck.isUnlimited
+                  ? " (Unlimited)"
+                  : ` / ${limitsCheck.maxAllowed}`}
               </span>{" "}
               connected accounts
             </p>

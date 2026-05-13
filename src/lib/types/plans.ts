@@ -273,8 +273,8 @@ export function priceIdToTier(priceId: string | null): PlanTier {
   if (tier === undefined) {
     console.error(
       `[plans.priceIdToTier] Unknown Stripe price ID "${priceId}". ` +
-      `Add it to planPrices or stripe_subscriptions has stale data. ` +
-      `Defaulting to "free".`,
+        `Add it to planPrices or stripe_subscriptions has stale data. ` +
+        `Defaulting to "free".`,
     );
     return "free";
   }
@@ -294,3 +294,10 @@ export function tierMeets(actual: PlanTier, required: PlanTier): boolean {
 export function tierLabel(tier: PlanTier): string {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
+
+export const TIER_ACCOUNT_LIMITS: Record<PlanTier, number> = {
+  free: 0,
+  starter: 5,
+  creator: 15,
+  pro: Number.POSITIVE_INFINITY,
+};
