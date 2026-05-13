@@ -1,5 +1,8 @@
 import { inngest } from "@/inngest/client";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
+import type { Platform } from "@/lib/types/database.types";
+import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
+import { isRetryableReason, type PlatformPostOutcome } from "./platformErrors";
 import {
   buildPlatformSignedUrls,
   callPlatformDirectPost,
@@ -9,11 +12,6 @@ import {
   fetchPostAndAccount,
   recordPostStatus,
 } from "./processSinglePostHelpers";
-import {
-  isRetryableReason,
-  type PlatformPostOutcome,
-} from "./platformErrors";
-import type { Platform } from "@/lib/types/database.types";
 
 type PostDueEventData = {
   scheduled_post_id: string;
@@ -46,7 +44,7 @@ export const processSinglePost = inngest.createFunction(
     const data = event.data as PostDueEventData;
 
     const fetched = await step.run("fetch-post-and-account", () =>
-      fetchPostAndAccount(data.scheduled_post_id)
+      fetchPostAndAccount(data.scheduled_post_id),
     );
     if (!fetched.success) {
       // Permanent: account row gone, FK broken, etc. Do not retry.
@@ -58,7 +56,7 @@ export const processSinglePost = inngest.createFunction(
 
     const compat = checkPlatformCompatibility(
       data.platform,
-      fetched.post.media_type
+      fetched.post.media_type,
     );
     if (!compat.compatible) {
       const result: PlatformPostOutcome = {
@@ -80,14 +78,14 @@ export const processSinglePost = inngest.createFunction(
     }
 
     const claim = await step.run("claim-post", () =>
-      claimPostForProcessing(data.scheduled_post_id)
+      claimPostForProcessing(data.scheduled_post_id),
     );
     if (!claim.claimed) {
       return { skipped: true, reason: "claimed-by-another-worker" };
     }
 
     const urls = await step.run("build-signed-urls", () =>
-      buildPlatformSignedUrls(fetched.post, data.platform)
+      buildPlatformSignedUrls(fetched.post, data.platform),
     );
     if (!urls.success) {
       // Retryable: signed URL minting can blip on Supabase.
@@ -95,13 +93,10 @@ export const processSinglePost = inngest.createFunction(
     }
 
     const fileName = fetched.post.media_storage_path
-      ? fetched.post.media_storage_path.split("/").pop() ?? ""
+      ? (fetched.post.media_storage_path.split("/").pop() ?? "")
       : "";
 
-    const mediaType = mediaTypeFromExtension(
-      fileName,
-      fetched.post.media_type
-    );
+    const mediaType = deriveMediaMimeType(fileName, fetched.post.media_type);
 
     const result = await step.run("call-platform-direct-post", () =>
       callPlatformDirectPost({
@@ -111,7 +106,7 @@ export const processSinglePost = inngest.createFunction(
         tiktokMediaUrl: urls.tiktokMediaUrl,
         fileName,
         mediaType,
-      })
+      }),
     );
 
     await step.run("record-status", () =>
@@ -119,15 +114,15 @@ export const processSinglePost = inngest.createFunction(
         post: fetched.post,
         account: fetched.account,
         result,
-      })
+      }),
     );
 
     if (fetched.post.media_storage_path) {
       await step.run("cleanup-storage", () =>
         cleanupMediaIfUnreferenced(
           fetched.post.media_storage_path,
-          fetched.post.principal_id
-        )
+          fetched.post.principal_id,
+        ),
       );
     }
 
@@ -145,28 +140,5 @@ export const processSinglePost = inngest.createFunction(
       reason: result.ok ? undefined : result.reason,
       contentId: result.ok ? result.contentId : undefined,
     };
-  }
+  },
 );
-
-/**
- * Best-effort MIME-type guess when the post does not store one.
- * Falls back to a generic content-type per media_type. The downstream
- * postToLinkedIn / postToPinterest / etc. helpers do their own
- * sniffing.
- */
-function mediaTypeFromExtension(
-  fileName: string,
-  mediaCategory: "text" | "image" | "video"
-): string {
-  if (mediaCategory === "text") return "";
-  const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
-  if (mediaCategory === "image") {
-    if (ext === "png") return "image/png";
-    if (ext === "webp") return "image/webp";
-    if (ext === "gif") return "image/gif";
-    return "image/jpeg";
-  }
-  if (ext === "mov") return "video/quicktime";
-  if (ext === "webm") return "video/webm";
-  return "video/mp4";
-}

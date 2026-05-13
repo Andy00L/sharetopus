@@ -13,7 +13,6 @@ type MimeTypeResult = {
 };
 export function getMimeTypeFromFileName(fileName?: string): MimeTypeResult {
   if (!fileName) {
-    console.log("[GetMimeTypeFileName] No filename provided, using default");
     return {
       success: false,
       mimeType: "application/octet-stream",
@@ -51,7 +50,6 @@ export function getMimeTypeFromFileName(fileName?: string): MimeTypeResult {
     };
   }
 
-  console.log(`[GetMimeTypeFileName] ${fileName} -> ${mimeType}`);
   return {
     success: true,
     mimeType,

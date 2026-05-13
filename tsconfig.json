@@ -30,7 +30,7 @@
     ".next\\dev/types/**/*.ts",
     ".next\\dev/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "src/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost.2ts"
+    "src/actions/server/handleSocialMediaPost/handleSocialMediaPost.2ts"
   ],
   "exclude": ["node_modules"]
 }

@@ -1,6 +1,10 @@
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import type { Platform } from "@/lib/types/database.types";
+import type {
+  CreatedVia,
+  MediaType,
+  Platform,
+} from "@/lib/types/database.types";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
@@ -18,8 +22,8 @@ export type GenericDirectPostConfig = {
   userId: string;
   batchId: string;
   scheduledPostId: string | null;
-  postType: "image" | "video" | "text";
-  createdVia: "web" | "mcp" | "x402" | "api";
+  postType: MediaType;
+  createdVia: CreatedVia;
 };
 
 export type DirectPostHookContext<TPostResult> = {

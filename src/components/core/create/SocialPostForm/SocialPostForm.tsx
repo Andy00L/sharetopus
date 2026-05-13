@@ -1,5 +1,6 @@
 "use client";
 
+import { uploadWithSignedUrl } from "@/actions/client/signedUrlUpload";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { Label } from "@/components/ui/label";
 import { SidebarGroup } from "@/components/ui/sidebar";
@@ -9,7 +10,7 @@ import { SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { uploadMedia } from "../action/media/uploadMedia";
+import { handleSocialMediaPost } from "../../../../actions/server/handleSocialMediaPost/handleSocialMediaPost";
 import { CAPTION_LIMITS } from "../constants/captionLimits";
 import {
   ALLOWED_IMAGE_TYPES,
@@ -37,7 +38,6 @@ import {
   getDefaultScheduledDate,
 } from "./state/defaults";
 import { checkFormSubmission } from "./validation/checkFormSubmission";
-import { handleSocialMediaPost } from "../action/handleSocialMediaPost/handleSocialMediaPost";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -274,12 +274,12 @@ export default function SocialPostForm({
           return;
         }
 
-        const uploadResult = await uploadMedia(
+        const uploadResult = await uploadWithSignedUrl(
           selectedFile,
           isScheduled,
-          planId,
-          (progress) => {
-            setUploadProgress(progress);
+          {
+            onProgress: (progress) => setUploadProgress(progress),
+            planId,
           },
         );
 

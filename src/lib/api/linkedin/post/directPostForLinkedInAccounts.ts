@@ -8,6 +8,7 @@ import {
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
+import { CreatedVia, MediaType } from "@/lib/types/database.types";
 
 interface AccountContent {
   accountId: string;
@@ -28,11 +29,11 @@ interface DirectPostConfig {
   cleanupFiles?: boolean;
   fileName?: string;
   batchId: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   isCronJob?: boolean;
   scheduledPostId?: string;
   cronSecret?: string;
-  createdVia: "web" | "mcp" | "x402" | "api";
+  createdVia: CreatedVia;
 }
 
 type LinkedInPassthrough = {
@@ -42,7 +43,7 @@ type LinkedInPassthrough = {
 };
 
 export async function directPostForLinkedInAccounts(
-  config: DirectPostConfig
+  config: DirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
   return directPostForAccountsGeneric<LinkedInPassthrough, LinkedInPostResult>(
     {
@@ -80,11 +81,11 @@ export async function directPostForLinkedInAccounts(
           "directPostLinkedIn",
           pt.config.userId,
           25,
-          60
+          60,
         );
         if (!rateCheck.success) {
           console.warn(
-            `[LinkedIn Direct Post] Rate limit exceeded for user: ${pt.config.userId}`
+            `[LinkedIn Direct Post] Rate limit exceeded for user: ${pt.config.userId}`,
           );
           return {
             success: false,
@@ -100,12 +101,12 @@ export async function directPostForLinkedInAccounts(
         }
         const buf = await getSupabaseVideoFile(
           pt.config.mediaPath,
-          pt.config.userId
+          pt.config.userId,
         );
         if (!buf.success) {
           console.error(
             `[LinkedIn Direct Post] Failed to fetch media:`,
-            buf.message
+            buf.message,
           );
           return { success: false, count: 0, message: buf.message };
         }
@@ -137,6 +138,6 @@ export async function directPostForLinkedInAccounts(
           posted_at: new Date().toISOString(),
         },
       }),
-    }
+    },
   );
 }

@@ -17,7 +17,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { PrivacyLevel, SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
+import { MediaType } from "@/lib/types/database.types";
+import type {
+  PrivacyLevel,
+  SocialAccount,
+  TikTokOptions,
+} from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 
 interface TikTokSettingsTabProps {
@@ -25,7 +30,7 @@ interface TikTokSettingsTabProps {
   readonly creatorInfo: Record<string, CreatorInfoData>;
   readonly isLoadingCreatorInfo: Record<string, boolean>;
   readonly creatorInfoErrors: Record<string, string | null>;
-  readonly postType: "image" | "video" | "text";
+  readonly postType: MediaType;
   readonly tikTokOptions: TikTokOptions;
   readonly onOptionsChange: (update: Partial<TikTokOptions>) => void;
 }
@@ -60,7 +65,7 @@ export default function TikTokSettingsTab({
     .filter(Boolean);
 
   const anyLoading = selectedTikTokAccounts.some(
-    (acc) => isLoadingCreatorInfo[acc.id]
+    (acc) => isLoadingCreatorInfo[acc.id],
   );
   const accountErrors = selectedTikTokAccounts
     .filter((acc) => creatorInfoErrors[acc.id])
@@ -74,9 +79,7 @@ export default function TikTokSettingsTab({
     loadedInfos.length > 0
       ? loadedInfos.reduce<PrivacyLevel[]>((acc, info) => {
           if (acc.length === 0) return [...info.privacy_level_options];
-          return acc.filter((opt) =>
-            info.privacy_level_options.includes(opt)
-          );
+          return acc.filter((opt) => info.privacy_level_options.includes(opt));
         }, [])
       : [];
 
@@ -141,11 +144,7 @@ export default function TikTokSettingsTab({
                 Loading TikTok options...
               </p>
             )}
-            {error && (
-              <p className="text-sm text-red-500">
-                Error: {error}
-              </p>
-            )}
+            {error && <p className="text-sm text-red-500">Error: {error}</p>}
           </div>
         );
       })}
@@ -231,11 +230,7 @@ export default function TikTokSettingsTab({
               />
               <Label
                 htmlFor="tiktok-allow-comment"
-                className={
-                  commentForceDisabled
-                    ? "text-muted-foreground"
-                    : ""
-                }
+                className={commentForceDisabled ? "text-muted-foreground" : ""}
               >
                 Allow Comment
                 {commentForceDisabled && (
@@ -259,11 +254,7 @@ export default function TikTokSettingsTab({
                   />
                   <Label
                     htmlFor="tiktok-allow-duet"
-                    className={
-                      duetForceDisabled
-                        ? "text-muted-foreground"
-                        : ""
-                    }
+                    className={duetForceDisabled ? "text-muted-foreground" : ""}
                   >
                     Allow Duet
                     {duetForceDisabled && (
@@ -288,9 +279,7 @@ export default function TikTokSettingsTab({
                   <Label
                     htmlFor="tiktok-allow-stitch"
                     className={
-                      stitchForceDisabled
-                        ? "text-muted-foreground"
-                        : ""
+                      stitchForceDisabled ? "text-muted-foreground" : ""
                     }
                   >
                     Allow Stitch

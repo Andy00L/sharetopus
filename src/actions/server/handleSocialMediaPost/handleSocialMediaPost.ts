@@ -1,19 +1,19 @@
-// src/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost.ts
+// src/actions/server/handleSocialMediaPost/handleSocialMediaPost.ts
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
-import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
-import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
+import { MediaType } from "@/lib/types/database.types";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
-import { randomUUID } from "node:crypto";
-import { getMimeTypeFromFileName } from "../getMimeTypeFromFileName";
+import { getMimeTypeFromFileName } from "../../../lib/utils/getMimeTypeFromFileName";
+import {
+  directPostBatch,
+  DirectPostData,
+} from "../directPostActions/directPostBatch";
 import { generateSuccessMessage } from "./successMessage";
 import { validateAccountContent } from "./validateContent";
 
@@ -105,7 +105,7 @@ export async function handleSocialMediaPost(config: {
   isScheduled: boolean;
   scheduledDate?: string;
   scheduledTime?: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   userId: string | null;
   batchId: string;
   cleanupFiles?: boolean;
@@ -268,68 +268,19 @@ export async function handleSocialMediaPost(config: {
 
   // Step 7: branch on direct vs scheduled
   if (!isScheduled) {
-    // Direct path: mint URLs then dispatch Inngest events.
-    let mediaUrl: string | undefined;
-    let tiktokMediaUrl: string | undefined;
-
-    if (tiktokAccounts.length > 0 && mediaPath) {
-      const tiktokUrlResult = buildProxiedTikTokMediaUrl({
-        mediaPath,
-        principalId: userId!,
-      });
-      if (!tiktokUrlResult.success) {
-        return {
-          success: false,
-          counts: ZERO_COUNTS,
-          message: tiktokUrlResult.message,
-          errors: [],
-        };
-      }
-      tiktokMediaUrl = tiktokUrlResult.url;
-    }
-
-    const hasNonTikTokPlatforms =
-      instagramAccounts.length > 0 ||
-      linkedinAccounts.length > 0 ||
-      pinterestAccounts.length > 0;
-
-    if (
-      hasNonTikTokPlatforms &&
-      mediaPath &&
-      (postType === "video" || postType === "image")
-    ) {
-      const signedUrlResult = await getServerSignedViewUrl(mediaPath);
-      if (!signedUrlResult.success) {
-        console.error(
-          `[handleSocialMediaPost] Signed URL failed: ${signedUrlResult.message}`,
-        );
-        return {
-          success: false,
-          counts: ZERO_COUNTS,
-          message: signedUrlResult.message,
-          errors: [],
-        };
-      }
-      mediaUrl = signedUrlResult.url;
-    }
-
-    return dispatchDirectPostEvents({
+    return directPostFromForm({
       pinterestAccounts,
       linkedinAccounts,
       tiktokAccounts,
       instagramAccounts,
       mediaPath,
       coverTimestamp,
-      fileName: fileName ?? "",
       boards,
       platformOptions,
       accountContent,
       postType,
       userId: userId!,
       batchId,
-      mediaType,
-      mediaUrl: mediaUrl ?? null,
-      tiktokMediaUrl: tiktokMediaUrl ?? null,
     });
   }
 
@@ -384,7 +335,7 @@ async function scheduleAllPosts(args: {
   accountContent: ContentInfo[];
   scheduledDate: string;
   scheduledTime: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   userId: string;
   batchId: string;
 }): Promise<PostResult> {
@@ -569,50 +520,37 @@ async function scheduleAllPosts(args: {
 // Direct-post Inngest event dispatch (UNCHANGED from before)
 // ────────────────────────────────────────────────────────────
 
-async function dispatchDirectPostEvents(args: {
+async function directPostFromForm(args: {
   pinterestAccounts: SocialAccount[];
   linkedinAccounts: SocialAccount[];
   tiktokAccounts: SocialAccount[];
   instagramAccounts: SocialAccount[];
   mediaPath: string;
   coverTimestamp: number;
-  fileName: string;
   boards?: BoardInfo[];
   platformOptions: PlatformOptions;
   accountContent: ContentInfo[];
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   userId: string;
   batchId: string;
-  mediaType: string;
-  mediaUrl: string | null;
-  tiktokMediaUrl: string | null;
 }): Promise<PostResult> {
-  const events: { name: "post.now"; data: PostNowEventData }[] = [];
-
   const findContent = (accountId: string) =>
     args.accountContent.find((c) => c.accountId === accountId);
+
+  const posts: DirectPostData[] = [];
 
   for (const account of args.linkedinAccounts) {
     const content = findContent(account.id);
     if (!content) continue;
-    events.push({
-      name: "post.now",
-      data: {
-        batch_id: args.batchId,
-        principal_id: args.userId,
-        social_account_id: account.id,
-        platform: "linkedin",
-        post_type: args.postType,
-        account_content: content,
-        platform_options: args.platformOptions,
-        board: null,
-        cover_timestamp: args.coverTimestamp,
-        file_name: args.fileName,
-        media_type: args.mediaType,
-        media_path: args.mediaPath,
-        media_url: args.mediaUrl,
-        tiktok_media_url: null,
-      },
+    posts.push({
+      socialAccountId: account.id,
+      platform: "linkedin",
+      postType: args.postType,
+      title: content.title,
+      description: content.description,
+      mediaStoragePath: args.mediaPath,
+      coverTimestamp: args.coverTimestamp,
+      platformOptions: args.platformOptions,
     });
   }
 
@@ -622,125 +560,101 @@ async function dispatchDirectPostEvents(args: {
     const selectedBoard = args.boards?.find(
       (b) => b.accountId === account.id && b.isSelected,
     );
-    events.push({
-      name: "post.now",
-      data: {
-        batch_id: args.batchId,
-        principal_id: args.userId,
-        social_account_id: account.id,
-        platform: "pinterest",
-        post_type: args.postType,
-        account_content: content,
-        platform_options: args.platformOptions,
-        board: selectedBoard ?? null,
-        cover_timestamp: args.coverTimestamp,
-        file_name: args.fileName,
-        media_type: args.mediaType,
-        media_path: args.mediaPath,
-        media_url: args.mediaUrl,
-        tiktok_media_url: null,
-      },
+    posts.push({
+      socialAccountId: account.id,
+      platform: "pinterest",
+      postType: args.postType,
+      title: content.title,
+      description: content.description,
+      mediaStoragePath: args.mediaPath,
+      coverTimestamp: args.coverTimestamp,
+      platformOptions: args.platformOptions,
+      pinterestBoardId: selectedBoard?.boardID,
+      pinterestBoardName: selectedBoard?.boardName,
+      pinterestLink: content.link || undefined,
     });
   }
 
   for (const account of args.tiktokAccounts) {
     const content = findContent(account.id);
     if (!content) continue;
-    events.push({
-      name: "post.now",
-      data: {
-        batch_id: args.batchId,
-        principal_id: args.userId,
-        social_account_id: account.id,
-        platform: "tiktok",
-        post_type: args.postType,
-        account_content: content,
-        platform_options: args.platformOptions,
-        board: null,
-        cover_timestamp: args.coverTimestamp,
-        file_name: args.fileName,
-        media_type: args.mediaType,
-        media_path: args.mediaPath,
-        media_url: null,
-        tiktok_media_url: args.tiktokMediaUrl,
-      },
+    posts.push({
+      socialAccountId: account.id,
+      platform: "tiktok",
+      postType: args.postType,
+      title: content.title,
+      description: content.description,
+      mediaStoragePath: args.mediaPath,
+      coverTimestamp: args.coverTimestamp,
+      platformOptions: args.platformOptions,
     });
   }
 
   for (const account of args.instagramAccounts) {
     const content = findContent(account.id);
     if (!content) continue;
-    events.push({
-      name: "post.now",
-      data: {
-        batch_id: args.batchId,
-        principal_id: args.userId,
-        social_account_id: account.id,
-        platform: "instagram",
-        post_type: args.postType,
-        account_content: content,
-        platform_options: args.platformOptions,
-        board: null,
-        cover_timestamp: args.coverTimestamp,
-        file_name: args.fileName,
-        media_type: args.mediaType,
-        media_path: args.mediaPath,
-        media_url: args.mediaUrl,
-        tiktok_media_url: null,
-      },
+    posts.push({
+      socialAccountId: account.id,
+      platform: "instagram",
+      postType: args.postType,
+      title: content.title,
+      description: content.description,
+      mediaStoragePath: args.mediaPath,
+      coverTimestamp: args.coverTimestamp,
+      platformOptions: args.platformOptions,
     });
   }
 
-  if (events.length === 0) {
-    console.error("[handleSocialMediaPost] No events to dispatch");
+  if (posts.length === 0) {
     return {
       success: false,
       counts: ZERO_COUNTS,
-      message: "No accounts to post to.",
+      message: "No posts to dispatch.",
       errors: [],
     };
   }
 
-  const eventsWithDispatch = events.map((evt) => ({
-    ...evt,
-    data: {
-      ...evt.data,
-      dispatch_id: randomUUID(),
-      created_via: "web" as const,
-    },
-  }));
+  const result = await directPostBatch(posts, args.userId, "web", args.batchId);
 
-  const dispatch = await dispatchPostNowEvents(eventsWithDispatch);
-  if (!dispatch.success) {
-    console.error(
-      `[handleSocialMediaPost] Dispatch failed (${dispatch.phase}):`,
-      dispatch.message,
-    );
-    const userMessage =
-      dispatch.phase === "lock_insert"
-        ? "Could not initialize post dispatch. Please try again in a moment."
-        : "Failed to start posting. Please try again.";
-    return {
-      success: false,
-      counts: ZERO_COUNTS,
-      message: userMessage,
-      errors: [],
-    };
+  const counts: PlatformCounts = { ...ZERO_COUNTS };
+  const rejectedIds = new Set(
+    result.details.rejected.map((r) => r.socialAccountId),
+  );
+  for (const post of posts) {
+    if (rejectedIds.has(post.socialAccountId)) continue;
+    counts[post.platform as keyof PlatformCounts]++;
+  }
+  counts.total =
+    counts.pinterest + counts.linkedin + counts.tiktok + counts.instagram;
+
+  const accountsLookup = new Map<string, SocialAccount>();
+  for (const acc of [
+    ...args.pinterestAccounts,
+    ...args.linkedinAccounts,
+    ...args.tiktokAccounts,
+    ...args.instagramAccounts,
+  ]) {
+    accountsLookup.set(acc.id, acc);
   }
 
-  const counts: PlatformCounts = {
-    linkedin: args.linkedinAccounts.length,
-    pinterest: args.pinterestAccounts.length,
-    tiktok: args.tiktokAccounts.length,
-    instagram: args.instagramAccounts.length,
-    total: eventsWithDispatch.length,
-  };
+  const errors: AccountError[] = result.details.rejected.map((r) => {
+    const acc = accountsLookup.get(r.socialAccountId);
+    return {
+      accountId: r.socialAccountId,
+      platform: acc?.platform ?? "unknown",
+      displayName:
+        acc?.display_name ?? acc?.username ?? acc?.id ?? r.socialAccountId,
+      error: r.reason,
+    };
+  });
 
   return {
-    success: true,
+    success: result.success && counts.total > 0,
     counts,
-    message: `Posting to ${eventsWithDispatch.length} account${eventsWithDispatch.length > 1 ? "s" : ""}`,
-    batch_id: args.batchId,
-    event_ids: dispatch.eventIds,
+    message: result.message,
+    errors,
+    resetIn: result.resetIn,
+    batch_id: result.batchId,
+    event_ids: result.eventIds,
   };
 }

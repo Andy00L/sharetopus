@@ -21,7 +21,6 @@ import {
   type PlatformErrorReason,
   type PlatformPostOutcome,
 } from "./platformErrors";
-
 // ---------- fetch-post-and-account ----------
 
 export type FetchPostResult =
@@ -298,11 +297,7 @@ export async function callPlatformDirectPost(args: {
 }): Promise<CallPlatformResult> {
   const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } = args;
 
-  const createdVia = (post.created_via ?? "web") as
-    | "web"
-    | "mcp"
-    | "x402"
-    | "api";
+  const createdVia = post.created_via ?? "web";
 
   const options = (post.post_options ?? {}) as PostOptions;
   const accountContent = {
@@ -569,20 +564,18 @@ export async function recordPostStatus(args: {
       post_title: post.post_title ?? null,
       post_description: post.post_description ?? null,
       post_options: (post.post_options ?? {}) as object,
-      media_type: post.media_type as "image" | "video" | "text",
+      media_type: post.media_type,
       media_storage_path: post.media_storage_path ?? "",
       coverTimestamp: post.cover_image_timestamp ?? undefined,
       batch_id: post.batch_id ?? post.id,
+      idempotency_key: post.idempotency_key,
+      x402_charge_id: post.x402_charge_id,
       extra_data: {
         reason: result.reason,
         message: result.message,
         timestamp: nowIso,
       },
-      created_via: (post.created_via ?? "web") as
-        | "web"
-        | "mcp"
-        | "x402"
-        | "api",
+      created_via: post.created_via ?? "web",
     });
 
     if (!storeResult.success) {

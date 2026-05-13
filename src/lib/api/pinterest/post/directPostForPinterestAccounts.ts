@@ -6,6 +6,7 @@ import {
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
+import { CreatedVia, MediaType } from "@/lib/types/database.types";
 
 interface PinterestDirectPostConfig {
   account: SocialAccount;
@@ -29,10 +30,10 @@ interface PinterestDirectPostConfig {
   fileName: string;
   batchId: string;
   mediaType: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   mediaUrl: string;
   scheduledPostId?: string;
-  createdVia: "web" | "mcp" | "x402" | "api";
+  createdVia: CreatedVia;
 }
 
 type PinterestPassthrough = {
@@ -40,7 +41,7 @@ type PinterestPassthrough = {
 };
 
 export async function directPostForPinterestAccounts(
-  config: PinterestDirectPostConfig
+  config: PinterestDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
   return directPostForAccountsGeneric<
     PinterestPassthrough,
@@ -86,6 +87,6 @@ export async function directPostForPinterestAccounts(
           board_name: pt.config.boards.boardName,
         },
       }),
-    }
+    },
   );
 }

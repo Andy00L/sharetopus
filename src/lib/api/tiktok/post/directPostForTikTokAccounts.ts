@@ -8,6 +8,7 @@ import {
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
+import { MediaType } from "@/lib/types/database.types";
 
 interface TikTokDirectPostConfig {
   account: SocialAccount;
@@ -23,7 +24,7 @@ interface TikTokDirectPostConfig {
     isCustomized: boolean;
   };
   userId: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   fileName: string;
   batchId: string;
   scheduledPostId?: string;
@@ -35,7 +36,7 @@ type TikTokPassthrough = {
 };
 
 export async function directPostForTikTokAccounts(
-  config: TikTokDirectPostConfig
+  config: TikTokDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
   return directPostForAccountsGeneric<TikTokPassthrough, TikTokPostResult>(
     {
@@ -61,7 +62,7 @@ export async function directPostForTikTokAccounts(
         }
         if (cfg.accountContent.accountId !== cfg.account.id) {
           console.error(
-            `[TikTok Direct Post] No or mismatched content for account ${cfg.account.id}`
+            `[TikTok Direct Post] No or mismatched content for account ${cfg.account.id}`,
           );
           return {
             success: false,
@@ -108,7 +109,7 @@ export async function directPostForTikTokAccounts(
         if (!pendingInsert.success) {
           console.error(
             "[directPostForTikTokAccounts] Failed to insert pending pull:",
-            pendingInsert.message
+            pendingInsert.message,
           );
           return;
         }
@@ -122,10 +123,10 @@ export async function directPostForTikTokAccounts(
         if (!dispatchResult.success) {
           console.error(
             "[directPostForTikTokAccounts] Failed to dispatch poll event:",
-            dispatchResult.message
+            dispatchResult.message,
           );
         }
       },
-    }
+    },
   );
 }

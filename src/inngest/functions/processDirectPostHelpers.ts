@@ -1,10 +1,11 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
-import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
-import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
+import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
+import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
+import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
+import { MediaType, Platform } from "@/lib/types/database.types";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 // ---------- event data type ----------
@@ -13,8 +14,8 @@ export type PostNowEventData = {
   batch_id: string;
   principal_id: string;
   social_account_id: string;
-  platform: "linkedin" | "pinterest" | "tiktok" | "instagram";
-  post_type: "image" | "video" | "text";
+  platform: Platform;
+  post_type: MediaType;
   account_content: {
     accountId: string;
     title: string;
@@ -47,7 +48,7 @@ export type FetchAccountResult =
   | { success: false; message: string };
 
 export async function fetchAccountForDirectPost(
-  socialAccountId: string
+  socialAccountId: string,
 ): Promise<FetchAccountResult> {
   const { data: account, error } = await adminSupabase
     .from("social_accounts")
@@ -95,7 +96,7 @@ export type DirectPostResult = {
  */
 export async function callDirectPostFromEvent(
   data: PostNowEventData,
-  account: SocialAccount
+  account: SocialAccount,
 ): Promise<DirectPostResult> {
   const {
     platform,

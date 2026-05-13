@@ -2,7 +2,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { Json, TablesInsert } from "@/lib/types/database.types";
+import type { Json, MediaType, TablesInsert } from "@/lib/types/database.types";
 
 type FailedPostData = {
   principal_id: string | null;
@@ -11,13 +11,15 @@ type FailedPostData = {
   post_title?: string | null;
   post_description?: string | null;
   post_options?: object;
-  media_type: "image" | "video" | "text";
+  media_type: MediaType;
   media_storage_path: string;
   coverTimestamp?: number;
   batch_id: string;
   scheduled_at?: string;
   extra_data?: Record<string, unknown>;
   created_via: "web" | "mcp" | "x402" | "api";
+  idempotency_key?: string | null;
+  x402_charge_id?: string | null;
 };
 
 /**
@@ -59,6 +61,8 @@ export async function storeFailedPost(
       batch_id: data.batch_id,
       error_message: errorMsg,
       created_via: data.created_via,
+      idempotency_key: data.idempotency_key || null,
+      x402_charge_id: data.x402_charge_id || null,
     };
 
     const { data: newRecord, error } = await adminSupabase

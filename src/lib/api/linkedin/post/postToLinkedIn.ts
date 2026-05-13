@@ -1,3 +1,4 @@
+import { MediaType } from "@/lib/types/database.types";
 import { ContentHistory } from "@/lib/types/dbTypes";
 import "server-only";
 
@@ -35,7 +36,7 @@ export async function postToLinkedIn({
   text: string;
   title?: string;
   link?: string;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
 
   mediaPath: string;
   mediaType?: string;
@@ -93,7 +94,7 @@ export async function postToLinkedIn({
                 ],
               },
             }),
-          }
+          },
         );
 
         if (!registerResponse.ok) {
@@ -102,7 +103,7 @@ export async function postToLinkedIn({
 
           console.error(
             "[LinkedIn Post Routes] Failed to register media upload:",
-            errorDetails
+            errorDetails,
           );
           return {
             success: false,
@@ -114,7 +115,7 @@ export async function postToLinkedIn({
         const registerData = await registerResponse.json();
         console.log(
           "[LinkedIn Post Routes] Register upload response:",
-          registerData
+          registerData,
         );
 
         // Extraire l'URL d'upload et l'URN de l'actif
@@ -126,14 +127,14 @@ export async function postToLinkedIn({
 
         console.log(
           `[LinkedIn Post Routes] Media registration successful, uploading ${postType} to:`,
-          uploadUrl
+          uploadUrl,
         );
 
         // 2. Stream the file directly from Supabase to LinkedIn
         try {
           if (!buffer) {
             console.error(
-              "[LinkedIn Post Routes] Error retrieving file from buffer:"
+              "[LinkedIn Post Routes] Error retrieving file from buffer:",
             );
             return {
               success: false,
@@ -142,7 +143,7 @@ export async function postToLinkedIn({
           }
           if (!mediaType) {
             console.error(
-              "[LinkedIn Post Routes] Missing media type for upload"
+              "[LinkedIn Post Routes] Missing media type for upload",
             );
             return {
               success: false,
@@ -170,13 +171,13 @@ export async function postToLinkedIn({
               errorDetails = { rawError: errorText };
               console.error(
                 "[LinkedIn Post Routes] Error parsing upload response:",
-                parseError
+                parseError,
               );
             }
 
             console.error(
               `[LinkedIn Post Routes] Failed to upload ${postType}:`,
-              errorDetails
+              errorDetails,
             );
             return {
               success: false,
@@ -186,7 +187,7 @@ export async function postToLinkedIn({
           }
 
           console.log(
-            `[LinkedIn Post Routes] ${postType} uploaded successfully, creating share with media`
+            `[LinkedIn Post Routes] ${postType} uploaded successfully, creating share with media`,
           );
 
           // 4. Créer le média content pour le partage
@@ -203,7 +204,7 @@ export async function postToLinkedIn({
         } catch (streamError) {
           console.error(
             `[LinkedIn Post Routes] Error streaming file from Supabase:`,
-            streamError
+            streamError,
           );
           return {
             success: false,
@@ -213,7 +214,7 @@ export async function postToLinkedIn({
       } catch (mediaError) {
         console.error(
           `[LinkedIn Post Routes] Error during ${postType} upload process:`,
-          mediaError
+          mediaError,
         );
         return {
           success: false,
@@ -271,12 +272,12 @@ export async function postToLinkedIn({
             "X-Restli-Protocol-Version": "2.0.0",
           },
           body: JSON.stringify(requestBody),
-        }
+        },
       );
 
       console.log(
         "[LinkedIn Post route] LinkedIn response status:",
-        linkedInResponse.status
+        linkedInResponse.status,
       );
 
       if (!linkedInResponse.ok) {
@@ -288,13 +289,13 @@ export async function postToLinkedIn({
           errorDetails = { rawError: errorText };
           console.error(
             "[LinkedIn Post Routes] Error parsing API response:",
-            parseError
+            parseError,
           );
         }
 
         console.error(
           "[LinkedIn Post Routes] LinkedIn API error:",
-          errorDetails
+          errorDetails,
         );
         return {
           success: false,
@@ -314,7 +315,7 @@ export async function postToLinkedIn({
       } catch (parseError) {
         console.log(
           `[LinkedIn Post Routes] Response is not JSON:${parseError}`,
-          responseText
+          responseText,
         );
         // Si ce n'est pas du JSON, nous utilisons la réponse brute
         data = { rawResponse: responseText };
@@ -337,16 +338,16 @@ export async function postToLinkedIn({
           shareMediaCategory === "NONE"
             ? "text"
             : shareMediaCategory === "ARTICLE"
-            ? "link"
-            : shareMediaCategory === "VIDEO"
-            ? "video"
-            : "image"
+              ? "link"
+              : shareMediaCategory === "VIDEO"
+                ? "video"
+                : "image"
         } post on LinkedIn`,
       };
     } catch (postError) {
       console.error(
         "[LinkedIn Post Routes] Error posting to LinkedIn:",
-        postError
+        postError,
       );
       return {
         success: false,

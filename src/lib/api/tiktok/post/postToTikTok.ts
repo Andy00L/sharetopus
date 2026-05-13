@@ -1,4 +1,5 @@
 // lib/api/tiktok/post/postToTikTok.ts
+import { MediaType } from "@/lib/types/database.types";
 import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
 import fetch from "node-fetch";
 import "server-only";
@@ -69,7 +70,7 @@ export async function postToTikTok({
   description?: string;
   tikTokOptions?: TikTokOptions;
   coverTimestamp: number;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   mediaType: string;
   media_url: string;
   autoAddMusic?: boolean;
@@ -94,14 +95,14 @@ export async function postToTikTok({
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json; charset=UTF-8",
         },
-      }
+      },
     );
 
     if (!creatorInfoResponse.ok) {
       const errorData = await creatorInfoResponse.json();
       console.error(
         "[Tiktok Post Function] Media registration error:",
-        errorData
+        errorData,
       );
 
       return {

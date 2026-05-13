@@ -1,9 +1,10 @@
+import { MediaType } from "@/lib/types/database.types";
 import { AlertCircle } from "lucide-react";
 import Image from "next/image";
 
 interface FilePreviewProps {
   readonly selectedFile: File | null;
-  readonly mediaType: "image" | "video" | "text" | null;
+  readonly mediaType: MediaType | null;
   readonly previewUrl: string | null;
 }
 

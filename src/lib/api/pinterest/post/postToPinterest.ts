@@ -5,6 +5,7 @@
 import "server-only";
 import { createVideoPin } from "./createVideoPin";
 import { createImagePin } from "./postImage";
+import { MediaType } from "@/lib/types/database.types";
 
 // Define return type for Pinterest posts
 export interface PinterestPostResult {
@@ -56,14 +57,14 @@ export async function postToPinterest({
   fileName: string;
   userId: string;
   coverTimestamp: number;
-  postType: "image" | "video" | "text";
+  postType: MediaType;
   mediaUrl: string;
 }): Promise<PinterestPostResult> {
   try {
     // Verify required parameters
     if (!accessToken || !boardId) {
       console.log(
-        "[Pinterest Post Function] Missing required parameters (accessToken, boardId, mediaPath)"
+        "[Pinterest Post Function] Missing required parameters (accessToken, boardId, mediaPath)",
       );
       return {
         success: false,
