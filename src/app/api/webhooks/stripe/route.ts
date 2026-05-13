@@ -7,6 +7,9 @@ import {
   claimWebhookEvent,
   releaseWebhookEvent,
 } from "@/actions/server/stripe/claimWebhookEvent";
+import { invalidateCachedOAuthClientsByUser } from "@/lib/mcp/auth/oauthClientCache";
+import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
+
 import stripe from "@/lib/stripe";
 import { priceIdToTier } from "@/lib/types/plans";
 import { NextRequest, NextResponse } from "next/server";
@@ -150,12 +153,20 @@ async function handleSubscriptionEvent(
       );
     }
 
+    // Invalidate the MCP subscription cache so this Vercel instance
+    // stops serving the cached active-subscription view immediately.
+    // Other instances still see the stale entry until their TTL (60s)
+    // expires; that bounded window is acceptable for cancellations.
+    invalidateCachedSubscription(userId);
+
     const demoteResult = await demoteOauthClientsOnCancel(userId);
     if (!demoteResult.success) {
       console.error(
         `[Stripe webhook] OAuth demotion failed for ${userId}: ${demoteResult.message}`,
       );
     }
+
+    invalidateCachedOAuthClientsByUser(userId);
 
     const cancelResult = await cancelFutureScheduledPostsOnSubCancel(userId);
     if (!cancelResult.success) {
@@ -177,6 +188,12 @@ async function handleSubscriptionEvent(
       throw new Error(`Failed to upsert subscription: ${error.message}`);
     }
 
+    // Invalidate any cached negative result for this principal. A user
+    // who hit MCP before subscribing would have a cached isActive=false
+    // entry; without this purge they would have to wait up to TTL (60s)
+    // before MCP recognizes their new subscription.
+    invalidateCachedSubscription(userId);
+
     const resumeResult = await resumeCancelledPostsOnResubscribe(userId);
     if (!resumeResult.success) {
       console.error(
@@ -190,6 +207,7 @@ async function handleSubscriptionEvent(
         `[Stripe webhook] OAuth promotion failed for ${userId}: ${promoteResult.message}`,
       );
     }
+    invalidateCachedOAuthClientsByUser(userId);
 
     return ok({ subscription: "created", user_id: userId });
   }
@@ -202,6 +220,11 @@ async function handleSubscriptionEvent(
   if (error) {
     throw new Error(`Failed to update subscription: ${error.message}`);
   }
+
+  // Invalidate the cache so plan changes (Starter -> Pro, status
+  // transitions to past_due, etc.) are reflected on the next request
+  // to this instance.
+  invalidateCachedSubscription(userId);
 
   return ok({ subscription: "updated", user_id: userId });
 }

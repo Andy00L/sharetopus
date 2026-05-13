@@ -1,18 +1,22 @@
 import "server-only";
 
+import { waitUntil } from "@vercel/functions";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { upsertMcpSession } from "@/actions/server/data/mcpSessions";
 import type { Json } from "@/lib/types/database.types";
+
 import { assertExhaustiveKind, type McpPrincipal } from "./auth";
 
 /**
  * Fields that get scrubbed from tool arguments before persisting.
  *
- * Anything that smells like a secret or credential. We match on key names
- * (case-insensitive) rather than values, because values are unpredictable.
+ * Anything that smells like a secret or credential. We match on key
+ * names (case-insensitive) rather than values, because values are
+ * unpredictable.
  *
- * List: token, password, secret, authorization, bearer, api_key, apikey,
- * access_token, refresh_token, credential, private_key, jwt
+ * List: token, password, secret, authorization, bearer, api_key,
+ * apikey, access_token, refresh_token, credential, private_key, jwt
  */
 const REDACT_KEYS =
   /^(token|password|secret|authorization|bearer|api_key|apikey|access_token|refresh_token|credential|private_key|jwt)$/i;
@@ -56,115 +60,113 @@ function oauthClientIdFromPrincipal(principal: McpPrincipal): string | null {
 }
 
 /**
- * Appends a row to mcp_audit_log. Fire-and-forget in most call sites,
- * but we still await to make sure it lands.
+ * Appends a row to mcp_audit_log. The audit INSERT is awaited so the
+ * caller knows the truth-source row landed. The mcp_sessions UPSERT
+ * runs in the background via waitUntil so it never adds latency to
+ * the user-facing request.
  *
- * The table has an UPDATE-blocking trigger, so this is truly append-only.
+ * mcp_audit_log has an UPDATE-blocking trigger, so this is truly
+ * append-only.
+ *
+ * client_name handling:
+ *   clientName arrives only on the MCP initialize handshake, which
+ *   never triggers logToolCall directly. So `entry.clientName` is
+ *   null on every tool-call audit row by design. We store null here
+ *   instead of hydrating from mcp_oauth_clients per call (the previous
+ *   behavior cost one extra SELECT on every OAuth tool call). To
+ *   recover client_name for analytics, JOIN mcp_audit_log with
+ *   mcp_oauth_clients on oauth_client_id at query time.
+ *
+ * mcp_sessions UPSERT:
+ *   The synthetic per-request UUID means each tool call creates a new
+ *   row. Useful for capturing analytics breadcrumbs (ip_hash, client_*)
+ *   but does NOT need to block the request. Moved to waitUntil so the
+ *   serverless function keeps the write alive while the response goes
+ *   back to the user.
  *
  * Called by: every tool handler in src/lib/mcp/tools/ and the route handler
- * Tables touched: mcp_audit_log (insert only)
+ * Tables touched: mcp_audit_log (insert only), mcp_sessions (UPSERT, background)
  *
  * Failure modes:
- *   If the insert fails we log the error but do not throw. A broken audit
- *   row should not block the user's request.
+ *   If the insert fails we log the error but do not throw. A broken
+ *   audit row should not block the user's request.
  */
 export async function logToolCall(entry: AuditEntry): Promise<void> {
   try {
     const redacted = entry.args ? redactSecrets(entry.args) : null;
     const argsJson = redacted ? truncateJson(redacted) : null;
 
-    // Hydrate client_name from mcp_oauth_clients when the current request
-    // did not carry clientInfo (true for every tool call; only the initial
-    // handshake carries it, and that handshake never triggers logToolCall).
-    let resolvedClientName = entry.clientName ?? null;
-    if (!resolvedClientName && entry.principal?.kind === "oauth") {
-      try {
-        const { data, error } = await adminSupabase
-          .from("mcp_oauth_clients")
-          .select("client_name")
-          .eq("client_id", entry.principal.oauthClientId)
-          .maybeSingle();
-        if (error) {
-          console.warn(
-            `[logToolCall] client_name hydration failed for ${entry.principal.oauthClientId}: ${error.message}`
-          );
-        } else {
-          resolvedClientName = data?.client_name ?? null;
-        }
-      } catch (err) {
-        console.warn(
-          "[logToolCall] client_name hydration unexpected error:",
-          err instanceof Error ? err.message : err
-        );
-      }
-    }
+    // Session UPSERT fires in the background. Right tool for "I want
+    // this write to land but the user does not need to wait for it".
+    // Errors are logged and swallowed: a failed session row is not
+    // worth retrying the whole request.
+    if (entry.sessionId && entry.principal?.principalId) {
+      const sessionPayload = {
+        id: entry.sessionId,
+        principal_id: entry.principal.principalId,
+        api_key_id: apiKeyIdFromPrincipal(entry.principal),
+        oauth_client_id: oauthClientIdFromPrincipal(entry.principal),
+        ip_hash: entry.ipHash ?? null,
+        client_name: entry.clientName ?? null,
+        client_version: entry.clientVersion ?? null,
+      };
 
-    const sessionPromise =
-      entry.sessionId && entry.principal?.principalId
-        ? upsertMcpSession({
-            id: entry.sessionId,
-            principal_id: entry.principal.principalId,
-            api_key_id: apiKeyIdFromPrincipal(entry.principal),
-            oauth_client_id: oauthClientIdFromPrincipal(entry.principal),
-            ip_hash: entry.ipHash ?? null,
-            client_name: resolvedClientName,
-            client_version: entry.clientVersion ?? null,
-          })
-        : Promise.resolve({ success: true as const });
-
-    const auditPromise = adminSupabase.from("mcp_audit_log").insert({
-      principal_id: entry.principal?.principalId ?? null,
-      oauth_client_id: entry.principal
-        ? oauthClientIdFromPrincipal(entry.principal)
-        : null,
-      api_key_id: entry.principal
-        ? apiKeyIdFromPrincipal(entry.principal)
-        : null,
-      session_id: entry.sessionId,
-      tool_name: entry.toolName,
-      args_redacted: argsJson as Json,
-      result_status: entry.resultStatus,
-      latency_ms: entry.latencyMs ?? null,
-      ip_hash: entry.ipHash ?? null,
-      user_agent: entry.userAgent ?? null,
-    });
-
-    const [sessionResult, auditResult] = await Promise.allSettled([
-      sessionPromise,
-      auditPromise,
-    ]);
-
-    if (sessionResult.status === "rejected") {
-      console.error(
-        `[logToolCall] Session upsert threw for ${entry.toolName}:`,
-        sessionResult.reason
-      );
-    } else if (
-      sessionResult.value &&
-      "success" in sessionResult.value &&
-      !sessionResult.value.success
-    ) {
-      console.error(
-        `[logToolCall] Session upsert failed for ${entry.toolName}:`,
-        "message" in sessionResult.value ? sessionResult.value.message : ""
+      waitUntil(
+        (async () => {
+          try {
+            const sessionResult = await upsertMcpSession(sessionPayload);
+            if (
+              sessionResult &&
+              "success" in sessionResult &&
+              !sessionResult.success
+            ) {
+              console.error(
+                `[logToolCall] Session upsert failed for ${entry.toolName}:`,
+                "message" in sessionResult ? sessionResult.message : "",
+              );
+            }
+          } catch (sessionErr) {
+            console.error(
+              `[logToolCall] Session upsert threw for ${entry.toolName}:`,
+              sessionErr instanceof Error ? sessionErr.message : sessionErr,
+            );
+          }
+        })(),
       );
     }
 
-    if (auditResult.status === "rejected") {
-      console.error(
-        `[logToolCall] Audit insert threw for ${entry.toolName}:`,
-        auditResult.reason
-      );
-    } else if (auditResult.value?.error) {
+    // Audit INSERT stays awaited. This is the truth-source row for
+    // compliance, billing, and security forensics; we want to know
+    // synchronously whether it landed.
+    const { error: auditError } = await adminSupabase
+      .from("mcp_audit_log")
+      .insert({
+        principal_id: entry.principal?.principalId ?? null,
+        oauth_client_id: entry.principal
+          ? oauthClientIdFromPrincipal(entry.principal)
+          : null,
+        api_key_id: entry.principal
+          ? apiKeyIdFromPrincipal(entry.principal)
+          : null,
+        session_id: entry.sessionId,
+        tool_name: entry.toolName,
+        args_redacted: argsJson as Json,
+        result_status: entry.resultStatus,
+        latency_ms: entry.latencyMs ?? null,
+        ip_hash: entry.ipHash ?? null,
+        user_agent: entry.userAgent ?? null,
+      });
+
+    if (auditError) {
       console.error(
         `[logToolCall] Failed to insert audit row for ${entry.toolName}:`,
-        auditResult.value.error.message
+        auditError.message,
       );
     }
   } catch (err) {
     console.error(
       `[logToolCall] Unexpected error writing audit log:`,
-      err instanceof Error ? err.message : err
+      err instanceof Error ? err.message : err,
     );
   }
 }
@@ -174,16 +176,18 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
  * REDACT_KEYS with "[REDACTED]". Also catches anything that looks
  * like a JWT (three dot-separated base64 segments).
  */
-function redactSecrets(
-  obj: Record<string, unknown>
-): Record<string, unknown> {
+function redactSecrets(obj: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
     if (REDACT_KEYS.test(key)) {
       result[key] = "[REDACTED]";
     } else if (typeof value === "string" && looksLikeJwt(value)) {
       result[key] = "[REDACTED_JWT]";
-    } else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    } else if (
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
       result[key] = redactSecrets(value as Record<string, unknown>);
     } else {
       result[key] = value;
@@ -201,6 +205,5 @@ function looksLikeJwt(s: string): boolean {
 function truncateJson(obj: Record<string, unknown>): Record<string, unknown> {
   const str = JSON.stringify(obj);
   if (str.length <= MAX_ARGS_LENGTH) return obj;
-  // Truncate and mark it
   return { _truncated: true, _preview: str.slice(0, MAX_ARGS_LENGTH) };
 }

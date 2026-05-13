@@ -1,6 +1,9 @@
 import "server-only";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+
+import { getCachedOAuthClient, setCachedOAuthClient } from "./oauthClientCache";
 
 export type OAuthTrustResult =
   | { allowed: true }
@@ -22,11 +25,12 @@ export type OAuthClientHints = {
  * `mcp_oauth_clients` on first sight.
  *
  * Flow:
- *   1. SELECT mcp_oauth_clients WHERE client_id = X
- *   2a. If row exists and revoked_at IS NOT NULL -> refuse "revoked"
- *   2b. If row exists and trust_level = 'blocked' -> refuse "blocked"
- *   2c. If row exists otherwise -> allow
- *   3.  If row does NOT exist -> firstSightInsert()
+ *   1. Cache hit -> return based on cached trust_level + revoked_at
+ *   2. Cache miss -> SELECT mcp_oauth_clients WHERE client_id = X
+ *   3a. If row exists and revoked_at IS NOT NULL -> refuse "revoked"
+ *   3b. If row exists and trust_level = 'blocked' -> refuse "blocked"
+ *   3c. If row exists otherwise -> allow + cache
+ *   4.  If row does NOT exist -> firstSightInsert() (not cached)
  *
  * Fails OPEN on lookup errors. Blocking legitimate users because the
  * DB hiccupped is worse than allowing an unknown client briefly.
@@ -39,38 +43,59 @@ export type OAuthClientHints = {
 export async function checkOAuthClientTrust(
   clientId: string,
   principalId: string,
-  hints: OAuthClientHints = {}
+  hints: OAuthClientHints = {},
 ): Promise<OAuthTrustResult> {
   if (!clientId) {
     console.warn("[checkOAuthClientTrust] Empty client_id, allowing");
     return { allowed: true };
   }
 
+  const cached = getCachedOAuthClient(clientId);
+  if (cached) {
+    if (cached.revokedAt) {
+      return { allowed: false, reason: "revoked" };
+    }
+    if (cached.trustLevel === "blocked") {
+      return { allowed: false, reason: "blocked" };
+    }
+    return { allowed: true };
+  }
+
   try {
     const { data: existing, error: lookupErr } = await adminSupabase
       .from("mcp_oauth_clients")
-      .select("client_id, trust_level, revoked_at")
+      .select("client_id, trust_level, revoked_at, registered_by_user_id")
       .eq("client_id", clientId)
       .maybeSingle();
 
     if (lookupErr) {
       console.error(
         `[checkOAuthClientTrust] Lookup failed for ${clientId}:`,
-        lookupErr.message
+        lookupErr.message,
       );
-      return { allowed: true }; // fail open
+      // Fail open. Do NOT cache: we want the next request to retry
+      // the SELECT instead of locking in a "lookup failed" state.
+      return { allowed: true };
     }
 
     if (existing) {
+      // Cache both allow and deny outcomes. A repeatedly-probing
+      // revoked or blocked client otherwise hammers the DB.
+      setCachedOAuthClient(clientId, {
+        trustLevel: existing.trust_level,
+        revokedAt: existing.revoked_at,
+        registeredByUserId: existing.registered_by_user_id,
+      });
+
       if (existing.revoked_at) {
         console.log(
-          `[checkOAuthClientTrust] Refused revoked client ${clientId}`
+          `[checkOAuthClientTrust] Refused revoked client ${clientId}`,
         );
         return { allowed: false, reason: "revoked" };
       }
       if (existing.trust_level === "blocked") {
         console.log(
-          `[checkOAuthClientTrust] Refused blocked client ${clientId}`
+          `[checkOAuthClientTrust] Refused blocked client ${clientId}`,
         );
         return { allowed: false, reason: "blocked" };
       }
@@ -81,41 +106,37 @@ export async function checkOAuthClientTrust(
   } catch (err) {
     console.error(
       "[checkOAuthClientTrust] Unexpected error:",
-      err instanceof Error ? err.message : err
+      err instanceof Error ? err.message : err,
     );
-    return { allowed: true }; // fail open
+    return { allowed: true };
   }
 }
 
 /**
  * Handles first-sight INSERT: rate limit, count verified clients for
  * the registering user, decide trust_level, INSERT.
+ *
+ * Populates the cache with the freshly-inserted row so the next
+ * request on this instance is a cache hit.
  */
 async function firstSightInsert(
   clientId: string,
   principalId: string,
-  hints: OAuthClientHints
+  hints: OAuthClientHints,
 ): Promise<OAuthTrustResult> {
   const minLimit = await checkRateLimit("dcr_register", null, 1, 60);
   if (!minLimit.success) {
     await logRateLimitEvent("dcr_register");
     console.warn(
-      `[firstSightInsert] DCR minute rate limit hit for ${clientId}`
+      `[firstSightInsert] DCR minute rate limit hit for ${clientId}`,
     );
     return { allowed: false, reason: "rate_limited" };
   }
 
-  const dayLimit = await checkRateLimit(
-    "dcr_register_daily",
-    null,
-    10,
-    86400
-  );
+  const dayLimit = await checkRateLimit("dcr_register_daily", null, 10, 86400);
   if (!dayLimit.success) {
     await logRateLimitEvent("dcr_register_daily");
-    console.warn(
-      `[firstSightInsert] DCR daily rate limit hit for ${clientId}`
-    );
+    console.warn(`[firstSightInsert] DCR daily rate limit hit for ${clientId}`);
     return { allowed: false, reason: "rate_limited" };
   }
 
@@ -128,7 +149,7 @@ async function firstSightInsert(
   if (countErr) {
     console.error(
       `[firstSightInsert] Verified-count query failed for ${principalId}:`,
-      countErr.message
+      countErr.message,
     );
     // Fall through; defaults to unverified
   }
@@ -152,20 +173,28 @@ async function firstSightInsert(
         trust_level: trustLevel,
         metadata: {},
       },
-      { onConflict: "client_id", ignoreDuplicates: true }
+      { onConflict: "client_id", ignoreDuplicates: true },
     );
 
   if (insertErr) {
     console.error(
       `[firstSightInsert] INSERT failed for ${clientId}:`,
-      insertErr.message
+      insertErr.message,
     );
     return { allowed: true }; // fail open after INSERT failure
   }
 
+  // Cache the freshly-inserted row so the next request from this
+  // client on the same instance skips the SELECT round-trip.
+  setCachedOAuthClient(clientId, {
+    trustLevel,
+    revokedAt: null,
+    registeredByUserId: principalId,
+  });
+
   console.log(
     `[firstSightInsert] Inserted ${clientId} as ${trustLevel} ` +
-      `(registered_by ${principalId}, verified_count_before ${verifiedCount})`
+      `(registered_by ${principalId}, verified_count_before ${verifiedCount})`,
   );
   return { allowed: true };
 }
@@ -187,7 +216,7 @@ async function logRateLimitEvent(scope: string): Promise<void> {
   } catch (err) {
     console.error(
       "[logRateLimitEvent] Failed to record rate-limit event:",
-      err instanceof Error ? err.message : err
+      err instanceof Error ? err.message : err,
     );
   }
 }
