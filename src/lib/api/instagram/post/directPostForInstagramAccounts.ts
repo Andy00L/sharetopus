@@ -3,9 +3,8 @@ import { storeContentHistory } from "@/actions/server/contentHistoryActions/stor
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
 import { SocialAccount } from "@/lib/types/dbTypes";
+import { ScheduleResult } from "@/lib/types/ScheduleResult";
 import "server-only";
-
-import type { ScheduleResult } from "@/lib/api/_shared/scheduleForAccountGeneric";
 
 /**
  * Directly posts content to Instagram accounts without scheduling
@@ -43,12 +42,12 @@ export async function directPostForInstagramAccounts(config: {
 
   try {
     console.log(
-      "[Instagram Direct Post] Starting to post directly to Instagram"
+      "[Instagram Direct Post] Starting to post directly to Instagram",
     );
 
     if (!accountContent || accountContent.accountId !== account.id) {
       console.error(
-        `[Instagram Direct Post] No or mismatched content for account ${account.id}`
+        `[Instagram Direct Post] No or mismatched content for account ${account.id}`,
       );
       return {
         success: false,
@@ -62,7 +61,7 @@ export async function directPostForInstagramAccounts(config: {
 
     if (!validToken.success) {
       console.error(
-        `[Instagram Direct Post] No valid access token for account ${account.id}`
+        `[Instagram Direct Post] No valid access token for account ${account.id}`,
       );
       return {
         success: false,
@@ -74,7 +73,7 @@ export async function directPostForInstagramAccounts(config: {
     // Validate Instagram Business/Creator account ID
     if (!account.account_identifier) {
       console.error(
-        `[Instagram Direct Post] Missing Instagram Business/Creator account ID for account ${account.id}`
+        `[Instagram Direct Post] Missing Instagram Business/Creator account ID for account ${account.id}`,
       );
       return {
         success: false,
@@ -86,7 +85,7 @@ export async function directPostForInstagramAccounts(config: {
     console.log(
       `[Instagram Direct Post] Posting to account: ${
         account.username ?? account.id
-      }`
+      }`,
     );
 
     // Map generic postType to Instagram-specific types
@@ -114,7 +113,7 @@ export async function directPostForInstagramAccounts(config: {
 
     // Add detailed console logging
     console.log(
-      `========== INSTAGRAM POST RESPONSE (${account.username}) ==========`
+      `========== INSTAGRAM POST RESPONSE (${account.username}) ==========`,
     );
     console.log("Success:", postResult.success);
     console.log("Post ID:", postResult.postId);
@@ -142,13 +141,13 @@ export async function directPostForInstagramAccounts(config: {
           },
           created_via: config.createdVia,
         },
-        userId
+        userId,
       );
 
       if (!historyResult.success) {
         console.error(
           `[Instagram Direct Post] Error saving to content history:`,
-          historyResult.message
+          historyResult.message,
         );
         return {
           success: false,
@@ -158,7 +157,7 @@ export async function directPostForInstagramAccounts(config: {
       }
 
       console.log(
-        `[Instagram Direct Post] Successfully posted to account and saved to history`
+        `[Instagram Direct Post] Successfully posted to account and saved to history`,
       );
     }
 
@@ -166,7 +165,7 @@ export async function directPostForInstagramAccounts(config: {
     if (!postResult.success) {
       console.error(
         "[Instagram Direct Post] Failed with error:",
-        postResult.message
+        postResult.message,
       );
 
       return {

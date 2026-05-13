@@ -1,7 +1,7 @@
 import "server-only";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import type { Platform } from "@/lib/types/database.types";
-import type {
+import {
   AccountError,
   ContentInfo,
 } from "@/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
@@ -20,7 +20,7 @@ export type ProcessAccountsConfig<TExtra> = {
   postType: "image" | "video" | "text";
   skipBatch?: boolean;
   resolvePerAccount: (
-    account: SocialAccount
+    account: SocialAccount,
   ) => { ok: true; extra: TExtra } | { ok: false; error: string };
   callScheduled: (args: {
     account: SocialAccount;
@@ -36,7 +36,7 @@ export type ProcessAccountsConfig<TExtra> = {
 };
 
 export async function processAccountsGeneric<TExtra>(
-  config: ProcessAccountsConfig<TExtra>
+  config: ProcessAccountsConfig<TExtra>,
 ): Promise<ProcessAccountsResult> {
   const { accounts, isScheduled, logPrefix, skipBatch } = config;
   const errors: AccountError[] = [];
@@ -53,11 +53,11 @@ export async function processAccountsGeneric<TExtra>(
       console.log(
         `${logPrefix} Processing account: ${
           account.display_name ?? account.username ?? account.id
-        }`
+        }`,
       );
 
       const accountContent = config.accountContent.find(
-        (c) => c.accountId === account.id
+        (c) => c.accountId === account.id,
       );
       if (!accountContent) {
         return {
@@ -65,8 +65,7 @@ export async function processAccountsGeneric<TExtra>(
           error: {
             accountId: account.id,
             platform: config.platform,
-            displayName:
-              account.display_name ?? account.username ?? account.id,
+            displayName: account.display_name ?? account.username ?? account.id,
             error: "No content configured for this account",
           },
         };
@@ -79,8 +78,7 @@ export async function processAccountsGeneric<TExtra>(
           error: {
             accountId: account.id,
             platform: config.platform,
-            displayName:
-              account.display_name ?? account.username ?? account.id,
+            displayName: account.display_name ?? account.username ?? account.id,
             error: resolved.error,
           },
         };
@@ -101,7 +99,7 @@ export async function processAccountsGeneric<TExtra>(
                 account,
                 accountContent,
                 extra: resolved.extra,
-              })
+              }),
             ),
           }).then((res) => res.json());
 
@@ -111,7 +109,7 @@ export async function processAccountsGeneric<TExtra>(
           account.id
         } in ${accountProcessingTime.toFixed(2)}ms: ${
           result.success ? "Success" : "Failed"
-        }`
+        }`,
       );
 
       if (result.success && result.count > 0) {
@@ -122,23 +120,21 @@ export async function processAccountsGeneric<TExtra>(
         error: {
           accountId: account.id,
           platform: config.platform,
-          displayName:
-            account.display_name ?? account.username ?? account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: result.message ?? "Failed to process account",
         },
       };
     } catch (error) {
       console.error(
         `${logPrefix} Error processing account ${account.id}:`,
-        error
+        error,
       );
       return {
         success: false as const,
         error: {
           accountId: account.id,
           platform: config.platform,
-          displayName:
-            account.display_name ?? account.username ?? account.id,
+          displayName: account.display_name ?? account.username ?? account.id,
           error: error instanceof Error ? error.message : String(error),
         },
       };
@@ -152,7 +148,7 @@ export async function processAccountsGeneric<TExtra>(
   });
 
   console.log(
-    `${logPrefix} Completed with ${successCount} successes and ${errors.length} failures`
+    `${logPrefix} Completed with ${successCount} successes and ${errors.length} failures`,
   );
   return { successCount, errors };
 }
