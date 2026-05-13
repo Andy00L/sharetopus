@@ -2,13 +2,13 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type {
   CreatedVia,
   Json,
   TablesInsert,
 } from "@/lib/types/database.types";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
+import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
 const MAX_BATCH_SIZE = 50;
@@ -337,7 +337,7 @@ function validatePostFields(post: SchedulePostData): string | null {
   }
 
   const opts = post.postOptions as Record<string, unknown> | null | undefined;
-  const hasPinterestBoard = Boolean(opts?.board_id);
+  const hasPinterestBoard = Boolean(opts?.board);
   const hasPinterestLink = Boolean(opts?.link);
 
   if (post.platform === "pinterest" && !hasPinterestBoard) {

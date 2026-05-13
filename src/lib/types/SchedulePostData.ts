@@ -23,7 +23,7 @@ export interface SchedulePostData {
     isAigc?: boolean;
 
     // Pinterest-specific options
-    board_id?: string;
+    board?: string;
     boardName?: string;
     link?: string;
 

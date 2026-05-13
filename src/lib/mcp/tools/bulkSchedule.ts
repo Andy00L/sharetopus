@@ -178,7 +178,7 @@ export function registerBulkSchedule(server: McpServer): void {
             inputPost.platform === "pinterest"
               ? {
                   privacyLevel: "PUBLIC" as const,
-                  board_id: inputPost.pinterest_board_id ?? "",
+                  board: inputPost.pinterest_board_id ?? "",
                   link: inputPost.pinterest_link ?? "",
                 }
               : null;

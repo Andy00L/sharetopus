@@ -160,7 +160,7 @@ export function registerSchedulePost(server: McpServer): void {
         toolArgs.platform === "pinterest"
           ? {
               privacyLevel: "PUBLIC" as const,
-              board_id: toolArgs.pinterest_board_id ?? "",
+              board: toolArgs.pinterest_board_id ?? "",
               link: toolArgs.pinterest_link ?? "",
             }
           : null;

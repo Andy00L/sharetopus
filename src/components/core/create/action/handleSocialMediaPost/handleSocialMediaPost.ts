@@ -429,7 +429,7 @@ async function scheduleAllPosts(args: {
         postOptions: {
           privacyLevel:
             args.platformOptions.pinterest?.privacyLevel ?? "PUBLIC",
-          board_id: selectedBoard?.boardID ?? "",
+          board: selectedBoard?.boardID ?? "",
           boardName: selectedBoard?.boardName ?? "",
           link: content.link,
         },
