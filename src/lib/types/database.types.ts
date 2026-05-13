@@ -1271,6 +1271,23 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      stripe_webhook_events: {
+        Row: {
+          event_id: string;
+          type: string;
+          processed_at: string;
+          livemode: boolean;
+        };
+        Insert: {
+          event_id: string;
+          type: string;
+          processed_at?: string;
+          livemode?: boolean;
+        };
+        Update: never; // idempotency log: INSERT or DELETE only
+        Relationships: [];
+      };
+      // ────────────────────────────────────────────────────────────────
       usage_quotas: {
         Row: {
           principal_id: string;

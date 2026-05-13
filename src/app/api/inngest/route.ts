@@ -1,13 +1,14 @@
-import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
-import { processSinglePost } from "@/inngest/functions/processSinglePost";
+import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanupCancelledPostsAfterGraceCron";
+import { cleanupStripeWebhookEvents } from "@/inngest/functions/cleanupStripeWebhookEvents";
 import { processDirectPost } from "@/inngest/functions/processDirectPost";
-import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
-import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
+import { processSinglePost } from "@/inngest/functions/processSinglePost";
+import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
 import { sweepOrphanStorageFiles } from "@/inngest/functions/sweepOrphanStorageFiles";
 import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthClientsCron";
-import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanupCancelledPostsAfterGraceCron";
+import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
+import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
+import { serve } from "inngest/next";
 
 export const runtime = "nodejs";
 
@@ -29,5 +30,6 @@ export const { GET, POST, PUT } = serve({
     sweepOrphanStorageFiles,
     sweepStaleOauthClientsCron,
     cleanupCancelledPostsAfterGraceCron,
+    cleanupStripeWebhookEvents,
   ],
 });

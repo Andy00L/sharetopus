@@ -1,6 +1,6 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { createHmac, timingSafeEqual } from "crypto";
 import { NextRequest } from "next/server";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -142,9 +142,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!upstream.ok) {
-      console.error(
-        `[Media Proxy] Upstream returned ${upstream.status}`
-      );
+      console.error(`[Media Proxy] Upstream returned ${upstream.status}`);
       if (upstream.status === 404) {
         return new Response("File not found", {
           status: 404,
