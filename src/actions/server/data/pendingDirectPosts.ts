@@ -1,12 +1,13 @@
-import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { Platform } from "@/lib/types/database.types";
+import "server-only";
 
 export type PendingDirectPostInput = {
   event_id: string;
   batch_id: string;
   principal_id: string;
   social_account_id: string;
-  platform: "linkedin" | "pinterest" | "tiktok" | "instagram";
+  platform: Platform;
   media_storage_path: string;
   idempotency_key?: string | null;
 };
@@ -24,7 +25,7 @@ export type InsertPendingDirectPostsResult =
  * exists, dispatch can proceed).
  */
 export async function insertPendingDirectPosts(
-  rows: PendingDirectPostInput[]
+  rows: PendingDirectPostInput[],
 ): Promise<InsertPendingDirectPostsResult> {
   if (rows.length === 0) {
     return { success: true, message: "No rows to insert", insertedCount: 0 };
@@ -52,7 +53,7 @@ export async function insertPendingDirectPosts(
     if (error.code === "23505") {
       console.warn(
         "[insertPendingDirectPosts] Unique violation (event_id PK or idempotency_key), treating as idempotent:",
-        error.message
+        error.message,
       );
       return {
         success: true,
@@ -60,16 +61,11 @@ export async function insertPendingDirectPosts(
         insertedCount: rows.length,
       };
     }
-    console.error(
-      "[insertPendingDirectPosts] Insert failed:",
-      error.message
-    );
+    console.error("[insertPendingDirectPosts] Insert failed:", error.message);
     return { success: false, message: `Insert failed: ${error.message}` };
   }
 
-  console.log(
-    `[insertPendingDirectPosts] Inserted ${rows.length} lock row(s)`
-  );
+  console.log(`[insertPendingDirectPosts] Inserted ${rows.length} lock row(s)`);
   return { success: true, message: "Inserted", insertedCount: rows.length };
 }
 
@@ -83,7 +79,7 @@ export async function insertPendingDirectPosts(
 export async function finalizePendingDirectPost(
   eventId: string,
   status: "completed" | "failed",
-  failureReason: string | null
+  failureReason: string | null,
 ): Promise<{ success: boolean; message: string; updated: boolean }> {
   const now = new Date().toISOString();
 
@@ -99,10 +95,7 @@ export async function finalizePendingDirectPost(
     .select("event_id");
 
   if (error) {
-    console.error(
-      "[finalizePendingDirectPost] Update failed:",
-      error.message
-    );
+    console.error("[finalizePendingDirectPost] Update failed:", error.message);
     return {
       success: false,
       message: `Update failed: ${error.message}`,
@@ -112,13 +105,9 @@ export async function finalizePendingDirectPost(
 
   const updated = !!(data && data.length > 0);
   if (!updated) {
-    console.log(
-      `[finalizePendingDirectPost] Already finalized: ${eventId}`
-    );
+    console.log(`[finalizePendingDirectPost] Already finalized: ${eventId}`);
   } else {
-    console.log(
-      `[finalizePendingDirectPost] Marked ${status}: ${eventId}`
-    );
+    console.log(`[finalizePendingDirectPost] Marked ${status}: ${eventId}`);
   }
 
   return {
@@ -134,8 +123,10 @@ export async function finalizePendingDirectPost(
  * conservatively (mirrors countPendingTikTokPullsForMediaPath behavior).
  */
 export async function countPendingDirectPostsForMediaPath(
-  mediaPath: string
-): Promise<{ success: true; count: number } | { success: false; message: string }> {
+  mediaPath: string,
+): Promise<
+  { success: true; count: number } | { success: false; message: string }
+> {
   const { count, error } = await adminSupabase
     .from("pending_direct_posts")
     .select("event_id", { count: "exact", head: true })
@@ -145,7 +136,7 @@ export async function countPendingDirectPostsForMediaPath(
   if (error) {
     console.error(
       "[countPendingDirectPostsForMediaPath] Query failed:",
-      error.message
+      error.message,
     );
     return { success: false, message: `Query failed: ${error.message}` };
   }
@@ -158,8 +149,10 @@ export async function countPendingDirectPostsForMediaPath(
  * Used by the sweeper Inngest cron. Returns the count of rows updated.
  */
 export async function sweepStuckPendingDirectPosts(
-  cutoffIso: string
-): Promise<{ success: true; sweptCount: number } | { success: false; message: string }> {
+  cutoffIso: string,
+): Promise<
+  { success: true; sweptCount: number } | { success: false; message: string }
+> {
   const now = new Date().toISOString();
 
   const { data, error } = await adminSupabase
@@ -176,7 +169,7 @@ export async function sweepStuckPendingDirectPosts(
   if (error) {
     console.error(
       "[sweepStuckPendingDirectPosts] Update failed:",
-      error.message
+      error.message,
     );
     return { success: false, message: `Sweep failed: ${error.message}` };
   }
