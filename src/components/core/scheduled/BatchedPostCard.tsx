@@ -32,8 +32,8 @@ import {
 
 import { cancelScheduledPostBatchAction } from "@/actions/server/scheduleActions/cancel/cancelScheduledPostBatchAction";
 import { deleteScheduledPostBatchAction } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatchAction";
+import { updateScheduledTimeBatchAction } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatchAction";
 import { resumeScheduledPostBatchAction } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatchAction";
-import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/updateScheduledTime";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -193,7 +193,7 @@ export default function BatchedPostCard({
 
     const doReschedule = async () => {
       const postIds = posts.map((post) => post.id);
-      const result = await updateScheduledTimeBatch(
+      const result = await updateScheduledTimeBatchAction(
         postIds,
         scheduledDateTime,
         userId,

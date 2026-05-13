@@ -1,9 +1,7 @@
 "use client";
 
-import {
-  getTikTokCreatorInfo,
-  type CreatorInfoData,
-} from "@/lib/api/tiktok/data/getTikTokCreatorInfo";
+import type { CreatorInfoData } from "@/lib/api/tiktok/data/getTikTokCreatorInfo";
+import { getTikTokCreatorInfoForAccount } from "@/lib/api/tiktok/data/getTikTokCreatorInfoForAccount";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import { useEffect, useRef, useState } from "react";
 
@@ -11,7 +9,7 @@ export type { CreatorInfoData };
 
 export function useTikTokCreatorInfo(
   socialAccounts: SocialAccount[],
-  enabled: boolean
+  enabled: boolean,
 ) {
   const [creatorInfo, setCreatorInfo] = useState<
     Record<string, CreatorInfoData>
@@ -24,12 +22,12 @@ export function useTikTokCreatorInfo(
     if (!enabled) return;
 
     for (const account of socialAccounts) {
-      if (!account.access_token || fetchedRef.current.has(account.id)) continue;
+      if (fetchedRef.current.has(account.id)) continue;
       fetchedRef.current.add(account.id);
 
       setIsLoading((prev) => ({ ...prev, [account.id]: true }));
 
-      getTikTokCreatorInfo(account.access_token).then((result) => {
+      getTikTokCreatorInfoForAccount(account.id).then((result) => {
         if (result.success) {
           setCreatorInfo((prev) => ({ ...prev, [account.id]: result.data }));
           setErrors((prev) => ({ ...prev, [account.id]: null }));
@@ -44,13 +42,13 @@ export function useTikTokCreatorInfo(
   function refetch(accountId: string) {
     fetchedRef.current.delete(accountId);
     const account = socialAccounts.find((a) => a.id === accountId);
-    if (!account?.access_token) return;
+    if (!account) return;
 
     fetchedRef.current.add(accountId);
     setIsLoading((prev) => ({ ...prev, [accountId]: true }));
     setErrors((prev) => ({ ...prev, [accountId]: null }));
 
-    getTikTokCreatorInfo(account.access_token).then((result) => {
+    getTikTokCreatorInfoForAccount(accountId).then((result) => {
       if (result.success) {
         setCreatorInfo((prev) => ({ ...prev, [accountId]: result.data }));
         setErrors((prev) => ({ ...prev, [accountId]: null }));
