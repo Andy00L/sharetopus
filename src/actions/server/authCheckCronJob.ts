@@ -6,26 +6,23 @@
  */
 export async function authCheckCronJob(
   userId: string | null,
-  cronSecret: string | undefined
+  cronSecret: string | undefined,
 ): Promise<boolean> {
   // Ensure the environment variable is set
   if (!process.env.CRON_SECRET_KEY) {
     console.error(
-      `[authCheckCronJob] CRON_SECRET_KEY environment variable is not set`
+      `[authCheckCronJob] CRON_SECRET_KEY environment variable is not set`,
     );
     return false;
   }
 
   // Validate the cron secret key
   if (cronSecret === process.env.CRON_SECRET_KEY) {
-    console.log(
-      `[authCheckCronJob] Cron job authentication successful for user ${userId}`
-    );
     return true;
   }
 
   console.error(
-    `[authCheckCronJob] Cron job authentication failed: Invalid secret key`
+    `[authCheckCronJob] Cron job authentication failed: Invalid secret key`,
   );
   return false;
 }

@@ -2,7 +2,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { TablesInsert, Json } from "@/lib/types/database.types";
+import type { Json, TablesInsert } from "@/lib/types/database.types";
 
 export type StoreContentHistoryInput = {
   platform: string;
@@ -24,29 +24,29 @@ export type StoreContentHistoryInput = {
  */
 export async function storeContentHistory(
   data: StoreContentHistoryInput,
-  userId: string | null
+  userId: string | null,
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
-  // Basic validation
-  if (
-    !userId ||
-    !data.platform ||
-    !data.content_id ||
-    !data.social_account_id
-  ) {
-    return {
-      success: false,
-      message: "Missing required information (userId, platform, contentId)",
-    };
-  }
-
   try {
-    console.log(
-      `[storeContentHistory] Storing content history for user ${userId}`,
-      {
-        platform: data.platform,
-        contentId: data.content_id,
-      }
-    );
+    // Basic validation
+    if (
+      !userId ||
+      !data.platform ||
+      !data.content_id ||
+      !data.social_account_id
+    ) {
+      console.error(
+        "[storeContentHistory] Missing required information (userId, platform, contentId)",
+        {
+          userId,
+          platform: data.platform,
+          contentId: data.content_id,
+        },
+      );
+      return {
+        success: false,
+        message: "Missing required information (userId, platform, contentId)",
+      };
+    }
 
     // Prepare data for insertion
     const insertData: TablesInsert<"content_history"> = {
@@ -76,10 +76,6 @@ export async function storeContentHistory(
       console.error("[storeContentHistory] Supabase insert error:", error);
       return { success: false, message: `Database error: ${error.message}` };
     }
-
-    console.log(
-      `[storeContentHistory] Content history stored successfully with ID: ${newRecord.id}`
-    );
 
     return {
       success: true,

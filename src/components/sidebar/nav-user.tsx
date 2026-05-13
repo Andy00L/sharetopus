@@ -59,6 +59,7 @@ export function NavUser() {
   if (!isSignedIn) {
     return null;
   }
+
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {

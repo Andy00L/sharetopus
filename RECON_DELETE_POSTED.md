@@ -13,6 +13,7 @@ The proposed change (DELETE the `scheduled_posts` row on successful post instead
 ### Where status='posted' is written
 
 `src/inngest/functions/processSinglePostHelpers.ts:479-489`:
+
 ```ts
 if (result.ok) {
     const { data, error } = await adminSupabase
@@ -33,27 +34,28 @@ This is the ONLY place in the codebase that writes `status='posted'` to `schedul
 ### Where status='failed' is written
 
 `src/inngest/functions/processSinglePostHelpers.ts:510-519`:
+
 ```ts
 const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .update({
-      status: "failed" satisfies PostStatus,
-      error_message: errorMessage,
-      updated_at: nowIso,
-    })
-    .eq("id", post.id)
-    .eq("status", "processing" satisfies PostStatus)
-    .select("id");
+  .from("scheduled_posts")
+  .update({
+    status: "failed" satisfies PostStatus,
+    error_message: errorMessage,
+    updated_at: nowIso,
+  })
+  .eq("id", post.id)
+  .eq("status", "processing" satisfies PostStatus)
+  .select("id");
 ```
 
 ### CAS guards on each UPDATE
 
-| Operation | File:line | Guard |
-|---|---|---|
+| Operation            | File:line                       | Guard                                   |
+| -------------------- | ------------------------------- | --------------------------------------- |
 | Claim for processing | processSinglePostHelpers.ts:130 | `.in("status", ["scheduled","queued"])` |
-| Mark posted | processSinglePostHelpers.ts:488 | `.eq("status", "processing")` |
-| Mark failed | processSinglePostHelpers.ts:518 | `.eq("status", "processing")` |
-| Mark queued (tick) | scheduledPostsTickHelpers.ts:65 | `.eq("status", "scheduled")` |
+| Mark posted          | processSinglePostHelpers.ts:488 | `.eq("status", "processing")`           |
+| Mark failed          | processSinglePostHelpers.ts:518 | `.eq("status", "processing")`           |
+| Mark queued (tick)   | scheduledPostsTickHelpers.ts:65 | `.eq("status", "scheduled")`            |
 
 ### Step ordering in the worker
 
@@ -63,7 +65,7 @@ const { data, error } = await adminSupabase
 2. compatibility check (inline, line 59)
 3. `claim-post` (line 82) - CAS: scheduled/queued -> processing
 4. `build-signed-urls` (line 89)
-5. `call-platform-direct-post` (line 106) - calls directPostFor* (writes content_history on success, failed_posts on failure)
+5. `call-platform-direct-post` (line 106) - calls directPostFor\* (writes content_history on success, failed_posts on failure)
 6. `record-status` (line 117) - CAS: processing -> posted/failed. **Awaited synchronously** via `step.run`.
 7. `cleanup-storage` (line 126) - deletes media if no other rows reference it. Runs AFTER record-status.
 
@@ -72,21 +74,23 @@ const { data, error } = await adminSupabase
 ### Re-invocation guard
 
 `src/inngest/functions/processSinglePostHelpers.ts:63-68`:
+
 ```ts
 const terminalStates: PostStatus[] = ["posted", "failed", "cancelled"];
 if (terminalStates.includes(post.status as PostStatus)) {
-    return {
-      success: true,
-      message: `post already ${post.status}`,
-      skip: true,
-    };
+  return {
+    success: true,
+    message: `post already ${post.status}`,
+    skip: true,
+  };
 }
 ```
 
 If the row is deleted instead of marked posted, `fetchPostAndAccount` handles the missing-row case at lines 51-53:
+
 ```ts
 if (postErr.code === "PGRST116") {
-    return { success: true, message: "post not found", skip: true };
+  return { success: true, message: "post not found", skip: true };
 }
 ```
 
@@ -94,58 +98,58 @@ Both paths produce `skip: true`. The worker returns `{ skipped: true }` in eithe
 
 ## Existing delete helpers
 
-| Helper | File:line | Signature | Ownership check | Currently called from |
-|---|---|---|---|---|
-| `deleteScheduledPostBatchInternal` | `_internal/scheduleActions/deleteScheduledPostBatch.ts:24` | `(postIds: string[], principalId: string) -> Promise<{success, message, details?}>` | Yes (principal_id check, line 46) | MCP `deleteScheduledPosts` tool, web UI via public wrapper |
-| `deleteScheduledPostBatch` | `scheduleActions/deleteScheduledPost.ts:17` | `(postIds: string[], userId: string \| null, cronSecret?: string) -> Promise<{success, message, ...}>` | Yes (authCheck/authCheckCronJob + ownership in internal) | `BatchedPostCard` UI, MCP tool |
+| Helper                             | File:line                                                  | Signature                                                                                              | Ownership check                                          | Currently called from                                      |
+| ---------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- | ---------------------------------------------------------- |
+| `deleteScheduledPostBatchInternal` | `_internal/scheduleActions/deleteScheduledPostBatch.ts:24` | `(postIds: string[], principalId: string) -> Promise<{success, message, details?}>`                    | Yes (principal_id check, line 46)                        | MCP `deleteScheduledPosts` tool, web UI via public wrapper |
+| `deleteScheduledPostBatch`         | `scheduleActions/deleteScheduledPost.ts:17`                | `(postIds: string[], userId: string \| null, cronSecret?: string) -> Promise<{success, message, ...}>` | Yes (authCheck/authCheckCronJob + ownership in internal) | `BatchedPostCard` UI, MCP tool                             |
 
-Both helpers delete rows by ID with no status filter (line 38-55 of `deleteScheduledPostBatch.ts`). They also clean up orphaned media via `deleteSupabaseFileActionInternal`.
+Both helpers delete rows by ID with no status filter (line 38-55 of `deleteScheduledPostBatch.ts`). They also clean up orphaned media via `deleteSupabaseFile`.
 
 Neither helper is directly reusable for the worker's purpose. The worker needs an admin-level single-row delete without ownership checks (the worker operates on behalf of the system, not a principal). The closest approach: a raw `adminSupabase.from("scheduled_posts").delete().eq("id", post.id)` inline in `recordPostStatus`, mirroring the existing UPDATE's structure.
 
 ## Every reader of scheduled_posts
 
-| File:line | Status filter | Caller surface | Affected by removing posted rows? |
-|---|---|---|---|
-| `scheduledPostsTickHelpers.ts:22-27` | `.eq("status", "scheduled")` | Inngest dispatcher | No |
-| `scheduledPostsTickHelpers.ts:59-66` | `.eq("status", "scheduled")` | Inngest dispatcher | No |
-| `processSinglePostHelpers.ts:44-48` | None (single by ID) | Worker fetch | No (skip if missing; see re-invocation guard above) |
-| `processSinglePostHelpers.ts:123-131` | `.in("status", ["scheduled","queued"])` | Worker claim | No |
-| `processSinglePostHelpers.ts:479-489` | `.eq("status", "processing")` | Worker mark posted | **YES: this is the line being changed to DELETE** |
-| `processSinglePostHelpers.ts:510-519` | `.eq("status", "processing")` | Worker mark failed | No |
-| `_internal/scheduleActions/getScheduledPosts.ts:29-51` | Optional (no default) | Web UI `PostsGrid`, MCP `list_scheduled_posts`, MCP resource | **YES: posted rows no longer returned. Functionally cleaner.** |
-| `_internal/scheduleActions/deleteScheduledPostBatch.ts:37-41` | None (by ID) | MCP/UI delete | No (if row gone, nothing to delete) |
-| `_internal/scheduleActions/cancelScheduledPostBatch.ts:27-41` | None (fetch), line 41 filters `status="scheduled"` | MCP/UI cancel | No |
-| `_internal/scheduleActions/resumeScheduledPostBatch.ts:28-41` | None (fetch), line 41 filters `status="cancelled"` | MCP/UI resume | No |
-| `_internal/scheduleActions/updateScheduledTimeBatch.ts:37-51` | None (fetch), lines 50-51 filter `"scheduled"/"cancelled"` | MCP reschedule | No |
-| `disconnectSocialAccount.ts:111-114` | `.in("status", ["scheduled","processing"])` | Account disconnect | No |
-| `disconnectSocialAccount.ts:165-168` | `.in("status", ["scheduled","processing"])` | Account disconnect | No |
-| `_internal/data/deleteSupabaseFileActionInternal.ts:89-92` | `.in("status", ["scheduled","processing"])` | Storage cleanup (folder) | No |
-| `_internal/data/deleteSupabaseFileActionInternal.ts:205-208` | `.in("status", ["scheduled","processing"])` | Storage cleanup (single file) | No |
-| `lib/mcp/tools/bulkSchedule.ts:164-170` | No status filter, `.gte/.lte` on `scheduled_at` | MCP quota check | Minimal: posted rows have past `scheduled_at` values outside the 24h forward window. Net effect: quotas become slightly more permissive (accurate). |
-| `lib/mcp/tools/bulkSchedule.ts:329-335` | Upsert by idempotency_key | MCP bulk insert | No |
-| `lib/mcp/tools/bulkSchedule.ts:364-368` | Fetch by idempotency_key | MCP idempotent lookup | No |
-| `_internal/scheduleActions/schedulePost.ts:80-84` | Insert | Schedule new post | No |
+| File:line                                                     | Status filter                                              | Caller surface                                               | Affected by removing posted rows?                                                                                                                   |
+| ------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scheduledPostsTickHelpers.ts:22-27`                          | `.eq("status", "scheduled")`                               | Inngest dispatcher                                           | No                                                                                                                                                  |
+| `scheduledPostsTickHelpers.ts:59-66`                          | `.eq("status", "scheduled")`                               | Inngest dispatcher                                           | No                                                                                                                                                  |
+| `processSinglePostHelpers.ts:44-48`                           | None (single by ID)                                        | Worker fetch                                                 | No (skip if missing; see re-invocation guard above)                                                                                                 |
+| `processSinglePostHelpers.ts:123-131`                         | `.in("status", ["scheduled","queued"])`                    | Worker claim                                                 | No                                                                                                                                                  |
+| `processSinglePostHelpers.ts:479-489`                         | `.eq("status", "processing")`                              | Worker mark posted                                           | **YES: this is the line being changed to DELETE**                                                                                                   |
+| `processSinglePostHelpers.ts:510-519`                         | `.eq("status", "processing")`                              | Worker mark failed                                           | No                                                                                                                                                  |
+| `_internal/scheduleActions/getScheduledPosts.ts:29-51`        | Optional (no default)                                      | Web UI `PostsGrid`, MCP `list_scheduled_posts`, MCP resource | **YES: posted rows no longer returned. Functionally cleaner.**                                                                                      |
+| `_internal/scheduleActions/deleteScheduledPostBatch.ts:37-41` | None (by ID)                                               | MCP/UI delete                                                | No (if row gone, nothing to delete)                                                                                                                 |
+| `_internal/scheduleActions/cancelScheduledPostBatch.ts:27-41` | None (fetch), line 41 filters `status="scheduled"`         | MCP/UI cancel                                                | No                                                                                                                                                  |
+| `_internal/scheduleActions/resumeScheduledPostBatch.ts:28-41` | None (fetch), line 41 filters `status="cancelled"`         | MCP/UI resume                                                | No                                                                                                                                                  |
+| `_internal/scheduleActions/updateScheduledTimeBatch.ts:37-51` | None (fetch), lines 50-51 filter `"scheduled"/"cancelled"` | MCP reschedule                                               | No                                                                                                                                                  |
+| `disconnectSocialAccount.ts:111-114`                          | `.in("status", ["scheduled","processing"])`                | Account disconnect                                           | No                                                                                                                                                  |
+| `disconnectSocialAccount.ts:165-168`                          | `.in("status", ["scheduled","processing"])`                | Account disconnect                                           | No                                                                                                                                                  |
+| `_internal/data/deleteSupabaseFile.ts:89-92`                  | `.in("status", ["scheduled","processing"])`                | Storage cleanup (folder)                                     | No                                                                                                                                                  |
+| `_internal/data/deleteSupabaseFile.ts:205-208`                | `.in("status", ["scheduled","processing"])`                | Storage cleanup (single file)                                | No                                                                                                                                                  |
+| `lib/mcp/tools/bulkSchedule.ts:164-170`                       | No status filter, `.gte/.lte` on `scheduled_at`            | MCP quota check                                              | Minimal: posted rows have past `scheduled_at` values outside the 24h forward window. Net effect: quotas become slightly more permissive (accurate). |
+| `lib/mcp/tools/bulkSchedule.ts:329-335`                       | Upsert by idempotency_key                                  | MCP bulk insert                                              | No                                                                                                                                                  |
+| `lib/mcp/tools/bulkSchedule.ts:364-368`                       | Fetch by idempotency_key                                   | MCP idempotent lookup                                        | No                                                                                                                                                  |
+| `_internal/scheduleActions/schedulePost.ts:80-84`             | Insert                                                     | Schedule new post                                            | No                                                                                                                                                  |
 
 ## Every reference to status='posted'
 
-| File:line | Type | Affected by removing posted rows? |
-|---|---|---|
-| `database.types.ts:225,257,287,665,697,727` | Type definition (generated) | No (type still valid, value unused in scheduled_posts) |
-| `database.types.ts:1712` | `PostStatus` union type | No |
-| `dbTypes.ts:45` | `PostStatus` union type | No |
-| `_internal/scheduleActions/getScheduledPosts.ts:19` | Filter parameter type | No (filtering by "posted" returns empty) |
-| `processSinglePostHelpers.ts:63` | Terminal state check (read) | No (row-not-found path has same outcome) |
-| `processSinglePostHelpers.ts:482` | Write `status='posted'` | **YES: this is the line being REPLACED with DELETE** |
-| `directPostForInstagramAccounts.ts:136` | Write `status: "posted"` to `content_history` | No (different table) |
-| `tiktok/postVideo.ts:80` | Write `status: "posted"` to `content_history` | No (different table) |
-| `tiktok/postImage.ts:83` | Write `status: "posted"` to `content_history` | No (different table) |
-| `directPostForLinkedInAccounts.ts:193` | Write `status: "posted"` to `content_history` | No (different table) |
-| `directPostForPinterestAccounts.ts:127` | Write `status: "posted"` to `content_history` | No (different table) |
-| `listScheduledPosts.ts:27` | Zod enum for MCP filter | Dead value (filtering by "posted" returns empty) |
-| `ContentHistoryCard.tsx:148` | UI badge color for `content_history` | No (different table) |
-| `BatchedPostCard.tsx:105` | UI badge for `scheduled_posts` | Dead case (never hit after change) |
-| `20260508000001_add_queued_status_to_scheduled_posts.sql:21,42` | CHECK constraint includes "posted" | No (constraint still valid, value just never written) |
+| File:line                                                       | Type                                          | Affected by removing posted rows?                      |
+| --------------------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
+| `database.types.ts:225,257,287,665,697,727`                     | Type definition (generated)                   | No (type still valid, value unused in scheduled_posts) |
+| `database.types.ts:1712`                                        | `PostStatus` union type                       | No                                                     |
+| `dbTypes.ts:45`                                                 | `PostStatus` union type                       | No                                                     |
+| `_internal/scheduleActions/getScheduledPosts.ts:19`             | Filter parameter type                         | No (filtering by "posted" returns empty)               |
+| `processSinglePostHelpers.ts:63`                                | Terminal state check (read)                   | No (row-not-found path has same outcome)               |
+| `processSinglePostHelpers.ts:482`                               | Write `status='posted'`                       | **YES: this is the line being REPLACED with DELETE**   |
+| `directPostForInstagramAccounts.ts:136`                         | Write `status: "posted"` to `content_history` | No (different table)                                   |
+| `tiktok/postVideo.ts:80`                                        | Write `status: "posted"` to `content_history` | No (different table)                                   |
+| `tiktok/postImage.ts:83`                                        | Write `status: "posted"` to `content_history` | No (different table)                                   |
+| `directPostForLinkedInAccounts.ts:193`                          | Write `status: "posted"` to `content_history` | No (different table)                                   |
+| `directPostForPinterestAccounts.ts:127`                         | Write `status: "posted"` to `content_history` | No (different table)                                   |
+| `listScheduledPosts.ts:27`                                      | Zod enum for MCP filter                       | Dead value (filtering by "posted" returns empty)       |
+| `ContentHistoryCard.tsx:148`                                    | UI badge color for `content_history`          | No (different table)                                   |
+| `BatchedPostCard.tsx:105`                                       | UI badge for `scheduled_posts`                | Dead case (never hit after change)                     |
+| `20260508000001_add_queued_status_to_scheduled_posts.sql:21,42` | CHECK constraint includes "posted"            | No (constraint still valid, value just never written)  |
 
 ## Retry flow (failed -> scheduled)
 
@@ -163,12 +167,13 @@ The retry flow does NOT depend on posted rows existing.
 `src/actions/server/_internal/data/deleteSupabaseFileAction.ts`:
 
 Reference check logic (single file, line 204-208):
+
 ```ts
 const { count: scheduledCount, error: checkError } = await adminSupabase
-    .from("scheduled_posts")
-    .select("id", { count: "exact", head: true })
-    .eq("media_storage_path", filePath)
-    .in("status", ["scheduled", "processing"]);
+  .from("scheduled_posts")
+  .select("id", { count: "exact", head: true })
+  .eq("media_storage_path", filePath)
+  .in("status", ["scheduled", "processing"]);
 ```
 
 The check filters to `["scheduled", "processing"]` only. It does NOT count `posted`, `failed`, or `cancelled` rows. Therefore, deleting a `posted` row has zero effect on the reference check.
@@ -181,21 +186,22 @@ Step ordering context: `cleanup-storage` runs AFTER `record-status` in the worke
 
 ## MCP tools
 
-| Tool | File | Status filter | Reads/writes posted? |
-|---|---|---|---|
-| `list_scheduled_posts` | `listScheduledPosts.ts` | Optional (`status` param, line 27). Default: none. | Currently reads posted rows when no filter or `status="posted"`. After change: returns empty for `status="posted"`. |
-| `cancel_scheduled_posts` | `cancelScheduledPosts.ts` | Filters to `status="scheduled"` | No |
-| `resume_scheduled_posts` | `resumeScheduledPosts.ts` | Filters to `status="cancelled"` | No |
-| `reschedule_posts` | `reschedulePosts.ts` (via `updateScheduledTimeBatch`) | Filters to `"scheduled"/"cancelled"` | No |
-| `delete_scheduled_posts` | `deleteScheduledPosts.ts` | No status filter (by ID) | Could delete posted rows; after change, posted rows are already gone. |
-| `bulk_schedule` | `bulkSchedule.ts` | Quota check: no status filter, date range | Counts posted rows in quota window (minor; see readers table) |
-| `schedule_post` | `schedulePost.ts` | Insert only | No |
+| Tool                     | File                                                  | Status filter                                      | Reads/writes posted?                                                                                                |
+| ------------------------ | ----------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `list_scheduled_posts`   | `listScheduledPosts.ts`                               | Optional (`status` param, line 27). Default: none. | Currently reads posted rows when no filter or `status="posted"`. After change: returns empty for `status="posted"`. |
+| `cancel_scheduled_posts` | `cancelScheduledPosts.ts`                             | Filters to `status="scheduled"`                    | No                                                                                                                  |
+| `resume_scheduled_posts` | `resumeScheduledPosts.ts`                             | Filters to `status="cancelled"`                    | No                                                                                                                  |
+| `reschedule_posts`       | `reschedulePosts.ts` (via `updateScheduledTimeBatch`) | Filters to `"scheduled"/"cancelled"`               | No                                                                                                                  |
+| `delete_scheduled_posts` | `deleteScheduledPosts.ts`                             | No status filter (by ID)                           | Could delete posted rows; after change, posted rows are already gone.                                               |
+| `bulk_schedule`          | `bulkSchedule.ts`                                     | Quota check: no status filter, date range          | Counts posted rows in quota window (minor; see readers table)                                                       |
+| `schedule_post`          | `schedulePost.ts`                                     | Insert only                                        | No                                                                                                                  |
 
 MCP resource `scheduledPosts.ts:35`: calls `getScheduledPostsInternal(principalId, { limit: 100 })` with no status filter. Currently returns all statuses including posted. After the change, posted rows are absent. The resource returns a cleaner dataset.
 
 ## Database
 
 `src/lib/types/database.types.ts:1708-1714`:
+
 ```ts
 export type PostStatus =
   | "scheduled"
@@ -207,11 +213,13 @@ export type PostStatus =
 ```
 
 CHECK constraint (`supabase/migrations/20260508000001_add_queued_status_to_scheduled_posts.sql:21`):
+
 ```sql
 CHECK (status IN ('scheduled','queued','processing','posted','failed','cancelled'));
 ```
 
 Partial indexes (same migration, lines 48-55):
+
 ```sql
 CREATE INDEX idx_scheduled_posts_status_due
   ON public.scheduled_posts (status, scheduled_at)
@@ -232,6 +240,7 @@ Both columns are `NULL`able and use `ON DELETE SET NULL`. No application code ev
 ## Posted page UI
 
 Data source confirmed: `src/components/core/posted/renderPosts.tsx:1,9`:
+
 ```ts
 import { getContentHistoryGroupedByBatch } from "@/actions/server/contentHistoryActions/getContentHistory";
 const posts = await getContentHistoryGroupedByBatch(userId);
@@ -241,16 +250,16 @@ The Posted page reads from `content_history`, NOT from `scheduled_posts`. It is 
 
 ## Risk assessment
 
-| Risk | Severity | Evidence |
-|---|---|---|
-| Web scheduled page stops showing "Posted" badge cards | LOW | `getScheduledPostsInternal` returns all statuses (line 29, no default filter). Posted rows will be absent. The scheduled page becomes a view of only pending/active items. The Posted page (`content_history`) still shows the full history. This is arguably more correct behavior. |
-| MCP `list_scheduled_posts` with `status="posted"` filter returns empty | LOW | `listScheduledPosts.ts:27` includes "posted" in the Zod enum. After the change, this filter always returns empty. Not breaking, but a dead filter value. |
-| MCP resource `scheduled-posts` returns fewer items | LOW | `scheduledPosts.ts:35` has no status filter. Posted rows simply absent. Cleaner dataset. |
-| `BatchedPostCard` "Posted" badge case becomes dead code | LOW | `BatchedPostCard.tsx:105-113`: the `case "posted"` branch in the status badge switch never executes. No runtime impact, just unreachable code. |
-| `fetchPostAndAccount` terminal state list includes "posted" unnecessarily | LOW | `processSinglePostHelpers.ts:63`: `["posted", "failed", "cancelled"]`. After the change, a re-invocation of a successfully posted item hits the "not found" path (PGRST116) instead of the "already posted" path. Both return `skip: true`. Could simplify by removing "posted" from the list, but not required. |
-| `content_history.scheduled_post_id` FK cascade fires | LOW | `ON DELETE SET NULL` on a column that is always NULL in practice (no code writes it). Cascade is a no-op. However, if future code starts writing this FK, the audit trail would be broken. |
-| `bulkSchedule` quota count becomes slightly more permissive | LOW | `bulkSchedule.ts:164-170`: no status filter on the 24h window count. Posted rows with past `scheduled_at` are outside the `gte(now)` window anyway, so the impact is negligible. |
-| `"posted"` value remains in PostStatus type and CHECK constraint | LOW | Both `database.types.ts:1712` and the SQL CHECK still include "posted". The value is valid but never written to `scheduled_posts`. No migration needed to remove it (and removing it would be a breaking schema change for no benefit). |
+| Risk                                                                      | Severity | Evidence                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Web scheduled page stops showing "Posted" badge cards                     | LOW      | `getScheduledPostsInternal` returns all statuses (line 29, no default filter). Posted rows will be absent. The scheduled page becomes a view of only pending/active items. The Posted page (`content_history`) still shows the full history. This is arguably more correct behavior.                             |
+| MCP `list_scheduled_posts` with `status="posted"` filter returns empty    | LOW      | `listScheduledPosts.ts:27` includes "posted" in the Zod enum. After the change, this filter always returns empty. Not breaking, but a dead filter value.                                                                                                                                                         |
+| MCP resource `scheduled-posts` returns fewer items                        | LOW      | `scheduledPosts.ts:35` has no status filter. Posted rows simply absent. Cleaner dataset.                                                                                                                                                                                                                         |
+| `BatchedPostCard` "Posted" badge case becomes dead code                   | LOW      | `BatchedPostCard.tsx:105-113`: the `case "posted"` branch in the status badge switch never executes. No runtime impact, just unreachable code.                                                                                                                                                                   |
+| `fetchPostAndAccount` terminal state list includes "posted" unnecessarily | LOW      | `processSinglePostHelpers.ts:63`: `["posted", "failed", "cancelled"]`. After the change, a re-invocation of a successfully posted item hits the "not found" path (PGRST116) instead of the "already posted" path. Both return `skip: true`. Could simplify by removing "posted" from the list, but not required. |
+| `content_history.scheduled_post_id` FK cascade fires                      | LOW      | `ON DELETE SET NULL` on a column that is always NULL in practice (no code writes it). Cascade is a no-op. However, if future code starts writing this FK, the audit trail would be broken.                                                                                                                       |
+| `bulkSchedule` quota count becomes slightly more permissive               | LOW      | `bulkSchedule.ts:164-170`: no status filter on the 24h window count. Posted rows with past `scheduled_at` are outside the `gte(now)` window anyway, so the impact is negligible.                                                                                                                                 |
+| `"posted"` value remains in PostStatus type and CHECK constraint          | LOW      | Both `database.types.ts:1712` and the SQL CHECK still include "posted". The value is valid but never written to `scheduled_posts`. No migration needed to remove it (and removing it would be a breaking schema change for no benefit).                                                                          |
 
 No BLOCKER or HIGH severity risks identified.
 

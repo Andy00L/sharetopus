@@ -1,9 +1,16 @@
-import { z } from "zod";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { fetchSocialAccountsInternal } from "@/actions/server/_internal/data/fetchSocialAccounts";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Lists the user's connected social accounts.
@@ -59,14 +66,17 @@ export function registerListConnections(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await fetchSocialAccountsInternal(
+      const result = await fetchSocialAccounts(
         principal.principalId,
-        !include_unavailable
+        "mcp",
+        !include_unavailable,
       );
 
       await logToolCall({
@@ -83,7 +93,10 @@ export function registerListConnections(server: McpServer): void {
       });
 
       if (!result.success) {
-        return { content: [{ type: "text", text: result.message }], isError: true };
+        return {
+          content: [{ type: "text", text: result.message }],
+          isError: true,
+        };
       }
 
       // Strip sensitive fields (tokens) before returning
@@ -97,7 +110,9 @@ export function registerListConnections(server: McpServer): void {
         follower_count: a.follower_count,
       }));
 
-      return { content: [{ type: "text", text: JSON.stringify(safe, null, 2) }] };
-    }
+      return {
+        content: [{ type: "text", text: JSON.stringify(safe, null, 2) }],
+      };
+    },
   );
 }

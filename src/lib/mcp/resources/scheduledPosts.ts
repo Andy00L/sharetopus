@@ -1,6 +1,6 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getScheduledPostsInternal } from "@/actions/server/_internal/scheduleActions/getScheduledPosts";
+import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
 import { extractPrincipal } from "@/lib/mcp/context";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { entitlementFor } from "../entitlement";
 
 /**
@@ -20,7 +20,10 @@ export function registerScheduledPostsResource(server: McpServer): void {
   server.resource(
     "scheduled-posts",
     "mcp://sharetopus/scheduled-posts",
-    { description: "Your scheduled posts across all platforms", mimeType: "application/json" },
+    {
+      description: "Your scheduled posts across all platforms",
+      mimeType: "application/json",
+    },
     async (_uri, extra) => {
       const principal = extractPrincipal(extra);
 
@@ -32,7 +35,7 @@ export function registerScheduledPostsResource(server: McpServer): void {
         };
       }
 
-      const result = await getScheduledPostsInternal(principal.principalId, {
+      const result = await getScheduledPosts(principal.principalId, "mcp", {
         limit: 100,
       });
 
@@ -45,6 +48,6 @@ export function registerScheduledPostsResource(server: McpServer): void {
           },
         ],
       };
-    }
+    },
   );
 }

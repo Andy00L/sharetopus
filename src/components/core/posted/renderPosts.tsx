@@ -1,36 +1,31 @@
-import { getContentHistoryGroupedByBatch } from "@/actions/server/contentHistoryActions/getContentHistory";
+import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
+import type { ContentHistory } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import ContentHistoryCard from "./ContentHistoryCard";
-import NoBatch from "./EmptyContentHistory";
 import NoData from "./noData";
 
 export default async function RenderPosts() {
   const { userId } = await auth();
-  const posts = await getContentHistoryGroupedByBatch(userId);
+  if (!userId) redirect("/sign-in");
 
-  // Handle errors or missing data
-  if (!posts.success || !posts.data) {
-    return <NoData />;
-  }
+  const result = await getContentHistory(userId, "web");
+  if (!result.success || !result.data?.length) return <NoData />;
 
-  const data = posts.data;
-  if (data === null) {
-    return <NoData />;
-  }
-
-  // Check if we have any batches
-  const batchIds = Object.keys(posts.data);
-  if (batchIds.length === 0) {
-    return <NoBatch />;
-  }
+  const grouped = result.data.reduce<Record<string, ContentHistory[]>>(
+    (acc, item) => {
+      const key = item.batch_id ?? "no-batch";
+      (acc[key] ??= []).push(item);
+      return acc;
+    },
+    {},
+  );
 
   return (
-    <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {batchIds.map((batchId) => (
-          <ContentHistoryCard key={batchId} items={posts.data![batchId]} />
-        ))}
-      </div>
-    </>
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      {Object.entries(grouped).map(([batchId, items]) => (
+        <ContentHistoryCard key={batchId} items={items} />
+      ))}
+    </div>
   );
 }

@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { registerScheduledPostsResource } from "./scheduledPosts";
 import { registerConnectionsResource } from "./connections";
-import { registerContentHistoryResource } from "./contentHistory";
+import { registerScheduledPostsResource } from "./scheduledPosts";
 
 /**
  * Registers all MCP resource handlers on the server.
@@ -16,5 +15,4 @@ import { registerContentHistoryResource } from "./contentHistory";
 export function registerResources(server: McpServer): void {
   registerScheduledPostsResource(server);
   registerConnectionsResource(server);
-  registerContentHistoryResource(server);
 }

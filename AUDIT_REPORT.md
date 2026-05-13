@@ -48,6 +48,7 @@ c7c5de5 update
 ```
 
 Key versions (from package.json):
+
 - Next.js: 16.1.6
 - React: 19.2.0
 - inngest: ^4.3.0 (resolved 4.3.0)
@@ -57,6 +58,7 @@ Key versions (from package.json):
 - stripe: ^18.5.0
 
 Migrations (chronological):
+
 1. `20260506000001_initial_schema.sql` -- full schema creation
 2. `20260507000001_atomic_increment_quota.sql` -- RPC for MCP quota counter
 3. `20260508000001_add_queued_status_to_scheduled_posts.sql` -- adds 'queued' to status CHECK
@@ -69,75 +71,75 @@ vercel.json: has `maxDuration: 60` for `src/app/api/direct/**/*.ts` but NO cron 
 
 ### Routes (Next.js App Router)
 
-| Route | Methods | Auth model | Summary |
-|-------|---------|-----------|---------|
-| `/api/inngest` | GET, POST, PUT | Inngest signature (SDK-managed) | Inngest serve endpoint for scheduledPostsTick + processSinglePost |
-| `/api/mcp/[transport]` | GET, POST | API key hash or OAuth JWT (withMcpAuth) | MCP protocol server (Streamable HTTP and SSE) |
-| `/api/social/pinterest/process` | POST | **NONE** | Dispatches to schedule or direct-post per Pinterest account |
-| `/api/social/pinterest/post` | POST | **NONE** | Calls directPostForPinterestAccounts |
-| `/api/social/pinterest/connect` | GET | Clerk (auth()) | OAuth callback for Pinterest |
-| `/api/social/pinterest/initiate` | GET | Clerk (auth()) | Start Pinterest OAuth flow |
-| `/api/social/linkedin/process` | POST | **NONE** | Dispatches to schedule or direct-post per LinkedIn account |
-| `/api/social/linkedin/post` | POST | **NONE** | Calls directPostForLinkedInAccounts |
-| `/api/social/linkedin/connect` | GET | Clerk (auth()) | OAuth callback for LinkedIn |
-| `/api/social/linkedin/initiate` | GET | Clerk (auth()) | Start LinkedIn OAuth flow |
-| `/api/social/tiktok/process` | POST | **NONE** | Dispatches to schedule or direct-post per TikTok account |
-| `/api/social/tiktok/post` | POST | **NONE** | Calls directPostForTikTokAccounts |
-| `/api/social/tiktok/connect` | GET | Clerk (auth()) | OAuth callback for TikTok |
-| `/api/social/tiktok/initiate` | GET | Clerk (auth()) | Start TikTok OAuth flow |
-| `/api/social/instagram/process` | POST | **NONE** | Dispatches to schedule or direct-post per Instagram account |
-| `/api/social/instagram/post` | POST | **NONE** | Calls directPostForInstagramAccounts |
-| `/api/social/instagram/connect` | GET | Clerk (auth()) | OAuth callback for Instagram |
-| `/api/social/instagram/initiate` | GET | Clerk (auth()) | Start Instagram OAuth flow |
-| `/api/storage/generate-upload-url` | POST | Clerk (auth()) | Generates signed upload URL for scheduled-videos bucket |
-| `/api/storage/generate-view-url` | POST | **NONE** | Generates signed view URL for scheduled-videos bucket |
-| `/api/media` | GET | **NONE** (query params only) | Proxy for TikTok to pull media from Supabase |
-| `/api/webhooks/clerk` | POST | Svix signature verification | Handles user.created, user.updated, user.deleted |
-| `/api/webhooks/stripe` | POST | Stripe signature verification | Handles subscription and invoice events |
-| `/api/auth/*` | Various | Clerk SDK | Clerk auth routes |
+| Route                              | Methods        | Auth model                              | Summary                                                           |
+| ---------------------------------- | -------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| `/api/inngest`                     | GET, POST, PUT | Inngest signature (SDK-managed)         | Inngest serve endpoint for scheduledPostsTick + processSinglePost |
+| `/api/mcp/[transport]`             | GET, POST      | API key hash or OAuth JWT (withMcpAuth) | MCP protocol server (Streamable HTTP and SSE)                     |
+| `/api/social/pinterest/process`    | POST           | **NONE**                                | Dispatches to schedule or direct-post per Pinterest account       |
+| `/api/social/pinterest/post`       | POST           | **NONE**                                | Calls directPostForPinterestAccounts                              |
+| `/api/social/pinterest/connect`    | GET            | Clerk (auth())                          | OAuth callback for Pinterest                                      |
+| `/api/social/pinterest/initiate`   | GET            | Clerk (auth())                          | Start Pinterest OAuth flow                                        |
+| `/api/social/linkedin/process`     | POST           | **NONE**                                | Dispatches to schedule or direct-post per LinkedIn account        |
+| `/api/social/linkedin/post`        | POST           | **NONE**                                | Calls directPostForLinkedInAccounts                               |
+| `/api/social/linkedin/connect`     | GET            | Clerk (auth())                          | OAuth callback for LinkedIn                                       |
+| `/api/social/linkedin/initiate`    | GET            | Clerk (auth())                          | Start LinkedIn OAuth flow                                         |
+| `/api/social/tiktok/process`       | POST           | **NONE**                                | Dispatches to schedule or direct-post per TikTok account          |
+| `/api/social/tiktok/post`          | POST           | **NONE**                                | Calls directPostForTikTokAccounts                                 |
+| `/api/social/tiktok/connect`       | GET            | Clerk (auth())                          | OAuth callback for TikTok                                         |
+| `/api/social/tiktok/initiate`      | GET            | Clerk (auth())                          | Start TikTok OAuth flow                                           |
+| `/api/social/instagram/process`    | POST           | **NONE**                                | Dispatches to schedule or direct-post per Instagram account       |
+| `/api/social/instagram/post`       | POST           | **NONE**                                | Calls directPostForInstagramAccounts                              |
+| `/api/social/instagram/connect`    | GET            | Clerk (auth())                          | OAuth callback for Instagram                                      |
+| `/api/social/instagram/initiate`   | GET            | Clerk (auth())                          | Start Instagram OAuth flow                                        |
+| `/api/storage/generate-upload-url` | POST           | Clerk (auth())                          | Generates signed upload URL for scheduled-videos bucket           |
+| `/api/storage/generate-view-url`   | POST           | **NONE**                                | Generates signed view URL for scheduled-videos bucket             |
+| `/api/media`                       | GET            | **NONE** (query params only)            | Proxy for TikTok to pull media from Supabase                      |
+| `/api/webhooks/clerk`              | POST           | Svix signature verification             | Handles user.created, user.updated, user.deleted                  |
+| `/api/webhooks/stripe`             | POST           | Stripe signature verification           | Handles subscription and invoice events                           |
+| `/api/auth/*`                      | Various        | Clerk SDK                               | Clerk auth routes                                                 |
 
 ### Server actions (top-level exports)
 
-| File | Function | Auth | Summary |
-|------|----------|------|---------|
-| `src/actions/server/scheduleActions/schedulePost.ts` | `schedulePost` | authCheck(userId) | Wraps schedulePostInternal |
-| `src/actions/server/scheduleActions/cancelScheduledPost.ts` | `cancelScheduledPostBatch` | authCheck(userId) | Wraps cancelScheduledPostBatchInternal |
-| `src/actions/server/scheduleActions/deleteScheduledPost.ts` | `deleteScheduledPostBatch` | authCheck or authCheckCronJob | Wraps deleteScheduledPostBatchInternal |
-| `src/actions/server/scheduleActions/getScheduledPosts.ts` | `getScheduledPosts` | authCheck(userId) | Wraps getScheduledPostsInternal |
-| `src/actions/server/scheduleActions/resumeScheduledPost.ts` | `resumeScheduledPostBatch` | authCheck(userId) | Wraps resumeScheduledPostBatchInternal |
-| `src/actions/server/scheduleActions/updateScheduledTime.ts` | `updateScheduledTimeBatch` | authCheck(userId) | Wraps updateScheduledTimeBatchInternal |
-| `src/actions/server/data/deleteSupabaseFileAction.ts` | `deleteSupabaseFileAction` | authCheck or authCheckCronJob | Wraps deleteSupabaseFileActionInternal |
-| `src/actions/server/data/fetchSocialAccounts.ts` | `fetchSocialAccounts` | authCheck(userId) | Fetches social accounts for a user |
-| `src/actions/server/contentHistoryActions/storeContentHistory.ts` | `storeContentHistory` | None (trusts caller) | Inserts into content_history |
-| `src/actions/server/contentHistoryActions/storeFailedPost.ts` | `storeFailedPost` | None (trusts caller) | Inserts into failed_posts |
-| `src/actions/server/contentHistoryActions/getContentHistory.ts` | `getContentHistory` | authCheck(userId) | Reads from content_history |
-| `src/actions/server/stripe/checkOutSession.ts` | `checkOutSession` | authCheck via auth() | Creates Stripe checkout session |
-| `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal` | authCheck via auth() | Creates Stripe customer portal session |
-| `src/actions/server/stripe/checkUserSubscription.ts` | `checkUserSubscription` | authCheck(userId) | Checks subscription status (includes past_due) |
-| `src/actions/server/accounts/disconnectSocialAccount.ts` | `disconnectSocialAccount` | authCheck(userId) | Removes social account |
-| `src/actions/server/mcp/createApiKey.ts` | `createApiKey` | authCheck(userId) | Creates MCP API key |
-| `src/actions/server/mcp/listApiKeys.ts` | `listApiKeys` | authCheck(userId) | Lists MCP API keys |
-| `src/actions/server/mcp/revokeApiKey.ts` | `revokeApiKey` | authCheck(userId) | Revokes MCP API key |
-| `src/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost.ts` | `handleSocialMediaPost` | authCheck or authCheckCronJob | Main post-now and schedule orchestrator (web UI only) |
+| File                                                                               | Function                   | Auth                          | Summary                                               |
+| ---------------------------------------------------------------------------------- | -------------------------- | ----------------------------- | ----------------------------------------------------- |
+| `src/actions/server/scheduleActions/schedulePost.ts`                               | `schedulePost`             | authCheck(userId)             | Wraps schedulePostInternal                            |
+| `src/actions/server/scheduleActions/cancelScheduledPost.ts`                        | `cancelScheduledPostBatch` | authCheck(userId)             | Wraps cancelScheduledPostBatchInternal                |
+| `src/actions/server/scheduleActions/deleteScheduledPost.ts`                        | `deleteScheduledPostBatch` | authCheck or authCheckCronJob | Wraps deleteScheduledPostBatchInternal                |
+| `src/actions/server/scheduleActions/getScheduledPosts.ts`                          | `getScheduledPosts`        | authCheck(userId)             | Wraps getScheduledPostsInternal                       |
+| `src/actions/server/scheduleActions/resumeScheduledPost.ts`                        | `resumeScheduledPostBatch` | authCheck(userId)             | Wraps resumeScheduledPostBatchInternal                |
+| `src/actions/server/scheduleActions/updateScheduledTime.ts`                        | `updateScheduledTimeBatch` | authCheck(userId)             | Wraps updateScheduledTimeBatchInternal                |
+| `src/actions/server/data/deleteSupabaseFileAction.ts`                              | `deleteSupabaseFileAction` | authCheck or authCheckCronJob | Wraps deleteSupabaseFile                              |
+| `src/actions/server/data/fetchSocialAccounts.ts`                                   | `fetchSocialAccounts`      | authCheck(userId)             | Fetches social accounts for a user                    |
+| `src/actions/server/contentHistoryActions/storeContentHistory.ts`                  | `storeContentHistory`      | None (trusts caller)          | Inserts into content_history                          |
+| `src/actions/server/contentHistoryActions/storeFailedPost.ts`                      | `storeFailedPost`          | None (trusts caller)          | Inserts into failed_posts                             |
+| `src/actions/server/contentHistoryActions/getContentHistory.ts`                    | `getContentHistory`        | authCheck(userId)             | Reads from content_history                            |
+| `src/actions/server/stripe/checkOutSession.ts`                                     | `checkOutSession`          | authCheck via auth()          | Creates Stripe checkout session                       |
+| `src/actions/server/stripe/customerPortal.ts`                                      | `createCustomerPortal`     | authCheck via auth()          | Creates Stripe customer portal session                |
+| `src/actions/server/stripe/checkUserSubscription.ts`                               | `checkUserSubscription`    | authCheck(userId)             | Checks subscription status (includes past_due)        |
+| `src/actions/server/accounts/disconnectSocialAccount.ts`                           | `disconnectSocialAccount`  | authCheck(userId)             | Removes social account                                |
+| `src/actions/server/mcp/createApiKey.ts`                                           | `createApiKey`             | authCheck(userId)             | Creates MCP API key                                   |
+| `src/actions/server/mcp/listApiKeys.ts`                                            | `listApiKeys`              | authCheck(userId)             | Lists MCP API keys                                    |
+| `src/actions/server/mcp/revokeApiKey.ts`                                           | `revokeApiKey`             | authCheck(userId)             | Revokes MCP API key                                   |
+| `src/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost.ts` | `handleSocialMediaPost`    | authCheck or authCheckCronJob | Main post-now and schedule orchestrator (web UI only) |
 
 ### MCP tools (count: 14)
 
-| Tool | Plan gate | Quota action | Summary |
-|------|-----------|-------------|---------|
-| `list_connections` | free | -- | Lists social accounts |
-| `list_scheduled_posts` | free | -- | Reads scheduled_posts |
-| `list_content_history` | free | -- | Reads content_history |
-| `list_billing_summary` | free | -- | Reads stripe_subscriptions + usage_quotas |
-| `request_account_reauth_link` | free | -- | Returns OAuth re-auth URL |
-| `attach_media_from_url` | starter | -- | Fetches URL, uploads to Supabase Storage |
-| `schedule_post` | starter | schedule_post (10/100/500/unlimited) | Inserts into scheduled_posts via schedulePostInternal |
-| `cancel_scheduled_posts` | starter | -- | Updates status to 'cancelled' |
-| `resume_scheduled_posts` | starter | -- | Updates status back to 'scheduled' |
-| `reschedule_posts` | starter | -- | Updates scheduled_at |
-| `delete_scheduled_posts` | starter | -- | Deletes rows + cleans media |
-| `bulk_schedule` | creator | bulk_schedule (0/0/200/unlimited) | Bulk upsert into scheduled_posts |
-| `get_account_analytics` | creator | -- | Reads analytics_metrics |
-| `generate_post_draft` | pro | generate_post_draft (0/0/0/100) | Returns prompt (no LLM call) |
+| Tool                          | Plan gate | Quota action                         | Summary                                               |
+| ----------------------------- | --------- | ------------------------------------ | ----------------------------------------------------- |
+| `list_connections`            | free      | --                                   | Lists social accounts                                 |
+| `list_scheduled_posts`        | free      | --                                   | Reads scheduled_posts                                 |
+| `list_content_history`        | free      | --                                   | Reads content_history                                 |
+| `list_billing_summary`        | free      | --                                   | Reads stripe_subscriptions + usage_quotas             |
+| `request_account_reauth_link` | free      | --                                   | Returns OAuth re-auth URL                             |
+| `attach_media_from_url`       | starter   | --                                   | Fetches URL, uploads to Supabase Storage              |
+| `schedule_post`               | starter   | schedule_post (10/100/500/unlimited) | Inserts into scheduled_posts via schedulePostInternal |
+| `cancel_scheduled_posts`      | starter   | --                                   | Updates status to 'cancelled'                         |
+| `resume_scheduled_posts`      | starter   | --                                   | Updates status back to 'scheduled'                    |
+| `reschedule_posts`            | starter   | --                                   | Updates scheduled_at                                  |
+| `delete_scheduled_posts`      | starter   | --                                   | Deletes rows + cleans media                           |
+| `bulk_schedule`               | creator   | bulk_schedule (0/0/200/unlimited)    | Bulk upsert into scheduled_posts                      |
+| `get_account_analytics`       | creator   | --                                   | Reads analytics_metrics                               |
+| `generate_post_draft`         | pro       | generate_post_draft (0/0/0/100)      | Returns prompt (no LLM call)                          |
 
 MCP resources: 3 (connections, scheduled-posts, content-history). All gated by entitlementFor() despite a misleading comment in `resources/index.ts:12` saying they are not. Resources do NOT audit-log.
 
@@ -145,48 +147,48 @@ MCP prompts: 3 (plan_week_for_platform, repurpose_post, audit_calendar). Pure me
 
 ### Inngest functions
 
-| Function ID | Trigger | Retries | Concurrency | Summary |
-|-------------|---------|---------|-------------|---------|
-| `scheduled-posts-tick` | `cron: "* * * * *"` | 0 | limit: 1 | Dispatcher: queries due scheduled_posts, emits post.due events, marks rows queued |
-| `process-single-post` | `event: "post.due"` | 3 (configurable) | limit: 5 (configurable), throttle: 5/min per social_account_id | Worker: claims row, mints URL, calls directPostFor*Accounts, records status |
+| Function ID            | Trigger             | Retries          | Concurrency                                                    | Summary                                                                           |
+| ---------------------- | ------------------- | ---------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `scheduled-posts-tick` | `cron: "* * * * *"` | 0                | limit: 1                                                       | Dispatcher: queries due scheduled_posts, emits post.due events, marks rows queued |
+| `process-single-post`  | `event: "post.due"` | 3 (configurable) | limit: 5 (configurable), throttle: 5/min per social_account_id | Worker: claims row, mints URL, calls directPostFor\*Accounts, records status      |
 
 Source: `src/inngest/functions/scheduledPostsTick.ts:14-21`, `src/inngest/functions/processSinglePost.ts:32-44`
 
 ### Cron / scheduled triggers (full picture)
 
-| Source | Schedule | Target | In code? | Operator must confirm |
-|--------|----------|--------|----------|----------------------|
-| Inngest Cloud | `* * * * *` | scheduled-posts-tick function | Yes (`scheduledPostsTick.ts:20`) | Confirm Inngest dashboard shows "Synced" |
-| Supabase pg_cron | Unknown | Supabase Edge Function or direct HTTP | No (not in migrations) | **Must run SQL query below** |
-| Supabase Edge Function | Triggered by pg_cron | `POST /api/cron/process-scheduled-posts` (deleted) | No (no supabase/functions/ dir) | **Must check Supabase dashboard** |
-| Vercel cron | None | N/A | No entries in vercel.json | N/A |
+| Source                 | Schedule             | Target                                             | In code?                         | Operator must confirm                    |
+| ---------------------- | -------------------- | -------------------------------------------------- | -------------------------------- | ---------------------------------------- |
+| Inngest Cloud          | `* * * * *`          | scheduled-posts-tick function                      | Yes (`scheduledPostsTick.ts:20`) | Confirm Inngest dashboard shows "Synced" |
+| Supabase pg_cron       | Unknown              | Supabase Edge Function or direct HTTP              | No (not in migrations)           | **Must run SQL query below**             |
+| Supabase Edge Function | Triggered by pg_cron | `POST /api/cron/process-scheduled-posts` (deleted) | No (no supabase/functions/ dir)  | **Must check Supabase dashboard**        |
+| Vercel cron            | None                 | N/A                                                | No entries in vercel.json        | N/A                                      |
 
 ### Database tables (posting-relevant subset)
 
-| Table | Who reads | Who writes | Idempotency key |
-|-------|-----------|-----------|-----------------|
-| `scheduled_posts` | Inngest tick, web UI, MCP tools, MCP resources | Web UI schedule actions, MCP tools, Inngest worker (status updates) | `principal_id + idempotency_key` (partial unique index, NULL keys exempt) |
-| `failed_posts` | Web UI | directPostFor*Accounts (isCronJob=true), Inngest recordPostStatus (via directPostFor*) | None |
-| `content_history` | Web UI, MCP resource, MCP tool | directPostFor*Accounts (on success), storeContentHistory | None |
-| `social_accounts` | All paths | OAuth connect routes, Clerk webhook (cascade delete) | `principal_id + platform + account_identifier` (unique) |
-| `stripe_subscriptions` | MCP auth, checkActiveSubscription, checkUserSubscription | Stripe webhook handler | `stripe_subscription_id` |
-| `usage_quotas` | MCP entitlement | atomic_increment_quota RPC | `principal_id + period + action` (unique) |
-| `mcp_audit_log` | -- | MCP audit.ts (logToolCall) | None |
+| Table                  | Who reads                                                | Who writes                                                                             | Idempotency key                                                           |
+| ---------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `scheduled_posts`      | Inngest tick, web UI, MCP tools, MCP resources           | Web UI schedule actions, MCP tools, Inngest worker (status updates)                    | `principal_id + idempotency_key` (partial unique index, NULL keys exempt) |
+| `failed_posts`         | Web UI                                                   | directPostFor*Accounts (isCronJob=true), Inngest recordPostStatus (via directPostFor*) | None                                                                      |
+| `content_history`      | Web UI, MCP resource, MCP tool                           | directPostFor\*Accounts (on success), storeContentHistory                              | None                                                                      |
+| `social_accounts`      | All paths                                                | OAuth connect routes, Clerk webhook (cascade delete)                                   | `principal_id + platform + account_identifier` (unique)                   |
+| `stripe_subscriptions` | MCP auth, checkActiveSubscription, checkUserSubscription | Stripe webhook handler                                                                 | `stripe_subscription_id`                                                  |
+| `usage_quotas`         | MCP entitlement                                          | atomic_increment_quota RPC                                                             | `principal_id + period + action` (unique)                                 |
+| `mcp_audit_log`        | --                                                       | MCP audit.ts (logToolCall)                                                             | None                                                                      |
 
 ### External services
 
-| Service | Where called | Auth method |
-|---------|-------------|-------------|
-| Pinterest API v5 | postImage.ts, createVideoPin.ts | Bearer token (per-account access_token) |
-| LinkedIn UGC API | postToLinkedIn.ts | Bearer token (per-account access_token) |
-| TikTok Content Posting API | postToTikTok.ts | Bearer token (per-account access_token) |
-| Instagram Graph API v23.0 | postToInstagram.ts | Bearer token (per-account access_token) |
-| Supabase Storage | Multiple (signed URL, upload, delete) | Service role key (adminSupabase) |
-| Supabase PostgREST | Multiple | Service role key (adminSupabase) or anon key |
-| Stripe API | Webhook handler, checkout, portal | STRIPE_SECRET_KEY |
-| Clerk | auth(), webhook handler | CLERK_SECRET_KEY (SDK-managed) |
-| Upstash Redis | checkRateLimit.ts | UPSTASH_REDIS_REST_URL + TOKEN |
-| Inngest Cloud | serve endpoint | INNGEST_EVENT_KEY + INNGEST_SIGNING_KEY (SDK-managed) |
+| Service                    | Where called                          | Auth method                                           |
+| -------------------------- | ------------------------------------- | ----------------------------------------------------- |
+| Pinterest API v5           | postImage.ts, createVideoPin.ts       | Bearer token (per-account access_token)               |
+| LinkedIn UGC API           | postToLinkedIn.ts                     | Bearer token (per-account access_token)               |
+| TikTok Content Posting API | postToTikTok.ts                       | Bearer token (per-account access_token)               |
+| Instagram Graph API v23.0  | postToInstagram.ts                    | Bearer token (per-account access_token)               |
+| Supabase Storage           | Multiple (signed URL, upload, delete) | Service role key (adminSupabase)                      |
+| Supabase PostgREST         | Multiple                              | Service role key (adminSupabase) or anon key          |
+| Stripe API                 | Webhook handler, checkout, portal     | STRIPE_SECRET_KEY                                     |
+| Clerk                      | auth(), webhook handler               | CLERK_SECRET_KEY (SDK-managed)                        |
+| Upstash Redis              | checkRateLimit.ts                     | UPSTASH_REDIS_REST_URL + TOKEN                        |
+| Inngest Cloud              | serve endpoint                        | INNGEST_EVENT_KEY + INNGEST_SIGNING_KEY (SDK-managed) |
 
 ## Entry points
 
@@ -282,7 +284,7 @@ CALL CHAIN:
   8. processSinglePost.ts:117 -- step "record-status"
      processSinglePostHelpers.ts:465 -- UPDATE scheduled_posts SET status='posted' or 'failed'
   9. processSinglePost.ts:126 -- step "cleanup-storage"
-     processSinglePostHelpers.ts:545 -- deleteSupabaseFileActionInternal
+     processSinglePostHelpers.ts:545 -- deleteSupabaseFile
 DB WRITES: scheduled_posts (status transitions), content_history (via directPostFor*), failed_posts (via directPostFor* when isCronJob=true)
 DB READS: scheduled_posts, social_accounts
 EXTERNAL CALLS: Platform APIs (Pinterest/LinkedIn/TikTok/Instagram), Supabase Storage
@@ -356,6 +358,7 @@ DB WRITES: stripe_subscriptions, stripe_invoices
 ### MCP: cancel_scheduled_posts / resume_scheduled_posts / reschedule_posts / delete_scheduled_posts
 
 All follow the same pattern:
+
 ```
 ENTRY: MCP tool
 AUTH: API key or OAuth JWT; plan >= starter
@@ -369,6 +372,7 @@ DB WRITES: scheduled_posts
 ### MCP: list_connections / list_scheduled_posts / list_content_history / list_billing_summary
 
 All follow the same pattern:
+
 ```
 ENTRY: MCP tool
 AUTH: API key or OAuth JWT; plan >= free
@@ -396,6 +400,7 @@ SECURITY NOTE: No SSRF protection against internal/private IPs
 ### Web UI: Cancel / Resume / Reschedule / Delete scheduled posts
 
 All follow the same pattern:
+
 ```
 ENTRY: BatchedPostCard or PostsGrid component
 AUTH: authCheck(userId) in public wrapper
@@ -457,32 +462,32 @@ Note: `price_1TBCLaCyG8V2WH2Ff8AhK1zC` exists in `devPriceIdAccountLimits` (`pla
 
 **Error classification (platformErrors.ts:34-59):**
 
-| Pattern | Reason | Retryable |
-|---------|--------|-----------|
-| Pinterest "doesn't allow you to save pins" | policy_rejected | No |
-| Pinterest "doesn't allow" | policy_rejected | No |
-| "no content found" | invalid_input | No |
-| "no board selected" | invalid_input | No |
-| "no linkedin identifier" | invalid_input | No |
-| "invalid token" / "expired" | auth_expired | Yes |
-| "too many" / "rate limit" | rate_limited | Yes |
-| "timeout" / "etimedout" | transient | Yes |
-| "network" / "econnreset" | transient | Yes |
-| "history" | invalid_input | No |
-| empty / anything else | unknown | No |
+| Pattern                                    | Reason          | Retryable |
+| ------------------------------------------ | --------------- | --------- |
+| Pinterest "doesn't allow you to save pins" | policy_rejected | No        |
+| Pinterest "doesn't allow"                  | policy_rejected | No        |
+| "no content found"                         | invalid_input   | No        |
+| "no board selected"                        | invalid_input   | No        |
+| "no linkedin identifier"                   | invalid_input   | No        |
+| "invalid token" / "expired"                | auth_expired    | Yes       |
+| "too many" / "rate limit"                  | rate_limited    | Yes       |
+| "timeout" / "etimedout"                    | transient       | Yes       |
+| "network" / "econnreset"                   | transient       | Yes       |
+| "history"                                  | invalid_input   | No        |
+| empty / anything else                      | unknown         | No        |
 
 **Runtime config (src/lib/jobs/runtimeConfig.ts):**
 
-| Env var | Default | Line |
-|---------|---------|------|
-| `MAX_DURATION_S` | 300 | 10 |
-| `WORKER_CONCURRENCY` | 5 | 11 |
-| `PER_ACCOUNT_THROTTLE_PER_MIN` | 5 | 12 |
-| `MAX_FILE_MB` | 100 | 16 |
-| `POLL_WINDOW_S` | 120 | 17 |
-| `WORKER_MAX_RETRIES` | 3 | 18 |
-| `DISPATCHER_BATCH_SIZE` | 200 | 19 |
-| `SIGNED_URL_TTL_S` | 300 | 20 |
+| Env var                        | Default | Line |
+| ------------------------------ | ------- | ---- |
+| `MAX_DURATION_S`               | 300     | 10   |
+| `WORKER_CONCURRENCY`           | 5       | 11   |
+| `PER_ACCOUNT_THROTTLE_PER_MIN` | 5       | 12   |
+| `MAX_FILE_MB`                  | 100     | 16   |
+| `POLL_WINDOW_S`                | 120     | 17   |
+| `WORKER_MAX_RETRIES`           | 3       | 18   |
+| `DISPATCHER_BATCH_SIZE`        | 200     | 19   |
+| `SIGNED_URL_TTL_S`             | 300     | 20   |
 
 No `process.env.*` reads in `src/inngest/` or `src/lib/jobs/` outside `runtimeConfig.ts`.
 
@@ -502,22 +507,25 @@ The schedulePost public wrapper calls authCheck(userId) AGAIN, inside the cookie
 
 All four `directPostFor{Platform}Accounts` functions are called from exactly two contexts:
 
-| Caller | Context | isCronJob | principal_id source |
-|--------|---------|-----------|---------------------|
+| Caller                                 | Context                                           | isCronJob                 | principal_id source                 |
+| -------------------------------------- | ------------------------------------------------- | ------------------------- | ----------------------------------- |
 | `/api/social/{platform}/post/route.ts` | Web UI post-now (via handleSocialMediaPost chain) | false (from request body) | config.userId (from SocialPostForm) |
-| `processSinglePostHelpers.ts` | Inngest worker (scheduled posts) | true (hardcoded) | post.principal_id (from DB row) |
+| `processSinglePostHelpers.ts`          | Inngest worker (scheduled posts)                  | true (hardcoded)          | post.principal_id (from DB row)     |
 
 When `isCronJob=true`:
+
 - On failure: writes to `failed_posts` via `storeFailedPost`
 - On success: writes to `content_history` via `storeContentHistory`
 
 When `isCronJob=false`:
+
 - On failure: returns error response only. No `failed_posts` row.
 - On success: writes to `content_history` via `storeContentHistory`
 
 ### Storage and signed URLs
 
 **Signed view URL flow:**
+
 1. Caller invokes `getSignedViewUrl(path, userId, expiresIn)` (`src/actions/client/getSignedViewUrl.ts:9`)
 2. This POSTs to `https://sharetopus.com/api/storage/generate-view-url` (hardcoded, `getSignedViewUrl.ts:16`)
 3. The route (`src/app/api/storage/generate-view-url/route.ts:4`) has NO auth. It calls `adminSupabase.storage.from("scheduled-videos").createSignedUrl(path, expiresIn)` and returns the signed URL.
@@ -533,25 +541,30 @@ The Supabase signed URL is passed verbatim as `media_source.url` to `https://api
 No signed URL is used. `createVideoPin` downloads the file buffer via `getSupabaseVideoFile` (`createVideoPin.ts:54`), then uploads raw bytes to Pinterest's S3 endpoint via FormData.
 
 **TTL values:**
+
 - handleSocialMediaPost: 300s hardcoded (`handleSocialMediaPost.ts:315`)
 - Inngest worker: `RUNTIME.signedUrlTtlS` = 300s default (`runtimeConfig.ts:20`, used at `processSinglePostHelpers.ts:195`)
 
 ### Subscriptions and plan tier
 
 **checkActiveSubscription** (`src/actions/checkActiveSubscription.ts:7`):
+
 - Queries `stripe_subscriptions WHERE user_id = userId AND status IN ('active', 'trialing')`, limit 1, newest first.
 - Returns `{ isActive, plan }` where `plan` is the raw Stripe price ID.
 - Fallback for no subscription: `isActive: false, plan: null`.
 
 **checkUserSubscription** (`src/actions/server/stripe/checkUserSubscription.ts`):
+
 - ALSO includes `'past_due'` as active. Only used by `customerPortal.ts`.
 - Calls `authCheck(userId)` first (requires Clerk session).
 
 **Stripe webhook handler** (`src/app/api/webhooks/stripe/route.ts`):
+
 - Stores the raw plan price ID as `stripe_subscriptions.plan`.
 - Returns HTTP 200 even when no matching user is found, silently dropping orphaned events.
 
 **Price-id-to-tier mapping** (`src/lib/types/plans.ts:235-279`):
+
 - Built from BOTH `devPlanPrices` and `prodPlanPrices` at module load.
 - Maps 12 price IDs (Starter/Creator/Pro x Monthly/Yearly x Dev/Prod).
 - Unknown IDs resolve to "free" with console.error.
@@ -560,30 +573,31 @@ No signed URL is used. `createVideoPin` downloads the file buffer via `getSupaba
 
 ### Every authCheck callsite
 
-| File:Line | Caller | Provided userId | Expected (Clerk auth()) | Auth context | Risk |
-|-----------|--------|----------------|------------------------|-------------|------|
-| `authCheck.ts:9` | (definition) | -- | -- | -- | -- |
-| `handleSocialMediaPost.ts:149` | handleSocialMediaPost | config.userId (from SocialPostForm) | Clerk session (server action context) | Web UI direct | OK: server action has cookies |
-| `schedulePost.ts:31` | schedulePost (public) | userId param | Clerk session | **Varies: web UI or /process route** | **BUG: null when called from /process** |
-| `cancelScheduledPost.ts:36` | cancelScheduledPostBatch | userId param | Clerk session | Web UI BatchedPostCard | OK |
-| `deleteScheduledPost.ts:41` | deleteScheduledPostBatch (else branch) | userId param | Clerk session | Web UI | OK |
-| `getScheduledPosts.ts:23` | getScheduledPosts | userId param | Clerk session | Web UI PostsGrid | OK |
-| `resumeScheduledPost.ts:37` | resumeScheduledPostBatch | userId param | Clerk session | Web UI | OK |
-| `updateScheduledTime.ts:38` | updateScheduledTimeBatch | userId param | Clerk session | Web UI | OK |
-| `fetchSocialAccounts.ts:26` | fetchSocialAccounts | userId param | Clerk session | Web UI | OK |
-| `getContentHistory.ts:22` | getContentHistory | userId param | Clerk session | Web UI | OK |
-| `deleteSupabaseFileAction.ts:42` | deleteSupabaseFileAction (else) | userId param | Clerk session | Web UI | OK |
-| `disconnectSocialAccount.ts:30` | disconnectSocialAccount | userId param | Clerk session | Web UI | OK |
-| `checkUserSubscription.ts:23` | checkUserSubscription | userId param | Clerk session | Web UI | OK |
-| `customerPortal.ts:36` | createCustomerPortal | auth() locally | Clerk session (same call) | Web UI | OK |
-| `checkOutSession.ts:48` | checkOutSession | auth() locally | Clerk session (same call) | Web UI | OK |
-| `createApiKey.ts:37` | createApiKey | userId param | Clerk session | Web UI | OK |
-| `listApiKeys.ts:30` | listApiKeys | userId param | Clerk session | Web UI | OK |
-| `revokeApiKey.ts:21` | revokeApiKey | userId param | Clerk session | Web UI | OK |
+| File:Line                        | Caller                                 | Provided userId                     | Expected (Clerk auth())               | Auth context                         | Risk                                    |
+| -------------------------------- | -------------------------------------- | ----------------------------------- | ------------------------------------- | ------------------------------------ | --------------------------------------- |
+| `authCheck.ts:9`                 | (definition)                           | --                                  | --                                    | --                                   | --                                      |
+| `handleSocialMediaPost.ts:149`   | handleSocialMediaPost                  | config.userId (from SocialPostForm) | Clerk session (server action context) | Web UI direct                        | OK: server action has cookies           |
+| `schedulePost.ts:31`             | schedulePost (public)                  | userId param                        | Clerk session                         | **Varies: web UI or /process route** | **BUG: null when called from /process** |
+| `cancelScheduledPost.ts:36`      | cancelScheduledPostBatch               | userId param                        | Clerk session                         | Web UI BatchedPostCard               | OK                                      |
+| `deleteScheduledPost.ts:41`      | deleteScheduledPostBatch (else branch) | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `getScheduledPosts.ts:23`        | getScheduledPosts                      | userId param                        | Clerk session                         | Web UI PostsGrid                     | OK                                      |
+| `resumeScheduledPost.ts:37`      | resumeScheduledPostBatch               | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `updateScheduledTime.ts:38`      | updateScheduledTimeBatch               | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `fetchSocialAccounts.ts:26`      | fetchSocialAccounts                    | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `getContentHistory.ts:22`        | getContentHistory                      | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `deleteSupabaseFileAction.ts:42` | deleteSupabaseFileAction (else)        | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `disconnectSocialAccount.ts:30`  | disconnectSocialAccount                | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `checkUserSubscription.ts:23`    | checkUserSubscription                  | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `customerPortal.ts:36`           | createCustomerPortal                   | auth() locally                      | Clerk session (same call)             | Web UI                               | OK                                      |
+| `checkOutSession.ts:48`          | checkOutSession                        | auth() locally                      | Clerk session (same call)             | Web UI                               | OK                                      |
+| `createApiKey.ts:37`             | createApiKey                           | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `listApiKeys.ts:30`              | listApiKeys                            | userId param                        | Clerk session                         | Web UI                               | OK                                      |
+| `revokeApiKey.ts:21`             | revokeApiKey                           | userId param                        | Clerk session                         | Web UI                               | OK                                      |
 
 ### Known regression: authCheck Expected: "null"
 
 **Production log:**
+
 ```
 [authCheck] Authentication failed: User ID mismatch. Provided: "user_3DNnqFjYoyAJjjLdXcxSb8FhaFS", Expected: "null"
 ```
@@ -621,6 +635,7 @@ This bug does NOT affect the Inngest worker (which calls `directPostFor*Accounts
 **Status in code:** DELETED. The directory `src/app/api/cron/process-scheduled-posts/` does not exist. It was removed in commit 43014d8 (FIX 13).
 
 **Remaining references in code:**
+
 - `src/inngest/functions/scheduledPostsTick.ts:10-11` -- comment explaining it replaces this route
 - `docs/` -- multiple documentation files reference it
 
@@ -637,6 +652,7 @@ This bug does NOT affect the Inngest worker (which calls `directPostFor*Accounts
 **Status in code:** No `cron.schedule` calls found in any migration file.
 
 **Operator must confirm** by running in Supabase SQL editor:
+
 ```sql
 SELECT jobid, jobname, schedule, command, active, nodename
 FROM cron.job
@@ -645,11 +661,12 @@ WHERE command ILIKE '%process-scheduled-posts%'
    OR command ILIKE '%edge%';
 ```
 
-### Old routes /api/social/*/process and /api/social/*/post
+### Old routes /api/social/_/process and /api/social/_/post
 
-**Status:** All 8 routes still exist and are actively used by `handleSocialMediaPost` for the web UI post-now flow. They are NOT deprecated per FIX 13 scope. FIX 13 notes: "A future PR can simplify handleSocialMediaPost to call directPostFor* in-process and then delete those four+four routes."
+**Status:** All 8 routes still exist and are actively used by `handleSocialMediaPost` for the web UI post-now flow. They are NOT deprecated per FIX 13 scope. FIX 13 notes: "A future PR can simplify handleSocialMediaPost to call directPostFor\* in-process and then delete those four+four routes."
 
 Callers:
+
 - `/process` routes: called only by `handleSocialMediaPost.ts:349-441` via fetch()
 - `/post` routes: called only by `process{Platform}Accounts.ts` via fetch()
 - The Inngest worker does NOT call any of these routes.
@@ -666,6 +683,7 @@ If both pipelines read a due `scheduled_posts` row:
 **Outcome:** No double-processing. The old path fails silently (404). The Inngest path proceeds normally.
 
 However, if the old cron path were hypothetically still working (route undeleted):
+
 - The old path fetches by `batch_id`, not status. It does not check status before processing.
 - The Inngest worker's claim step uses `.in("status", ["scheduled", "queued"])`.
 - If the old path processes and DELETES the row (Option A behavior), the Inngest worker's fetch step returns skip:true (row not found). Safe.
@@ -676,6 +694,7 @@ However, if the old cron path were hypothetically still working (route undeleted
 The "Post Now" path and the scheduled path operate on different rows. `handleSocialMediaPost` creates NO `scheduled_posts` row for direct posts. The scheduled version's row exists with its own ID. The Inngest worker processes the scheduled row independently.
 
 If the user explicitly scheduled a post and then also posts the same content directly:
+
 - Two independent content_history rows would be created (one from each path).
 - Two posts would appear on the platform.
 - No row-level conflict occurs in the database.
@@ -683,10 +702,11 @@ If the user explicitly scheduled a post and then also posts the same content dir
 ### Scenario: Inngest worker fails mid-step and retries
 
 Each step is checkpointed. On retry:
+
 - "fetch-post-and-account": idempotent read, no side effects.
 - "claim-post": CAS guard `.in("status", ["scheduled", "queued"])` returns 0 rows if already claimed. Worker returns `skipped: true`.
 - "build-signed-urls": pure computation/HTTP, no DB side effect.
-- "call-platform-direct-post": NOT idempotent. If the directPostFor* function succeeds (posts to platform + writes content_history) but the step result is lost before checkpoint, the retry will post again and create a duplicate content_history row. The platform may also show a duplicate post. No dedup mechanism exists at this level.
+- "call-platform-direct-post": NOT idempotent. If the directPostFor\* function succeeds (posts to platform + writes content_history) but the step result is lost before checkpoint, the retry will post again and create a duplicate content_history row. The platform may also show a duplicate post. No dedup mechanism exists at this level.
 - "record-status": CAS guard `.eq("status", "processing")` prevents double-update.
 - "cleanup-storage": Reference-checked delete; idempotent.
 
@@ -696,29 +716,29 @@ Each step is checkpointed. On retry:
 
 ### Env vars in code but NOT in .env.example
 
-| Variable | Where used |
-|----------|-----------|
-| `MAX_DURATION_S` | `src/lib/jobs/runtimeConfig.ts:10` |
-| `WORKER_CONCURRENCY` | `src/lib/jobs/runtimeConfig.ts:11` |
-| `PER_ACCOUNT_THROTTLE_PER_MIN` | `src/lib/jobs/runtimeConfig.ts:12` |
-| `MAX_FILE_MB` | `src/lib/jobs/runtimeConfig.ts:16` |
-| `POLL_WINDOW_S` | `src/lib/jobs/runtimeConfig.ts:17` |
-| `WORKER_MAX_RETRIES` | `src/lib/jobs/runtimeConfig.ts:18` |
-| `DISPATCHER_BATCH_SIZE` | `src/lib/jobs/runtimeConfig.ts:19` |
-| `SIGNED_URL_TTL_S` | `src/lib/jobs/runtimeConfig.ts:20` |
-| `INNGEST_EVENT_KEY` | Inngest SDK (reads automatically, not via process.env in user code) |
-| `INNGEST_SIGNING_KEY` | Inngest SDK (reads automatically) |
-| `INNGEST_SIGNING_KEY_FALLBACK` | Inngest SDK (reads automatically) |
+| Variable                       | Where used                                                          |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `MAX_DURATION_S`               | `src/lib/jobs/runtimeConfig.ts:10`                                  |
+| `WORKER_CONCURRENCY`           | `src/lib/jobs/runtimeConfig.ts:11`                                  |
+| `PER_ACCOUNT_THROTTLE_PER_MIN` | `src/lib/jobs/runtimeConfig.ts:12`                                  |
+| `MAX_FILE_MB`                  | `src/lib/jobs/runtimeConfig.ts:16`                                  |
+| `POLL_WINDOW_S`                | `src/lib/jobs/runtimeConfig.ts:17`                                  |
+| `WORKER_MAX_RETRIES`           | `src/lib/jobs/runtimeConfig.ts:18`                                  |
+| `DISPATCHER_BATCH_SIZE`        | `src/lib/jobs/runtimeConfig.ts:19`                                  |
+| `SIGNED_URL_TTL_S`             | `src/lib/jobs/runtimeConfig.ts:20`                                  |
+| `INNGEST_EVENT_KEY`            | Inngest SDK (reads automatically, not via process.env in user code) |
+| `INNGEST_SIGNING_KEY`          | Inngest SDK (reads automatically)                                   |
+| `INNGEST_SIGNING_KEY_FALLBACK` | Inngest SDK (reads automatically)                                   |
 
 All 8 RUNTIME vars have defaults and are optional. The 3 INNGEST vars are required for Inngest to function but are managed by the Vercel-Inngest integration.
 
 ### Env vars in .env.example but NOT referenced via process.env in user code
 
-| Variable | Notes |
-|----------|-------|
-| `CLERK_SECRET_KEY` | Used by @clerk/nextjs SDK internally |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Used by Clerk client SDK internally |
-| `STRIPE_PUBLISHABLE_KEY` | Used by Stripe.js on client side |
+| Variable                            | Notes                                |
+| ----------------------------------- | ------------------------------------ |
+| `CLERK_SECRET_KEY`                  | Used by @clerk/nextjs SDK internally |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Used by Clerk client SDK internally  |
+| `STRIPE_PUBLISHABLE_KEY`            | Used by Stripe.js on client side     |
 
 These are consumed by SDKs, not by user code via `process.env`.
 
@@ -848,6 +868,7 @@ The Inngest worker logs use "[processSinglePost]" and "[scheduledPostsTick]" pre
 ## Open questions
 
 1. **Is the Supabase pg_cron job still active?** Operator must run in Supabase SQL editor:
+
    ```sql
    SELECT jobid, jobname, schedule, command, active, nodename
    FROM cron.job
@@ -873,7 +894,7 @@ The Inngest worker logs use "[processSinglePost]" and "[scheduledPostsTick]" pre
 
 7. **Are any of the 8 RUNTIME env vars set in Vercel?** All have defaults but operator may have customized them. Check Vercel > Settings > Environment Variables for `MAX_DURATION_S`, `WORKER_CONCURRENCY`, etc.
 
-8. **Is there a Vercel middleware that restricts access to /api/social/* routes?** The `src/middleware.ts` file was not read in this audit. If middleware blocks external access to these routes, observation #1 is mitigated. Operator should check middleware config.
+8. **Is there a Vercel middleware that restricts access to /api/social/\* routes?** The `src/middleware.ts` file was not read in this audit. If middleware blocks external access to these routes, observation #1 is mitigated. Operator should check middleware config.
    ```bash
    grep -n "social" src/middleware.ts
    ```

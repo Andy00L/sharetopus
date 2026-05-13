@@ -1,6 +1,6 @@
 "use client";
 
-import { deleteSupabaseFileAction } from "@/actions/server/data/deleteSupabaseFileAction";
+import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { Label } from "@/components/ui/label";
 import { SidebarGroup } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,35 +9,35 @@ import { SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { handleSocialMediaPost } from "../action/handleSocialMediaPost/handleSocialMediaPost";
 import { uploadMedia } from "../action/media/uploadMedia";
+import { CAPTION_LIMITS } from "../constants/captionLimits";
 import {
   ALLOWED_IMAGE_TYPES,
   ALLOWED_VIDEO_TYPES,
 } from "../constants/constants";
-import { CAPTION_LIMITS } from "../constants/captionLimits";
 import NoAccountAvailable from "../NoAccountAvailable";
 import { ImageUploads } from "../upload/ImageUpload";
 import { VideoCoverSelector } from "../upload/VideoCoverSelector";
 import { VideoUploads } from "../upload/VideoUpload";
 import { useAccountContent } from "./hooks/useAccountContent";
 import { usePinterestBoards } from "./hooks/usePinterestBoards";
-import { convertPngToJpeg } from "./media/convertPngToJpeg";
 import { useTikTokCreatorInfo } from "./hooks/useTikTokCreatorInfo";
+import { convertPngToJpeg } from "./media/convertPngToJpeg";
+import { pollDirectPostStatus } from "./polling/pollDirectPostStatus";
 import AccountSelector from "./sections/AccountSelector";
 import CaptionsTab from "./sections/CaptionsTab";
 import PinterestSettingsTab from "./sections/PinterestSettingsTab";
 import SchedulingPanel from "./sections/SchedulingPanel";
 import TikTokSettingsTab from "./sections/TikTokSettingsTab";
 import {
+  DEFAULT_SCHEDULED_TIME,
   TIKTOK_COMPLIANCE_UI_ENABLED,
   defaultPlatformOptions,
   defaultTextInputs,
-  DEFAULT_SCHEDULED_TIME,
   getDefaultScheduledDate,
 } from "./state/defaults";
 import { checkFormSubmission } from "./validation/checkFormSubmission";
-import { pollDirectPostStatus } from "./polling/pollDirectPostStatus";
+import { handleSocialMediaPost } from "../action/handleSocialMediaPost/handleSocialMediaPost";
 
 interface SocialPostFormProps {
   readonly accounts: SocialAccount[];
@@ -64,13 +64,13 @@ export default function SocialPostForm({
     Record<string, boolean>
   >({});
   const [textInputs, setTextInputs] = useState({ ...defaultTextInputs });
-  const [platformOptions, setPlatformOptions] = useState(
-    () => ({ ...defaultPlatformOptions })
-  );
+  const [platformOptions, setPlatformOptions] = useState(() => ({
+    ...defaultPlatformOptions,
+  }));
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledDate, setScheduledDate] = useState(getDefaultScheduledDate);
   const [scheduledTime, setScheduledTime] = useState<string>(
-    DEFAULT_SCHEDULED_TIME
+    DEFAULT_SCHEDULED_TIME,
   );
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -96,21 +96,21 @@ export default function SocialPostForm({
 
   // Derived data
   const selectedPinterestAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest"
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest",
   );
   const selectedLinkedinAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "linkedin"
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "linkedin",
   );
   const selectedTikTokAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok"
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok",
   );
   const selectedInstagramAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "instagram"
+    (acc) => selectedAccounts[acc.id] === true && acc.platform === "instagram",
   );
 
   const tikTokCreatorHook = useTikTokCreatorInfo(
     selectedTikTokAccounts,
-    TIKTOK_COMPLIANCE_UI_ENABLED
+    TIKTOK_COMPLIANCE_UI_ENABLED,
   );
 
   // Legitimate useEffect: object URL lifecycle for preview
@@ -142,7 +142,7 @@ export default function SocialPostForm({
       addAccountContent(
         account,
         textInputs,
-        platformOptions.pinterest?.link || ""
+        platformOptions.pinterest?.link || "",
       );
       if (account.platform === "pinterest") {
         pinterestHook.loadBoardsForAccount(account);
@@ -158,18 +158,16 @@ export default function SocialPostForm({
 
   function handleTextInputChange(
     field: "title" | "description" | "link",
-    value: string
+    value: string,
   ) {
     const clampedValue =
-      field === "description"
-        ? value.slice(0, CAPTION_LIMITS.default)
-        : value;
+      field === "description" ? value.slice(0, CAPTION_LIMITS.default) : value;
     const newInputs = { ...textInputs, [field]: clampedValue };
     setTextInputs(newInputs);
     updateDefaultText(
       newInputs,
       platformOptions.pinterest?.link || "",
-      selectedPinterestAccounts.map((a) => a.id)
+      selectedPinterestAccounts.map((a) => a.id),
     );
   }
 
@@ -179,7 +177,7 @@ export default function SocialPostForm({
     updateDefaultText(
       newInputs,
       platformOptions.pinterest?.link || "",
-      selectedPinterestAccounts.map((a) => a.id)
+      selectedPinterestAccounts.map((a) => a.id),
     );
   }
 
@@ -191,7 +189,7 @@ export default function SocialPostForm({
     updateDefaultText(
       textInputs,
       link,
-      selectedPinterestAccounts.map((a) => a.id)
+      selectedPinterestAccounts.map((a) => a.id),
     );
   }
 
@@ -270,7 +268,7 @@ export default function SocialPostForm({
           postType === "image" ? MAX_IMAGE_SIZE_BYTES : MAX_VIDEO_SIZE_BYTES;
         if (selectedFile.size > maxSize) {
           setError(
-            `File exceeds maximum size limit of ${maxSize / (1024 * 1024)}MB.`
+            `File exceeds maximum size limit of ${maxSize / (1024 * 1024)}MB.`,
           );
           setIsLoading(false);
           return;
@@ -282,7 +280,7 @@ export default function SocialPostForm({
           planId,
           (progress) => {
             setUploadProgress(progress);
-          }
+          },
         );
 
         if (!uploadResult.success) {
@@ -332,19 +330,19 @@ export default function SocialPostForm({
           result.message ||
             `Successfully ${
               isScheduled ? "scheduled" : "published"
-            } your content!`
+            } your content!`,
         );
         if (result.errors && result.errors.length > 0) {
           setTimeout(() => {
             toast.warning(
-              `Note: ${result.errors?.length} account(s) had issues.  See details for more information.`
+              `Note: ${result.errors?.length} account(s) had issues.  See details for more information.`,
             );
           }, 500);
         }
         resetForm();
       } else if (result.resetIn) {
         toast.error(
-          `You've reached the posting limit. Please try again in ${result.resetIn} seconds.`
+          `You've reached the posting limit. Please try again in ${result.resetIn} seconds.`,
         );
         if (!result.counts || result.counts.total === 0) {
           await cleanupMediaOnError(mediaStoragePath);
@@ -359,7 +357,7 @@ export default function SocialPostForm({
               ? firstError.error.split(":")[0].trim()
               : firstError.error;
             toast.error(
-              `Problem with ${firstError.platform}: ${friendlyError}`
+              `Problem with ${firstError.platform}: ${friendlyError}`,
             );
           }
         }
@@ -380,8 +378,7 @@ export default function SocialPostForm({
     return <NoAccountAvailable />;
   }
 
-  const selectedCount =
-    Object.values(selectedAccounts).filter(Boolean).length;
+  const selectedCount = Object.values(selectedAccounts).filter(Boolean).length;
 
   return (
     <>
@@ -404,7 +401,7 @@ export default function SocialPostForm({
               }
               if (file.size > MAX_VIDEO_SIZE_BYTES) {
                 setError(
-                  `File size exceeds the maximum limit of ${uploadLimits?.video}MB.`
+                  `File size exceeds the maximum limit of ${uploadLimits?.video}MB.`,
                 );
                 return;
               }
@@ -447,7 +444,7 @@ export default function SocialPostForm({
 
               if (finalFile.size > MAX_IMAGE_SIZE_BYTES) {
                 setError(
-                  `File size exceeds the maximum limit of ${uploadLimits?.image}MB.`
+                  `File size exceeds the maximum limit of ${uploadLimits?.image}MB.`,
                 );
                 return;
               }
@@ -510,10 +507,7 @@ export default function SocialPostForm({
                   </TabsTrigger>
                 )}
                 {selectedPinterestAccounts.length > 0 && (
-                  <TabsTrigger
-                    value="pinterest"
-                    className=" cursor-pointer "
-                  >
+                  <TabsTrigger value="pinterest" className=" cursor-pointer ">
                     Pinterest Settings
                   </TabsTrigger>
                 )}

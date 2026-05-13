@@ -1,6 +1,6 @@
-import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { bumpPastScheduleToFuture } from "@/actions/server/_internal/scheduleActions/_shared/bumpPastScheduleToFuture";
+import { bumpPastScheduleToFuture } from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
+import "server-only";
 
 export type ResumeResult =
   | { success: true; resumed: number; bumped: number }
@@ -25,7 +25,7 @@ export type ResumeResult =
  * requires `cancelled_by_sub_at IS NOT NULL`.
  */
 export async function resumeCancelledPostsOnResubscribe(
-  principalId: string
+  principalId: string,
 ): Promise<ResumeResult> {
   try {
     const { data: candidates, error: fetchErr } = await adminSupabase
@@ -65,7 +65,7 @@ export async function resumeCancelledPostsOnResubscribe(
 
       if (updateErr) {
         console.error(
-          `[resumeCancelledPostsOnResubscribe] Failed to resume ${row.id}: ${updateErr.message}`
+          `[resumeCancelledPostsOnResubscribe] Failed to resume ${row.id}: ${updateErr.message}`,
         );
         continue;
       }
@@ -75,7 +75,7 @@ export async function resumeCancelledPostsOnResubscribe(
 
     if (resumed > 0) {
       console.log(
-        `[resumeCancelledPostsOnResubscribe] Resumed ${resumed} posts for ${principalId} (${bumped} bumped to future)`
+        `[resumeCancelledPostsOnResubscribe] Resumed ${resumed} posts for ${principalId} (${bumped} bumped to future)`,
       );
     }
     return { success: true, resumed, bumped };

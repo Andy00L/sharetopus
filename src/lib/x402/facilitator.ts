@@ -450,39 +450,35 @@ async function refundEvm(
 }
 
 async function refundSolana(
-  cdp: CdpClient,
+  _cdp: CdpClient,
   input: RefundPaymentInput
 ): Promise<RefundPaymentResult> {
-  const senderAddress = process.env.X402_RECIPIENT_SOLANA;
-  if (!senderAddress) {
+  // Delegate to the dedicated Solana refund module (Phase 4.2).
+  const { refundSolana: refundSolanaImpl } = await import(
+    "@/lib/x402/solana/refundSolana"
+  );
+
+  const result = await refundSolanaImpl({
+    payerAddress: input.payerAddress,
+    amountUsdc: input.amountUsdc,
+    network: input.network,
+    reason: input.reason,
+  });
+
+  if (!result.ok) {
     return {
       ok: false,
       error: {
         kind: "facilitator_error",
-        message: "X402_RECIPIENT_SOLANA env var not set. Cannot issue Solana refund.",
+        message: result.error.message,
       },
     };
   }
 
-  // Solana SPL token transfers require building a transaction with the
-  // SPL Token program instructions (finding ATAs, creating if needed, then
-  // calling transferChecked). The CDP SDK's sendTransaction accepts a
-  // base64-encoded serialized Solana transaction.
-  //
-  // Phase 4.2 will implement the full Solana refund path using @solana/kit
-  // (available as a transitive dep via @coinbase/cdp-sdk). For Phase 4.0,
-  // this returns an error indicating Solana refunds are not yet wired.
-  void cdp;
-  console.warn(`[X402Facilitator] Solana refund not yet implemented. Charge: ${input.originalTxHash}, payer: ${input.payerAddress}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`);
-
   return {
-    ok: false,
-    error: {
-      kind: "facilitator_error",
-      message:
-        "Solana refunds are not yet implemented. " +
-        "The refund has been logged for manual processing.",
-    },
+    ok: true,
+    refundTxHash: result.refundTxHash,
+    refundedAt: new Date().toISOString(),
   };
 }
 

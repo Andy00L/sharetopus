@@ -13,13 +13,17 @@ import { Suspense } from "react";
 async function SocialPostFormWithData() {
   const { userId } = await auth();
 
+  if (!userId) {
+    redirect("/sign-in");
+  }
+
   const subscriptionInfo = await checkActiveSubscription(userId);
 
   if (!subscriptionInfo.isActive || !subscriptionInfo.plan) {
     redirect("/create");
   }
 
-  const accounts = await fetchSocialAccounts(userId);
+  const accounts = await fetchSocialAccounts(userId, "web", false);
 
   if (!accounts.success) {
     return <RateLimitError resetIn={accounts.resetIn} />;

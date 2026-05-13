@@ -15,7 +15,7 @@ import { authCheck } from "@/actions/server/authCheck";
  * @returns {Promise<boolean>} True if user has an active, trialing, or past_due subscription; false otherwise
  */
 export async function checkUserSubscription(
-  userId: string | null
+  userId: string | null,
 ): Promise<boolean> {
   // Get authenticated user ID from Clerk auth
 
@@ -23,14 +23,14 @@ export async function checkUserSubscription(
   const result = await authCheck(userId);
   if (!result) {
     console.error(
-      `[checkUserSubscription] Authentication check failed for userId: ${userId}`
+      `[checkUserSubscription] Authentication check failed for userId: ${userId}`,
     );
     return false;
   }
 
   try {
     console.log(
-      `[checkUserSubscription] Checking subscription status for user: ${userId}`
+      `[checkUserSubscription] Checking subscription status for user: ${userId}`,
     );
 
     // Query the stripe_subscriptions table to find the most recent subscription

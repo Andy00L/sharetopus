@@ -16,10 +16,14 @@ import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 const AccountsPageWithData = async () => {
   const { userId } = await auth();
+  if (!userId) {
+    redirect("/sign-in");
+  }
   const subscriptionCheck = await checkActiveSubscription(userId);
   if (!subscriptionCheck.isActive || !subscriptionCheck.success) {
     return <SubscriptionPrompt />;
@@ -27,7 +31,7 @@ const AccountsPageWithData = async () => {
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
 
-  const fetchResult = await fetchSocialAccounts(userId, false);
+  const fetchResult = await fetchSocialAccounts(userId, "web", false);
   if (!fetchResult.success) {
     return <RateLimitError resetIn={fetchResult.resetIn} />;
   }
@@ -37,10 +41,10 @@ const AccountsPageWithData = async () => {
   // Filter accounts by platform
   const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");
   const pinterestAccounts = accounts.filter(
-    (acc) => acc.platform === "pinterest"
+    (acc) => acc.platform === "pinterest",
   );
   const linkedinAccounts = accounts.filter(
-    (acc) => acc.platform === "linkedin"
+    (acc) => acc.platform === "linkedin",
   );
   {
     /* 

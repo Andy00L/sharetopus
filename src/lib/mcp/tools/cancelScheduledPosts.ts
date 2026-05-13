@@ -1,16 +1,23 @@
-import { z } from "zod";
+import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancel/cancelScheduledPostBatch";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { cancelScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/cancelScheduledPostBatch";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Cancels one or more scheduled posts (sets status to "cancelled").
  *
  * Plan gate: Starter+
  * Tables touched: scheduled_posts (read + update)
- * Calls: src/actions/server/_internal/scheduleActions/cancelScheduledPostBatch.ts
+ * Calls: src/actions/server/scheduleActions/cancel/cancelScheduledPostBatch.ts
  */
 export function registerCancelScheduledPosts(server: McpServer): void {
   server.registerTool(
@@ -58,14 +65,17 @@ export function registerCancelScheduledPosts(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await cancelScheduledPostBatchInternal(
+      const result = await cancelScheduledPostBatch(
         args.post_ids,
-        principal.principalId
+        principal.principalId,
+        "mcp",
       );
 
       await logToolCall({
@@ -83,6 +93,6 @@ export function registerCancelScheduledPosts(server: McpServer): void {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         isError: !result.success,
       };
-    }
+    },
   );
 }

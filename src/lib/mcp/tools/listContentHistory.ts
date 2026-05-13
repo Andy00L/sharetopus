@@ -1,16 +1,23 @@
-import { z } from "zod";
+import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getContentHistoryInternal } from "@/actions/server/_internal/contentHistoryActions/getContentHistory";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Lists content that has already been posted.
  *
  * Plan gate: any active subscription.
  * Tables read: content_history, social_accounts (join for avatar_url).
- * Calls: src/actions/server/_internal/contentHistoryActions/getContentHistory.ts
+ * Calls:src/actions/server/contentHistoryActions/getContentHistory.ts
  *
  * Output is JSON.stringify. No free-form user text.
  */
@@ -65,12 +72,18 @@ export function registerListContentHistory(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await getContentHistoryInternal(principal.principalId, args);
+      const result = await getContentHistory(
+        principal.principalId,
+        "mcp",
+        args,
+      );
 
       await logToolCall({
         principal,
@@ -86,12 +99,17 @@ export function registerListContentHistory(server: McpServer): void {
       });
 
       if (!result.success) {
-        return { content: [{ type: "text", text: result.message }], isError: true };
+        return {
+          content: [{ type: "text", text: result.message }],
+          isError: true,
+        };
       }
 
       return {
-        content: [{ type: "text", text: JSON.stringify(result.data ?? [], null, 2) }],
+        content: [
+          { type: "text", text: JSON.stringify(result.data ?? [], null, 2) },
+        ],
       };
-    }
+    },
   );
 }

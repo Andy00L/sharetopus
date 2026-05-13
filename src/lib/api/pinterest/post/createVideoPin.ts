@@ -178,7 +178,10 @@ async function uploadVideoFileStreaming({
       .createSignedUrl(mediaPath, 600);
 
     if (signedError || !signedData?.signedUrl) {
-      console.error("[Pinterest PostVideo] Failed to mint signed URL:", signedError);
+      console.error(
+        "[Pinterest PostVideo] Failed to mint signed URL:",
+        signedError,
+      );
       return {
         success: false,
         error: "Failed to mint Supabase signed URL for video",
@@ -191,7 +194,7 @@ async function uploadVideoFileStreaming({
 
     if (!supabaseResponse.ok) {
       console.error(
-        `[Pinterest PostVideo] Supabase fetch returned ${supabaseResponse.status}`
+        `[Pinterest PostVideo] Supabase fetch returned ${supabaseResponse.status}`,
       );
       return {
         success: false,
@@ -210,17 +213,23 @@ async function uploadVideoFileStreaming({
 
     const contentLengthHeader = supabaseResponse.headers.get("content-length");
     if (!contentLengthHeader) {
-      console.error("[Pinterest PostVideo] Missing Content-Length from storage");
+      console.error(
+        "[Pinterest PostVideo] Missing Content-Length from storage",
+      );
       return {
         success: false,
         error: "Storage did not return Content-Length for video",
-        message: "Cannot stream without known file size (S3 requires Content-Length)",
+        message:
+          "Cannot stream without known file size (S3 requires Content-Length)",
       };
     }
 
     const fileByteLength = Number(contentLengthHeader);
     if (!Number.isFinite(fileByteLength) || fileByteLength <= 0) {
-      console.error("[Pinterest PostVideo] Invalid Content-Length:", contentLengthHeader);
+      console.error(
+        "[Pinterest PostVideo] Invalid Content-Length:",
+        contentLengthHeader,
+      );
       return {
         success: false,
         error: "Storage returned invalid Content-Length for video",
@@ -228,7 +237,7 @@ async function uploadVideoFileStreaming({
     }
 
     console.log(
-      `[Pinterest PostVideo] Streaming ${fileByteLength} bytes to Pinterest S3`
+      `[Pinterest PostVideo] Streaming ${fileByteLength} bytes to Pinterest S3`,
     );
 
     // Build the streaming multipart body

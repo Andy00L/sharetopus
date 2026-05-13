@@ -24,8 +24,12 @@ export interface SchedulePostData {
 
     // Pinterest-specific options
     board_id?: string;
+    boardName?: string;
     link?: string;
 
+    // LinkedIn-specific options
+    visibility?: string;
+    memberUrn?: string;
     // Add other platform options here as needed
   } | null;
   idempotency_key?: string;

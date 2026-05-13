@@ -1,20 +1,29 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import { authCheck } from "@/actions/server/authCheck";
-import { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
+import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { CreatedVia, SocialAccount } from "@/lib/types/database.types";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
- * Fetches social accounts for a specific user with optional availability filtering
+ * Fetches social accounts for a given principal with optional availability filtering.
  *
- * @param userId - The ID of the user whose social accounts to fetch
- * @param filterByAvailability - When true, only returns available accounts (default: true)
- * @returns Structured response with success status, message, and optional account data
+ * **Authentication:** Does not call Clerk. Caller must validate `principalId` before
+ * calling (e.g. `auth()` in RSC for `"web"`, MCP principal for `"mcp"`).
+ *
+ * **Rate limiting:** 30 requests per 60s, scoped per `source` + `principalId`
+ * (e.g. `web_fetch_social_accounts`, `mcp_fetch_social_accounts`).
+ *
+ * **Tables:** `social_accounts`.
+ *
+ * @param principalId - Matches `social_accounts.principal_id`.
+ * @param source - Channel label; used to build the rate-limit scope.
+ * @param filterByAvailability - When true (default), only returns rows where `is_available = true`.
+ * @returns Success flag, user-facing message, optional `data`, and `resetIn` seconds when rate limited.
  */
 export async function fetchSocialAccounts(
-  userId: string | null,
-  filterByAvailability: boolean = true
+  principalId: string,
+  source: CreatedVia,
+  filterByAvailability: boolean = true,
 ): Promise<{
   success: boolean;
   message: string;
@@ -22,34 +31,22 @@ export async function fetchSocialAccounts(
   resetIn?: number;
 }> {
   try {
-    // Verify user is properly authenticated
-    const authResult = await authCheck(userId);
+    console.log(
+      `[fetchSocialAccounts] Fetching social accounts for principal: ${principalId}`,
+      `Source: ${source}`,
+    );
 
-    if (!authResult) {
-      console.error(
-        `[fetchSocialAccounts]: Authentication check failed for user ID: ${userId}`
-      );
-      return {
-        success: false,
-        message: "Authentication validation failed. Please sign in again.",
-      };
-    }
+    // Step 1: Check rate limits to prevent abuse
+    const rateLimitScope = `${source}_fetch_social_accounts`;
 
-    // Step 2: Check rate limits to prevent abuse
     const rateCheck = await checkRateLimit(
-      "fetchSocialAccounts", // Unique identifier for this operation
-      userId, // User identifier
+      rateLimitScope, // Unique identifier per channel
+      principalId, // Principal identifier
       30, // Limit (30 requests)
-      60 // Window (60 seconds)
+      60, // Window (60 seconds)
     );
 
     if (!rateCheck.success) {
-      console.warn(
-        `[fetchSocialAccounts]: Rate limit exceeded for user: ${userId}. Reset in: ${
-          rateCheck.resetIn ?? "unknown"
-        } seconds`
-      );
-
       return {
         success: false,
         message: "Too many requests. Please try again later.",
@@ -57,38 +54,31 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 3: Build and execute the database query
-    // Start building the query
+    // Step 2: Build and execute the database query
     let query = adminSupabase
       .from("social_accounts")
       .select("*")
-      .eq("principal_id", userId!);
+      .eq("principal_id", principalId);
 
     // Only apply the availability filter if requested
     if (filterByAvailability) {
       query = query.eq("is_available", true);
     }
 
-    // Execute the query
     const { data, error } = await query;
 
     if (error) {
-      console.error(
-        `[fetchSocialAccounts]: Database error fetching social accounts:`,
-        error.message,
-        error.details
-      );
+      console.error("[fetchSocialAccounts] DB error:", error.message);
       return {
         success: false,
-        message:
-          "Failed to retrieve your social accounts. Please try again later.",
+        message: "Failed to retrieve your social accounts.",
       };
     }
 
-    // Step 5: Check if data exists
+    // Step 3: Check if data exists
     if (!data || data.length === 0) {
       console.log(
-        `[fetchSocialAccounts]: No social accounts found for user: ${userId}`
+        `[fetchSocialAccounts]: No social accounts found for principal: ${principalId}`,
       );
       return {
         success: true,
@@ -97,18 +87,17 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 6: Return successful response with data
-
+    // Step 4: Return successful response with data
     return {
       success: true,
       message: "Social accounts retrieved successfully.",
       data: data as SocialAccount[],
     };
   } catch (err) {
-    // Step 7: Handle unexpected errors
+    // Step 5: Handle unexpected errors
     console.error(
       `[fetchSocialAccounts]: Unexpected error fetching social accounts:`,
-      err instanceof Error ? err.message : err
+      err instanceof Error ? err.message : err,
     );
     return {
       success: false,

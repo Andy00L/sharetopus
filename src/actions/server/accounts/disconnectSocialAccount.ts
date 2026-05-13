@@ -1,7 +1,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { authCheck } from "@/actions/server/authCheck";
 import "server-only";
-import { deleteSupabaseFileAction } from "../data/deleteSupabaseFileAction";
+import { deleteSupabaseFile } from "../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
@@ -21,41 +21,34 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
  */
 export async function disconnectSocialAccount(
   accountId: string,
-  userId: string | null
+  userId: string | null,
 ): Promise<{ success: boolean; message: string; resetIn?: number }> {
   try {
-    console.log(`[Disconnect Account] Processing account: ${accountId}`);
+    console.log(
+      `[Disconnect Account] Processing account: ${accountId}, user: ${userId}`,
+    );
 
     // Verify user is properly authenticated
-    const authResult = await authCheck(userId);
-    if (!authResult) {
-      console.error(
-        `[fetchSocialAccounts]: Authentication check failed for user ID: ${userId}`
-      );
+    if (!(await authCheck(userId))) {
       return {
         success: false,
         message: "Authentication validation failed. Please sign in again.",
       };
     }
-    console.log(
-      `[fetchSocialAccounts]: Authentication validated for user: ${userId}`
-    );
 
     // Step 2: Check rate limits to prevent abuse
-    console.log(
-      `[fetchSocialAccounts]: Checking rate limits for user: ${userId}`
-    );
     const rateCheck = await checkRateLimit(
       "disconnectSocialAccount", // Unique identifier for this operation
       userId, // User identifier
       30, // Limit (30 requests)
-      60 // Window (60 seconds)
+      60, // Window (60 seconds)
     );
+
     if (!rateCheck.success) {
       console.warn(
         `[fetchSocialAccounts]: Rate limit exceeded for user: ${userId}. Reset in: ${
           rateCheck.resetIn ?? "unknown"
-        } seconds`
+        } seconds`,
       );
       return {
         success: false,
@@ -63,14 +56,8 @@ export async function disconnectSocialAccount(
         resetIn: rateCheck.resetIn,
       };
     }
-    console.log(
-      `[fetchSocialAccounts]: Rate limit check passed for user: ${userId}`
-    );
 
-    // Step 3: Verify account exists and belongs to user
-    console.log(
-      `[disconnectSocialAccount]: Verifying account ownership for account: ${accountId}`
-    );
+    // Step 3: fetch account, verify ownership.
     const { data: account, error: fetchError } = await adminSupabase
       .from("social_accounts")
       .select("principal_id, platform")
@@ -80,7 +67,7 @@ export async function disconnectSocialAccount(
     if (fetchError || !account) {
       console.error(
         `[disconnectSocialAccount]: Account fetch error:`,
-        fetchError?.message || "Account not found"
+        fetchError?.message || "Account not found",
       );
       return {
         success: false,
@@ -92,49 +79,40 @@ export async function disconnectSocialAccount(
     // Security check: ensure the account belongs to this user
     if (account.principal_id !== userId) {
       console.warn(
-        `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.principal_id}`
+        `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.principal_id}`,
       );
       return {
         success: false,
         message: "You are not authorized to disconnect this account.",
       };
     }
-    console.log(
-      `[disconnectSocialAccount]: Account ownership verified for platform: ${account.platform}`
-    );
 
-    // Step 4: Find all media paths for scheduled posts for this account
-    console.log(
-      `[disconnectSocialAccount]: Finding media files used by this account's posts`
-    );
+    // Step 4: collect media paths from active scheduled posts BEFORE the cascade delete wipes them.
     const { data: mediaPaths, error: postsError } = await adminSupabase
       .from("scheduled_posts")
       .select("media_storage_path")
       .eq("social_account_id", accountId)
       .in("status", ["scheduled", "processing"])
-      .filter("media_storage_path", "neq", null);
+      .not("media_storage_path", "is", null);
 
     if (postsError) {
       console.error(
         `[disconnectSocialAccount]: Error fetching media paths:`,
-        postsError.message
+        postsError.message,
       );
       // Continue anyway - we'll just not be able to clean up files
     }
 
     // Step 5: Extract unique file paths to check
-    const filesToCheck = mediaPaths
-      ? [...new Set(mediaPaths.map((post) => post.media_storage_path))]
-      : [];
+    const filesToCheck = [
+      ...new Set(
+        (mediaPaths ?? [])
+          .map((row) => row.media_storage_path)
+          .filter((path): path is string => Boolean(path)),
+      ),
+    ];
 
-    console.log(
-      `[Disconnect Account] Found ${filesToCheck.length} unique files to check`
-    );
-
-    // Step 6: Delete the account record from the database
-    console.log(
-      `[disconnectSocialAccount]: Removing account ${accountId} from database`
-    );
+    // Step 6: delete the account. FK CASCADE wipes scheduled_posts, pending_*, social_connections.
     const { error: deleteError } = await adminSupabase
       .from("social_accounts")
       .delete()
@@ -143,82 +121,42 @@ export async function disconnectSocialAccount(
     if (deleteError) {
       console.error(
         `[disconnectSocialAccount]: Account deletion error:`,
-        deleteError.message
+        deleteError.message,
       );
       return {
         success: false,
         message: `Failed to disconnect the account`,
       };
     }
-    console.log(
-      `[disconnectSocialAccount]: Account successfully removed from database`
+
+    // Step 7: try to delete each media file. deleteSupabaseFile re-checks all reference
+    // tables (scheduled_posts, failed_posts, pending pulls, pending direct posts) and
+    // preserves files still referenced.
+
+    const deleteResults = await Promise.allSettled(
+      filesToCheck.map((filePath) =>
+        deleteSupabaseFile(userId!, filePath, false),
+      ),
     );
 
-    // Step 7: Check if each file is still being used by other scheduled posts
-    console.log(`[disconnectSocialAccount]: Checking for orphaned media files`);
-    const filesForDeletion = [];
-    for (const filePath of filesToCheck) {
-      if (!filePath) continue;
-
-      // Only request count, not actual data - optimized query
-      const { count, error: checkError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("media_storage_path", { count: "exact", head: true })
-        .eq("media_storage_path", filePath)
-        .in("status", ["scheduled", "processing"]);
-
-      if (checkError) {
-        console.error(
-          `[Disconnect Account] Error checking references for file ${filePath}:`,
-          checkError
-        );
-        continue;
-      }
-
-      // If count is 0, no posts reference this file
-      if (count === 0) {
-        console.log(
-          `[disconnectSocialAccount]: File no longer in use, marked for deletion: ${filePath}`
-        );
-        filesForDeletion.push(filePath);
-      } else {
-        console.log(
-          `[Disconnect Account] File still in use by ${count} posts, keeping: ${filePath}`
-        );
-      }
-    }
-
-    // Step 8: Delete each file that's no longer needed
-    console.log(
-      `[disconnectSocialAccount]: Found ${filesForDeletion.length} orphaned files to delete`
-    );
     let deletedFiles = 0;
-    for (const filePath of filesForDeletion) {
-      const result = await deleteSupabaseFileAction(userId, filePath);
-      if (result.success) {
+    for (const result of deleteResults) {
+      if (result.status === "fulfilled" && result.value.success === true) {
         deletedFiles++;
-      }
-      if (!result.success) {
+      } else if (result.status === "rejected") {
         console.error(
-          `[disconnectSocialAccount]: Error deleting file  ${filePath}, ${result.message}:`
+          "[disconnectSocialAccount] File deletion threw:",
+          result.reason,
         );
-        continue;
       }
-      console.log(
-        `[disconnectSocialAccount]: File deletion result for ${filePath}:`,
-        result.success ? "Success" : `Failed: ${result.message}`
-      );
     }
-    // Step 9: Return success with details about the operation
+
     const platformName =
       account.platform.charAt(0).toUpperCase() + account.platform.slice(1);
-    console.log(
-      `[disconnectSocialAccount]: Successfully disconnected ${platformName} account`
-    );
 
     return {
       success: true,
-      message: `${platformName} account disconnected successfully${
+      message: `${platformName} account disconnected${
         deletedFiles > 0
           ? ` and ${deletedFiles} unused media files cleaned up.`
           : "."

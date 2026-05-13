@@ -58,26 +58,26 @@ flowchart TD
 
 ### Status transitions
 
-| From | To | Trigger | Notes |
-|------|----|---------|-------|
-| (new) | scheduled | schedulePostInternal, bulk_schedule | created_via set at insert time |
-| scheduled | queued | scheduled-posts-tick cron | Batch up to 200. Status updated before event dispatch. |
-| scheduled | cancelled | cancel_scheduled_posts | Only scheduled status can be cancelled |
-| cancelled | scheduled | resume_scheduled_posts | If scheduled_at <= now, bumps to now + 1 hour |
-| queued | processing | process-single-post | Compare-and-swap (WHERE status=queued) prevents double-processing |
-| processing | posted | Platform publish success | posted_at set to now(). Content history inserted. |
-| processing | failed | Terminal platform error | Error recorded in error_message. failed_posts row inserted. |
+| From       | To         | Trigger                             | Notes                                                             |
+| ---------- | ---------- | ----------------------------------- | ----------------------------------------------------------------- |
+| (new)      | scheduled  | schedulePostInternal, bulk_schedule | created_via set at insert time                                    |
+| scheduled  | queued     | scheduled-posts-tick cron           | Batch up to 200. Status updated before event dispatch.            |
+| scheduled  | cancelled  | cancel_scheduled_posts              | Only scheduled status can be cancelled                            |
+| cancelled  | scheduled  | resume_scheduled_posts              | If scheduled_at <= now, bumps to now + 1 hour                     |
+| queued     | processing | process-single-post                 | Compare-and-swap (WHERE status=queued) prevents double-processing |
+| processing | posted     | Platform publish success            | posted_at set to now(). Content history inserted.                 |
+| processing | failed     | Terminal platform error             | Error recorded in error_message. failed_posts row inserted.       |
 
 ## created_via
 
 Every post-related table (scheduled_posts, failed_posts, content_history) stores a `created_via` field tracking the origin:
 
-| Value | Meaning |
-|-------|---------|
-| `web` | Created through the web UI (handleSocialMediaPost) |
-| `mcp` | Created through an MCP tool call |
+| Value  | Meaning                                                               |
+| ------ | --------------------------------------------------------------------- |
+| `web`  | Created through the web UI (handleSocialMediaPost)                    |
+| `mcp`  | Created through an MCP tool call                                      |
 | `x402` | Created through x402 anonymous wallet (deferred, not yet implemented) |
-| `api` | Created through REST API (deferred, not yet implemented) |
+| `api`  | Created through REST API (deferred, not yet implemented)              |
 
 The value is threaded through `schedulePostInternal`, `storeContentHistory`, and `storeFailedPost`. This was added in commit `FIX SCHEDULE-CREATED-VIA` to enable per-origin analytics.
 
@@ -105,7 +105,7 @@ sequenceDiagram
     end
 ```
 
-The `pending_direct_posts` row is inserted *before* the Inngest event is sent. This ensures that even if the worker starts immediately, the lock row already exists. The worker's `finalizePendingDirectPost` only updates rows with `status=processing` (idempotent on re-invocation).
+The `pending_direct_posts` row is inserted _before_ the Inngest event is sent. This ensures that even if the worker starts immediately, the lock row already exists. The worker's `finalizePendingDirectPost` only updates rows with `status=processing` (idempotent on re-invocation).
 
 ## Lock tables
 
@@ -115,35 +115,35 @@ Two tables serve as processing locks to prevent premature media cleanup:
 
 Tracks direct "post now" operations. One row per platform per dispatch.
 
-| Column | Purpose |
-|--------|---------|
-| event_id (PK) | Inngest event ID. Duplicate inserts are treated as success. |
-| batch_id | Groups multi-platform posts from one user action |
-| principal_id | Owner |
-| social_account_id | Target account |
-| platform | Target platform |
-| media_storage_path | File being used (prevents cleanup while in-flight) |
-| status | processing, completed, failed |
-| failure_reason | Error message on failure |
-| finished_at | Timestamp when finalized |
+| Column             | Purpose                                                     |
+| ------------------ | ----------------------------------------------------------- |
+| event_id (PK)      | Inngest event ID. Duplicate inserts are treated as success. |
+| batch_id           | Groups multi-platform posts from one user action            |
+| principal_id       | Owner                                                       |
+| social_account_id  | Target account                                              |
+| platform           | Target platform                                             |
+| media_storage_path | File being used (prevents cleanup while in-flight)          |
+| status             | processing, completed, failed                               |
+| failure_reason     | Error message on failure                                    |
+| finished_at        | Timestamp when finalized                                    |
 
 ### pending_tiktok_pulls
 
 Tracks TikTok async publish polling. TikTok's pull model means the publish can take minutes.
 
-| Column | Purpose |
-|--------|---------|
-| publish_id (PK) | TikTok publish ID from content/init response |
-| principal_id | Owner |
-| social_account_id | TikTok account |
-| scheduled_post_id | FK to scheduled_posts (null for direct posts) |
-| media_storage_path | File being pulled by TikTok |
-| status | pending, completed, failed |
-| attempt_count | Number of poll attempts so far |
-| last_polled_at | Timestamp of last poll |
-| failure_reason | Error on terminal failure |
+| Column             | Purpose                                       |
+| ------------------ | --------------------------------------------- |
+| publish_id (PK)    | TikTok publish ID from content/init response  |
+| principal_id       | Owner                                         |
+| social_account_id  | TikTok account                                |
+| scheduled_post_id  | FK to scheduled_posts (null for direct posts) |
+| media_storage_path | File being pulled by TikTok                   |
+| status             | pending, completed, failed                    |
+| attempt_count      | Number of poll attempts so far                |
+| last_polled_at     | Timestamp of last poll                        |
+| failure_reason     | Error on terminal failure                     |
 
-Both tables are checked by `deleteSupabaseFileActionInternal` and `cleanupMediaIfUnreferenced` before deleting any storage file.
+Both tables are checked by `deleteSupabaseFile` and `cleanupMediaIfUnreferenced` before deleting any storage file.
 
 ## Retry strategy
 
@@ -155,14 +155,14 @@ Inngest handles retries for `process-single-post`:
 
 Error classification (`src/inngest/functions/platformErrors.ts`):
 
-| Reason | Retryable | Example |
-|--------|-----------|---------|
-| `auth_expired` | Yes | Token expired, refresh failed |
-| `rate_limited` | Yes | Platform 429 response |
-| `transient` | Yes | Network timeout, connection reset |
-| `policy_rejected` | No | Pinterest domain block, TikTok policy violation |
-| `invalid_input` | No | Text post to Pinterest, missing board ID |
-| `unknown` | No | Unmapped error |
+| Reason            | Retryable | Example                                         |
+| ----------------- | --------- | ----------------------------------------------- |
+| `auth_expired`    | Yes       | Token expired, refresh failed                   |
+| `rate_limited`    | Yes       | Platform 429 response                           |
+| `transient`       | Yes       | Network timeout, connection reset               |
+| `policy_rejected` | No        | Pinterest domain block, TikTok policy violation |
+| `invalid_input`   | No        | Text post to Pinterest, missing board ID        |
+| `unknown`         | No        | Unmapped error                                  |
 
 Terminal failures record the error in `scheduled_posts.error_message` and insert a `failed_posts` row. Retryable failures throw an exception, which Inngest catches for retry.
 
@@ -193,12 +193,12 @@ sequenceDiagram
     T->>A: { success, scheduleId: "new-id", message: "already created" }
 ```
 
-| Tool | Key source | Target table | Constraint |
-|------|-----------|-------------|------------|
-| `schedule_post` | `idempotency_key` param (optional, 1-200 chars) | `scheduled_posts` | UNIQUE on `(principal_id, idempotency_key)` |
-| `post_now` | `idempotency_key` param (optional, 1-200 chars) | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
-| `bulk_schedule` | Derived: `${batchId}:${index}` | `scheduled_posts` | Same |
-| `bulk_post_now` | Derived: `${batch_id}:${index}` | `pending_direct_posts` | Same |
+| Tool            | Key source                                      | Target table           | Constraint                                  |
+| --------------- | ----------------------------------------------- | ---------------------- | ------------------------------------------- |
+| `schedule_post` | `idempotency_key` param (optional, 1-200 chars) | `scheduled_posts`      | UNIQUE on `(principal_id, idempotency_key)` |
+| `post_now`      | `idempotency_key` param (optional, 1-200 chars) | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
+| `bulk_schedule` | Derived: `${batchId}:${index}`                  | `scheduled_posts`      | Same                                        |
+| `bulk_post_now` | Derived: `${batch_id}:${index}`                 | `pending_direct_posts` | Same                                        |
 
 All four use `INSERT ... ON CONFLICT DO NOTHING` (Supabase `ignoreDuplicates: true`). If the insert conflicts, the handler fetches the existing row and returns its ID. The key is optional; omitting it means no deduplication (every call creates a new row).
 

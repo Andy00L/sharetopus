@@ -1,16 +1,23 @@
-import { z } from "zod";
+import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatch";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { deleteScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/deleteScheduledPostBatch";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Permanently deletes scheduled posts and cleans up orphaned media.
  *
  * Plan gate: Starter+
  * Tables touched: scheduled_posts (read + delete), Supabase Storage (delete)
- * Calls: src/actions/server/_internal/scheduleActions/deleteScheduledPostBatch.ts
+ * Calls: src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts
  *
  * The internal batch function now mirrors the web UI delete flow,
  * including storage cleanup for media files no longer referenced
@@ -62,14 +69,17 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await deleteScheduledPostBatchInternal(
+      const result = await deleteScheduledPostBatch(
         args.post_ids,
-        principal.principalId
+        principal.principalId,
+        "mcp",
       );
 
       await logToolCall({
@@ -87,6 +97,6 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         isError: !result.success,
       };
-    }
+    },
   );
 }

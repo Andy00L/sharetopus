@@ -30,9 +30,9 @@ import {
   X,
 } from "lucide-react";
 
-import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancelScheduledPost";
-import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/deleteScheduledPost";
-import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resumeScheduledPost";
+import { cancelScheduledPostBatchAction } from "@/actions/server/scheduleActions/cancel/cancelScheduledPostBatchAction";
+import { deleteScheduledPostBatchAction } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatchAction";
+import { resumeScheduledPostBatchAction } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatchAction";
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/updateScheduledTime";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,7 @@ import PlatformContentDropdown from "./PlatformContentDropdown/PlatformContentDr
 
 interface BatchedPostCardProps {
   readonly posts: ScheduledPost[];
-  readonly userId: string | null;
+  readonly userId: string;
 }
 
 export default function BatchedPostCard({
@@ -74,10 +74,10 @@ export default function BatchedPostCard({
   const canReschedule = canCancel || canResume;
 
   const [rescheduleDate, setRescheduleDate] = useState<string>(
-    format(new Date(firstPost.scheduled_at), "yyyy-MM-dd")
+    format(new Date(firstPost.scheduled_at), "yyyy-MM-dd"),
   );
   const [rescheduleTime, setRescheduleTime] = useState<string>(
-    format(new Date(firstPost.scheduled_at), "HH:mm")
+    format(new Date(firstPost.scheduled_at), "HH:mm"),
   );
   // Generate status badge
   const getStatusBadge = () => {
@@ -148,7 +148,7 @@ export default function BatchedPostCard({
 
   // Actions
   const runAction = async (
-    fn: () => Promise<{ success: boolean; message: string; resetIn?: number }>
+    fn: () => Promise<{ success: boolean; message: string; resetIn?: number }>,
   ) => {
     if (loading) return;
     setLoading(true);
@@ -160,7 +160,7 @@ export default function BatchedPostCard({
       } else if (res.resetIn) {
         // Special handling for rate limits
         toast.error(
-          `${res.message} Please try again in ${res.resetIn} seconds.`
+          `${res.message} Please try again in ${res.resetIn} seconds.`,
         );
       } else {
         toast.error(res.message);
@@ -196,7 +196,7 @@ export default function BatchedPostCard({
       const result = await updateScheduledTimeBatch(
         postIds,
         scheduledDateTime,
-        userId
+        userId,
       );
 
       if (result.success) {
@@ -233,7 +233,10 @@ export default function BatchedPostCard({
         };
       }
 
-      const result = await cancelScheduledPostBatch(scheduledPostIds, userId);
+      const result = await cancelScheduledPostBatchAction(
+        scheduledPostIds,
+        userId,
+      );
 
       // Use the details to provide more specific messages
       if (result.success) {
@@ -269,7 +272,7 @@ export default function BatchedPostCard({
       const postIds = posts.map((post) => post.id);
 
       // With our new batch function, we can delete all posts in one call
-      const result = await deleteScheduledPostBatch(postIds, userId);
+      const result = await deleteScheduledPostBatchAction(postIds, userId);
 
       // Return the result directly
       return {
@@ -302,7 +305,10 @@ export default function BatchedPostCard({
         };
       }
 
-      const result = await resumeScheduledPostBatch(cancelledPostIds, userId);
+      const result = await resumeScheduledPostBatchAction(
+        cancelledPostIds,
+        userId,
+      );
 
       // Use the details to provide more specific messages
       if (result.success) {

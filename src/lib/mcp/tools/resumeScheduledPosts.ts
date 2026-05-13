@@ -1,16 +1,23 @@
-import { z } from "zod";
+import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatch";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { resumeScheduledPostBatchInternal } from "@/actions/server/_internal/scheduleActions/resumeScheduledPostBatch";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Resumes cancelled posts back to "scheduled" status.
  *
  * Plan gate: Starter+
  * Tables touched: scheduled_posts (read + update)
- * Calls: src/actions/server/_internal/scheduleActions/resumeScheduledPostBatch.ts
+ * Calls: src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
  *
  * If a post's scheduled_at is in the past, it gets bumped to 1 hour from now.
  */
@@ -60,14 +67,17 @@ export function registerResumeScheduledPosts(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await resumeScheduledPostBatchInternal(
+      const result = await resumeScheduledPostBatch(
         args.post_ids,
-        principal.principalId
+        principal.principalId,
+        "mcp",
       );
 
       await logToolCall({
@@ -85,6 +95,6 @@ export function registerResumeScheduledPosts(server: McpServer): void {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         isError: !result.success,
       };
-    }
+    },
   );
 }

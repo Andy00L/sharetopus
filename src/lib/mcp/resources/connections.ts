@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { fetchSocialAccountsInternal } from "@/actions/server/_internal/data/fetchSocialAccounts";
 import { extractPrincipal } from "@/lib/mcp/context";
 import { entitlementFor } from "../entitlement";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 
 /**
  * MCP resource: connected social accounts.
@@ -20,7 +20,10 @@ export function registerConnectionsResource(server: McpServer): void {
   server.resource(
     "connections",
     "mcp://sharetopus/connections",
-    { description: "Your connected social media accounts", mimeType: "application/json" },
+    {
+      description: "Your connected social media accounts",
+      mimeType: "application/json",
+    },
     async (_uri, extra) => {
       const principal = extractPrincipal(extra);
 
@@ -32,7 +35,11 @@ export function registerConnectionsResource(server: McpServer): void {
         };
       }
 
-      const result = await fetchSocialAccountsInternal(principal.principalId, false);
+      const result = await fetchSocialAccounts(
+        principal.principalId,
+        "mcp",
+        false,
+      );
 
       const safe = (result.data ?? []).map((a) => ({
         id: a.id,
@@ -53,6 +60,6 @@ export function registerConnectionsResource(server: McpServer): void {
           },
         ],
       };
-    }
+    },
   );
 }

@@ -2,7 +2,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { TablesInsert, Json } from "@/lib/types/database.types";
+import type { Json, TablesInsert } from "@/lib/types/database.types";
 
 type FailedPostData = {
   principal_id: string | null;
@@ -24,23 +24,25 @@ type FailedPostData = {
  * Stores a record of a failed post attempt in the failed_posts table
  */
 export async function storeFailedPost(
-  data: FailedPostData
+  data: FailedPostData,
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
-  if (!data.principal_id || !data.social_account_id || !data.platform) {
-    return {
-      success: false,
-      message: "Missing required information",
-    };
-  }
-
   try {
-    console.log(
-      `[storeFailedPost] Storing failed post for user ${data.principal_id}`
-    );
+    if (!data.principal_id || !data.social_account_id || !data.platform) {
+      console.error("[storeFailedPost] Missing required information", {
+        principal_id: data.principal_id,
+        social_account_id: data.social_account_id,
+        platform: data.platform,
+      });
+      return {
+        success: false,
+        message: "Missing required information",
+      };
+    }
 
-    const errorMsg = typeof data.extra_data?.message === "string"
-      ? data.extra_data.message
-      : "Failed to post";
+    const errorMsg =
+      typeof data.extra_data?.message === "string"
+        ? data.extra_data.message
+        : "Failed to post";
 
     const insertData: TablesInsert<"failed_posts"> = {
       principal_id: data.principal_id,

@@ -1,8 +1,9 @@
 import { SocialAccount } from "@/lib/types/dbTypes";
+
 import {
   AccountError,
   ContentInfo,
-} from "../../../../components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
+} from "@/components/core/create/action/handleSocialMediaPost/handleSocialMediaPost";
 import { scheduleForInstagramAccounts } from "../../instagram/schedule/scheduleForInstagramAccounts";
 
 /**
@@ -31,7 +32,7 @@ export async function processInstagramAccounts(config: {
   // Validate we have a URL for Instagram
   if (!config.mediaUrl && !isScheduled) {
     console.error(
-      "[processInstagramAccounts] No media URL provided for Instagram"
+      "[processInstagramAccounts] No media URL provided for Instagram",
     );
     return {
       successCount: 0,
@@ -50,7 +51,7 @@ export async function processInstagramAccounts(config: {
   }
 
   console.log(
-    `[processInstagramAccounts]: Processing ${accounts.length} Instagram accounts`
+    `[processInstagramAccounts]: Processing ${accounts.length} Instagram accounts`,
   );
 
   // Process accounts in parallel for maximum performance
@@ -59,12 +60,12 @@ export async function processInstagramAccounts(config: {
       console.log(
         `[processInstagramAccounts]: Processing account: ${
           account.display_name || account.username || account.id
-        }`
+        }`,
       );
 
       // Find content for this account
       const accountContent = config.accountContent.find(
-        (c) => c.accountId === account.id
+        (c) => c.accountId === account.id,
       );
 
       if (!accountContent) {
@@ -143,7 +144,7 @@ export async function processInstagramAccounts(config: {
           account.id
         } in ${accountProcessingTime.toFixed(2)}ms: ${
           result.success ? "Success" : "Failed"
-        }`
+        }`,
       );
 
       // Add to success count if successful
@@ -164,7 +165,7 @@ export async function processInstagramAccounts(config: {
       // Record account-level error but don't stop other accounts
       console.error(
         `[processInstagramAccounts]: Error processing account ${account.id}:`,
-        error
+        error,
       );
       return {
         success: false,
@@ -191,7 +192,7 @@ export async function processInstagramAccounts(config: {
   });
 
   console.log(
-    `[processInstagramAccounts]: Completed with ${successCount} successes and ${errors.length} failures`
+    `[processInstagramAccounts]: Completed with ${successCount} successes and ${errors.length} failures`,
   );
   return { successCount, errors };
 }

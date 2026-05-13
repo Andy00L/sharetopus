@@ -6,7 +6,7 @@ export function validateAccountContent(
   accountContent: ContentInfo[],
   platform: string,
   boards?: BoardInfo[],
-  postType?: string
+  postType?: string,
 ): AccountError[] {
   const errors: AccountError[] = [];
 
@@ -27,7 +27,7 @@ export function validateAccountContent(
     // Platform-specific validations
     if (platform === "pinterest" && postType !== "text") {
       const hasSelectedBoard = boards?.some(
-        (b) => b.accountId === account.id && b.isSelected
+        (b) => b.accountId === account.id && b.isSelected,
       );
       if (!hasSelectedBoard) {
         errors.push({

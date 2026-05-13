@@ -1,7 +1,7 @@
 "use server";
 import { authCheck } from "@/actions/server/authCheck";
-import { authCheckCronJob } from "../authCheckCronJob";
-import { deleteSupabaseFileActionInternal } from "@/actions/server/_internal/data/deleteSupabaseFileAction";
+import { authCheckCronJob } from "../../authCheckCronJob";
+import { deleteSupabaseFile } from "./deleteSupabaseFile";
 
 /**
  * Entry point for deleting files from Supabase Storage via browser sessions
@@ -18,21 +18,18 @@ export async function deleteSupabaseFileAction(
   userId: string | null,
   filePath: string | null,
   forceDelete: boolean = false,
-  cronSecret?: string
+  cronSecret?: string,
 ): Promise<{ success: boolean; message: string }> {
   console.log(
     `[deleteSupabaseFile]: Starting deletion process for user: ${userId}, path: ${
       filePath ?? "entire folder"
-    }`
+    }`,
   );
 
   // Authentication: cron jobs use a secret key, regular users use Clerk.
   if (cronSecret) {
     const authResult = await authCheckCronJob(userId, cronSecret);
     if (!authResult) {
-      console.error(
-        `[deleteSupabaseFileAction]: Cron job authentication failed for user ID: ${userId}`
-      );
       return {
         success: false,
         message: "Cron job authentication failed. Invalid secret key.",
@@ -41,9 +38,6 @@ export async function deleteSupabaseFileAction(
   } else {
     const authResult = await authCheck(userId);
     if (!authResult) {
-      console.error(
-        `[deleteSupabaseFileAction]: User authentication check failed for user ID: ${userId}`
-      );
       return {
         success: false,
         message: "Authentication validation failed. Please sign in again.",
@@ -57,5 +51,5 @@ export async function deleteSupabaseFileAction(
   }
 
   // Auth passed. Delegate to the internal version.
-  return deleteSupabaseFileActionInternal(userId, filePath, forceDelete);
+  return deleteSupabaseFile(userId, filePath, forceDelete);
 }

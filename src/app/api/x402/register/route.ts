@@ -10,6 +10,7 @@ import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { handleRegisterChallenge } from "@/lib/x402/register/handleRegisterChallenge";
 import { handleRegisterVerify } from "@/lib/x402/register/handleRegisterVerify";
+import { handleRegisterSolanaVerify } from "@/lib/x402/register/handleRegisterSolanaVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
 import { buildErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
@@ -49,30 +50,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ? getNetworkConfig(networkParam) ?? getDefaultNetwork()
     : getDefaultNetwork();
 
-  // ── EVM only for Phase 4.1 (Drew decision #8) ─────────────────────
-  if (!network.isEvm) {
-    await logX402Call({
-      principal: null,
-      action: "register",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "error",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
-    return NextResponse.json(
-      {
-        error: "network_not_supported",
-        message:
-          "Solana register ships in Phase 4.2; use an EVM network for now.",
-      },
-      { status: 400 }
-    );
-  }
-
   // ── Build network context ──────────────────────────────────────────
-  const recipientAddress = process.env.X402_RECIPIENT_EVM;
+  const recipientAddress = network.isEvm
+    ? process.env.X402_RECIPIENT_EVM
+    : process.env.X402_RECIPIENT_SOLANA;
   if (!recipientAddress) {
     console.error("[POST /api/x402/register] X402_RECIPIENT_EVM env not set");
     await logX402Call({
@@ -165,12 +146,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Verify path ────────────────────────────────────────────────────
-  const result = await handleRegisterVerify(
-    request,
-    paymentHeader,
-    context,
-    ipHash
-  );
+  const result = network.isEvm
+    ? await handleRegisterVerify(request, paymentHeader, context, ipHash)
+    : await handleRegisterSolanaVerify(request, paymentHeader, context, ipHash);
 
   if (!result.ok) {
     const auditStatus =

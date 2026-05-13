@@ -1,9 +1,12 @@
-import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
-import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
-import { deleteSupabaseFileActionInternal } from "@/actions/server/_internal/data/deleteSupabaseFileAction";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
+import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
+import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
+import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
+import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
+import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
+import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import type {
   Platform,
@@ -11,16 +14,13 @@ import type {
   ScheduledPost,
   SocialAccount,
 } from "@/lib/types/database.types";
+import type { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
+import "server-only";
 import {
   classifyDirectPostFailure,
   type PlatformErrorReason,
   type PlatformPostOutcome,
 } from "./platformErrors";
-import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
-import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
-import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
-import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
-import type { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
 
 // ---------- fetch-post-and-account ----------
 
@@ -40,7 +40,7 @@ export type FetchPostResult =
  * terminal (posted/failed/cancelled), so a re-invocation is a no-op.
  */
 export async function fetchPostAndAccount(
-  scheduledPostId: string
+  scheduledPostId: string,
 ): Promise<FetchPostResult> {
   const { data: post, error: postErr } = await adminSupabase
     .from("scheduled_posts")
@@ -119,7 +119,7 @@ export type ClaimResult = {
  * took it OR the row already moved on; return claimed=false.
  */
 export async function claimPostForProcessing(
-  scheduledPostId: string
+  scheduledPostId: string,
 ): Promise<ClaimResult> {
   const { data, error } = await adminSupabase
     .from("scheduled_posts")
@@ -165,7 +165,7 @@ export type SignedUrlsResult =
  */
 export async function buildPlatformSignedUrls(
   post: ScheduledPost,
-  platform: Platform
+  platform: Platform,
 ): Promise<SignedUrlsResult> {
   if (!post.media_storage_path || post.media_storage_path === "") {
     return {
@@ -194,7 +194,7 @@ export async function buildPlatformSignedUrls(
 
   const signed = await getServerSignedViewUrl(
     post.media_storage_path,
-    RUNTIME.signedUrlTtlS
+    RUNTIME.signedUrlTtlS,
   );
   if (!signed.success) {
     return {
@@ -229,7 +229,7 @@ export type CompatibilityResult = {
  */
 export function checkPlatformCompatibility(
   platform: Platform,
-  mediaType: ScheduledPost["media_type"]
+  mediaType: ScheduledPost["media_type"],
 ): CompatibilityResult {
   if (platform === "pinterest" && mediaType === "text") {
     return {
@@ -296,10 +296,13 @@ export async function callPlatformDirectPost(args: {
   fileName: string;
   mediaType: string;
 }): Promise<CallPlatformResult> {
-  const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } =
-    args;
+  const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } = args;
 
-  const createdVia = (post.created_via ?? "web") as "web" | "mcp" | "x402" | "api";
+  const createdVia = (post.created_via ?? "web") as
+    | "web"
+    | "mcp"
+    | "x402"
+    | "api";
 
   const options = (post.post_options ?? {}) as PostOptions;
   const accountContent = {
@@ -450,7 +453,7 @@ export async function callPlatformDirectPost(args: {
 
     const reason = classifyDirectPostFailure(
       post.platform as Platform,
-      result.message
+      result.message,
     );
     return {
       ok: false,
@@ -462,7 +465,7 @@ export async function callPlatformDirectPost(args: {
     const message = err instanceof Error ? err.message : String(err);
     const reason: PlatformErrorReason = classifyDirectPostFailure(
       post.platform as Platform,
-      message
+      message,
     );
     return { ok: false, reason, message };
   }
@@ -575,13 +578,17 @@ export async function recordPostStatus(args: {
         message: result.message,
         timestamp: nowIso,
       },
-      created_via: (post.created_via ?? "web") as "web" | "mcp" | "x402" | "api",
+      created_via: (post.created_via ?? "web") as
+        | "web"
+        | "mcp"
+        | "x402"
+        | "api",
     });
 
     if (!storeResult.success) {
       console.error(
         "[recordPostStatus] Failed to store failed post record:",
-        storeResult.message
+        storeResult.message,
       );
       // Continue. The scheduled_posts UPDATE already succeeded;
       // losing the failed_posts row is non-fatal.
@@ -610,17 +617,13 @@ export type CleanupResult = {
  */
 export async function cleanupMediaIfUnreferenced(
   mediaPath: string,
-  principalId: string
+  principalId: string,
 ): Promise<CleanupResult> {
   if (!mediaPath || mediaPath === "") {
     return { success: true, message: "no media to clean", deleted: false };
   }
   try {
-    const result = await deleteSupabaseFileActionInternal(
-      principalId,
-      mediaPath,
-      false
-    );
+    const result = await deleteSupabaseFile(principalId, mediaPath, false);
     return {
       success: true,
       message: result.success

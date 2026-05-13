@@ -1,675 +1,124 @@
-import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import { entitlementFor } from "../entitlement";
-import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+// src/lib/mcp/tools/bulkSchedule.ts
+import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
+import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
-import type { McpPrincipal } from "../auth";
-import type { TablesInsert, CreatedVia } from "@/lib/types/database.types";
-
-// ---------------------------------------------------------------------------
-// Constants & schema
-// ---------------------------------------------------------------------------
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { logToolCall } from "../audit";
+import { entitlementFor } from "../entitlement";
 
 const MAX_POSTS_PER_CALL = 30;
 
 const postSchema = z.object({
-  social_account_id: z.string().uuid(),
-  platform: z.enum(["linkedin", "tiktok", "pinterest", "instagram"]),
-  scheduled_at: z.string(),
-  post_type: z.enum(["text", "image", "video"]),
-  title: z.string().optional(),
-  description: z.string().nullable(),
-  media_storage_path: z.string().optional().default(""),
-  pinterest_board_id: z.string().optional(),
-  pinterest_board_name: z.string().optional(),
-  pinterest_link: z.string().url().max(2048).optional(),
+  social_account_id: z
+    .string()
+    .uuid()
+    .describe(
+      "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
+    ),
+  platform: z
+    .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+    .describe(
+      "Target social media platform. Must match the platform of the provided social_account_id.",
+    ),
+  scheduled_at: z
+    .string()
+    .describe(
+      "ISO 8601 datetime string for when to publish (e.g. '2026-06-01T14:30:00Z'). Must be in the future.",
+    ),
+  post_type: z
+    .enum(["text", "image", "video"])
+    .describe(
+      "Type of post. Text posts only supported on LinkedIn. Pinterest/TikTok/Instagram require image or video.",
+    ),
+  title: z
+    .string()
+    .optional()
+    .describe(
+      "Optional post title. Used by Pinterest and YouTube. Ignored by LinkedIn/TikTok/Instagram.",
+    ),
+  description: z
+    .string()
+    .nullable()
+    .describe(
+      "Post body text / caption. Required for text posts. Optional but recommended for media posts.",
+    ),
+  media_storage_path: z
+    .string()
+    .optional()
+    .default("")
+    .describe(
+      "Supabase Storage path for the media file. Required for image/video posts. Get this by calling attach_media_from_url first.",
+    ),
+  pinterest_board_id: z
+    .string()
+    .optional()
+    .describe(
+      "Pinterest board ID. REQUIRED when platform='pinterest'. Get available boards via list_pinterest_boards.",
+    ),
+  pinterest_board_name: z
+    .string()
+    .optional()
+    .describe(
+      "Optional Pinterest board display name. Cosmetic. Only valid when platform='pinterest'.",
+    ),
+  pinterest_link: z
+    .string()
+    .url()
+    .max(2048)
+    .optional()
+    .describe(
+      "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Only valid when platform='pinterest'.",
+    ),
 });
 
-type PostInput = z.infer<typeof postSchema>;
-
-// ---------------------------------------------------------------------------
-// Result types
-//
-// Match the codebase convention: success boolean + message + optional payload.
-// Internal helpers use these so the handler can branch on `result.success`
-// without ever seeing a raw supabase error tuple.
-// ---------------------------------------------------------------------------
-
-type EntitlementCheckResult =
-  | { success: true }
-  | {
-      success: false;
-      message: string;
-      auditStatus: "denied" | "quota_exceeded";
-    };
-
-type PlatformQuotaCheckResult =
-  | { success: true }
-  | {
-      success: false;
-      message: string;
-      auditStatus: "quota_exceeded";
-    };
-
-type AccountOwnershipCheckResult =
-  | { success: true }
-  | {
-      success: false;
-      message: string;
-      auditStatus: "denied" | "error";
-      unownedIds?: string[];
-    };
-
-type ScheduledPostInsertRow = TablesInsert<"scheduled_posts">;
-
-type BulkInsertResult =
-  | {
-      success: true;
-      insertedIds: string[];
-      skippedIdempotentIndexes: number[];
-    }
-  | {
-      success: false;
-      message: string;
-      pgErrorCode: string | null;
-    };
-
-type PerPostResult = {
-  index: number;
-  success: boolean;
-  message: string;
-  scheduleId?: string;
-};
-
-type BulkScheduleContext = {
-  principal: McpPrincipal;
-  sessionId: string | null;
-  ipHash: string | null;
-  userAgent: string | null;
-  clientName: string | null;
-  clientVersion: string | null;
-  startedAt: number;
-};
-
-type McpToolResponse = {
-  content: Array<{ type: "text"; text: string }>;
-  isError: boolean;
-};
-
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
-
-/** Wraps extractPrincipal + extractSessionId + Date.now(). */
-async function buildBulkScheduleContext(
-  extra: Record<string, unknown>
-): Promise<BulkScheduleContext> {
-  return {
-    principal: extractPrincipal(extra),
-    sessionId: extractSessionId(extra),
-    ipHash: await extractIpHash(),
-    userAgent: await extractUserAgent(),
-    clientName: extractClientName(extra),
-    clientVersion: extractClientVersion(extra),
-    startedAt: Date.now(),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Preflight helpers
-// ---------------------------------------------------------------------------
+type BulkSchedulePostInput = z.infer<typeof postSchema>;
 
 /**
- * Checks whether the principal's plan allows bulk_schedule.
- * Returns a deny result with an appropriate audit status on failure.
- */
-async function checkBulkScheduleEntitlement(
-  ctx: BulkScheduleContext
-): Promise<EntitlementCheckResult> {
-  try {
-    const ent = await entitlementFor(ctx.principal, "bulk_schedule");
-    if (ent.mode === "deny") {
-      console.error(
-        `[checkBulkScheduleEntitlement] denied for ${ctx.principal.principalId}:`,
-        ent.reason,
-        ent.detail
-      );
-      return {
-        success: false,
-        message: `Denied: ${ent.detail ?? ent.reason}`,
-        auditStatus:
-          ent.reason === "platform_quota" ? "quota_exceeded" : "denied",
-      };
-    }
-    return { success: true };
-  } catch (err) {
-    console.error("[checkBulkScheduleEntitlement] unexpected:", err);
-    return {
-      success: false,
-      message: "Entitlement check failed unexpectedly.",
-      auditStatus: "denied",
-    };
-  }
-}
-
-/**
- * Checks per-platform daily caps for the next 24 hours.
- * Fails on the first platform that would exceed its cap.
- * Absorbs supabase errors into the result.
- */
-async function enforcePlatformDailyQuotas(
-  ctx: BulkScheduleContext,
-  posts: PostInput[]
-): Promise<PlatformQuotaCheckResult> {
-  const platforms = [...new Set(posts.map((p) => p.platform))];
-  const now = new Date();
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-
-  for (const platform of platforms) {
-    try {
-      const postsForPlatform = posts.filter(
-        (p) => p.platform === platform
-      ).length;
-
-      const { count: existingCount, error: countError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("id", { count: "exact", head: true })
-        .eq("principal_id", ctx.principal.principalId)
-        .eq("platform", platform)
-        .gte("scheduled_at", now.toISOString())
-        .lte("scheduled_at", tomorrow.toISOString());
-
-      if (countError) {
-        console.error(
-          `[enforcePlatformDailyQuotas] count query failed for ${platform}:`,
-          countError
-        );
-        return {
-          success: false,
-          message: "Platform quota lookup failed.",
-          auditStatus: "quota_exceeded",
-        };
-      }
-
-      const { data: quota, error: quotaError } = await adminSupabase
-        .from("platform_quotas")
-        .select("daily_cap")
-        .eq("platform", platform)
-        .maybeSingle();
-
-      if (quotaError) {
-        console.error(
-          `[enforcePlatformDailyQuotas] quota fetch failed for ${platform}:`,
-          quotaError
-        );
-        return {
-          success: false,
-          message: "Platform quota lookup failed.",
-          auditStatus: "quota_exceeded",
-        };
-      }
-
-      const dailyCap = quota?.daily_cap ?? 50;
-      const totalAfter = (existingCount ?? 0) + postsForPlatform;
-
-      if (totalAfter > dailyCap) {
-        console.error(
-          `[enforcePlatformDailyQuotas] ${platform}: ` +
-            `${existingCount ?? 0} existing + ${postsForPlatform} new > cap ${dailyCap}`
-        );
-        return {
-          success: false,
-          message:
-            `Platform quota exceeded for ${platform}. ` +
-            `${existingCount ?? 0} posts already scheduled in the next 24h, ` +
-            `adding ${postsForPlatform} would exceed the daily cap of ${dailyCap}.`,
-          auditStatus: "quota_exceeded",
-        };
-      }
-    } catch (err) {
-      console.error(
-        `[enforcePlatformDailyQuotas] unexpected error for ${platform}:`,
-        err
-      );
-      return {
-        success: false,
-        message: "Platform quota lookup failed.",
-        auditStatus: "quota_exceeded",
-      };
-    }
-  }
-
-  return { success: true };
-}
-
-/**
- * Verifies the principal owns every social_account_id in the batch.
- * One bulk SELECT, no per-account queries.
- * Absorbs supabase errors and unowned-account denials into the result.
- */
-async function verifyAccountOwnership(
-  ctx: BulkScheduleContext,
-  posts: PostInput[]
-): Promise<AccountOwnershipCheckResult> {
-  const accountIds = [...new Set(posts.map((p) => p.social_account_id))];
-
-  try {
-    const { data: ownedAccounts, error } = await adminSupabase
-      .from("social_accounts")
-      .select("id")
-      .eq("principal_id", ctx.principal.principalId)
-      .in("id", accountIds);
-
-    if (error) {
-      console.error("[verifyAccountOwnership] supabase error:", error);
-      return {
-        success: false,
-        message: "Failed to verify social account ownership.",
-        auditStatus: "error",
-      };
-    }
-
-    const ownedIds = new Set((ownedAccounts ?? []).map((a) => a.id));
-    const unownedIds = accountIds.filter((id) => !ownedIds.has(id));
-
-    if (unownedIds.length > 0) {
-      console.warn("[verifyAccountOwnership] unowned accounts:", unownedIds);
-      return {
-        success: false,
-        message: `You do not own the following social account(s): ${unownedIds.join(", ")}`,
-        auditStatus: "denied",
-        unownedIds,
-      };
-    }
-
-    return { success: true };
-  } catch (err) {
-    console.error("[verifyAccountOwnership] unexpected:", err);
-    return {
-      success: false,
-      message: "Failed to verify social account ownership.",
-      auditStatus: "error",
-    };
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Pinterest preflight
-// ---------------------------------------------------------------------------
-
-type PinterestFieldsCheckResult =
-  | { success: true }
-  | {
-      success: false;
-      message: string;
-      auditStatus: "denied";
-      invalidIndexes: number[];
-    };
-
-/**
- * Validates Pinterest-specific fields per post:
- *   - pinterest_board_id is required when platform = 'pinterest'
- *   - pinterest_* fields are only valid when platform = 'pinterest'
- */
-function validatePinterestFieldsPerPost(
-  posts: PostInput[]
-): PinterestFieldsCheckResult {
-  const invalidIndexes: number[] = [];
-  const reasons: string[] = [];
-
-  posts.forEach((post, i) => {
-    const hasPinterestField =
-      Boolean(post.pinterest_board_id) ||
-      Boolean(post.pinterest_board_name) ||
-      Boolean(post.pinterest_link);
-
-    if (post.platform === "pinterest" && !post.pinterest_board_id) {
-      invalidIndexes.push(i);
-      reasons.push(
-        `Post #${i}: pinterest_board_id is required for Pinterest.`
-      );
-      return;
-    }
-    if (post.platform !== "pinterest" && hasPinterestField) {
-      invalidIndexes.push(i);
-      reasons.push(
-        `Post #${i}: pinterest_* fields are only valid when platform = 'pinterest'.`
-      );
-    }
-  });
-
-  if (invalidIndexes.length > 0) {
-    return {
-      success: false,
-      message: reasons.join(" "),
-      auditStatus: "denied",
-      invalidIndexes,
-    };
-  }
-
-  return { success: true };
-}
-
-// ---------------------------------------------------------------------------
-// Insert helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Builds the insert row array. Pure; no DB calls or side effects.
- * Every row gets an idempotency_key of `${batchId}:${index}`.
- */
-function buildScheduledPostRows(
-  posts: PostInput[],
-  principalId: string,
-  batchId: string,
-  createdVia: CreatedVia
-): ScheduledPostInsertRow[] {
-  return posts.map((post, i) => {
-    const postOptions =
-      post.platform === "pinterest"
-        ? {
-            privacyLevel: "PUBLIC" as const,
-            board: post.pinterest_board_id ?? "",
-            link: post.pinterest_link ?? "",
-          }
-        : null;
-
-    return {
-      principal_id: principalId,
-      social_account_id: post.social_account_id,
-      platform: post.platform,
-      status: "scheduled" as const,
-      scheduled_at: new Date(post.scheduled_at).toISOString(),
-      post_title: post.title ?? "",
-      post_description: post.description,
-      post_options: postOptions,
-      media_type: post.post_type,
-      media_storage_path: post.media_storage_path,
-      cover_image_timestamp: null,
-      batch_id: batchId,
-      created_via: createdVia,
-      idempotency_key: `${batchId}:${i}`,
-    };
-  });
-}
-
-/**
- * Idempotent bulk insert using ON CONFLICT DO NOTHING on the partial
- * unique index (principal_id, idempotency_key).
- *
- * Returns inserted IDs in input order, plus which indexes were
- * idempotent skips (already existed from a prior call with the same
- * batch_id).
- */
-async function insertScheduledPostsIdempotent(
-  rows: ScheduledPostInsertRow[]
-): Promise<BulkInsertResult> {
-  try {
-    const { data: inserted, error } = await adminSupabase
-      .from("scheduled_posts")
-      .upsert(rows, {
-        onConflict: "principal_id,idempotency_key",
-        ignoreDuplicates: true,
-      })
-      .select("id, idempotency_key");
-
-    if (error) {
-      console.error("[insertScheduledPostsIdempotent] supabase error:", error);
-      return {
-        success: false,
-        message: `Bulk insert failed: ${error.message}`,
-        pgErrorCode: error.code ?? null,
-      };
-    }
-
-    const insertedRows = inserted ?? [];
-    const insertedKeySet = new Set(
-      insertedRows.map((r) => r.idempotency_key)
-    );
-
-    const allKeys = rows
-      .map((r) => r.idempotency_key)
-      .filter((k): k is string => k != null);
-    const skippedKeys = allKeys.filter((k) => !insertedKeySet.has(k));
-
-    const keyToId = new Map<string, string>();
-    for (const r of insertedRows) {
-      if (r.idempotency_key) {
-        keyToId.set(r.idempotency_key, r.id);
-      }
-    }
-
-    if (skippedKeys.length > 0) {
-      const { data: existing, error: fetchErr } = await adminSupabase
-        .from("scheduled_posts")
-        .select("id, idempotency_key")
-        .eq("principal_id", rows[0].principal_id)
-        .in("idempotency_key", skippedKeys);
-
-      if (fetchErr) {
-        console.error(
-          "[insertScheduledPostsIdempotent] fetch existing error:",
-          fetchErr
-        );
-        return {
-          success: false,
-          message: `Inserted some posts but failed to look up previously scheduled duplicates: ${fetchErr.message}`,
-          pgErrorCode: fetchErr.code ?? null,
-        };
-      }
-
-      for (const r of existing ?? []) {
-        if (r.idempotency_key) {
-          keyToId.set(r.idempotency_key, r.id);
-        }
-      }
-    }
-
-    const insertedIds: string[] = [];
-    const skippedIdempotentIndexes: number[] = [];
-    const skippedKeySet = new Set(skippedKeys);
-
-    for (let i = 0; i < rows.length; i++) {
-      const key = rows[i].idempotency_key;
-      insertedIds.push(key ? (keyToId.get(key) ?? "") : "");
-      if (key && skippedKeySet.has(key)) {
-        skippedIdempotentIndexes.push(i);
-      }
-    }
-
-    return { success: true, insertedIds, skippedIdempotentIndexes };
-  } catch (unexpected) {
-    console.error("[insertScheduledPostsIdempotent] unexpected:", unexpected);
-    return {
-      success: false,
-      message:
-        "Bulk insert failed unexpectedly. None of the posts were scheduled.",
-      pgErrorCode: null,
-    };
-  }
-}
-
-/**
- * Transforms a successful BulkInsertResult into per-post results.
- * Pure; only called when insertResult.success is true.
- */
-function buildPerPostResults(
-  posts: PostInput[],
-  _batchId: string,
-  insertResult: {
-    success: true;
-    insertedIds: string[];
-    skippedIdempotentIndexes: number[];
-  }
-): PerPostResult[] {
-  const skippedSet = new Set(insertResult.skippedIdempotentIndexes);
-  return posts.map((_, i) => ({
-    index: i,
-    success: true,
-    message: skippedSet.has(i)
-      ? "Already scheduled (idempotent retry)."
-      : "Scheduled.",
-    scheduleId: insertResult.insertedIds[i],
-  }));
-}
-
-// ---------------------------------------------------------------------------
-// Audit helpers
-// ---------------------------------------------------------------------------
-
-/** Records the final audit entry after insert (success or failure). */
-async function recordBulkScheduleAudit(
-  ctx: BulkScheduleContext,
-  batchId: string,
-  totalCount: number,
-  insertResult: BulkInsertResult
-): Promise<void> {
-  try {
-    await logToolCall({
-      principal: ctx.principal,
-      sessionId: ctx.sessionId,
-      toolName: "bulk_schedule",
-      args: {
-        count: totalCount,
-        batch_id: batchId,
-        ...(insertResult.success === false
-          ? { pg_error_code: insertResult.pgErrorCode }
-          : {}),
-      },
-      resultStatus: insertResult.success ? "ok" : "error",
-      latencyMs: Date.now() - ctx.startedAt,
-      ipHash: ctx.ipHash,
-      userAgent: ctx.userAgent,
-      clientName: ctx.clientName,
-      clientVersion: ctx.clientVersion,
-    });
-  } catch (err) {
-    console.error("[recordBulkScheduleAudit] unexpected:", err);
-  }
-}
-
-/** Records an audit entry when a preflight check denies the request. */
-async function recordPreflightDeny(
-  ctx: BulkScheduleContext,
-  denyResult: { auditStatus: "denied" | "quota_exceeded" | "error" },
-  totalCount: number
-): Promise<void> {
-  try {
-    await logToolCall({
-      principal: ctx.principal,
-      sessionId: ctx.sessionId,
-      toolName: "bulk_schedule",
-      args: { count: totalCount },
-      resultStatus: denyResult.auditStatus,
-      latencyMs: Date.now() - ctx.startedAt,
-      ipHash: ctx.ipHash,
-      userAgent: ctx.userAgent,
-      clientName: ctx.clientName,
-      clientVersion: ctx.clientVersion,
-    });
-  } catch (err) {
-    console.error("[recordPreflightDeny] unexpected:", err);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Response builders
-// ---------------------------------------------------------------------------
-
-function buildDenyResponse(message: string): McpToolResponse {
-  return {
-    content: [{ type: "text", text: message }],
-    isError: true,
-  };
-}
-
-function buildSuccessResponse(
-  batchId: string,
-  totalCount: number,
-  results: PerPostResult[]
-): McpToolResponse {
-  const succeeded = results.filter((r) => r.success).length;
-  const failed = results.filter((r) => !r.success).length;
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          {
-            batch_id: batchId,
-            total: totalCount,
-            succeeded,
-            failed,
-            results,
-          },
-          null,
-          2
-        ),
-      },
-    ],
-    isError: false,
-  };
-}
-
-function buildInsertFailureResponse(
-  batchId: string,
-  totalCount: number,
-  failureResult: { success: false; message: string }
-): McpToolResponse {
-  return {
-    content: [
-      {
-        type: "text",
-        text:
-          `Bulk insert failed for batch ${batchId}: ${failureResult.message}. ` +
-          `None of the ${totalCount} posts were scheduled. Safe to retry the ` +
-          `same batch_id; already-scheduled posts will not be duplicated.`,
-      },
-    ],
-    isError: true,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Registration
-// ---------------------------------------------------------------------------
-
-/**
- * Schedules up to 30 posts in a single call via one bulk insert.
+ * MCP tool: schedule up to 30 posts in a single bulk insert.
  *
  * Plan gate: Creator+
  * Tables touched: scheduled_posts (bulk upsert), social_accounts (ownership),
  *                 platform_quotas (daily cap check)
+ * Calls: src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
  *
- * Pre-flight checks (all via named helpers, errors-as-values):
- *   1. Entitlement: plan tier gate.
- *   2. Platform daily quota: counts scheduled_posts in the next 24h for each
- *      (principal, platform) pair against platform_quotas.daily_cap.
- *   3. Social account ownership: one query for all unique account IDs.
+ * Thin wrapper: entitlement check + audit log. All validation, ownership,
+ * platform quota, insert, and idempotency logic lives in the core.
  *
- * Idempotency: each row gets idempotency_key = `${batchId}:${index}`.
- * Retries with the same batch_id are no-ops at the DB layer via the
- * partial unique index idx_scheduled_posts_idempotency.
+ * Idempotency: if the agent supplies batch_id, each post gets
+ * idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id
+ * are no-ops via the partial unique index on (principal_id, idempotency_key).
  */
 export function registerBulkSchedule(server: McpServer): void {
   server.registerTool(
     "bulk_schedule",
     {
       title: "Bulk Schedule",
-      description:
-        `Schedule up to ${MAX_POSTS_PER_CALL} posts for future publishing. Requires Creator plan or higher. For Pinterest posts, include pinterest_board_id per post. For immediate multi-platform posting, use bulk_post_now.`,
+      description: `Schedule up to ${MAX_POSTS_PER_CALL} posts in a single call. Requires Creator plan or higher. Use this when cross-posting the same media to multiple accounts/platforms, or when scheduling a content series in one shot. For media posts, call attach_media_from_url first. For Pinterest entries, include pinterest_board_id per post. To make retries safe (recommended for agent flows), supply batch_id.`,
       inputSchema: {
         posts: z
           .array(postSchema)
           .min(1)
           .max(MAX_POSTS_PER_CALL)
-          .describe(`Array of posts to schedule (max ${MAX_POSTS_PER_CALL})`),
+          .describe(
+            `Array of posts to schedule (1 to ${MAX_POSTS_PER_CALL}). Each entry represents one post = one social account + one platform. To cross-post to N accounts, include N entries with the same media_storage_path.`,
+          ),
         batch_id: z
           .string()
+          .min(1)
+          .max(200)
           .optional()
-          .describe("Optional batch ID to group all posts in this call"),
+          .describe(
+            "Optional batch_id to group all posts in this call. When supplied, each post gets idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id are no-ops (already-scheduled posts will not be duplicated). Strongly recommended for agent retries after network errors.",
+          ),
       },
       annotations: {
         title: "Bulk Schedule",
@@ -679,59 +128,145 @@ export function registerBulkSchedule(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      const ctx = await buildBulkScheduleContext(extra);
+    async (toolArgs, extra) => {
+      const principal = extractPrincipal(extra);
+      const sessionId = extractSessionId(extra);
+      const ipHash = await extractIpHash();
+      const userAgent = await extractUserAgent();
+      const clientName = extractClientName(extra);
+      const clientVersion = extractClientVersion(extra);
+      const startTime = Date.now();
 
-      const entitlement = await checkBulkScheduleEntitlement(ctx);
-      if (entitlement.success === false) {
-        await recordPreflightDeny(ctx, entitlement, args.posts.length);
-        return buildDenyResponse(entitlement.message);
+      // Plan-tier gate (MCP-specific, separate from web's Clerk subscription).
+      const entitlement = await entitlementFor(principal, "bulk_schedule");
+      if (entitlement.mode === "deny") {
+        await logToolCall({
+          principal,
+          sessionId,
+          toolName: "bulk_schedule",
+          args: { count: toolArgs.posts.length },
+          resultStatus:
+            entitlement.reason === "platform_quota"
+              ? "quota_exceeded"
+              : "denied",
+          latencyMs: Date.now() - startTime,
+          ipHash,
+          userAgent,
+          clientName,
+          clientVersion,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
+            },
+          ],
+          isError: true,
+        };
       }
 
-      const platformQuota = await enforcePlatformDailyQuotas(ctx, args.posts);
-      if (platformQuota.success === false) {
-        await recordPreflightDeny(ctx, platformQuota, args.posts.length);
-        return buildDenyResponse(platformQuota.message);
-      }
+      // Shared batch_id for all posts in this call. Agent-supplied if present,
+      // else generated server-side.
+      const batchId = toolArgs.batch_id ?? generateBatchId();
+      const agentSuppliedBatchId = Boolean(toolArgs.batch_id);
 
-      const ownership = await verifyAccountOwnership(ctx, args.posts);
-      if (ownership.success === false) {
-        await recordPreflightDeny(ctx, ownership, args.posts.length);
-        return buildDenyResponse(ownership.message);
-      }
+      // Translate MCP input shape -> SchedulePostData shape.
+      const posts: SchedulePostData[] = toolArgs.posts.map(
+        (inputPost: BulkSchedulePostInput, postIndex: number) => {
+          const postOptions =
+            inputPost.platform === "pinterest"
+              ? {
+                  privacyLevel: "PUBLIC" as const,
+                  board_id: inputPost.pinterest_board_id ?? "",
+                  link: inputPost.pinterest_link ?? "",
+                }
+              : null;
 
-      const pinterestCheck = validatePinterestFieldsPerPost(args.posts);
-      if (pinterestCheck.success === false) {
-        await recordPreflightDeny(ctx, pinterestCheck, args.posts.length);
-        return buildDenyResponse(pinterestCheck.message);
-      }
-
-      const batchId = args.batch_id ?? generateBatchId();
-      const rows = buildScheduledPostRows(
-        args.posts,
-        ctx.principal.principalId,
-        batchId,
-        "mcp"
+          return {
+            socialAccountId: inputPost.social_account_id,
+            platform: inputPost.platform,
+            scheduledAt: inputPost.scheduled_at,
+            postType: inputPost.post_type,
+            title: inputPost.title ?? null,
+            description: inputPost.description,
+            mediaStoragePath: inputPost.media_storage_path,
+            postOptions,
+            batch_id: batchId,
+            // Derive per-post idempotency_key from agent batch_id for retry
+            // safety. If agent didn't supply batch_id, leave undefined and
+            // let core generate its own per-row keys.
+            idempotency_key: agentSuppliedBatchId
+              ? `${batchId}:${postIndex}`
+              : undefined,
+          };
+        },
       );
-      const insertOutcome = await insertScheduledPostsIdempotent(rows);
 
-      await recordBulkScheduleAudit(
-        ctx,
-        batchId,
-        args.posts.length,
-        insertOutcome
+      const scheduleResult = await schedulePostBatch(
+        posts,
+        principal.principalId,
+        "mcp",
       );
 
-      if (insertOutcome.success === false) {
-        return buildInsertFailureResponse(
-          batchId,
-          args.posts.length,
-          insertOutcome
-        );
+      await logToolCall({
+        principal,
+        sessionId,
+        toolName: "bulk_schedule",
+        args: {
+          count: toolArgs.posts.length,
+          batch_id: scheduleResult.batchId,
+        },
+        resultStatus: scheduleResult.success ? "ok" : "error",
+        latencyMs: Date.now() - startTime,
+        ipHash,
+        userAgent,
+        clientName,
+        clientVersion,
+      });
+
+      if (!scheduleResult.success) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: false,
+                  batch_id: scheduleResult.batchId,
+                  message: scheduleResult.message,
+                  details: scheduleResult.details,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          isError: true,
+        };
       }
 
-      const results = buildPerPostResults(args.posts, batchId, insertOutcome);
-      return buildSuccessResponse(batchId, args.posts.length, results);
-    }
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                success: true,
+                batch_id: scheduleResult.batchId,
+                total: scheduleResult.details.total,
+                inserted: scheduleResult.details.inserted,
+                duplicates: scheduleResult.details.duplicates,
+                rejected: scheduleResult.details.rejected,
+                schedule_ids: scheduleResult.scheduleIds,
+                message: scheduleResult.message,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    },
   );
 }

@@ -1,15 +1,20 @@
 // components/core/scheduled/PostsGrid.tsx
-import { getScheduledPostsGroupedByBatch } from "@/actions/server/scheduleActions/getScheduledPosts";
+import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
 import RateLimitError from "@/components/RateLimitError";
 import { SidebarGroup } from "@/components/ui/sidebar";
+import { ScheduledPost } from "@/lib/types/database.types";
 import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import NoData from "../posted/noData";
 import BatchedPostCard from "./BatchedPostCard";
 import EmptyContent from "./EmptyContent";
 
 export default async function PostsGrid() {
   const { userId } = await auth();
-  const postsResult = await getScheduledPostsGroupedByBatch(userId);
+  if (!userId) {
+    redirect("/sign-in");
+  }
+  const postsResult = await getScheduledPosts(userId, "web");
 
   // Handle rate limiting
   if (!postsResult.success && postsResult.resetIn) {
@@ -29,24 +34,29 @@ export default async function PostsGrid() {
   if (!postsResult.data || Object.keys(postsResult.data).length === 0) {
     return <EmptyContent />;
   }
-  const posts = postsResult.data;
-
-  // Get all batch IDs
-  const batchIds = Object.keys(posts);
-
-  const totalPosts = batchIds.reduce(
-    (sum, batchId) => sum + posts[batchId].length,
-    0
+  // Inline batch grouping (was getScheduledPostsGroupedByBatch)
+  const groupedPosts = postsResult.data.reduce(
+    (acc: Record<string, ScheduledPost[]>, post) => {
+      const batchId = post.batch_id || "no-batch";
+      if (!acc[batchId]) acc[batchId] = [];
+      acc[batchId].push(post);
+      return acc;
+    },
+    {},
   );
 
-  // In case there are batches but they're all empty
-  if (totalPosts === 0) {
+  const batchIds = Object.keys(groupedPosts);
+  if (batchIds.length === 0) {
     return <EmptyContent />;
   }
   return (
     <SidebarGroup className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {batchIds.map((batchId) => (
-        <BatchedPostCard key={batchId} posts={posts[batchId]} userId={userId} />
+        <BatchedPostCard
+          key={batchId}
+          posts={groupedPosts[batchId]}
+          userId={userId}
+        />
       ))}
     </SidebarGroup>
   );

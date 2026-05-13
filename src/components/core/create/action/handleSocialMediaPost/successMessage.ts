@@ -6,7 +6,7 @@ import { PlatformCounts } from "./handleSocialMediaPost";
 export function generateSuccessMessage(
   counts: PlatformCounts,
   isScheduled: boolean,
-  errorCount: number
+  errorCount: number,
 ): string {
   if (counts.total === 0) {
     return "No posts were processed successfully. Please check your account selections and try again.";

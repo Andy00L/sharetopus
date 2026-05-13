@@ -1,16 +1,23 @@
-import { z } from "zod";
+import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
+import {
+  extractClientName,
+  extractClientVersion,
+  extractIpHash,
+  extractPrincipal,
+  extractSessionId,
+  extractUserAgent,
+} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { getScheduledPostsInternal } from "@/actions/server/_internal/scheduleActions/getScheduledPosts";
-import { entitlementFor } from "../entitlement";
+import { z } from "zod";
 import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { entitlementFor } from "../entitlement";
 
 /**
  * Reads scheduled_posts rows owned by the calling principal.
  *
  * Plan gate: any active subscription.
  * Tables read: scheduled_posts, social_accounts (join).
- * Calls: src/actions/server/_internal/scheduleActions/getScheduledPosts.ts
+ * Calls: src/actions/server/scheduleActions/get/getScheduledPosts.ts
  *
  * Output is JSON.stringify of the rows. No free-form user text returned.
  */
@@ -69,12 +76,18 @@ export function registerListScheduledPosts(server: McpServer): void {
           clientVersion,
         });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
+          content: [
+            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+          ],
           isError: true,
         };
       }
 
-      const result = await getScheduledPostsInternal(principal.principalId, args);
+      const result = await getScheduledPosts(
+        principal.principalId,
+        "mcp",
+        args,
+      );
 
       await logToolCall({
         principal,
@@ -90,12 +103,17 @@ export function registerListScheduledPosts(server: McpServer): void {
       });
 
       if (!result.success) {
-        return { content: [{ type: "text", text: result.message }], isError: true };
+        return {
+          content: [{ type: "text", text: result.message }],
+          isError: true,
+        };
       }
 
       return {
-        content: [{ type: "text", text: JSON.stringify(result.data ?? [], null, 2) }],
+        content: [
+          { type: "text", text: JSON.stringify(result.data ?? [], null, 2) },
+        ],
       };
-    }
+    },
   );
 }

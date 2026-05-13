@@ -1,8 +1,8 @@
-import "server-only";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import type { SocialAccount } from "@/lib/types/dbTypes";
 import type { Platform } from "@/lib/types/database.types";
+import type { SocialAccount } from "@/lib/types/dbTypes";
+import "server-only";
 
 export type DirectPostScheduleResult = {
   success: boolean;
@@ -38,11 +38,11 @@ export type DirectPostPlatformAdapter<
     message?: string;
     error?: string;
     details?: unknown;
-  }
+  },
 > = {
   validate?: (
     passthrough: TPassthrough,
-    config: GenericDirectPostConfig
+    config: GenericDirectPostConfig,
   ) =>
     | Promise<DirectPostScheduleResult | null>
     | DirectPostScheduleResult
@@ -50,12 +50,12 @@ export type DirectPostPlatformAdapter<
 
   checkRateLimit?: (
     passthrough: TPassthrough,
-    config: GenericDirectPostConfig
+    config: GenericDirectPostConfig,
   ) => Promise<DirectPostScheduleResult | null>;
 
   preparePassthrough?: (
     passthrough: TPassthrough,
-    config: GenericDirectPostConfig
+    config: GenericDirectPostConfig,
   ) => Promise<
     | { success: true; passthrough: TPassthrough }
     | (DirectPostScheduleResult & { success: false })
@@ -64,13 +64,13 @@ export type DirectPostPlatformAdapter<
   call: (
     accessToken: string,
     passthrough: TPassthrough,
-    config: GenericDirectPostConfig
+    config: GenericDirectPostConfig,
   ) => Promise<TPostResult>;
 
   toHistoryFields: (
     postResult: TPostResult,
     passthrough: TPassthrough,
-    config: GenericDirectPostConfig
+    config: GenericDirectPostConfig,
   ) => {
     content_id: string;
     media_url: string | null;
@@ -80,7 +80,7 @@ export type DirectPostPlatformAdapter<
 
   onPostSuccess?: (
     ctx: DirectPostHookContext<TPostResult>,
-    passthrough: TPassthrough
+    passthrough: TPassthrough,
   ) => Promise<void>;
 };
 
@@ -94,11 +94,11 @@ export async function directPostForAccountsGeneric<
     message?: string;
     error?: string;
     details?: unknown;
-  }
+  },
 >(
   config: GenericDirectPostConfig,
   passthrough: TPassthrough,
-  adapter: DirectPostPlatformAdapter<TPassthrough, TPostResult>
+  adapter: DirectPostPlatformAdapter<TPassthrough, TPostResult>,
 ): Promise<DirectPostScheduleResult> {
   const {
     logPrefix,
@@ -156,9 +156,7 @@ export async function directPostForAccountsGeneric<
 
     const validToken = await ensureValidToken(account);
     if (!validToken.success || !validToken.token) {
-      console.error(
-        `${logPrefix} Invalid token for account ${account.id}`
-      );
+      console.error(`${logPrefix} Invalid token for account ${account.id}`);
       return {
         success: false,
         count: 0,
@@ -167,17 +165,17 @@ export async function directPostForAccountsGeneric<
     }
 
     console.log(
-      `${logPrefix} Posting to account: ${account.username ?? account.id}`
+      `${logPrefix} Posting to account: ${account.username ?? account.id}`,
     );
 
     const postResult = await adapter.call(
       validToken.token,
       activePassthrough,
-      config
+      config,
     );
 
     console.log(
-      `========== ${platform.toUpperCase()} POST RESPONSE (${account.username ?? account.id}) ==========`
+      `========== ${platform.toUpperCase()} POST RESPONSE (${account.username ?? account.id}) ==========`,
     );
     console.log("Success:", postResult.success);
     if (postResult.publishId) console.log("Publish ID:", postResult.publishId);
@@ -201,7 +199,7 @@ export async function directPostForAccountsGeneric<
     const historyFields = adapter.toHistoryFields(
       postResult,
       activePassthrough,
-      config
+      config,
     );
 
     const historyResult = await storeContentHistory(
@@ -219,14 +217,10 @@ export async function directPostForAccountsGeneric<
         extra: historyFields.extra,
         created_via: config.createdVia,
       },
-      userId
+      userId,
     );
 
     if (!historyResult.success) {
-      console.error(
-        `${logPrefix} Failed to save history:`,
-        historyResult.message
-      );
       return {
         success: false,
         count: 0,
@@ -234,20 +228,16 @@ export async function directPostForAccountsGeneric<
       };
     }
 
-    console.log(
-      `${logPrefix} Successfully posted to account and saved to history`
-    );
-
     if (adapter.onPostSuccess) {
       try {
         await adapter.onPostSuccess(
           { postResult, historyResult, config },
-          activePassthrough
+          activePassthrough,
         );
       } catch (hookErr) {
         console.error(
           `${logPrefix} onPostSuccess hook threw (post still succeeded):`,
-          hookErr instanceof Error ? hookErr.message : hookErr
+          hookErr instanceof Error ? hookErr.message : hookErr,
         );
       }
     }
@@ -260,7 +250,7 @@ export async function directPostForAccountsGeneric<
   } catch (error) {
     console.error(
       `${logPrefix} Unexpected error for account ${account?.id}:`,
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     return {
       success: false,

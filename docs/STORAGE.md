@@ -14,6 +14,7 @@ Media files (images and videos) are stored in Supabase Storage. Three upload pat
 - `attach_media_from_url`: `{principalId}/{timestamp}_{filename}`
 
 The `principalId` is the Clerk user ID (e.g., `user_2abc123def456`). Example paths:
+
 - `user_2abc123def456/a1b2c3d4-e5f6-7890-abcd-ef1234567890.mp4`
 - `user_2abc123def456/1715400000000_photo.jpg`
 
@@ -92,6 +93,7 @@ flowchart TD
 `src/app/api/media/route.ts` provides HMAC-signed media URLs for TikTok's pull model. TikTok requires a publicly accessible URL to fetch media from, and the proxy provides one without exposing storage credentials.
 
 Security checks:
+
 1. Query parameter validation (path, expiry, signature)
 2. Expiry timestamp check
 3. HMAC-SHA256 signature verification using `MEDIA_PROXY_HMAC_SECRET`
@@ -104,27 +106,27 @@ The proxy streams the file from Supabase (does not redirect) and sets `Cache-Con
 
 ### Allowed content types
 
-| Category | MIME Types |
-|----------|-----------|
-| Image | `image/jpeg`, `image/png` |
-| Video | `video/mp4`, `video/mov`, `video/quicktime` |
+| Category | MIME Types                                  |
+| -------- | ------------------------------------------- |
+| Image    | `image/jpeg`, `image/png`                   |
+| Video    | `video/mp4`, `video/mov`, `video/quicktime` |
 
 `attach_media_from_url` additionally allows: `image/gif`, `image/webp`, `video/webm`.
 
 ### Per-file size limits (all plans)
 
-| Type | Max Size |
-|------|----------|
-| Image | 8 MB |
-| Video | 250 MB |
+| Type  | Max Size |
+| ----- | -------- |
+| Image | 8 MB     |
+| Video | 250 MB   |
 
 ### Storage quotas by plan
 
-| Plan | Storage Limit |
-|------|--------------|
-| Starter | 5 GB |
-| Creator | 15 GB |
-| Pro | 45 GB |
+| Plan    | Storage Limit |
+| ------- | ------------- |
+| Starter | 5 GB          |
+| Creator | 15 GB         |
+| Pro     | 45 GB         |
 
 Defined in `src/lib/types/plans.ts` as `STORAGE_LIMITS` keyed by Stripe price ID. Unknown price IDs fall back to 5 GB.
 
@@ -136,10 +138,10 @@ Both the web upload path (`generateServerSignedUploadUrl`) and MCP `attach_media
 
 The `sweep-orphan-storage-files` Inngest cron runs daily at 03:00 UTC. It identifies and deletes files older than 24 hours that are not referenced by any of 4 tables:
 
-| Table | Column |
-|-------|--------|
-| `scheduled_posts` | `media_storage_path` |
-| `failed_posts` | `media_storage_path` |
+| Table                  | Column               |
+| ---------------------- | -------------------- |
+| `scheduled_posts`      | `media_storage_path` |
+| `failed_posts`         | `media_storage_path` |
 | `pending_tiktok_pulls` | `media_storage_path` |
 | `pending_direct_posts` | `media_storage_path` |
 
@@ -153,7 +155,7 @@ See [docs/INNGEST.md](./INNGEST.md) for full details.
 
 ## Reference-aware cleanup
 
-Outside the orphan sweep, files are deleted individually by `deleteSupabaseFileActionInternal` (called when deleting scheduled posts or disconnecting accounts). Before deleting, it checks all 4 reference tables:
+Outside the orphan sweep, files are deleted individually by `deleteSupabaseFile` (called when deleting scheduled posts or disconnecting accounts). Before deleting, it checks all 4 reference tables:
 
 - `scheduled_posts` where status in (scheduled, processing)
 - `failed_posts`
@@ -166,9 +168,9 @@ If any reference exists, the file is preserved. On database error during the che
 
 TikTok uses a pull model where TikTok's servers fetch media from a URL provided by Sharetopus. Two modes are supported via `TIKTOK_MEDIA_SOURCE` env var:
 
-| Mode | Env Value | How It Works |
-|------|-----------|-------------|
-| Proxy (default) | `proxy` | Media served through `/api/media` with HMAC signature. Requires `MEDIA_PROXY_HMAC_SECRET`. |
+| Mode            | Env Value         | How It Works                                                                               |
+| --------------- | ----------------- | ------------------------------------------------------------------------------------------ |
+| Proxy (default) | `proxy`           | Media served through `/api/media` with HMAC signature. Requires `MEDIA_PROXY_HMAC_SECRET`. |
 | Direct Supabase | `supabase_direct` | Direct Supabase Storage URL with custom domain. Requires `SUPABASE_CUSTOM_STORAGE_DOMAIN`. |
 
 The proxy mode is the default and works without additional infrastructure. The direct mode avoids the proxy hop but requires a custom storage domain configured in Supabase.

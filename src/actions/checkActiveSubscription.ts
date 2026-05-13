@@ -32,7 +32,7 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
     if (error) {
       console.error(
         `[checkActiveSubscription] Supabase query error User: ${userId}:`,
-        error
+        error,
       );
       return {
         success: false,
