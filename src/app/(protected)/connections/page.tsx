@@ -25,10 +25,10 @@ const AccountsPageWithData = async () => {
     redirect("/sign-in");
   }
   const subscriptionCheck = await checkActiveSubscription(userId);
-  if (!subscriptionCheck.isActive || !subscriptionCheck.success) {
+  if (!subscriptionCheck.isActive) {
     return <SubscriptionPrompt />;
   }
-  const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.plan);
+  const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
 
   const fetchResult = await fetchSocialAccounts(userId, "web", false);

@@ -21,7 +21,7 @@ export async function POST() {
 
     // Check subscription status
     const subscriptionCheck = await checkActiveSubscription(userId);
-    if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
+    if (!subscriptionCheck.isActive) {
       return NextResponse.json(
         { success: false, message: "Abonnement actif requis" },
         { status: 403 }
@@ -31,7 +31,7 @@ export async function POST() {
     // Check account limits
     const limitsCheck = await checkAccountLimits(
       userId,
-      subscriptionCheck.plan
+      subscriptionCheck.tier,
     );
 
     if (!limitsCheck.success) {

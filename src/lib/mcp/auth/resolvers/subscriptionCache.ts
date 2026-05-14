@@ -36,7 +36,7 @@ const CACHE_TTL_MS = 60_000;
 
 type SubscriptionCacheEntry = {
   isActive: boolean;
-  plan: PlanTier;
+  plan: PlanTier | null;
   priceId: string | null;
   expiresAt: number;
 };

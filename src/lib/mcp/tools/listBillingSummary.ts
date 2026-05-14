@@ -101,7 +101,9 @@ export function registerListBillingSummary(server: McpServer): void {
                 subscription: subscriptionResult.subscription
                   ? {
                       plan_tier: ctx.principal.plan,
-                      plan_label: tierLabel(ctx.principal.plan),
+                      plan_label: ctx.principal.plan
+                        ? tierLabel(ctx.principal.plan)
+                        : "None",
                       price_id: subscriptionResult.subscription.plan,
                       status: subscriptionResult.subscription.status,
                       start_date: subscriptionResult.subscription.start_date,

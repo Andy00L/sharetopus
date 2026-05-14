@@ -1,13 +1,13 @@
 import {
   DEFAULT_UPLOAD_LIMITS,
-  PRICE_ID_UPLOAD_LIMITS,
+  TIER_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
 
 // Largest video upload any plan allows (in MB). Used to compute how
 // many concurrent workers can run without exceeding the Vercel
 // function memory ceiling.
 const MAX_VIDEO_MB = Math.max(
-  ...Object.values(PRICE_ID_UPLOAD_LIMITS).map((l) => l.video),
+  ...Object.values(TIER_UPLOAD_LIMITS).map((l) => l.video),
   DEFAULT_UPLOAD_LIMITS.video,
 );
 

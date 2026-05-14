@@ -84,7 +84,7 @@ export function registerRequestUploadUrl(server: McpServer): void {
 
         const uploadUrlResult = await generateServerSignedUploadUrl({
           principalId: ctx.principal.principalId,
-          priceId: ctx.principal.priceId,
+          tier: ctx.principal.plan,
           filename: args.filename,
           contentType: args.content_type,
           fileSize: args.size_bytes,

@@ -1,6 +1,6 @@
 import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { STORAGE_LIMITS, DEFAULT_STORAGE_LIMIT } from "@/lib/types/plans";
+import { TIER_STORAGE_LIMITS, DEFAULT_STORAGE_LIMIT, type PlanTier } from "@/lib/types/plans";
 
 const BUCKET = "scheduled-videos";
 
@@ -29,13 +29,12 @@ export type StorageQuotaResult = StorageQuotaOk | StorageQuotaErr;
  */
 export async function enforceStorageQuota(
   principalId: string,
-  priceId: string | null,
+  tier: PlanTier | null,
   additionalBytes: number,
 ): Promise<StorageQuotaResult> {
-  const cap =
-    priceId && STORAGE_LIMITS[priceId]
-      ? STORAGE_LIMITS[priceId]
-      : DEFAULT_STORAGE_LIMIT;
+  const cap = tier !== null
+    ? TIER_STORAGE_LIMITS[tier]
+    : DEFAULT_STORAGE_LIMIT;
 
   const { data, error } = await adminSupabase.rpc("get_user_storage_bytes", {
     _bucket: BUCKET,

@@ -1,6 +1,6 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import { PRICE_ID_UPLOAD_LIMITS } from "@/components/core/create/constants/uploadLimits";
+import { TIER_UPLOAD_LIMITS } from "@/components/core/create/constants/uploadLimits";
 import SocialPostForm from "@/components/core/create/SocialPostForm/SocialPostForm";
 import RateLimitError from "@/components/RateLimitError";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
@@ -18,7 +18,7 @@ async function SocialPostFormWithData() {
 
   const subscriptionInfo = await checkActiveSubscription(userId);
 
-  if (!subscriptionInfo.isActive || !subscriptionInfo.plan) {
+  if (!subscriptionInfo.isActive || !subscriptionInfo.tier) {
     redirect("/create");
   }
 
@@ -28,14 +28,14 @@ async function SocialPostFormWithData() {
     return <RateLimitError resetIn={accounts.resetIn} />;
   }
 
-  const uploadLimits = PRICE_ID_UPLOAD_LIMITS[subscriptionInfo.plan];
+  const uploadLimits = TIER_UPLOAD_LIMITS[subscriptionInfo.tier];
 
   return (
     <SocialPostForm
       accounts={accounts.data ?? []}
       uploadLimits={uploadLimits}
       userId={userId}
-      planId={subscriptionInfo.plan}
+      planId={subscriptionInfo.plan ?? undefined}
       postType="image"
     />
   );

@@ -38,31 +38,29 @@ type EntitlementDenyReason =
  * new tool name without adding a tier here is a build error, which is
  * exactly the safety net we want.
  *
- * Tier policy:
- *   - "free": read-only metadata tools (list_*, request_account_reauth_link)
- *   - "starter": write tools that hit external APIs (schedule, post, media)
- *   - "creator": batch tools and analytics
- *   - "pro": AI-assisted draft generation (uses client-side sampling)
+ * Policy: MCP access requires Creator tier or higher. Starter users
+ * have zero MCP access. The map stays for future granularity but
+ * uniformly demands Creator minimum today.
  */
 const ACTION_PLAN_GATE: Record<McpToolName, PlanTier> = {
-  list_connections: "free",
-  list_pinterest_boards: "free",
-  list_scheduled_posts: "free",
-  list_content_history: "free",
-  list_billing_summary: "free",
-  request_account_reauth_link: "free",
-  attach_media_from_url: "starter",
-  request_upload_url: "starter",
-  schedule_post: "starter",
-  post_now: "starter",
-  cancel_scheduled_posts: "starter",
-  resume_scheduled_posts: "starter",
-  reschedule_posts: "starter",
-  delete_scheduled_posts: "starter",
-  bulk_schedule: "creator",
-  bulk_post_now: "creator",
-  get_account_analytics: "creator",
-  generate_post_draft: "pro",
+  list_connections:            "creator",
+  list_pinterest_boards:       "creator",
+  list_scheduled_posts:        "creator",
+  list_content_history:        "creator",
+  list_billing_summary:        "creator",
+  request_account_reauth_link: "creator",
+  attach_media_from_url:       "creator",
+  request_upload_url:          "creator",
+  schedule_post:               "creator",
+  post_now:                    "creator",
+  cancel_scheduled_posts:      "creator",
+  resume_scheduled_posts:      "creator",
+  reschedule_posts:            "creator",
+  delete_scheduled_posts:      "creator",
+  bulk_schedule:               "creator",
+  bulk_post_now:               "creator",
+  get_account_analytics:       "creator",
+  generate_post_draft:         "creator",
 };
 
 /**
@@ -86,13 +84,13 @@ const ACTION_PLAN_GATE: Record<McpToolName, PlanTier> = {
 const MONTHLY_CAPS: Partial<
   Record<McpToolName, Record<PlanTier, number | null>>
 > = {
-  schedule_post: { free: 10, starter: 100, creator: 500, pro: null },
-  post_now: { free: 0, starter: 100, creator: 500, pro: null },
-  request_upload_url: { free: 0, starter: 100, creator: 500, pro: null },
-  attach_media_from_url: { free: 0, starter: 100, creator: 500, pro: null },
-  bulk_schedule: { free: 0, starter: 0, creator: 200, pro: null },
-  bulk_post_now: { free: 0, starter: 0, creator: 500, pro: null },
-  generate_post_draft: { free: 0, starter: 0, creator: 0, pro: 100 },
+  schedule_post:         { starter: 0, creator: 500, pro: null },
+  post_now:              { starter: 0, creator: 500, pro: null },
+  request_upload_url:    { starter: 0, creator: 500, pro: null },
+  attach_media_from_url: { starter: 0, creator: 500, pro: null },
+  bulk_schedule:         { starter: 0, creator: 200, pro: null },
+  bulk_post_now:         { starter: 0, creator: 500, pro: null },
+  generate_post_draft:   { starter: 0, creator: 100, pro: null },
 };
 
 /**
@@ -143,7 +141,7 @@ function checkTierGate(
   if (tierMeets(principal.plan, required)) return { mode: "allow" };
   return {
     mode: "deny",
-    reason: principal.plan === "free" ? "no_subscription" : "plan_too_low",
+    reason: principal.plan === null ? "no_subscription" : "plan_too_low",
     detail: buildTierDenyMessage(action, required, principal.plan),
   };
 }
@@ -156,9 +154,9 @@ function checkTierGate(
 function buildTierDenyMessage(
   action: McpToolName,
   required: PlanTier,
-  actual: PlanTier,
+  actual: PlanTier | null,
 ): string {
-  if (actual === "free") {
+  if (actual === null) {
     return (
       `Action "${action}" requires the ${tierLabel(required)} ` +
       `plan or higher. You do not have an active subscription.`
@@ -185,6 +183,14 @@ async function checkAndIncrementQuota(
 ): Promise<EntitlementResult> {
   const caps = MONTHLY_CAPS[action];
   if (!caps) return { mode: "allow" };
+
+  if (principal.plan === null) {
+    return {
+      mode: "deny",
+      reason: "no_subscription",
+      detail: `Action "${action}" requires an active subscription.`,
+    };
+  }
 
   const cap = caps[principal.plan];
   if (cap === 0) {

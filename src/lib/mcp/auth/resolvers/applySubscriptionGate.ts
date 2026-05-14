@@ -1,7 +1,6 @@
 import "server-only";
 
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { priceIdToTier } from "@/lib/types/plans";
 
 import type { McpPrincipal } from "../types";
 import {
@@ -40,7 +39,7 @@ export async function applySubscriptionGate(
       // subscription.created.
       setCachedSubscription(candidate.principalId, {
         isActive: false,
-        plan: "free",
+        plan: null,
         priceId: null,
       });
       console.log(
@@ -49,17 +48,14 @@ export async function applySubscriptionGate(
       return null;
     }
 
-    const resolvedTier = priceIdToTier(sub.plan);
-    const resolvedPriceId = sub.plan ?? null;
-
     setCachedSubscription(candidate.principalId, {
       isActive: true,
-      plan: resolvedTier,
-      priceId: resolvedPriceId,
+      plan: sub.tier,
+      priceId: sub.plan ?? null,
     });
 
-    candidate.priceId = resolvedPriceId;
-    candidate.plan = resolvedTier;
+    candidate.priceId = sub.plan ?? null;
+    candidate.plan = sub.tier;
     return candidate;
   } catch (err) {
     // Errors are NOT cached. A transient DB blip should retry next

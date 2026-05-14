@@ -6,10 +6,11 @@ import {
   ALLOWED_VIDEO_TYPES,
 } from "@/components/core/create/constants/constants";
 import {
-  PRICE_ID_UPLOAD_LIMITS,
+  TIER_UPLOAD_LIMITS,
   DEFAULT_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
+import type { PlanTier } from "@/lib/types/plans";
 import { randomUUID } from "crypto";
 
 /**
@@ -24,7 +25,7 @@ const ALLOWED_UPLOAD_TYPES: ReadonlyArray<string> = [
 
 export interface GenerateUploadUrlInput {
   principalId: string;
-  priceId: string | null;
+  tier: PlanTier | null;
   filename: string;
   contentType: string;
   fileSize: number;
@@ -64,7 +65,7 @@ export interface GenerateUploadUrlResult {
  *   1. Input fields present and valid
  *   2. Bucket env configured
  *   3. Content type in allow-list
- *   4. Per-file size cap (from PRICE_ID_UPLOAD_LIMITS)
+ *   4. Per-file size cap (from TIER_UPLOAD_LIMITS)
  *   5. Storage quota (via enforceStorageQuota RPC, when countTowardStorage)
  *   6. Mint signed upload URL via adminSupabase
  */
@@ -108,12 +109,13 @@ export async function generateServerSignedUploadUrl(
     };
   }
 
-  // 4. Per-file size cap (image vs video, per-plan)
+  // 4. Per-file size cap (image vs video, per-tier)
   const mediaKind: "image" | "video" = input.contentType.startsWith("image/")
     ? "image"
     : "video";
-  const limits =
-    PRICE_ID_UPLOAD_LIMITS[input.priceId ?? ""] ?? DEFAULT_UPLOAD_LIMITS;
+  const limits = input.tier !== null
+    ? TIER_UPLOAD_LIMITS[input.tier]
+    : DEFAULT_UPLOAD_LIMITS;
   const capMB = mediaKind === "image" ? limits.image : limits.video;
   const capBytes = capMB * 1024 * 1024;
 
@@ -129,7 +131,7 @@ export async function generateServerSignedUploadUrl(
   if (input.countTowardStorage) {
     const check = await enforceStorageQuota(
       input.principalId,
-      input.priceId,
+      input.tier,
       input.fileSize,
     );
     if (!check.success) {

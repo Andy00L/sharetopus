@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Subscription check
     const subscriptionCheck = await checkActiveSubscription(userId);
-    if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
+    if (!subscriptionCheck.isActive) {
       return NextResponse.json(
         { success: false, message: "Abonnement actif requis" },
         { status: 403 }
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     // 4. Delegate to shared helper
     const result = await generateServerSignedUploadUrl({
       principalId: userId,
-      priceId: subscriptionCheck.plan ?? null,
+      tier: subscriptionCheck.tier,
       filename,
       contentType,
       fileSize,

@@ -32,7 +32,7 @@ export async function POST() {
       subscriptionCheck
     );
 
-    if (!subscriptionCheck.success || !subscriptionCheck.isActive) {
+    if (!subscriptionCheck.isActive) {
       return NextResponse.json(
         { success: false, message: "Abonnement actif requis" },
         { status: 403 }
@@ -44,7 +44,7 @@ export async function POST() {
 
     const limitsCheck = await checkAccountLimits(
       userId,
-      subscriptionCheck.plan
+      subscriptionCheck.tier,
     );
     console.log("[Linkedin Initiate route] Limits check result:", limitsCheck);
 

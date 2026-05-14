@@ -55,14 +55,14 @@ export async function resolveMcpPrincipal(
   if (!verifiedToken) return null;
 
   // Build a candidate McpPrincipal for the subscription gate. Plan
-  // starts at "free" and gets overwritten inside applySubscriptionGate
+  // starts at null and gets overwritten inside applySubscriptionGate
   // once the active row is found.
   const oauthCandidate: McpPrincipal = {
     kind: "oauth",
     principalId: verifiedToken.principalId,
     oauthClientId: verifiedToken.oauthClientId,
     scopes: verifiedToken.scopes,
-    plan: "free",
+    plan: null,
     priceId: null,
   };
 

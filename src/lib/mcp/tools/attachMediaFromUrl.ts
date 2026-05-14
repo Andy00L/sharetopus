@@ -96,7 +96,7 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         }
 
         // Per-user upload size caps (MB -> bytes).
-        const uploadLimits = getUploadLimitsForPrincipal(ctx.principal.priceId);
+        const uploadLimits = getUploadLimitsForPrincipal(ctx.principal.plan);
         const maxBytes =
           Math.max(uploadLimits.image, uploadLimits.video) * 1024 * 1024;
 
@@ -147,7 +147,7 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         // Aggregate storage quota check (after download, before upload).
         const quotaResult = await enforceStorageQuota(
           ctx.principal.principalId,
-          ctx.principal.priceId,
+          ctx.principal.plan,
           fetchResult.bytes.length,
         );
         if (!quotaResult.success) {

@@ -9,7 +9,7 @@ export type McpPrincipal =
       principalId: string;
       apiKeyId: string;
       scopes: string[];
-      plan: PlanTier;
+      plan: PlanTier | null;
       priceId: string | null;
       oauthClientId?: undefined;
     }
@@ -18,7 +18,7 @@ export type McpPrincipal =
       principalId: string;
       oauthClientId: string;
       scopes: string[];
-      plan: PlanTier;
+      plan: PlanTier | null;
       priceId: string | null;
       apiKeyId?: undefined;
     };

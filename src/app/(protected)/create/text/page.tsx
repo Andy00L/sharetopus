@@ -17,7 +17,7 @@ async function SocialPostFormWithData() {
 
   const subscriptionInfo = await checkActiveSubscription(userId);
 
-  if (!subscriptionInfo.isActive || !subscriptionInfo.plan) {
+  if (!subscriptionInfo.isActive || !subscriptionInfo.tier) {
     redirect("/create");
   }
 
@@ -32,7 +32,7 @@ async function SocialPostFormWithData() {
       accounts={accounts.data ?? []}
       userId={userId}
       postType="text"
-      planId={subscriptionInfo.plan}
+      planId={subscriptionInfo.plan ?? undefined}
     />
   );
 }

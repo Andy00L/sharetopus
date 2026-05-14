@@ -94,7 +94,7 @@ export async function resolveApiKey(
     principalId: apiKeyRow.principal_id,
     apiKeyId: apiKeyRow.id,
     scopes: apiKeyRow.scopes ?? [],
-    plan: "free",
+    plan: null,
     priceId: null,
   };
 }

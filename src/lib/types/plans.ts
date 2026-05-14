@@ -139,93 +139,22 @@ const prodPlanPrices = [
 // Export the right array based on environment
 export const planPrices = isProd ? prodPlanPrices : devPlanPrices;
 
-// Same for the account limits
-const devPriceIdAccountLimits: Record<string, number> = {
-  // Starter plan - 5 accounts
-  price_1RKr9JCZd1WOWtsDVHl5MsP6: 5, // Monthly
-  price_1RKrGNCZd1WOWtsDcU2r7iNf: 5, // Yearly
-
-  // Creator plan - 15 accounts
-  price_1RKrAsCZd1WOWtsDt1phjbgI: 15, // Monthly
-  price_1RKrGiCZd1WOWtsDOOQ4l3wH: 15, // Yearly
-
-  // Pro plan - Unlimited (use a very high number)
-  price_1RKrCRCZd1WOWtsDRzjqHluX: 999, // Monthly
-  price_1RKrGyCZd1WOWtsD2avrk52o: 999, // Yearly
-
-  // Temporary dev test plan - 5 accounts
-  price_1TBCLaCyG8V2WH2Ff8AhK1zC: 5,
+// Tier-keyed storage limits in bytes.
+export const TIER_STORAGE_LIMITS: Record<PlanTier, number> = {
+  starter: 5  * 1024 * 1024 * 1024,
+  creator: 15 * 1024 * 1024 * 1024,
+  pro:     45 * 1024 * 1024 * 1024,
 };
 
-const prodPriceIdAccountLimits: Record<string, number> = {
-  // Starter plan - 5 accounts
-  price_1RNMXJCyG8V2WH2FUpSI7VJt: 5, // Monthly
-  price_1RNMXJCyG8V2WH2FLLApU9iL: 5, // Yearly
-
-  // Creator plan - 15 accounts
-  price_1RNMXHCyG8V2WH2Fq3TC2YwY: 15, // Monthly
-  price_1RNMXHCyG8V2WH2FJJWCcCk4: 15, // Yearly
-
-  // Pro plan - Unlimited
-  price_1RNMXECyG8V2WH2FxDDhYNy8: 999, // Monthly
-  price_1RNMXDCyG8V2WH2Fz1ae60z4: 999, // Yearly
-};
-
-// Storage limits in bytes
-export const PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
-  // Starter plan - 5GB storage
-  price_1RNMXJCyG8V2WH2FUpSI7VJt: 5 * 1024 * 1024 * 1024,
-  price_1RNMXJCyG8V2WH2FLLApU9iL: 5 * 1024 * 1024 * 1024,
-
-  // Creator plan - 15GB storage
-  price_1RNMXHCyG8V2WH2Fq3TC2YwY: 15 * 1024 * 1024 * 1024,
-  price_1RNMXHCyG8V2WH2FJJWCcCk4: 15 * 1024 * 1024 * 1024,
-
-  // Pro plan - 45GB storage
-  price_1RNMXECyG8V2WH2FxDDhYNy8: 45 * 1024 * 1024 * 1024,
-  price_1RNMXDCyG8V2WH2Fz1ae60z4: 45 * 1024 * 1024 * 1024,
-};
-
-// Dev environment storage limits
-const DEV_PRICE_ID_STORAGE_LIMITS: Record<string, number> = {
-  // Dev Starter plan - 5GB storage
-  price_1RKr9JCZd1WOWtsDVHl5MsP6: 5 * 1024 * 1024 * 1024,
-  price_1RKrGNCZd1WOWtsDcU2r7iNf: 5 * 1024 * 1024 * 1024,
-
-  // Dev Creator plan - 15GB storage
-  price_1RKrAsCZd1WOWtsDt1phjbgI: 15 * 1024 * 1024 * 1024,
-  price_1RKrGiCZd1WOWtsDOOQ4l3wH: 15 * 1024 * 1024 * 1024,
-
-  // Dev Pro plan - 45GB storage
-  price_1RKrCRCZd1WOWtsDRzjqHluX: 45 * 1024 * 1024 * 1024,
-  price_1RKrGyCZd1WOWtsD2avrk52o: 45 * 1024 * 1024 * 1024,
-
-  // Temporary dev test plan - 5GB storage
-  price_1TBCLaCyG8V2WH2Ff8AhK1zC: 5 * 1024 * 1024 * 1024,
-};
-
-// Export based on environment
-export const STORAGE_LIMITS: Record<string, number> = isProd
-  ? PRICE_ID_STORAGE_LIMITS
-  : DEV_PRICE_ID_STORAGE_LIMITS;
-
-// Default storage limit for unknown/missing price IDs (most restrictive tier)
+// Fallback for users with no resolvable tier (most restrictive cap).
 export const DEFAULT_STORAGE_LIMIT: number = 5 * 1024 * 1024 * 1024; // 5 GB
-
-// Export the right account limits based on environment
-export const PRICE_ID_ACCOUNT_LIMITS: Record<string, number> = isProd
-  ? prodPriceIdAccountLimits
-  : devPriceIdAccountLimits;
-
-// Default limit for unknown subscription IDs
-export const DEFAULT_ACCOUNT_LIMIT = 0;
 
 /**
  * Tier hierarchy used by MCP entitlement gates and any other code
  * that needs to compare plan levels. Order is rank: higher index
  * grants access to lower-rank actions.
  */
-export const TIER_RANK = ["free", "starter", "creator", "pro"] as const;
+export const TIER_RANK = ["starter", "creator", "pro"] as const;
 export type PlanTier = (typeof TIER_RANK)[number];
 
 /**
@@ -263,20 +192,20 @@ const PRICE_ID_TO_TIER: Record<string, PlanTier> = buildPriceIdToTierMap();
 
 /**
  * Resolve a Stripe price ID to a plan tier.
- * Returns "free" for null or unknown IDs (fail-closed default).
+ * Returns null for null or unknown IDs (fail-closed).
  * Logs unknown non-null IDs because they indicate config drift
  * between Stripe and planPrices.
  */
-export function priceIdToTier(priceId: string | null): PlanTier {
-  if (priceId === null) return "free";
+export function priceIdToTier(priceId: string | null): PlanTier | null {
+  if (priceId === null) return null;
   const tier = PRICE_ID_TO_TIER[priceId];
   if (tier === undefined) {
     console.error(
       `[plans.priceIdToTier] Unknown Stripe price ID "${priceId}". ` +
         `Add it to planPrices or stripe_subscriptions has stale data. ` +
-        `Defaulting to "free".`,
+        `Returning null.`,
     );
-    return "free";
+    return null;
   }
   return tier;
 }
@@ -284,7 +213,8 @@ export function priceIdToTier(priceId: string | null): PlanTier {
 /**
  * True iff actual tier meets or exceeds required tier.
  */
-export function tierMeets(actual: PlanTier, required: PlanTier): boolean {
+export function tierMeets(actual: PlanTier | null, required: PlanTier): boolean {
+  if (actual === null) return false;
   return TIER_RANK.indexOf(actual) >= TIER_RANK.indexOf(required);
 }
 
@@ -296,7 +226,6 @@ export function tierLabel(tier: PlanTier): string {
 }
 
 export const TIER_ACCOUNT_LIMITS: Record<PlanTier, number> = {
-  free: 0,
   starter: 5,
   creator: 15,
   pro: Number.POSITIVE_INFINITY,
