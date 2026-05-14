@@ -1,53 +1,103 @@
 # MCP Server
 
-Sharetopus exposes an MCP server via two transports:
+Sharetopus exposes an MCP server that lets AI agents (Claude Desktop, Cursor, ChatGPT) schedule posts, manage content, and query analytics on behalf of authenticated subscribers.
+
+Two transports, both stateless (mcp-handler 1.1.0 does not support persistent sessions):
+
 - **Streamable HTTP:** `https://sharetopus.com/api/mcp/mcp`
 - **SSE:** `https://sharetopus.com/api/mcp/sse`
 
-Both transports run in stateless mode (mcp-handler 1.1.0 does not support persistent sessions). AI agents (Claude Desktop, Cursor, ChatGPT) can schedule posts, manage content, and query analytics on behalf of authenticated subscribers.
-
 Built with mcp-handler 1.1.0 and @modelcontextprotocol/sdk 1.29.0.
+
+> **Plan requirement:** MCP access requires the Creator plan or higher. All 18 tools require Creator tier minimum. Starter and free users have no MCP access.
 
 [Back to README](../README.md)
 
+---
+
+## Table of contents
+
+- [Authentication](#authentication)
+- [Connecting from AI clients](#connecting-from-ai-clients)
+- [withMcpTool higher-order function](#withmcptool-higher-order-function)
+- [Tool inventory](#tool-inventory)
+- [Tool details](#tool-details)
+- [Tool annotations](#tool-annotations)
+- [Resources](#resources)
+- [Prompts](#prompts)
+- [Usage examples](#usage-examples)
+- [MCP request lifecycle](#mcp-request-lifecycle)
+- [Idempotency](#idempotency)
+- [Audit and session tracking](#audit-and-session-tracking)
+- [OAuth client management](#oauth-client-management)
+- [Known limitations](#known-limitations)
+- [Source files referenced](#source-files-referenced)
+
+---
+
 ## Authentication
 
-Two auth paths, both resolving to a `principal_id` with a cached subscription tier.
+Two auth paths, both resolving to a `McpPrincipal` (kind: `apikey` or `oauth`) with a cached subscription tier.
 
 ```mermaid
 sequenceDiagram
     participant Agent as AI Agent
-    participant MCP as /api/mcp/mcp
+    participant Route as /api/mcp/[transport]
     participant Auth as resolveMcpPrincipal
+    participant Gate as applySubscriptionGate
+    participant Trust as assertOAuthClientTrust
 
-    Agent->>MCP: POST with Bearer token
+    Agent->>Route: POST with Bearer token
+    Route->>Route: Per-IP rate limit (100 req / 60s)
+    Route->>Route: Extract clientInfo (initialize only)
 
     alt Token starts with stp_mcp_
+        Auth->>Auth: resolveApiKey()
         Auth->>Auth: SHA-256 hash token
-        Auth->>Auth: Lookup token_hash in api_keys table
+        Auth->>Auth: Lookup token_hash in api_keys
         Auth->>Auth: Check: not revoked, not expired
         Auth->>Auth: Update last_used_at
-        Auth-->>MCP: McpPrincipal (kind=apikey, principalId, scopes, plan)
+        Auth->>Gate: applySubscriptionGate()
+        Gate->>Gate: Reject free/starter tiers
+        Gate-->>Route: McpPrincipal (kind=apikey)
     else Clerk OAuth token
-        Auth->>Auth: Verify JWT via Clerk SDK
-        Auth->>Auth: Resolve principalId from Clerk userId
-        Auth-->>MCP: McpPrincipal (kind=oauth, principalId, plan)
+        Auth->>Auth: verifyOAuthToken() via Clerk SDK
+        Auth->>Gate: applySubscriptionGate()
+        Gate->>Gate: Reject free/starter tiers
+        Gate-->>Auth: McpPrincipal (kind=oauth)
+        Auth->>Trust: assertOAuthClientTrust()
+        Trust->>Trust: Check blocked/revoked status
+        Trust-->>Route: McpPrincipal (kind=oauth)
     end
 
-    MCP->>MCP: Subscription gate (free tier blocked)
-    MCP->>MCP: Inject principal into tool context
+    Route->>Route: Stash principal + requestSessionId in authInfo.extra
+    Route-->>Agent: Server capabilities
 ```
+
+The subscription gate runs before the OAuth trust check. This means non-paying users never leave a row in `mcp_oauth_clients`.
+
+### Route-level rate limit
+
+Every request hits a per-IP rate limit before any token handling:
+
+- **100 requests per 60 seconds** per IP (SHA-256 hashed, raw IP never stored)
+- Fires before bearer token check, so token-probing attackers cannot bypass the limiter
+- `MAX_INITIALIZE_BODY_BYTES`: 16 KB (bodies larger than this skip clientInfo extraction)
 
 ### Generating an API key
 
-1. Open the Sharetopus web app and navigate to Settings or Integrations
-2. Click "Create MCP API Key", give it a name
-3. Copy the key (shown once, format: `stp_mcp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`)
-4. Store it in your MCP client config as a Bearer token
+1. Open the Sharetopus web app. Navigate to Settings or Integrations.
+2. Click "Create MCP API Key" and give it a name.
+3. Copy the key (shown once, format: `stp_mcp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`).
+4. Store it in your MCP client config as a Bearer token.
 
-Limits: 10 active MCP keys per user. Keys can be revoked from the UI. Requires an active subscription (Starter or above).
+Limits: 10 active MCP keys per user. Keys can be revoked from the UI. Requires Creator plan or higher.
 
-### Connecting from Claude Desktop
+---
+
+## Connecting from AI clients
+
+### Claude Desktop
 
 Add to `claude_desktop_config.json`:
 
@@ -64,7 +114,13 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-For Clerk OAuth (if your client supports OAuth discovery):
+### Cursor
+
+Same configuration format. Place the URL and Authorization header in Cursor's MCP server settings.
+
+### Generic OAuth (RFC 9728 auto-discovery)
+
+For clients with OAuth discovery support, only the URL is needed:
 
 ```json
 {
@@ -78,36 +134,104 @@ For Clerk OAuth (if your client supports OAuth discovery):
 
 The server publishes an RFC 9728 OAuth Protected Resource metadata endpoint at `/.well-known/oauth-protected-resource` for automatic discovery.
 
+---
+
+## withMcpTool higher-order function
+
+Every tool handler is wrapped by `withMcpTool`, a higher-order function that centralizes context extraction, entitlement gating, and audit logging. Tool authors write only business logic. The wrapper handles everything else.
+
+**Execution steps:**
+
+1. **Extract per-request context** (principal, sessionId, requestId, ipHash, userAgent, clientName, clientVersion, startedAt)
+2. **Compute audit args** via `auditArgsBuilder` if provided, otherwise fall back to `rawArgsAsAuditPayload` (coerces empty objects to null)
+3. **Run entitlement gate** (tier check via `ACTION_PLAN_GATE`, then monthly quota via `MONTHLY_CAPS`)
+4. **On deny:** emit audit row with status `denied` or `quota_exceeded`, return error to agent
+5. **On allow:** call the inner handler
+6. **On success or handler-returned isError:** emit audit row. Handler may override the result status via `auditStatus` (e.g., `rate_limited`) and the args via `auditArgs`
+7. **On thrown error:** emit an `error` audit row with the default audit args, then re-throw so the SDK surfaces a JSON-RPC error
+
+### McpToolContext
+
+The context object passed to every handler:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `principal` | `McpPrincipal` | Authenticated user with kind, principalId, scopes, plan |
+| `sessionId` | `string \| null` | SDK session ID (real for SSE, synthetic UUID for stateless) |
+| `requestId` | `string \| null` | Per-request correlation ID for cross-layer log tracing |
+| `ipHash` | `string \| null` | SHA-256 of client IP + salt |
+| `userAgent` | `string \| null` | Truncated to 512 chars |
+| `clientName` | `string \| null` | From initialize handshake only (null on tool calls) |
+| `clientVersion` | `string \| null` | From initialize handshake only (null on tool calls) |
+| `startedAt` | `number` | `Date.now()` at context build time, used for latency computation |
+
+### McpHandlerResult
+
+The return type from every handler:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `content` | `Array<{ type: "text"; text: string }>` | MCP SDK content envelope |
+| `isError` | `boolean?` | Signals an error response to the agent |
+| `auditStatus` | `string?` | Override the audit log status (default: `ok` if no error, `error` if isError) |
+| `auditArgs` | `Record \| null?` | Override the args stored in the audit log |
+
+### Usage pattern
+
+```typescript
+server.registerTool(
+  "schedule_post",
+  { ...toolConfig },
+  withMcpTool("schedule_post", async (ctx, args) => {
+    // Business logic only. Entitlement, audit, context are handled.
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  }),
+);
+
+// With custom audit args scrubbing for large payloads:
+withMcpTool(
+  "bulk_schedule",
+  async (ctx, args) => { /* ... */ },
+  { auditArgsBuilder: (args) => ({ count: args.posts.length }) },
+);
+```
+
+---
+
 ## Tool inventory
 
-18 tools across 4 tiers. Quota enforcement is atomic (Postgres RPC `atomic_increment_quota`). Write tools that create posts support idempotent retries via `idempotency_key` (see [Idempotency](#idempotency) below). All tools carry [Connectors Directory annotations](#tool-annotations).
+18 tools, all requiring Creator+ minimum. Quota enforcement is atomic (Postgres RPC `atomic_increment_quota`). Write tools that create posts support idempotent retries via `idempotency_key` (see [Idempotency](#idempotency)). All tools carry [Connectors Directory annotations](#tool-annotations).
 
-| Tool | Type | Tier | Monthly Quota | Rate Limit | Description |
-|------|------|------|---------------|------------|-------------|
-| `list_connections` | Read | Free | - | - | List connected social accounts with platform and status |
-| `list_pinterest_boards` | Read | Free | - | - | List Pinterest boards for an account (paginated) |
-| `list_scheduled_posts` | Read | Free | - | - | List scheduled posts, optional filter by platform/status |
-| `list_content_history` | Read | Free | - | - | View posted content history, optional platform filter |
-| `list_billing_summary` | Read | Free | - | - | View subscription plan, status, and monthly usage counts |
-| `request_account_reauth_link` | Read | Free | - | - | Get re-auth URL for an account with expired token |
-| `schedule_post` | Write | Starter+ | 100 / 500 / unlimited | - | Schedule a post for future publishing |
-| `post_now` | Write | Starter+ | 100 / 500 / unlimited | - | Publish a post immediately via Inngest event |
-| `cancel_scheduled_posts` | Write | Starter+ | - | - | Cancel 1-50 scheduled posts |
-| `resume_scheduled_posts` | Write | Starter+ | - | - | Resume cancelled posts (past dates rescheduled +1h) |
-| `reschedule_posts` | Write | Starter+ | - | - | Change scheduled time for 1-50 posts |
-| `delete_scheduled_posts` | Write | Starter+ | - | - | Permanently delete 1-50 posts + cleanup orphan media |
-| `attach_media_from_url` | Write | Starter+ | 100 / 500 / unlimited | 10/60s | Download from URL, upload to storage. SSRF-guarded. |
-| `request_upload_url` | Write | Starter+ | 100 / 500 / unlimited | 20/60s | Get signed upload URL for direct media upload |
-| `bulk_schedule` | Write | Creator+ | 200 / unlimited | - | Schedule up to 30 posts at once with idempotency |
-| `bulk_post_now` | Write | Creator+ | 500 / unlimited | - | Publish up to 30 posts immediately with idempotency |
-| `get_account_analytics` | Read | Creator+ | - | - | Fetch metrics (views, likes, comments, shares) |
-| `generate_post_draft` | Read | Pro | 100/mo | - | Generate draft via client LLM (zero API cost) |
+Monthly quota format below: Creator cap / Pro cap.
+
+| Tool | Type | Monthly Quota | Rate Limit | Description |
+|------|------|---------------|------------|-------------|
+| `list_connections` | Read | - | - | List connected social accounts with platform and status |
+| `list_pinterest_boards` | Read | - | - | List Pinterest boards for an account (paginated) |
+| `list_scheduled_posts` | Read | - | - | List scheduled posts, optional filter by platform/status |
+| `list_content_history` | Read | - | - | View posted content history, optional platform filter |
+| `list_billing_summary` | Read | - | - | View subscription plan, status, and monthly usage counts |
+| `request_account_reauth_link` | Read | - | - | Get re-auth URL for an account with expired token |
+| `get_account_analytics` | Read | - | - | Fetch metrics (views, likes, comments, shares) |
+| `generate_post_draft` | Read | 100 / unlimited | - | Generate draft via client LLM (zero API cost) |
+| `schedule_post` | Write | 500 / unlimited | - | Schedule a post for future publishing |
+| `post_now` | Write | 500 / unlimited | - | Publish immediately via Inngest event |
+| `cancel_scheduled_posts` | Write | - | - | Cancel 1-50 scheduled posts |
+| `resume_scheduled_posts` | Write | - | - | Resume cancelled posts (past dates rescheduled +1h) |
+| `reschedule_posts` | Write | - | - | Change scheduled time for 1-50 posts |
+| `delete_scheduled_posts` | Write | - | - | Permanently delete 1-50 posts + cleanup orphan media |
+| `attach_media_from_url` | Write | 500 / unlimited | 10/60s | Download from URL, upload to storage. SSRF-guarded. |
+| `request_upload_url` | Write | 500 / unlimited | 20/60s | Get signed upload URL for direct media upload |
+| `bulk_schedule` | Write | 200 / unlimited | - | Schedule up to 30 posts at once with idempotency |
+| `bulk_post_now` | Write | 500 / unlimited | - | Publish up to 30 posts immediately with idempotency |
+
+---
 
 ## Tool details
 
 ### list_connections
 
-List connected social accounts. Returns platform, display name, availability status. Tokens are stripped from the response.
+List connected social accounts. Returns platform, display name, and availability status. Tokens are stripped from the response.
 
 **Parameters:**
 ```
@@ -116,6 +240,24 @@ include_unavailable  boolean  optional  default: false
 ```
 
 **Returns:** Array of social account objects (id, platform, display_name, username, avatar_url, is_available).
+
+---
+
+### list_pinterest_boards
+
+List Pinterest boards for a connected account. Use this to get the `board_id` required by `schedule_post` and `post_now` when targeting Pinterest.
+
+**Parameters:**
+```
+social_account_id  string (UUID)  required
+  ID of the Pinterest social_accounts row
+page_size          number (1-100)  optional  default: 25
+  Number of boards per page
+bookmark           string  optional
+  Pagination cursor from a previous response
+```
+
+**Returns:** `{ success, boards: [{ id, name, description, privacy, pin_count }], bookmark }`. If the account token is expired, returns `{ success: false, expired: true, reauth_url }`.
 
 ---
 
@@ -175,6 +317,46 @@ social_account_id  string (UUID)  required
 
 ---
 
+### get_account_analytics
+
+Fetch performance metrics for posted content. Data may be up to 24 hours old.
+
+**Parameters:**
+```
+platform    "linkedin" | "tiktok" | "pinterest" | "instagram"  optional
+content_id  string  optional
+  Filter by specific content ID
+days        number (1-90)  optional  default: 30
+  Number of days to look back
+limit       number (1-100)  optional  default: 20
+```
+
+**Returns:** Array of analytics objects with views, likes, comments, shares.
+
+---
+
+### generate_post_draft
+
+Generate a draft post using the client's LLM. The tool returns a structured prompt; the client's model generates the draft. Zero API cost to the Sharetopus account. Requires a client with MCP sampling/createMessage support.
+
+**Parameters:**
+```
+platform            "linkedin" | "tiktok" | "pinterest" | "instagram"  required
+topic               string  required
+  Topic or theme for the post
+tone                "professional" | "casual" | "humorous" | "educational" | "promotional"
+                    optional  default: "professional"
+max_length          number (50-3000)  optional  default: 500
+additional_context  string  optional
+  Extra instructions or brand guidelines
+```
+
+**Monthly quota:** Creator 100/mo, Pro unlimited.
+
+**Returns:** Structured prompt object. Clients without MCP sampling support receive an error.
+
+---
+
 ### schedule_post
 
 Schedule a post for future publishing. For media posts, call `attach_media_from_url` or `request_upload_url` first to get a `media_storage_path`.
@@ -209,6 +391,8 @@ idempotency_key      string (1-200 chars)  optional
   DB-enforced via UNIQUE constraint on (principal_id, idempotency_key).
 ```
 
+**Monthly quota:** Creator 500/mo, Pro unlimited.
+
 **Returns:** `{ success, message, scheduleId }`. The post enters `scheduled` status and will be dispatched by the `scheduled-posts-tick` cron when its time arrives. If the idempotency_key already exists for this principal, returns the existing scheduleId with a message indicating it was already created.
 
 **Failure modes:** quota exceeded (monthly cap), account not found, account not owned by principal, invalid scheduled_at, missing media for image/video post.
@@ -241,6 +425,8 @@ idempotency_key      string (1-200 chars)  optional
   DB-enforced via UNIQUE constraint on (principal_id, idempotency_key)
   on the pending_direct_posts table.
 ```
+
+**Monthly quota:** Creator 500/mo, Pro unlimited.
 
 **Returns:** `{ success, event_id, batch_id, message }`. Use the event_id to poll status. If the idempotency_key already exists, returns the existing event_id with a message indicating it was already dispatched.
 
@@ -318,7 +504,7 @@ filename  string  optional
 
 **Rate limit:** 10 requests per 60 seconds per principal.
 
-**Monthly quota:** 100 (starter), 500 (creator), unlimited (pro).
+**Monthly quota:** Creator 500/mo, Pro unlimited.
 
 **Allowed MIME types:** image/jpeg, image/png, image/gif, image/webp, video/mp4, video/quicktime, video/webm.
 
@@ -344,13 +530,15 @@ size_bytes    number (positive integer)  required
 
 **Rate limit:** 20 requests per 60 seconds (hard limit).
 
+**Monthly quota:** Creator 500/mo, Pro unlimited.
+
 **Returns:** `{ success, upload_url, storage_path, token, expires_in_seconds }`.
 
 ---
 
 ### bulk_schedule
 
-Schedule up to 30 posts at once. Requires Creator plan or higher. Each post gets an `idempotency_key` of `${batchId}:${index}`, making retries safe.
+Schedule up to 30 posts at once. Each post gets an `idempotency_key` of `${batchId}:${index}`, making retries safe.
 
 **Parameters:**
 ```
@@ -368,33 +556,17 @@ batch_id  string  optional
   Group all posts under this batch ID
 ```
 
+**Monthly quota:** Creator 200/mo, Pro unlimited.
+
 **Preflight checks:** entitlement verification, platform daily quota enforcement (next 24h), social account ownership (single bulk query).
 
 **Returns:** `{ batch_id, total, succeeded, failed, results: [...] }`.
 
 ---
 
-### list_pinterest_boards
-
-List Pinterest boards for a connected account. Use this to get the `board_id` required by `schedule_post` and `post_now` when targeting Pinterest.
-
-**Parameters:**
-```
-social_account_id  string (UUID)  required
-  ID of the Pinterest social_accounts row
-page_size          number (1-100)  optional  default: 25
-  Number of boards per page
-bookmark           string  optional
-  Pagination cursor from a previous response
-```
-
-**Returns:** `{ success, boards: [{ id, name, description, privacy, pin_count }], bookmark }`. If the account token is expired, returns `{ success: false, expired: true, reauth_url }`.
-
----
-
 ### bulk_post_now
 
-Publish up to 30 posts immediately in one call. Each post dispatches a separate Inngest `post.now` event. Requires Creator plan or higher.
+Publish up to 30 posts immediately in one call. Each post dispatches a separate Inngest `post.now` event.
 
 **Parameters:**
 ```
@@ -416,146 +588,13 @@ batch_id  string (1-200 chars)  optional
   making retries safe. Same pattern as bulk_schedule.
 ```
 
+**Monthly quota:** Creator 500/mo, Pro unlimited.
+
 **Preflight checks:** entitlement verification, social account ownership (single bulk query), caption length validation per platform, Pinterest board requirement.
 
 **Returns:** `{ success, batch_id, dispatched, total, results: [{ index, platform, social_account_id, event_id }] }`.
 
 ---
-
-### get_account_analytics
-
-Fetch performance metrics for posted content. Data may be up to 24 hours old.
-
-**Parameters:**
-```
-platform    "linkedin" | "tiktok" | "pinterest" | "instagram"  optional
-content_id  string  optional
-  Filter by specific content ID
-days        number (1-90)  optional  default: 30
-  Number of days to look back
-limit       number (1-100)  optional  default: 20
-```
-
-**Returns:** Array of analytics objects with views, likes, comments, shares.
-
----
-
-### generate_post_draft
-
-Generate a draft post using the client's LLM. The tool returns a structured prompt; the client's model generates the draft. Zero API cost to the Sharetopus account.
-
-**Parameters:**
-```
-platform            "linkedin" | "tiktok" | "pinterest" | "instagram"  required
-topic               string  required
-  Topic or theme for the post
-tone                "professional" | "casual" | "humorous" | "educational" | "promotional"
-                    optional  default: "professional"
-max_length          number (50-3000)  optional  default: 500
-additional_context  string  optional
-  Extra instructions or brand guidelines
-```
-
-**Returns:** Structured prompt object. Clients without MCP sampling support receive an error.
-
-## Resources
-
-3 read-only resources. Same entitlement checks as corresponding tools. Return empty contents if the user's plan doesn't qualify.
-
-| URI | MIME Type | Description |
-|-----|-----------|-------------|
-| `mcp://sharetopus/scheduled-posts` | application/json | Scheduled posts (limit 100) |
-| `mcp://sharetopus/connections` | application/json | Connected social accounts (tokens stripped) |
-| `mcp://sharetopus/content-history` | application/json | Published content history (limit 100) |
-
-## Prompts
-
-3 reusable message templates that guide agent workflows.
-
-| Prompt | Parameters | Purpose |
-|--------|-----------|---------|
-| `plan_week_for_platform` | platform, theme | Plan 5-7 posts around a theme for a specific platform |
-| `repurpose_post` | post_id, target_platforms (comma-separated) | Fetch a post and adapt it for multiple platforms |
-| `audit_calendar` | (none) | Audit the next 14 days of scheduled posts for gaps and imbalances |
-
-## Usage examples
-
-### Example 1: Schedule a Pinterest post for tomorrow
-
-User prompt to agent: "Schedule a Pinterest post for tomorrow at 10am with this image: https://example.com/photo.jpg"
-
-Tool call sequence:
-1. `list_connections` to find the Pinterest account ID
-2. `attach_media_from_url(url: "https://example.com/photo.jpg")` to upload the image
-3. `schedule_post(social_account_id: "...", platform: "pinterest", scheduled_at: "2026-05-11T10:00:00Z", post_type: "image", description: "...", media_storage_path: "user_xxxx/abc123.jpg")`
-
-### Example 2: Check analytics for the past week
-
-User prompt: "Show me how my posts performed last week"
-
-Tool call sequence:
-1. `get_account_analytics(days: 7)` to fetch metrics across all platforms
-
-The response includes views, likes, comments, and shares per content item. Data may be up to 24 hours old.
-
-### Example 3: Cancel all Friday posts and reschedule to Monday
-
-User prompt: "Cancel all my posts scheduled for this Friday and move them to next Monday at 9am"
-
-Tool call sequence:
-1. `list_scheduled_posts(status: "scheduled")` to find all scheduled posts
-2. Agent filters results to Friday posts client-side
-3. `reschedule_posts(post_ids: ["id1", "id2", "id3"], new_scheduled_time: "2026-05-18T09:00:00Z")`
-
-Note: `reschedule_posts` also resumes cancelled posts, so if some were already cancelled, they get resumed with the new time.
-
-### Example 4: Plan a week of LinkedIn content
-
-User prompt: "Help me plan a week of LinkedIn posts about developer productivity"
-
-The agent can use the `plan_week_for_platform` prompt:
-1. Agent invokes the prompt with `platform: "linkedin"`, `theme: "developer productivity"`
-2. The prompt returns a structured message guiding the agent to create 5-7 posts
-3. Agent generates drafts (optionally using `generate_post_draft` for Pro users)
-4. Agent calls `bulk_schedule` to schedule all posts at once
-
-## MCP request lifecycle
-
-```mermaid
-sequenceDiagram
-    participant A as Agent
-    participant R as /api/mcp/[transport]
-    participant Auth as resolveMcpPrincipal
-    participant Ent as entitlementFor
-    participant Tool as Tool handler
-    participant DB as Supabase
-    participant Audit as logToolCall
-
-    A->>R: POST initialize {clientInfo}
-    R->>R: Parse body, extract clientName + clientVersion
-    R->>Auth: Resolve principal (API key or OAuth)
-    Auth-->>R: McpPrincipal
-    R->>DB: Upsert mcp_sessions (client_name, client_version)
-    R-->>A: Server capabilities
-
-    A->>R: POST tools/call {name, arguments}
-    R->>Auth: Resolve principal
-    R->>Ent: entitlementFor(principal, action)
-    alt deny (no_subscription / plan_too_low / monthly_quota)
-        Ent-->>R: deny
-        R->>Audit: Log denied / quota_exceeded
-        R-->>A: Error with deny reason
-    else allow
-        R->>Tool: Execute tool(args, principal)
-        Tool->>Tool: Rate limit check (if applicable)
-        Tool->>Tool: Idempotency pre-check (if key provided)
-        Tool->>DB: Query / mutate
-        DB-->>Tool: Result
-        Tool-->>R: Tool result
-        R->>Audit: Log ok + latency_ms
-        R-->>A: JSON result
-    end
-```
 
 ## Tool annotations
 
@@ -582,38 +621,198 @@ All 18 tools carry MCP Connectors Directory annotations via `registerTool`. Read
 | attach_media_from_url | false | false | false | true |
 | request_upload_url | false | false | false | false |
 
+---
+
+## Resources
+
+3 read-only resources. Same entitlement checks as the corresponding tools. Return empty contents if the user's plan does not qualify.
+
+| URI | MIME Type | Description |
+|-----|-----------|-------------|
+| `mcp://sharetopus/scheduled-posts` | application/json | Scheduled posts (limit 100) |
+| `mcp://sharetopus/connections` | application/json | Connected social accounts (tokens stripped) |
+| `mcp://sharetopus/content-history` | application/json | Published content history (limit 100) |
+
+---
+
+## Prompts
+
+3 reusable message templates that guide agent workflows.
+
+| Prompt | Parameters | Purpose |
+|--------|-----------|---------|
+| `plan_week_for_platform` | platform, theme | Plan 5-7 posts around a theme for a specific platform |
+| `repurpose_post` | post_id, target_platforms (comma-separated) | Fetch a post and adapt it for multiple platforms |
+| `audit_calendar` | (none) | Audit the next 14 days of scheduled posts for gaps and imbalances |
+
+---
+
+## Usage examples
+
+### Example 1: Schedule a Pinterest post for tomorrow
+
+User prompt to agent: "Schedule a Pinterest post for tomorrow at 10am with this image: https://example.com/photo.jpg"
+
+Tool call sequence:
+1. `list_connections` to find the Pinterest account ID
+2. `attach_media_from_url(url: "https://example.com/photo.jpg")` to upload the image
+3. `schedule_post(social_account_id: "...", platform: "pinterest", scheduled_at: "2026-05-15T10:00:00Z", post_type: "image", description: "...", media_storage_path: "user_xxxx/abc123.jpg")`
+
+### Example 2: Check analytics for the past week
+
+User prompt: "Show me how my posts performed last week"
+
+Tool call sequence:
+1. `get_account_analytics(days: 7)` to fetch metrics across all platforms
+
+The response includes views, likes, comments, and shares per content item. Data may be up to 24 hours old.
+
+### Example 3: Cancel all Friday posts and reschedule to Monday
+
+User prompt: "Cancel all my posts scheduled for this Friday and move them to next Monday at 9am"
+
+Tool call sequence:
+1. `list_scheduled_posts(status: "scheduled")` to find all scheduled posts
+2. Agent filters results to Friday posts client-side
+3. `reschedule_posts(post_ids: ["id1", "id2", "id3"], new_scheduled_time: "2026-05-19T09:00:00Z")`
+
+Note: `reschedule_posts` also resumes cancelled posts, so if some were already cancelled, they get resumed with the new time.
+
+### Example 4: Plan a week of LinkedIn content
+
+User prompt: "Help me plan a week of LinkedIn posts about developer productivity"
+
+The agent can use the `plan_week_for_platform` prompt:
+1. Agent invokes the prompt with `platform: "linkedin"`, `theme: "developer productivity"`
+2. The prompt returns a structured message guiding the agent to create 5-7 posts
+3. Agent generates drafts (optionally using `generate_post_draft`)
+4. Agent calls `bulk_schedule` to schedule all posts at once
+
+---
+
+## MCP request lifecycle
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant R as /api/mcp/[transport]
+    participant Auth as resolveMcpPrincipal
+    participant HOF as withMcpTool
+    participant Ent as entitlementFor
+    participant Tool as Tool handler
+    participant DB as Supabase
+    participant Audit as logToolCall
+
+    A->>R: POST initialize {clientInfo}
+    R->>R: Per-IP rate limit (100/60s)
+    R->>R: Extract clientName + clientVersion from body
+    R->>Auth: Resolve principal (API key or OAuth)
+    Auth-->>R: McpPrincipal
+    R->>R: Generate synthetic requestSessionId (UUID)
+    R-->>A: Server capabilities
+
+    A->>R: POST tools/call {name, arguments}
+    R->>Auth: Resolve principal
+    Auth-->>R: McpPrincipal
+    R->>HOF: withMcpTool(toolName, handler)
+    HOF->>HOF: buildContext (principal, session, ip, ua, client)
+    HOF->>HOF: Compute defaultAuditArgs (auditArgsBuilder or rawArgsAsAuditPayload)
+    HOF->>Ent: entitlementFor(principal, toolName)
+    Ent->>Ent: checkTierGate (ACTION_PLAN_GATE)
+    Ent->>Ent: checkAndIncrementQuota (atomic_increment_quota RPC)
+
+    alt deny (no_subscription / plan_too_low / monthly_quota)
+        Ent-->>HOF: deny
+        HOF->>Audit: emitAudit(denied | quota_exceeded)
+        HOF-->>A: Error with deny reason
+    else allow
+        Ent-->>HOF: allow
+        HOF->>Tool: handler(ctx, args)
+        Tool->>Tool: Rate limit check (if applicable)
+        Tool->>Tool: Idempotency pre-check (if key provided)
+        Tool->>DB: Query / mutate
+        DB-->>Tool: Result
+        Tool-->>HOF: McpHandlerResult
+        HOF->>Audit: emitAudit(ok | error | rate_limited)
+        HOF-->>A: JSON result
+    end
+
+    Note over Audit,DB: Audit INSERT awaited (compliance)
+    Note over Audit,DB: Session UPSERT via waitUntil (background)
+```
+
+---
+
 ## Idempotency
 
-Three tools accept an explicit `idempotency_key` parameter for safe retries. A fourth uses a derived key.
+Four tools support idempotent retries. Two accept an explicit `idempotency_key` parameter. Two derive the key automatically.
 
 | Tool | Key source | DB constraint |
 |------|-----------|---------------|
 | `schedule_post` | `idempotency_key` param | UNIQUE on `(principal_id, idempotency_key)` in `scheduled_posts` |
 | `post_now` | `idempotency_key` param | UNIQUE on `(principal_id, idempotency_key)` in `pending_direct_posts` |
+| `bulk_schedule` | Derived: `${batchId}:${index}` | Same as `schedule_post` |
 | `bulk_post_now` | Derived: `${batch_id}:${index}` | Same as `post_now` |
-| `bulk_schedule` | Derived: `${batch_id}:${index}` | Same as `schedule_post` |
 
 All four use `INSERT ... ON CONFLICT DO NOTHING`. If the insert conflicts, the handler fetches the existing row and returns its ID with a message like "already dispatched". Network retries with the same key are safe. See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
 
+---
+
 ## Audit and session tracking
 
-Every tool call is logged to `mcp_audit_log` with:
-- principal_id, api_key_id or oauth_client_id
-- session_id (SDK session ID for stateful transports, synthetic UUID for stateless)
-- tool_name, args_redacted (sensitive keys like token/password/secret are replaced with `[REDACTED]`)
-- result_status: `ok`, `error`, `denied`, `rate_limited`, `quota_exceeded`
-- latency_ms, ip_hash (SHA-256 of IP + salt, raw IP never stored), user_agent
+### mcp_audit_log
 
-The `mcp_sessions` table tracks session metadata via best-effort upserts. On `initialize` requests, the route handler extracts `clientInfo.name` (capped at 200 chars) and `clientInfo.version` (capped at 50 chars) from the JSON-RPC params and stores them as `client_name` and `client_version`. This identifies which AI client (Claude Desktop, Cursor, etc.) made each session.
+Every tool call is logged to `mcp_audit_log` with these fields:
 
-The `mcp_audit_log` table has an update-blocking trigger. Rows are append-only.
+| Field | Description |
+|-------|-------------|
+| `principal_id` | User who made the call |
+| `api_key_id` / `oauth_client_id` | Which credential was used |
+| `session_id` | SDK session ID (stateful) or synthetic UUID (stateless) |
+| `tool_name` | Name of the tool invoked |
+| `args_redacted` | Tool arguments with sensitive keys replaced |
+| `result_status` | `ok`, `error`, `denied`, `rate_limited`, or `quota_exceeded` |
+| `latency_ms` | Wall-clock time from context build to audit emit |
+| `ip_hash` | SHA-256 of IP + salt (raw IP never stored) |
+| `user_agent` | Client User-Agent header |
+
+The table has an update-blocking trigger. Rows are append-only.
+
+### Argument redaction
+
+Before persisting, args pass through `redactSecrets()`:
+
+- **13 key patterns** matched case-insensitively: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt
+- **JWT detector:** any value matching three base64url segments separated by dots is replaced with `[REDACTED_JWT]`
+- **Truncation:** args are capped at 4,096 characters. Oversized payloads are replaced with `{ _truncated: true, _preview: "..." }`
+
+### Session tracking
+
+The `mcp_sessions` table tracks session metadata via best-effort upserts:
+
+| Field | Description |
+|-------|-------------|
+| `id` | Session UUID (synthetic per-request in stateless mode) |
+| `principal_id` | User who owns the session |
+| `oauth_client_id` / `api_key_id` | Credential used |
+| `client_name` | From `clientInfo.name` on initialize (max 200 chars) |
+| `client_version` | From `clientInfo.version` on initialize (max 50 chars) |
+| `ip_hash` | SHA-256 of client IP |
+| `last_activity_at` | Updated on each upsert |
+
+The session upsert runs in the background via `waitUntil` so it never adds latency to the response. The audit INSERT is awaited synchronously because it is compliance-critical.
+
+### clientInfo sanitization
+
+`sanitizeClientField()` strips control characters (0x00-0x1f) and HTML injection characters (`< > ' " &`) from `clientName` and `clientVersion` before storage. This prevents stored-XSS in the admin dashboard.
+
+---
 
 ## OAuth client management
 
-OAuth clients (Claude Desktop, Cursor, etc.) are tracked in
-`mcp_oauth_clients`. Population is lazy: the first time a client_id
-authenticates via Clerk, Sharetopus inserts a row with the auto-verify
-rule applied.
+OAuth clients (Claude Desktop, Cursor, etc.) are tracked in `mcp_oauth_clients`. Population is lazy: the first time a client_id authenticates via Clerk, Sharetopus inserts a row with the auto-verify rule applied.
+
+**Table columns:** client_id, client_name, redirect_uris, trust_level (unverified | verified | blocked), revoked_at, registered_by_user_id.
 
 Manual promote:
 ```sql
@@ -636,13 +835,15 @@ SET revoked_at = now()
 WHERE client_id = 'leaked_client_xxx';
 ```
 
-Auth resolver refuses both `blocked` and `revoked_at IS NOT NULL`.
+The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL`. Blocked/revoked results are cached so repeated probes do not hit the database.
+
+---
 
 ## Known limitations
 
 - **Stateless mode only.** mcp-handler 1.1.0 forces stateless mode on both Streamable HTTP and SSE transports. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
 - **`generate_post_draft` requires sampling.** Clients without MCP sampling/createMessage support (some older clients) will get an error.
-- **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function polls for completion.
+- **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
 - **`bulk_schedule` and `bulk_post_now` are MCP-only.** No REST or web UI equivalent exists yet.
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
 
@@ -651,3 +852,23 @@ Auth resolver refuses both `blocked` and `revoked_at IS NOT NULL`.
 **See also:** [docs/SECURITY.md](./SECURITY.md) (SSRF guard, idempotency, storage quotas), [docs/AUTH.md](./AUTH.md) (principal model, auth paths), [docs/BILLING.md](./BILLING.md) (plan gates, monthly caps)
 
 [Back to README](../README.md)
+
+---
+
+## Source files referenced
+
+| File | Description |
+|------|-------------|
+| `src/app/api/mcp/[transport]/route.ts` | MCP route handler, rate limit, clientInfo extraction |
+| `src/lib/mcp/auth/resolve.ts` | `resolveMcpPrincipal()`, token dispatch to API key or OAuth path |
+| `src/lib/mcp/auth/resolvers/apiKey.ts` | API key resolution and validation |
+| `src/lib/mcp/auth/resolvers/oauth.ts` | Clerk OAuth token verification |
+| `src/lib/mcp/auth/resolvers/applySubscriptionGate.ts` | Subscription tier gate (blocks free/starter) |
+| `src/lib/mcp/auth/oauthClientTrust.ts` | `checkOAuthClientTrust()`, lazy population, block/revoke logic |
+| `src/lib/mcp/withMcpTool.ts` | `withMcpTool()` HOF, context extraction, entitlement gate, audit emit |
+| `src/lib/mcp/entitlement.ts` | `entitlementFor()`, `ACTION_PLAN_GATE`, `MONTHLY_CAPS`, atomic quota RPC |
+| `src/lib/mcp/audit.ts` | `logToolCall()`, argument redaction, session upsert via waitUntil |
+| `src/lib/mcp/context.ts` | Context extractors (principal, sessionId, requestId, ipHash, userAgent) |
+| `src/lib/mcp/toolNames.ts` | `MCP_TOOL_NAMES` array and `McpToolName` type |
+| `src/lib/mcp/tools/index.ts` | Tool registration orchestrator |
+| `src/lib/mcp/prompts/index.ts` | Prompt registration |

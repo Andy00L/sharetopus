@@ -1,30 +1,74 @@
 # Security Architecture
 
-Consolidated view of every security mechanism in Sharetopus. Each section names the attack it prevents, the code that implements the defense, and the known gaps.
+Every security mechanism in Sharetopus, organized by the attack it stops, the code that implements the defense, and the known gaps.
 
 [Back to README](../README.md)
 
-## Threat model
+## Table of Contents
 
-| Attack | Mechanism | Code |
-|--------|-----------|------|
-| MCP agent retries on network blip, duplicates a post | Idempotency keys + DB UNIQUE constraint | `src/lib/mcp/tools/schedulePost.ts`, `postNow.ts`, `bulkPostNow.ts`, `bulkSchedule.ts` |
-| Agent submits URL pointing at cloud metadata (169.254.169.254) | safeUserFetch DNS + IP blocklist | `src/lib/mcp/_shared/safeUserFetch.ts` |
-| Agent submits oversized file claiming small Content-Length | Stream-based byte counter (Content-Length untrusted) | `src/lib/mcp/_shared/safeUserFetch.ts` |
-| Agent uploads 25 GB on Starter plan | enforceStorageQuota checks actual bytes via RPC | `src/lib/mcp/_shared/enforceStorageQuota.ts` |
-| Agent floods attach_media_from_url | Rate limit 10/60s + monthly cap 100/500/unlimited | `src/lib/mcp/tools/attachMediaFromUrl.ts` |
-| Cross-user storage path access | Path `startsWith(principalId/)` check | `/api/storage/generate-view-url`, `/api/media` |
-| TikTok pull URL forged | HMAC-SHA256 + 30-min expiry | `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` |
-| Media proxy path traversal | Block `..`, `//`, leading `/` | `src/app/api/media/route.ts` |
-| MCP audit log tampering | Append-only table (Update: never, DB constraint) | `mcp_audit_log` table, `src/lib/mcp/audit.ts` |
-| Concurrent quota race condition | atomic_increment_quota Postgres function | `usage_quotas` table, `src/lib/mcp/entitlement.ts` |
-| Agent exhausts monthly action cap | Per-tier monthly quotas enforced atomically | `src/lib/mcp/entitlement.ts` |
-| MCP IP tracking leaks real IPs | SHA-256 hash with configurable salt, raw IP never stored | `src/lib/mcp/ipHash.ts` |
-| Sensitive args in audit log | Regex redaction of 13 key patterns + JWT detection | `src/lib/mcp/audit.ts` |
+- [Defense Layers](#defense-layers)
+- [Threat Model](#threat-model)
+- [Identity Flow](#identity-flow)
+- [Rate Limiting](#rate-limiting)
+- [Idempotency](#idempotency)
+- [SSRF Guard](#ssrf-guard)
+- [Storage Quota Enforcement](#storage-quota-enforcement)
+- [TikTok HMAC Media Proxy](#tiktok-hmac-media-proxy)
+- [Webhook Verification](#webhook-verification)
+- [Append-Only Audit](#append-only-audit)
+- [Data Protection](#data-protection)
+- [XSS Prevention](#xss-prevention)
+- [Known Gaps](#known-gaps)
+- [Compliance Posture](#compliance-posture)
+- [Source Files Referenced](#source-files-referenced)
 
-## Identity flow
+## Defense Layers
 
-Two auth paths converge on a single principal with a cached subscription tier. Free tier is blocked at the subscription gate.
+Every inbound request passes through these layers in order. A failure at any layer rejects the request immediately.
+
+```mermaid
+flowchart LR
+    A["Network\n(TLS, DNS)"] --> B["Rate Limit\n(Upstash sliding window)"]
+    B --> C["Auth\n(API key or Clerk JWT)"]
+    C --> D["Entitlement\n(plan tier + monthly quota)"]
+    D --> E["Handler\n(tool logic, SSRF guard,\nquota check)"]
+    E --> F["Audit\n(append-only log,\narg redaction)"]
+
+    style A fill:#e8e8e8,stroke:#666
+    style B fill:#ffd6d6,stroke:#c44
+    style C fill:#fff3cd,stroke:#a80
+    style D fill:#d4edda,stroke:#2a5
+    style E fill:#cce5ff,stroke:#36a
+    style F fill:#e2d5f1,stroke:#74b
+```
+
+MCP route-level rate limiting (100/60s per IP) runs before auth. All other rate limits run after auth, scoped to the authenticated principal.
+
+## Threat Model
+
+| # | Attack | Defense | Implementation |
+|---|--------|---------|----------------|
+| 1 | Duplicate posts from MCP retry | `idempotency_key` + DB UNIQUE constraint | `schedulePost.ts`, `postNow.ts`, `bulkPostNow.ts`, `bulkSchedule.ts` |
+| 2 | SSRF via `attach_media_from_url` (e.g. cloud metadata at 169.254.169.254) | `safeUserFetch` with 14 IP ranges blocked | `safeUserFetch.ts` |
+| 3 | Oversized file with fake Content-Length | Stream-based byte counter (Content-Length never trusted) | `safeUserFetch.ts` |
+| 4 | Storage quota bypass | `enforceStorageQuota` via `get_user_storage_bytes` RPC | `enforceStorageQuota.ts` |
+| 5 | `attach_media_from_url` flood | 10/60s rate limit + monthly cap per tier | `attachMediaFromUrl.ts` |
+| 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/storage/generate-view-url`, `/api/media` |
+| 7 | TikTok media URL forgery | HMAC-SHA256 + 30-min expiry | `buildProxiedTikTokMediaUrl.ts` |
+| 8 | Media proxy path traversal | Block `..`, `//`, leading `/` | `/api/media/route.ts` |
+| 9 | Audit log tampering | Append-only table (Update: never, DB trigger) | `mcp_audit_log` table |
+| 10 | Concurrent quota race condition | `atomic_increment_quota` Postgres function | `entitlement.ts` |
+| 11 | Monthly cap exhaustion | Per-tier quotas enforced atomically | `entitlement.ts` |
+| 12 | IP tracking privacy leak | SHA-256 hash with configurable salt | `ipHash.ts` |
+| 13 | Sensitive args in audit log | Regex redaction of 13 key patterns + JWT detection | `audit.ts` |
+| 14 | Unauthorized MCP access flood | Route-level rate limit: 100/60s per IP (before auth) | MCP route handler |
+| 15 | XSS via MCP `clientInfo` | `sanitizeClientField` strips control chars + HTML injection chars | MCP server init |
+| 16 | Stripe webhook replay | Signature verification + `stripe_webhook_events` idempotency table | Stripe webhook handler |
+| 17 | TikTok webhook replay | HMAC-SHA256 + 300s tolerance + `tiktok_webhook_events` idempotency table | TikTok webhook handler |
+
+## Identity Flow
+
+Two auth paths converge on a single `McpPrincipal` with a cached subscription tier. Free and Starter tiers are blocked at the subscription gate (Creator+ required for MCP).
 
 ```mermaid
 sequenceDiagram
@@ -50,16 +94,16 @@ sequenceDiagram
     A->>DB: checkActiveSubscription (stripe_subscriptions)
     DB-->>A: { isActive, plan, priceId }
 
-    alt not active
-        A-->>R: null (401 invalid_token)
-    else active
+    alt not active OR plan below Creator
+        A-->>R: null (401 invalid_token, fail-closed)
+    else active with Creator+ plan
         A->>A: priceIdToTier(priceId)
         A-->>R: McpPrincipal { principalId, kind, plan, priceId, scopes }
         R->>R: Inject principal into tool context
     end
 ```
 
-The subscription gate runs after auth succeeds but before returning the principal. If `checkActiveSubscription` returns `isActive: false` or errors, the request is blocked (fail-closed).
+**Fail-closed behavior.** If `checkActiveSubscription` returns `isActive: false`, errors, or the plan is below Creator, the request is blocked. No principal is returned.
 
 **McpPrincipal type** (discriminated union):
 - `kind: "apikey"` carries `apiKeyId`, `scopes`
@@ -68,13 +112,46 @@ The subscription gate runs after auth succeeds but before returning the principa
 
 The plan tier is resolved once during auth and cached on the principal. Tools and entitlement checks read `principal.plan` without querying `stripe_subscriptions` again.
 
-See [docs/AUTH.md](./AUTH.md) for the full principal model, API key format, and OAuth discovery.
+## Rate Limiting
+
+### Per-request limits
+
+All per-request rate limits use Upstash Redis sliding window (`@upstash/ratelimit`).
+
+| Path | Scope | Limit | Window | Storage |
+|------|-------|-------|--------|---------|
+| MCP route (pre-auth) | per IP | 100 | 60s | Upstash |
+| `attach_media_from_url` | per principal | 10 | 60s | Upstash |
+| `request_upload_url` | per principal | 20 | 60s | Upstash |
+| `handleSocialMediaPost` | per user | 30 | 60s | Upstash |
+| `checkOutSession` | per user | 15 | 60s | Upstash |
+| `createCustomerPortal` | per user | 20 | 60s | Upstash |
+| `directPostBatch` | per source | 20 | 60s | Upstash |
+| `schedulePostBatch` | per source | 10 | 60s | Upstash |
+| DCR registration | per IP | 1/min, 10/day | | Supabase `rate_limit_events` |
+| Pinterest board listing | per account | 15 | 60s | Upstash |
+
+### Monthly caps (per-tier, atomic)
+
+Enforced by `entitlementFor` in `src/lib/mcp/entitlement.ts` via `atomic_increment_quota` Postgres RPC. The increment is atomic at the database level, preventing race conditions between concurrent requests.
+
+| Action | Creator | Pro |
+|--------|---------|-----|
+| `schedule_post` | 500 | unlimited |
+| `post_now` | 500 | unlimited |
+| `request_upload_url` | 500 | unlimited |
+| `attach_media_from_url` | 500 | unlimited |
+| `bulk_schedule` | 200 | unlimited |
+| `bulk_post_now` | 500 | unlimited |
+| `generate_post_draft` | 100 | unlimited |
+
+Starter tier: 0 for all actions (completely blocked from MCP at the auth gate).
+
+Period key format: `YYYY-MM-01` (first of month, UTC), generated by `currentQuotaPeriod()`.
 
 ## Idempotency
 
 MCP write tools that create posts support Stripe-style idempotent retries. An agent that retries after a network error with the same `idempotency_key` gets back the original result instead of creating a duplicate.
-
-### How it works
 
 ```mermaid
 sequenceDiagram
@@ -115,11 +192,9 @@ The key is optional. Omitting it means no deduplication (every call creates a ne
 
 The `scheduled-posts-tick` cron uses `eventId = ${postId}:${scheduledAt}` with a 24-hour dedup window in Inngest, preventing duplicate dispatch if the cron fires twice for the same batch.
 
-## SSRF guard
+## SSRF Guard
 
-`safeUserFetch` (`src/lib/mcp/_shared/safeUserFetch.ts`) protects `attach_media_from_url` from Server-Side Request Forgery. An agent could submit a URL pointing at internal infrastructure (cloud metadata endpoints, private services). The guard blocks this at multiple layers.
-
-### Flow
+`safeUserFetch` protects `attach_media_from_url` from Server-Side Request Forgery. An agent could submit a URL pointing at internal infrastructure (cloud metadata endpoints, private services). The guard blocks this at multiple layers.
 
 ```mermaid
 flowchart TD
@@ -130,7 +205,7 @@ flowchart TD
     C -- yes --> D{Hostname is literal IP?}
     D -- yes --> E[Validate IP directly]
     D -- no --> F["DNS lookup (all: true, verbatim: false)"]
-    F --> G{Every resolved IP in safe ranges?}
+    F --> G{Every resolved IP safe?}
     E --> G
     G -- no --> X3[reject: blocked_ip]
     G -- yes --> H["fetch(url, redirect: 'manual')"]
@@ -142,11 +217,19 @@ flowchart TD
     K --> L{Bytes exceed maxBytes?}
     L -- yes --> X6[abort: too_large]
     L -- no --> M[Return Buffer + metadata]
+
+    style X1 fill:#fdd,stroke:#c44
+    style X2 fill:#fdd,stroke:#c44
+    style X3 fill:#fdd,stroke:#c44
+    style X4 fill:#fdd,stroke:#c44
+    style X5 fill:#fdd,stroke:#c44
+    style X6 fill:#fdd,stroke:#c44
+    style M fill:#dfd,stroke:#2a5
 ```
 
 ### Blocked IP ranges
 
-14 ranges, covering IPv4 and IPv6. Unrecognized IP formats fail closed (treated as blocked).
+14 ranges covering IPv4 and IPv6. Unrecognized IP formats fail closed (treated as blocked).
 
 **IPv4:**
 
@@ -174,42 +257,47 @@ flowchart TD
 
 ### Additional guards
 
-- **Scheme validation:** Only `http:` and `https:` are allowed. `file:`, `ftp:`, `data:`, `gopher:` are rejected.
-- **Redirect blocking:** `fetch` is called with `redirect: "manual"`. Any 3xx response is rejected. This prevents TOCTOU attacks where DNS resolves to a safe IP but the redirect target is internal.
-- **Content-type validation:** Response content-type is checked against an allowlist (prefix match + exact match). Strips parameters before comparison.
-- **Stream-based byte counter:** Body is read chunk-by-chunk via `response.body.getReader()`. A running `byteCount` is compared against `maxBytes` on each chunk. If exceeded, the fetch is aborted. The Content-Length header is never trusted.
-- **Timeouts:** Connect timeout (5s) and total timeout (30s) via AbortController.
-- **User-Agent:** Requests identify as `Sharetopus-MCP/1.0`.
+- **Scheme validation.** Only `http:` and `https:` are allowed. `file:`, `ftp:`, `data:`, `gopher:` are rejected.
+- **Redirect blocking.** `fetch` is called with `redirect: "manual"`. Any 3xx response is rejected. This prevents TOCTOU attacks where DNS resolves to a safe IP but the redirect target is internal.
+- **Content-type validation.** Response content-type is checked against an allowlist (prefix match + exact match). Strips parameters before comparison.
+- **Stream-based byte counter.** Body is read chunk-by-chunk via `response.body.getReader()`. A running `byteCount` is compared against `maxBytes` on each chunk. If exceeded, the fetch is aborted. The Content-Length header is never trusted.
+- **Timeouts.** Connect timeout (5s) and total timeout (30s) via AbortController.
+- **User-Agent.** Requests identify as `Sharetopus-MCP/1.0`.
 
-## Storage quota enforcement
+## Storage Quota Enforcement
+
+Three upload paths all converge on a single enforcement function.
 
 ```mermaid
 flowchart LR
     subgraph "Upload paths"
-        A1["Web /api/storage/generate-upload-url"]
-        A2["MCP request_upload_url"]
-        A3["MCP attach_media_from_url"]
+        A1["Web /api/storage\n/generate-upload-url"]
+        A2["MCP\nrequest_upload_url"]
+        A3["MCP\nattach_media_from_url"]
     end
 
     subgraph "Quota check"
         E["enforceStorageQuota()"]
-        F["get_user_storage_bytes RPC"]
+        F["get_user_storage_bytes\nPostgres RPC"]
         E --> F
     end
 
     subgraph "Storage"
-        S[("scheduled-videos bucket")]
+        S[("scheduled-videos\nbucket")]
     end
 
     A1 --> E
     A2 --> E
-    A3 --> SSRF["safeUserFetch (SSRF guard)"] --> SizeCap["Per-type size cap"] --> E
-    E -->|"projected <= cap"| Mint["Mint signed URL or upload"]
+    A3 --> SSRF["safeUserFetch\n(SSRF guard)"] --> SizeCap["Per-type\nsize cap"] --> E
+    E -->|"projected <= cap"| Mint["Mint signed URL\nor upload"]
     E -->|"projected > cap"| Reject["Return quota_exceeded"]
     Mint --> S
+
+    style Reject fill:#fdd,stroke:#c44
+    style Mint fill:#dfd,stroke:#2a5
 ```
 
-`enforceStorageQuota` (`src/lib/mcp/_shared/enforceStorageQuota.ts`) is the single enforcement point for all three upload paths.
+`enforceStorageQuota` is the single enforcement point for all three upload paths:
 
 1. Calls `get_user_storage_bytes` Postgres RPC with `_bucket = "scheduled-videos"` and `_prefix = "{principalId}/"`.
 2. The RPC reads `storage.objects` directly (no pagination, no estimation).
@@ -218,7 +306,7 @@ flowchart LR
 5. Returns allow or deny with current/cap in the error message.
 
 | Plan | Storage cap |
-|------|-----------|
+|------|-------------|
 | Starter | 5 GB |
 | Creator | 15 GB |
 | Pro | 45 GB |
@@ -226,9 +314,7 @@ flowchart LR
 
 Per-file size caps (all plans): image 8 MB, video 250 MB.
 
-## Web media security
-
-### TikTok HMAC-signed media proxy
+## TikTok HMAC Media Proxy
 
 TikTok's pull model requires a publicly accessible URL for media. Sharetopus uses an HMAC-signed proxy (`/api/media`) to serve files without exposing storage credentials.
 
@@ -267,92 +353,131 @@ sequenceDiagram
 - Payload: `${principalId}:${mediaPath}:${expiresAt}` (colon-separated)
 - Expiry window: 30 minutes from URL creation
 - Signature comparison: `crypto.timingSafeEqual` (constant-time, prevents timing attacks)
+- Response: proxy streams the file body directly (no redirect). `Cache-Control: private, no-store`.
 
-### Web view URLs
+## Webhook Verification
 
-`/api/storage/generate-view-url` creates signed view URLs for the web UI.
+### Stripe
 
-- Clerk auth required
-- Path ownership check: `path.startsWith(userId/)`
-- Default TTL: 300 seconds (5 minutes)
-- The `expiresIn` parameter is not capped server-side (low severity; users can only access their own files)
+Stripe webhooks are verified using the Stripe SDK's built-in signature check against `STRIPE_WEBHOOK_SECRET`. Processed events are recorded in the `stripe_webhook_events` table (append-only) for idempotency. If an event ID already exists, the handler returns early without reprocessing.
 
-## Append-only audit
+### TikTok
 
-Six tables are append-only (`Update: never` in database types, enforced at the DB layer):
+TikTok webhooks are verified with HMAC-SHA256. The signed payload is `${timestamp}.${rawBody}`, where the timestamp comes from the request header. Verification enforces a 300-second tolerance window to reject stale or replayed requests. Processed events are recorded in the `tiktok_webhook_events` table (append-only) for idempotency.
 
-| Table | Purpose |
-|-------|---------|
-| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency |
-| `stripe_invoices` | Payment records |
-| `wallet_credits_ledger` | Credit transaction history (x402, deferred) |
-| `x402_access_log` | Access audit trail (x402, deferred) |
-| `x402_refunds` | Refund records (x402, deferred) |
-| `sanctions_screenings` | Wallet sanctions check results (x402, deferred) |
+### Clerk
 
-The `mcp_audit_log` insert happens in `logToolCall` (`src/lib/mcp/audit.ts`), which runs fire-and-forget after every tool call. Arguments are redacted before insert: 13 key patterns (token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt) are replaced with `[REDACTED]`. Strings matching the JWT three-segment pattern (`xxx.yyy.zzz` in base64url) are replaced with `[REDACTED_JWT]`. Args are truncated to 4096 chars.
+Clerk webhooks are verified using the Svix library's signature verification. This validates the webhook signature, timestamp, and payload integrity.
 
-## Rate limiting
+## Append-Only Audit
 
-### Where it's enforced
+Eight tables are append-only (`Update: never` in database types, enforced at the DB layer):
 
-| Path | Scope key | Limit | Enforced by |
-|------|----------|-------|-------------|
-| MCP `attach_media_from_url` | `mcp_attach_media_from_url` | 10/60s | Tool handler |
-| MCP `request_upload_url` | `mcp_request_upload_url` | 20/60s | Tool handler |
-| Web `handleSocialMediaPost` | per user | 30/60s | Server action |
-| Web `checkOutSession` | per user | 15/60s | Server action |
-| Web `createCustomerPortal` | per user | 20/60s | Server action |
+| Table | Purpose | Retention |
+|-------|---------|-----------|
+| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days (cleanup cron) |
+| `stripe_invoices` | Payment records | Indefinite |
+| `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
+| `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
+| `wallet_credits_ledger` | Credit transaction history (x402, deferred) | Indefinite |
+| `x402_access_log` | Access audit trail (x402, deferred) | Indefinite |
+| `x402_refunds` | Refund records (x402, deferred) | Indefinite |
+| `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |
 
-All rate limits use Upstash Redis sliding window (`@upstash/ratelimit`).
+### Argument redaction
 
-### Monthly caps (per-tier, atomic)
+The `mcp_audit_log` insert happens in `logToolCall`, which runs fire-and-forget after every tool call. Arguments are redacted before insert:
 
-Enforced by `entitlementFor` in `src/lib/mcp/entitlement.ts` via `atomic_increment_quota` Postgres RPC.
+- **13 key patterns** replaced with `[REDACTED]`: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt, and any key containing these as substrings.
+- **JWT detector** replaces strings matching the three-segment base64url pattern (`xxx.yyy.zzz`) with `[REDACTED_JWT]`.
+- **Truncation** to 4096 chars after redaction.
 
-| Action | Starter | Creator | Pro |
-|--------|---------|---------|-----|
-| schedule_post | 100 | 500 | unlimited |
-| post_now | 100 | 500 | unlimited |
-| request_upload_url | 100 | 500 | unlimited |
-| attach_media_from_url | 100 | 500 | unlimited |
-| bulk_schedule | blocked | 200 | unlimited |
-| bulk_post_now | blocked | 500 | unlimited |
-| generate_post_draft | blocked | blocked | 100 |
+## Data Protection
 
-Period key format: `YYYY-MM-01` (first of month, UTC), generated by `currentQuotaPeriod()` (`src/lib/mcp/_shared/currentQuotaPeriod.ts`). All readers and writers must use this helper to avoid silent zero-result queries.
+### IP hashing
 
-### Gaps
+Raw client IPs are never stored. All IP addresses are hashed before persistence.
 
-- No rate limit on `/api/storage/generate-view-url` (Clerk-authed, own files only)
-- No rate limit on `/api/media` proxy (HMAC-signed, 30-min expiry)
-- No aggregate per-day cap on `attach_media_from_url` (has per-minute and per-month caps)
+- Algorithm: SHA-256
+- Input: `ip + ":" + salt`
+- Output: truncated to 32 hex chars
+- Salt: `MCP_IP_HASH_SALT` env var, required in production (server throws if missing)
+- Development: fallback salt with a warning log
 
-## Known gaps
+### PII in audit logs
+
+Token, password, secret, and JWT patterns are redacted before insert (see [Argument redaction](#argument-redaction) above).
+
+### Data retention
+
+| Data | Retention |
+|------|-----------|
+| `mcp_audit_log` | 90 days (via `cleanup-mcp-audit-log` cron) |
+| `stripe_webhook_events` | 90 days (via `cleanup-stripe-webhook-events` cron) |
+| Cancelled scheduled posts | 7-day grace period |
+| `stripe_invoices` | Grows indefinitely (no cleanup) |
+| `content_history` | Grows indefinitely (no cleanup) |
+
+## XSS Prevention
+
+### clientInfo sanitization
+
+MCP clients send a `clientInfo` object containing `clientName` and `clientVersion` during session initialization. These values are stored and rendered in the admin dashboard.
+
+`sanitizeClientField` strips:
+- ASCII control characters (0x00-0x1f)
+- HTML injection characters: `<`, `>`, `'`, `"`, `&`
+
+This prevents stored-XSS when rendering client names in the dashboard. Field length limits: `clientName` max 200 chars, `clientVersion` max 50 chars.
+
+## Known Gaps
 
 These are acknowledged design decisions or low-severity issues, not bugs.
 
-| Gap | Severity | Notes |
-|-----|----------|-------|
-| Cancelled `scheduled_posts` hold storage indefinitely | Design decision | Orphan sweep only catches unreferenced files. Cancelled posts still reference media. A future FIX could free storage on cancel. |
-| `expiresIn` on `/api/storage/generate-view-url` not capped server-side | Low | Own files only. Client could request a very long-lived signed URL. |
-| No alerting on orphan sweep counts | Low | Sweep logs stats to Inngest but no Slack/email/PagerDuty hook. |
-| No rate limit on view URL and media proxy endpoints | Low | Both require authentication (Clerk or HMAC). Abuse would require valid credentials. |
-| `attach_media_from_url` has no aggregate daily cap | Low | Per-minute (10/60s) and per-month caps exist. A sustained 10/min attack over 24h would hit the monthly cap within a day for Starter users. |
+| # | Gap | Severity | Notes |
+|---|-----|----------|-------|
+| 1 | Cancelled `scheduled_posts` hold storage indefinitely | Design decision | Orphan sweep only catches unreferenced files. Cancelled posts still reference their media. |
+| 2 | `expiresIn` on `/api/storage/generate-view-url` not capped server-side | Low | Own files only. Client could request a long-lived signed URL. |
+| 3 | No alerting on orphan sweep counts | Low | Sweep logs stats to Inngest but no external notification hook. |
+| 4 | No rate limit on view URL and media proxy endpoints | Low | Both require authentication (Clerk or HMAC). Abuse would require valid credentials. |
+| 5 | No aggregate daily cap on `attach_media_from_url` | Low | Per-minute (10/60s) and per-month caps exist. A sustained 10/min attack over 24h would hit the monthly cap within a day for Creator users. |
 
-## Compliance posture
+## Compliance Posture
 
-What Sharetopus does today:
+### Active
 
-- **PII redaction in audit logs:** Token, password, secret, JWT patterns are redacted before insert. Raw client IPs are never stored (SHA-256 hashed with configurable salt).
-- **Data retention:** No automated purge. `mcp_audit_log`, `stripe_invoices`, and `content_history` grow indefinitely.
-- **Append-only financial tables:** `stripe_invoices` cannot be updated or deleted at the DB layer.
+- **PII redaction in audit logs.** Token, password, secret, JWT patterns are redacted before insert.
+- **IP hashing.** Raw client IPs are never stored. SHA-256 hashed with configurable salt.
+- **Append-only financial tables.** `stripe_invoices` cannot be updated or deleted at the DB layer.
+- **90-day audit retention.** `mcp_audit_log` and `stripe_webhook_events` are cleaned up by scheduled crons.
 
-Deferred until x402 ships:
+### Deferred (until x402 ships)
 
-- **OFAC / FINTRAC / MiCA screening:** The `sanctions_screenings` table exists but no screening service is integrated.
-- **Wallet KYC:** No identity verification for wallet-based access.
-- **USDC fair market value tracking:** The `usdc_fmv_daily` table exists but is not populated.
+- **OFAC / FINTRAC / MiCA screening.** The `sanctions_screenings` table exists but no screening service is integrated.
+- **Wallet KYC.** No identity verification for wallet-based access.
+- **USDC fair market value tracking.** The `usdc_fmv_daily` table exists but is not populated.
+
+## Source Files Referenced
+
+| File | Role |
+|------|------|
+| `src/lib/mcp/tools/schedulePost.ts` | Schedule post with idempotency |
+| `src/lib/mcp/tools/postNow.ts` | Immediate post with idempotency |
+| `src/lib/mcp/tools/bulkPostNow.ts` | Bulk immediate post with derived idempotency keys |
+| `src/lib/mcp/tools/bulkSchedule.ts` | Bulk schedule with derived idempotency keys |
+| `src/lib/mcp/tools/attachMediaFromUrl.ts` | URL-based media attach (rate limited, SSRF guarded) |
+| `src/lib/mcp/tools/requestUploadUrl.ts` | Signed upload URL generation (rate limited) |
+| `src/lib/mcp/tools/generatePostDraft.ts` | AI draft generation (monthly capped) |
+| `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard (IP blocklist, scheme, redirect, byte counter) |
+| `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement for all upload paths |
+| `src/lib/mcp/_shared/currentQuotaPeriod.ts` | Monthly quota period key generation |
+| `src/lib/mcp/entitlement.ts` | Plan tier checks, monthly cap enforcement via `atomic_increment_quota` |
+| `src/lib/mcp/audit.ts` | Audit logging with arg redaction and JWT detection |
+| `src/lib/mcp/ipHash.ts` | IP hashing (SHA-256 with salt) |
+| `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed TikTok media URL builder |
+| `src/app/api/media/route.ts` | Media proxy (HMAC verification, path traversal guard) |
+| `src/app/api/storage/generate-view-url/route.ts` | Web view URL generation (Clerk auth, path ownership) |
+| `src/app/api/storage/generate-upload-url/route.ts` | Web upload URL generation (storage quota check) |
 
 ---
 

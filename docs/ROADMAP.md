@@ -1,141 +1,232 @@
 # Roadmap
 
-Features and improvements that are deferred, in-progress, or blocked. This reflects the current state of the codebase, not aspirational goals.
+Current state of shipped features, deferred work, and known issues. Reflects what the code does today, not aspirational goals.
 
 [Back to README](../README.md)
 
-## Implementation status
+## Table of Contents
+
+- [Implementation Status](#implementation-status)
+- [Shipped](#shipped)
+- [Near-Term (Next 30 Days)](#near-term-next-30-days)
+- [Mid-Term (1-3 Months)](#mid-term-1-3-months)
+- [Long-Term (3+ Months)](#long-term-3-months)
+- [Open Issues](#open-issues)
+- [Won't Fix (For Now)](#wont-fix-for-now)
+- [Source Files Referenced](#source-files-referenced)
+
+## Implementation Status
 
 ```mermaid
-graph LR
-    subgraph Shipped["Shipped"]
-        WebUI["Web UI"]
-        MCP["MCP Server (18 tools)"]
-        Billing["Stripe Billing"]
-        Inngest["Inngest Crons (6)"]
-        Platforms["4 Platforms"]
+graph TD
+    subgraph Shipped["Shipped (Production)"]
+        TikTokWH["TikTok Webhook + Inngest Processor"]
+        HybridPricing["Hybrid Pricing / MCP Creator+ Gate"]
+        WithMcpTool["withMcpTool HOF (auth, audit, entitlement)"]
+        APIKeyExpiry["API Key Expiry (7/30/90/365d)"]
+        RequestIdTrace["Web requestId Tracing"]
+        SharedFinalize["TikTok Shared Finalize (poll+webhook)"]
+        GenericAdapter["Generic Adapter Pattern"]
+        OAuthTrust["OAuth Client Trust Enforcement"]
+        RetentionCrons["Data Retention Crons (3)"]
+        SSRFGuard["SSRF Guard (safeUserFetch)"]
+        StorageQuota["Storage Quota Enforcement"]
+        ToolAnnotations["MCP Tool Annotations (18 tools)"]
+        ClientInfo["clientInfo Capture"]
+        PinterestBoards["list_pinterest_boards Tool"]
+        BulkPostNow["bulk_post_now Tool"]
+        IdempotentRetries["Idempotent Retries on Write Tools"]
     end
 
-    subgraph Schema["Schema Ready, Code Deferred"]
-        REST["REST API"]
+    subgraph NearTerm["Near-Term (Schema Ready)"]
+        REST["REST API v1"]
+    end
+
+    subgraph MidTerm["Mid-Term (Schema Exists, Code Deferred)"]
         x402["x402 Wallet Access"]
+        NewPlatforms["YouTube, X, Threads, Facebook"]
     end
 
-    subgraph NotStarted["Not Started"]
-        NewPlatforms["Threads, YouTube, X"]
-        Analytics["Analytics Pipeline"]
+    subgraph LongTerm["Long-Term (Partial/Planned)"]
+        WalletLedger["Wallet Credits Ledger"]
+        FederatedAgents["Federated Agent Features"]
+        AnalyticsPipeline["Analytics Pipeline"]
     end
 
-    MCP -.->|"mirrors"| REST
-    Billing -.->|"alternative"| x402
-    Platforms -.->|"expand"| NewPlatforms
+    SharedFinalize -->|"converges on"| TikTokWH
+    GenericAdapter -->|"enables"| NewPlatforms
+    HybridPricing -->|"alternative path"| x402
+    REST -->|"mirrors"| WithMcpTool
 ```
 
-## Deferred features
+## Shipped
 
-### REST API (Phase 2)
+All items below are live in production.
 
-A public REST API mirroring the MCP tools (schedule, cancel, list, etc.) with `stp_rest_*` API keys. The `api_keys` table already supports `kind=rest` and the `created_via=api` enum value exists.
+### 1. TikTok Webhook Receiver + Inngest Processor
 
-**Status:** Deferred. Waiting for MCP traffic signal before investing in a parallel API surface.
+The `/api/webhooks/tiktok/publish` endpoint receives HMAC-SHA256 signed events from TikTok's Content Posting API. The `processTikTokPublishWebhook` Inngest function processes events with 3 retries. Both the webhook path and the existing poll worker converge on `finalizeTikTokPostByPublishId`, making the system dual-path (webhook arrives first in most cases, poll serves as fallback). The `tiktok_webhook_events` table enforces idempotency so concurrent webhook + poll completions are safe.
 
-### x402 anonymous wallet access (Phase 4)
+### 2. Hybrid Pricing / MCP Creator+ Minimum
 
-Wallet-based authentication using SIWE (Sign-In With Ethereum). Users pay per-action with USDC credits instead of a monthly subscription.
+All 18 MCP tools require Creator tier or above. Starter users have web UI access only, no MCP. Per-tool quotas at Creator tier: 500/mo for most tools, 200/mo for `bulk_schedule`, 100/mo for `generate_post_draft`. Pro tier has unlimited quotas.
 
-Schema tables exist: `wallets`, `wallet_credits`, `wallet_credits_ledger`, `x402_charges`, `x402_refunds`, `x402_access_log`, `pricing_actions`, `siwe_nonces`, `usdc_fmv_daily`, `sanctions_screenings`.
+### 3. withMcpTool Higher-Order Function
 
-The `principals.kind=wallet` path and `created_via=x402` enum are wired but no code path is built.
+A 240-line wrapper (`withMcpTool`) handles auth, entitlement checks, audit logging, and error handling for every MCP tool. Injects `McpToolContext` containing principal, sessionId, requestId, ipHash, and userAgent. Logs automatically on deny, error, and success paths.
 
-**Status:** Deferred. Schema ready, code path not started.
+### 4. API Key Expiry
 
-### Platform deduplication refactors
+Users select expiry duration when creating API keys: 7, 30, 90, or 365 days (default 90). No "never expires" option. The `ApiKeysCard.tsx` component displays remaining time and expiry date.
 
-The 4 platform integrations share similar patterns for OAuth, token refresh, and posting. Three generic helpers now handle the common logic (`directPostForAccountsGeneric.ts`, `processAccountsGeneric.ts`, `scheduleForAccountGeneric.ts` in `src/lib/api/_shared/`). The 9 platform-specific wrappers are now thin adapters over these generics.
+### 5. Web requestId Tracing
 
-**Status:** Shipped. Remaining platform-specific duplication is minimal.
+`generateRequestId()` runs at server action entry points. The ID threads through `schedulePostBatch` and `directPostBatch`, connecting web requests to downstream operations in logs and audit records.
 
-## Recently shipped
+### 6. TikTok Shared Finalize Function
 
-### list_pinterest_boards MCP tool
+`finalizeTikTokPostByPublishId` handles both poll and webhook outcomes. It is idempotent (first writer wins). Constructs deep links from `creator_username` + `publish_id` prefix.
 
-The `list_pinterest_boards` tool lets MCP agents discover board IDs for Pinterest posting. Parameters: `social_account_id` (required), `page_size` (1-100, default 25), `bookmark` (pagination cursor). Returns board id, name, description, privacy, pin_count.
+### 7. Generic Adapter Pattern
 
-### bulk_post_now MCP tool
+`directPostForAccountsGeneric.ts` defines the `DirectPostPlatformAdapter` type. Per-platform adapters (LinkedIn, Pinterest, TikTok, Instagram) are thin wrappers. Token refresh, history storage, and error handling live in the generic layer.
 
-The `bulk_post_now` tool publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent retry pattern as `bulk_schedule` (batch_id derives per-post idempotency keys).
+### 8. OAuth Client Trust Enforcement
 
-### Idempotent retries on MCP write tools
+The `mcp_oauth_clients` table tracks `trust_level` (unverified, verified, blocked). Clients auto-verify on first appearance, demote to unverified on subscription cancel, promote back on resubscribe. The `sweep-stale-oauth-clients` cron runs daily at 04:00 UTC with 90-day retention.
 
-`schedule_post`, `post_now`, and `bulk_post_now` accept an optional `idempotency_key` parameter. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors.
+### 9. Data Retention Crons
 
-### SSRF guard on attach_media_from_url
+Three Inngest crons handle cleanup:
+- `cleanup-mcp-audit-log`: 90-day retention
+- `cleanup-stripe-webhook-events`: 90-day retention
+- `cleanup-cancelled-posts-after-grace`: 7-day grace period
 
-`safeUserFetch` (`src/lib/mcp/_shared/safeUserFetch.ts`) blocks 14 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved), rejects non-http(s) schemes, blocks redirects, validates content-type, and enforces a stream-based byte counter (Content-Length untrusted). Rate limited at 10/60s per principal.
+### 10. SSRF Guard (safeUserFetch)
 
-### Storage quota enforcement parity
+Blocks 14 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved). Rejects non-http(s) schemes, blocks redirects, validates content-type, enforces a stream-based byte counter (Content-Length header untrusted). Rate limited at 10 requests per 60 seconds per principal.
 
-`enforceStorageQuota` (`src/lib/mcp/_shared/enforceStorageQuota.ts`) calls the `get_user_storage_bytes` Postgres RPC to read actual bytes from `storage.objects`. Used by both `generateServerSignedUploadUrl` (web/MCP upload) and `attach_media_from_url`.
+### 11. Storage Quota Enforcement (enforceStorageQuota)
 
-### MCP tool annotations
+Calls the `get_user_storage_bytes` Postgres RPC to read actual bytes from `storage.objects`. Plan-based caps enforced at upload time for both web/MCP upload (`generateServerSignedUploadUrl`) and `attach_media_from_url`.
+
+### 12. MCP Tool Annotations
 
 All 18 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`.
 
-### clientInfo capture
+### 13. clientInfo Capture
 
-The MCP route handler extracts `clientInfo.name` and `clientInfo.version` from the initialize handshake and stores them in `mcp_sessions.client_name` and `mcp_sessions.client_version`.
+The MCP route handler extracts `clientInfo.name` and `clientInfo.version` from the initialize handshake. Stored in `mcp_sessions.client_name` and `mcp_sessions.client_version`.
 
-## Open issues
+### 14. list_pinterest_boards MCP Tool
 
-### Analytics metrics population
+Lets MCP agents discover board IDs for Pinterest posting. Parameters: `social_account_id` (required), `page_size` (1-100, default 25), `bookmark` (pagination cursor). Returns board id, name, description, privacy, pin_count.
 
-The `analytics_metrics` table exists and the `get_account_analytics` MCP tool reads from it, but no cron or background job populates it. The tool returns whatever is in the table (currently empty for most users).
+### 15. bulk_post_now MCP Tool
 
-A QStash-based refresh job was mentioned in a code comment but the `@upstash/qstash` dependency is not imported anywhere.
+Publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent retry pattern as `bulk_schedule` (batch_id derives per-post idempotency keys).
 
-**Status:** Table exists, data pipeline not built.
+### 16. Idempotent Retries on MCP Write Tools
 
-### TikTok unaudited app limitations
+`schedule_post`, `post_now`, and `bulk_post_now` accept an optional `idempotency_key` parameter. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors without creating duplicates.
 
-TikTok's unaudited developer apps have restrictions that affect posting:
+## Near-Term (Next 30 Days)
+
+### REST API v1
+
+A public REST API mirroring the MCP tools (schedule, cancel, list, etc.) with `stp_rest_*` API keys. The `api_keys` table already supports `kind=rest` and the `created_via=api` enum value exists.
+
+A code comment in `src/lib/mcp/auth/resolve.ts` references "Phase 2 adds stp_rest_ branch", confirming the planned approach: reuse the same auth resolution logic with a new key prefix.
+
+**Status:** Schema ready, code not started.
+
+## Mid-Term (1-3 Months)
+
+### x402 Wallet Access
+
+Wallet-based authentication using SIWE (Sign-In With Ethereum). Users pay per-action with USDC credits instead of a monthly subscription.
+
+Schema tables exist and are migrated: `wallets`, `wallet_credits`, `wallet_credits_ledger`, `x402_charges`, `x402_refunds`, `x402_access_log`, `pricing_actions`, `siwe_nonces`, `usdc_fmv_daily`, `sanctions_screenings`. The `principals.kind=wallet` path and `created_via=x402` enum are wired. Dependencies installed: `@x402/core`, `@x402/evm`, `@coinbase/cdp-sdk`.
+
+No code path is built. This is schema-only at this point.
+
+### Additional Platforms
+
+YouTube, X/Twitter, Threads, and Facebook appear in the `social_accounts.platform` enum and type definitions. No backend integration code exists for these. The generic adapter pattern (item 7 above) is designed to make adding new platforms straightforward.
+
+## Long-Term (3+ Months)
+
+### Wallet Credits Ledger
+
+The `wallet_credits_ledger` table schema exists as part of the x402 migration. Building the actual credit/debit transaction logic depends on the x402 code path being completed first.
+
+### Federated Agent Features
+
+No schema or code exists. Planned direction for multi-agent collaboration scenarios where external agents interact with Sharetopus on behalf of users.
+
+### Analytics Pipeline
+
+The `analytics_metrics` table exists and `get_account_analytics` reads from it, but no cron or background job populates it. Building the data pipeline requires deciding on data sources (platform APIs, webhook events, or both) and refresh cadence.
+
+## Open Issues
+
+### 1. Analytics Metrics Population
+
+The table exists, the MCP tool reads it, but nothing writes to it. The tool returns whatever is in the table (currently empty for most users). The Studio/Analytics page at `/studio` shows a "Coming Soon" placeholder for the same reason.
+
+### 2. TikTok Unaudited App Limitations
+
+TikTok's unaudited developer apps have restrictions:
 - `picture_size_check_failed` errors for non-square images
-- Default privacy `SELF_ONLY` (private posts)
+- Default privacy `SELF_ONLY` (posts are private)
 - Limited API rate quotas
 
-These resolve when the TikTok app passes audit review.
+These resolve when the TikTok app passes audit review. No code change needed.
 
-**Status:** Known limitation, depends on TikTok developer app approval.
+### 3. Instagram Connect Button Disabled
 
-### Instagram connect button
+The Instagram OAuth backend (initiate, connect, post, process) is fully functional. The "Connect Instagram" button is commented out in the connections page UI component. Backend ready, UI disabled.
 
-The Instagram OAuth backend (initiate, connect, post, process) is fully functional, but the "Connect Instagram" button is commented out in the connections page UI component.
+### 4. i18n Declared But No Translations
 
-**Status:** Backend ready, UI button disabled.
+Internationalization is configured in `i18n-config.ts` (fr, en, es) and dependencies (`i18next`, `react-i18next`, `next-i18next`) are installed. No translation files exist. The UI is English only.
 
-### i18n
+### 5. Studio/Analytics Page Placeholder
 
-Internationalization is declared in `i18n-config.ts` (fr, en, es) and dependencies (`i18next`, `react-i18next`, `next-i18next`) are installed. No translation files exist. The UI is English only.
+The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analytics data pipeline).
 
-**Status:** Infrastructure in place, no translations.
+### 6. Unused QStash Dependency
 
-### Studio/Analytics page
+`@upstash/qstash` is listed in `package.json` but not imported anywhere. Legacy from pre-Inngest era. See "Won't Fix" below.
 
-The Studio page at `/studio` shows a "Coming Soon" placeholder. The `analytics_metrics` table exists but has no data pipeline.
+## Won't Fix (For Now)
 
-**Status:** Placeholder UI only.
+### QStash Removal
 
-## Won't fix (for now)
-
-### Additional platform integrations
-
-Threads, YouTube, X/Twitter, and Facebook appear in type definitions (`social_accounts.platform` enum) but building integrations for these is not planned until the current 4 platforms are stable and the user base warrants it.
-
-### QStash removal
-
-`@upstash/qstash` is listed as a dependency but is not imported in any source file. It was likely used before the migration to Inngest. Removing it is low-risk but low priority.
+`@upstash/qstash` is a dead dependency. Removing it is low-risk but low priority. No code references it.
 
 ---
 
 **See also:** [docs/ARCHITECTURE.md](./ARCHITECTURE.md) (system overview), [docs/MCP.md](./MCP.md) (tool inventory), [docs/SECURITY.md](./SECURITY.md) (security mechanisms)
 
 [Back to README](../README.md)
+
+## Source Files Referenced
+
+| File | Relevance |
+|------|-----------|
+| `src/app/api/webhooks/tiktok/publish/route.ts` | TikTok webhook endpoint |
+| `src/lib/inngest/functions/processTikTokPublishWebhook.ts` | Webhook Inngest processor |
+| `src/lib/api/tiktok/finalizeTikTokPostByPublishId.ts` | Shared finalize (poll + webhook) |
+| `src/lib/mcp/withMcpTool.ts` | HOF wrapping all 18 tools |
+| `src/lib/mcp/auth/resolve.ts` | Auth resolution, REST API phase 2 comment |
+| `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic adapter pattern |
+| `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard |
+| `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement |
+| `src/components/ApiKeysCard.tsx` | API key expiry display |
+| `src/lib/inngest/functions/sweepStaleOauthClients.ts` | OAuth trust sweep cron |
+| `src/lib/inngest/functions/cleanupMcpAuditLog.ts` | Audit log retention cron |
+| `src/lib/inngest/functions/cleanupStripeWebhookEvents.ts` | Stripe events retention cron |
+| `src/lib/inngest/functions/cleanupCancelledPostsAfterGrace.ts` | Cancelled posts cleanup cron |
+| `i18n-config.ts` | i18n language configuration |
+| `package.json` | Dependency declarations (x402, QStash, cdp-sdk) |

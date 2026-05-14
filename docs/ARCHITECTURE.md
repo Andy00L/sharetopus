@@ -2,9 +2,27 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, Inngest background jobs, and integrations with 4 social platforms.
 
-292 TypeScript source files. 24 API routes. 29 database tables. 18 MCP tools.
+346 TypeScript source files. 21 API routes. 31 database tables. 18 MCP tools. 11 Inngest functions.
 
 [Back to README](../README.md)
+
+## Table of contents
+
+- [System overview](#system-overview)
+- [Directory structure](#directory-structure)
+- [Data flows](#data-flows)
+  - [Web user schedules a post](#web-user-schedules-a-post)
+  - [MCP agent schedules a post](#mcp-agent-schedules-a-post)
+  - [Inngest processes a scheduled post](#inngest-processes-a-scheduled-post)
+  - [TikTok async publish (webhook + polling)](#tiktok-async-publish-webhook--polling)
+  - [Pinterest OAuth flow](#pinterest-oauth-flow)
+- [State diagrams](#state-diagrams)
+  - [scheduled_posts.status](#scheduled_postsstatus)
+  - [pending_direct_posts.status](#pending_direct_postsstatus)
+- [Error handling](#error-handling)
+- [Design tradeoffs](#design-tradeoffs)
+- [Tech stack](#tech-stack)
+- [Source files referenced](#source-files-referenced)
 
 ## System overview
 
@@ -24,32 +42,40 @@ graph TD
             PubActions["Public Actions (auth + rate limit)"]
             IntActions["Internal Actions (no auth, MCP use)"]
         end
-        subgraph API["API Routes (24 endpoints)"]
+        subgraph API["API Routes (21 endpoints)"]
             SocialRoutes["Social OAuth + Post Routes"]
             StorageRoutes["Storage URL Routes"]
-            WebhookRoutes["Webhook Handlers (Clerk, Stripe)"]
+            WebhookRoutes["Webhook Handlers (Clerk, Stripe, TikTok)"]
             PostStatus["Post Status Polling"]
+            X402Routes["x402 Routes (deferred)"]
         end
         subgraph MCP["MCP Server"]
             MCPRoute["POST /api/mcp/mcp"]
             MCPAuth["withMcpAuth (Bearer token)"]
-            MCPTools["18 Tools"]
-            MCPRes["3 Resources"]
-            MCPPrompts["3 Prompts"]
+            MCPTools["18 Tools, 3 Resources, 3 Prompts"]
         end
     end
 
-    subgraph Background["Background (Inngest)"]
-        Dispatcher["scheduled-posts-tick (cron 5min)"]
-        Worker["process-single-post (event)"]
-        DirectWorker["process-direct-post (event)"]
-        TikTokPoll["tiktok-publish-status-poll (event)"]
-        StuckSweep["sweep-stuck-direct-posts (cron 5min)"]
-        OrphanSweep["sweep-orphan-storage-files (cron daily)"]
+    subgraph Background["Background (Inngest, 11 functions)"]
+        subgraph EventHandlers["Event-driven (4)"]
+            Worker["process-single-post (post.due, retries 3)"]
+            DirectWorker["process-direct-post (post.now, retries 0)"]
+            TikTokPoll["tiktok-publish-status-poll (tiktok.publish.poll)"]
+            TikTokWebhook["process-tiktok-publish-webhook (tiktok.publish.webhook.received, retries 3)"]
+        end
+        subgraph Crons["Cron jobs (7)"]
+            Dispatcher["scheduled-posts-tick (*/5 min)"]
+            StuckSweep["sweep-stuck-direct-posts (*/5 min)"]
+            OrphanSweep["sweep-orphan-storage-files (daily 03:00)"]
+            StripeSweep["cleanup-stripe-webhook-events (daily 03:00)"]
+            OauthSweep["sweep-stale-oauth-clients (daily 04:00)"]
+            AuditSweep["cleanup-mcp-audit-log (daily 04:00)"]
+            GraceSweep["cleanup-cancelled-posts-after-grace (daily 05:00)"]
+        end
     end
 
     subgraph Data["Data Layer"]
-        Supabase["Supabase Postgres (29 tables)"]
+        Supabase["Supabase Postgres (31 tables)"]
         Storage["Supabase Storage (scheduled-videos)"]
         Redis["Upstash Redis (rate limits)"]
     end
@@ -76,10 +102,16 @@ graph TD
     Worker --> LI & TK & PI & IG
     DirectWorker --> LI & TK & PI & IG
     TikTokPoll --> TK
+    TikTokWebhook --> Supabase
     StuckSweep --> Supabase
     OrphanSweep --> Storage
+    StripeSweep --> Supabase
+    OauthSweep --> Supabase
+    AuditSweep --> Supabase
+    GraceSweep --> Supabase
     Clerk -->|webhooks| WebhookRoutes
     Stripe -->|webhooks| WebhookRoutes
+    TK -->|webhooks| WebhookRoutes
     WebhookRoutes --> Supabase
 ```
 
@@ -102,7 +134,11 @@ src/
       contentHistoryActions/    # storeContentHistory, storeFailedPost, getContentHistory
       data/                     # generateServerSignedUploadUrl, pendingDirectPosts,
                                 # pendingTikTokPulls, mcpSessions, orphanStorageSweep,
+                                # sweepStaleOauthClients, cleanupCancelledPostsAfterGrace,
+                                # finalizeTikTokPostByPublishId,
                                 # getServerSignedViewUrl, getSupabaseVideoFile
+      directPostActions/        # directPostBatchAction (with requestId tracing)
+      handleSocialMediaPost/    # Main posting handler (direct + scheduled)
       mcp/                      # createApiKey, listApiKeys, revokeApiKey
       rateLimit/                # checkRateLimit (Upstash sliding window)
       scheduleActions/          # Public wrappers: auth + rate limit + delegate to _internal
@@ -122,21 +158,25 @@ src/
       oauth-protected-resource/ # RFC 9728 OAuth discovery for MCP clients
     api/
       auth/[clerk]/             # Clerk auth UI
-      inngest/                  # Inngest serve() endpoint (6 functions)
+      inngest/                  # Inngest serve() endpoint (11 functions)
       mcp/[transport]/          # MCP server (Streamable HTTP + SSE)
       media/                    # HMAC-signed media proxy
       posts/status/             # Inngest job status polling (max 50 event IDs)
       social/
         {platform}/connect/     # OAuth callback handler
         {platform}/initiate/    # OAuth initiation redirect
-        {platform}/post/        # Direct post endpoint
-        {platform}/process/     # Schedule processing endpoint
       storage/
         generate-upload-url/    # Signed upload URL (Clerk-authed)
         generate-view-url/      # Signed view URL (Clerk-authed, 5min TTL)
       webhooks/
         clerk/                  # user.created, user.updated, user.deleted
         stripe/                 # subscription.*, invoice.*
+        tiktok/publish/         # TikTok Content Posting webhooks
+      x402/                     # Wallet-based access (deferred)
+        connect/                # x402 connection initiation
+        oauth/callback/         # Platform OAuth callback for wallet users
+        oauth/status/           # Connection status query
+        register/               # Wallet registration challenge + verify
   components/
     core/
       create/                   # Post creation form, media upload, validation
@@ -152,13 +192,20 @@ src/
     ui/                         # shadcn/ui components
   inngest/
     client.ts                   # Inngest client (id: "sharetopus")
+    dispatch/
+      dispatchPostNowEvents.ts  # Dispatch helper for direct posts
     functions/
-      scheduledPostsTick.ts     # Cron: dispatch due scheduled posts
-      processSinglePost.ts      # Event: process one scheduled post
-      processDirectPost.ts      # Event: process one direct post
-      tikTokPublishStatusPoll.ts # Event: poll TikTok publish status
-      sweepStuckDirectPosts.ts  # Cron: recover stuck pending_direct_posts
-      sweepOrphanStorageFiles.ts # Cron: delete unreferenced storage files
+      scheduledPostsTick.ts     # Cron */5: dispatch due scheduled posts
+      processSinglePost.ts      # Event post.due: process one scheduled post (retries 3)
+      processDirectPost.ts      # Event post.now: process one direct post (retries 0)
+      tikTokPublishStatusPoll.ts  # Event tiktok.publish.poll: poll TikTok publish status
+      processTikTokPublishWebhook.ts  # Event tiktok.publish.webhook.received: handle TikTok webhook (retries 3)
+      sweepStuckDirectPosts.ts  # Cron */5: recover stuck pending_direct_posts
+      sweepOrphanStorageFiles.ts  # Cron daily 03:00: delete unreferenced storage files
+      cleanupStripeWebhookEvents.ts  # Cron daily 03:00: purge stripe_webhook_events > 90d
+      sweepStaleOauthClientsCron.ts   # Cron daily 04:00: purge unverified OAuth clients > 90d
+      cleanupMcpAuditLogCron.ts       # Cron daily 04:00: purge mcp_audit_log > 90d
+      cleanupCancelledPostsAfterGraceCron.ts  # Cron daily 05:00: delete cancelled posts past 7d grace
       platformErrors.ts         # Error classification (retryable vs terminal)
   lib/
     api/
@@ -170,7 +217,7 @@ src/
       instagram/                # OAuth, posting, scheduling, data helpers
       linkedin/                 # OAuth, posting, scheduling, data helpers
       pinterest/                # OAuth, posting (streaming video), scheduling
-      tiktok/                   # OAuth, posting (async pull), scheduling
+      tiktok/                   # OAuth, posting (async pull), scheduling, finalize
       inngest/                  # Inngest API helpers
     jobs/
       runtimeConfig.ts          # Runtime tuning (concurrency, timeouts, batch sizes)
@@ -178,15 +225,26 @@ src/
       auth.ts                   # resolveMcpPrincipal (API key + OAuth paths)
       audit.ts                  # logToolCall, arg redaction, session upsert
       context.ts                # extractPrincipal, extractSessionId, extractIpHash
-      entitlement.ts            # Plan gating + monthly quota enforcement
+      entitlement.ts            # Plan gating (Creator+ minimum) + monthly quota enforcement
       ipHash.ts                 # SHA-256 IP hashing with configurable salt
+      withMcpTool.ts            # HOF wrapper: auth, entitlement, audit, error handling
       _shared/                  # safeUserFetch, enforceStorageQuota, currentQuotaPeriod
       tools/                    # 18 tool definitions (one file per tool)
-      resources/                # 3 resource definitions
-      prompts/                  # 3 prompt definitions
+      prompts/                  # 3 prompt definitions (auditCalendar, planWeekForPlatform, repurposePost)
     types/
-      database.types.ts         # Generated Supabase types (29 tables)
-      plans.ts                  # Plan tiers, price IDs, account/storage limits
+      database.types.ts         # Generated Supabase types (31 tables)
+      plans.ts                  # Plan tiers (Starter, Creator, Pro), price IDs, account/storage limits
+    utils/
+      generateRequestId.ts      # Web requestId tracing for server actions
+    x402/                       # Wallet-based anonymous access (deferred)
+      auth/                     # resolveWalletPrincipal, types
+      audit/                    # logX402Call
+      connect/                  # buildOAuthUrl
+      oauth/                    # connectionToken, callback handlers per platform
+      register/                 # handleRegisterChallenge, handleRegisterVerify
+      sanctions/                # applyWalletGate (OFAC)
+      siwe/                     # SIWE nonce create/consume/verify
+      solana/                   # refundSolana
 ```
 
 ## Data flows
@@ -206,6 +264,7 @@ sequenceDiagram
     User->>Form: Fill post content + select accounts
     Form->>Handler: Submit (isScheduled=true)
     Handler->>Handler: Clerk authCheck + rate limit (30/60s)
+    Handler->>Handler: generateRequestId() for tracing
     Handler->>Handler: Validate content per account
     Handler->>Process: POST per platform (accounts, content, scheduledAt)
     Process->>Schedule: scheduleFor{Platform}Accounts(accounts, content)
@@ -218,31 +277,37 @@ sequenceDiagram
 
 ### MCP agent schedules a post
 
+MCP access requires the Creator plan or higher. Starter users have zero MCP access. All 18 tools enforce this via the `withMcpTool` HOF, which runs entitlement checks before any business logic.
+
 ```mermaid
 sequenceDiagram
     participant Agent as AI Agent
     participant MCP as /api/mcp/mcp
     participant Auth as resolveMcpPrincipal
+    participant HOF as withMcpTool
     participant Entitle as entitlementFor
-    participant Tool as schedule_post tool
+    participant Tool as schedule_post handler
     participant Internal as schedulePostInternal
     participant DB as Supabase
     participant Audit as logToolCall
 
     Agent->>MCP: POST {tool: schedule_post, args: {...}}
     MCP->>Auth: Bearer token
-    Auth-->>MCP: McpPrincipal (principalId, plan=starter)
-    MCP->>Entitle: entitlementFor(principal, "schedule_post")
-    Entitle->>DB: Check + increment usage_quotas
-    Entitle-->>MCP: allowed (100/mo starter)
-    MCP->>Tool: execute(args, principal)
+    Auth-->>MCP: McpPrincipal (principalId, plan)
+    MCP->>HOF: withMcpTool("schedule_post", handler)
+    HOF->>HOF: buildContext (principal, session, ipHash, ua, client)
+    HOF->>Entitle: entitlementFor(principal, "schedule_post")
+    Entitle->>Entitle: checkTierGate (Creator+ required)
+    Entitle->>DB: atomic_increment_quota (500/mo Creator, unlimited Pro)
+    Entitle-->>HOF: allowed
+    HOF->>Tool: execute(ctx, args)
     Tool->>Internal: schedulePostInternal(data, principalId, "mcp")
     Internal->>DB: INSERT scheduled_posts (status=scheduled, created_via=mcp)
     DB-->>Tool: scheduleId
-    Tool-->>MCP: {success: true, scheduleId}
-    MCP->>Audit: logToolCall(principal, "schedule_post", "ok", latency)
+    Tool-->>HOF: {content, isError: false}
+    HOF->>Audit: logToolCall(principal, "schedule_post", "ok", latencyMs)
     Audit->>DB: INSERT mcp_audit_log
-    MCP-->>Agent: JSON result
+    HOF-->>Agent: JSON result
 ```
 
 ### Inngest processes a scheduled post
@@ -278,6 +343,37 @@ sequenceDiagram
         Worker-->>Inngest: throw (triggers retry with backoff)
     end
 ```
+
+### TikTok async publish (webhook + polling)
+
+TikTok's Content Posting API is asynchronous. After the initial upload, TikTok returns a `publish_id` but the post is not live yet. Sharetopus resolves final status through two parallel paths that both converge on the same function.
+
+```mermaid
+graph TD
+    subgraph Initiation["Post initiated"]
+        Upload["Upload to TikTok (returns publish_id)"]
+    end
+
+    subgraph Resolution["Two resolution paths"]
+        Webhook["Webhook path"]
+        Polling["Polling path"]
+    end
+
+    subgraph Convergence["Shared finalize"]
+        Finalize["finalizeTikTokPostByPublishId"]
+    end
+
+    Upload -->|dispatch tiktok.publish.poll| Polling
+    Upload -->|TikTok sends webhook| Webhook
+
+    Webhook -->|"process-tiktok-publish-webhook (retries 3)"| Finalize
+    Polling -->|"tiktok-publish-status-poll (GET /publish/status)"| Finalize
+
+    Finalize -->|completed| Success["UPDATE status=posted, INSERT content_history"]
+    Finalize -->|failed| Failure["UPDATE status=failed, INSERT failed_posts"]
+```
+
+Whichever path fires first writes the final state. The finalize function is idempotent, so if both paths resolve (e.g., webhook arrives after polling already completed), the second call is a no-op.
 
 ### Pinterest OAuth flow
 
@@ -358,11 +454,19 @@ Platform errors are classified in `src/inngest/functions/platformErrors.ts`:
 - **Retryable**: `auth_expired`, `rate_limited`, `transient` (network timeouts, connection resets)
 - **Terminal**: `policy_rejected` (platform policy violation), `invalid_input` (wrong post type, missing board), `unknown`
 
+The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the request, it writes an audit row with status `denied` or `quota_exceeded` and returns a structured error to the agent. If the handler throws, the HOF writes an `error` audit row and re-throws for the SDK to surface as a JSON-RPC error.
+
 ## Design tradeoffs
 
-**Principals table (unified identity).** `principals.kind` is `clerk` or `wallet`. Every other table FKs to `principal_id`, not `user_id`. This adds a join when you only care about Clerk users (which is currently all users), but it means the x402 wallet-based anonymous access path can be added without schema migration. The wallet tables exist in the schema but the code path is not built yet.
+**Principals table (unified identity).** `principals.kind` is `clerk` or `wallet`. Every other table FKs to `principal_id`, not `user_id`. This adds a join when you only care about Clerk users (which is currently all users), but it means the x402 wallet-based anonymous access path can be added without schema migration. The wallet tables exist in the schema but the code path is deferred.
 
 **created_via enum.** Every post-related table stores `created_via: web | mcp | x402 | api`. This was threaded through all scheduling and posting paths so analytics can distinguish origin. The cost is an extra parameter passed through several layers.
+
+**withMcpTool HOF.** Every MCP tool handler is wrapped by `withMcpTool`, which handles: (1) extract per-request context (principal, session, ipHash, user agent, client info), (2) run entitlement gate (tier check + monthly quota via atomic RPC), (3) call business logic, (4) emit audit row with latency. Tool handlers only contain business logic. The HOF also supports per-tool `auditArgsBuilder` for scrubbing large or sensitive args before they reach `mcp_audit_log`.
+
+**Generic adapter pattern.** `directPostForAccountsGeneric.ts` provides a single code path for direct posting across all 4 platforms. Platform-specific logic is injected via callbacks. Same pattern in `processAccountsGeneric.ts` and `scheduleForAccountGeneric.ts`. This avoids 4x duplication at the cost of an abstraction layer.
+
+**TikTok dual-path resolution.** TikTok publishes are async (you get a `publish_id`, not a final status). Both webhook and polling paths exist because webhooks are faster but not 100% reliable. Both converge on `finalizeTikTokPostByPublishId`, which is idempotent. The second path to arrive is a no-op.
 
 **Stateless MCP (mcp-handler 1.1.0).** The MCP server runs in stateless Streamable HTTP mode. mcp-handler 1.1.0 does not support persistent sessions across requests. Each request resolves the principal independently. The `mcp_sessions` table tracks session activity but cannot enforce session continuity. This is fine for tool calls but limits features like long-running subscriptions or server-initiated notifications.
 
@@ -370,9 +474,13 @@ Platform errors are classified in `src/inngest/functions/platformErrors.ts`:
 
 **Admin Supabase client.** All server actions use a service-role Supabase client that bypasses RLS. This is simpler than managing RLS policies for server-side operations but means the application layer is responsible for all access control. Every action manually checks `principal_id` ownership.
 
+**Web requestId tracing.** Public server actions call `generateRequestId()` and pass the ID through the call chain. This ties together the server action, any Inngest events dispatched, and the resulting background work, making it possible to trace a user action end-to-end in logs.
+
 **Inngest over pg_cron.** Background jobs use Inngest (hosted) instead of Postgres cron extensions. Inngest provides retry with backoff, per-account throttling, event-driven dispatch, and observability without self-hosting infrastructure. The tradeoff is a dependency on Inngest's hosted service and the 300-second Vercel function timeout ceiling.
 
 **Streaming multipart for Pinterest video.** Pinterest requires uploading video files to S3 via multipart form-data. The `buildStreamingMultipartFormDataBody` helper streams the file chunk-by-chunk (~64KB) to avoid loading the entire video into memory. This adds complexity (Content-Length precomputation, `duplex: "half"` on fetch) but keeps memory usage bounded even for 250 MB videos.
+
+**4 surfaces, 2 shipped.** The system is designed for 4 access surfaces: Web (shipped), MCP (shipped), REST API (deferred), x402 wallet-based access (deferred). The `created_via` enum and `principals` table accommodate all four, but only Web and MCP have working code paths today.
 
 ## Tech stack
 
@@ -402,8 +510,42 @@ Platform errors are classified in `src/inngest/functions/platformErrors.ts`:
 | Drag & Drop | @dnd-kit | core 6.3.1 |
 | Deployment | Vercel | |
 
+## Source files referenced
+
+| File | What it does |
+|------|-------------|
+| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 11 functions |
+| `src/inngest/client.ts` | Inngest client instance (id: "sharetopus") |
+| `src/inngest/functions/scheduledPostsTick.ts` | Cron: dispatch due scheduled posts every 5 min |
+| `src/inngest/functions/processSinglePost.ts` | Event worker: process one scheduled post |
+| `src/inngest/functions/processDirectPost.ts` | Event worker: process one direct post |
+| `src/inngest/functions/tikTokPublishStatusPoll.ts` | Event worker: poll TikTok publish status |
+| `src/inngest/functions/processTikTokPublishWebhook.ts` | Event worker: handle TikTok publish webhook |
+| `src/inngest/functions/sweepStuckDirectPosts.ts` | Cron: recover stuck direct posts |
+| `src/inngest/functions/sweepOrphanStorageFiles.ts` | Cron: delete unreferenced storage files |
+| `src/inngest/functions/cleanupStripeWebhookEvents.ts` | Cron: purge Stripe webhook events older than 90 days |
+| `src/inngest/functions/sweepStaleOauthClientsCron.ts` | Cron: purge unverified OAuth clients older than 90 days |
+| `src/inngest/functions/cleanupMcpAuditLogCron.ts` | Cron: purge mcp_audit_log rows older than 90 days |
+| `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Cron: delete cancelled posts past 7-day grace |
+| `src/inngest/functions/platformErrors.ts` | Error classification (retryable vs terminal) |
+| `src/lib/mcp/withMcpTool.ts` | HOF: auth, entitlement, audit, error handling for MCP tools |
+| `src/lib/mcp/entitlement.ts` | Plan gating (Creator+ minimum) + monthly quota enforcement |
+| `src/lib/mcp/auth.ts` | resolveMcpPrincipal (API key + OAuth paths) |
+| `src/lib/mcp/audit.ts` | logToolCall, arg redaction, session upsert |
+| `src/lib/mcp/context.ts` | Extract principal, sessionId, ipHash from MCP request |
+| `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic direct-post adapter for all 4 platforms |
+| `src/lib/api/_shared/processAccountsGeneric.ts` | Generic multi-account processor |
+| `src/lib/api/_shared/scheduleForAccountGeneric.ts` | Generic scheduler |
+| `src/lib/api/_shared/buildStreamingMultipartFormDataBody.ts` | Streaming multipart for Pinterest video |
+| `src/actions/server/data/finalizeTikTokPostByPublishId.ts` | Shared TikTok finalize (webhook + polling converge here) |
+| `src/actions/api/adminSupabase.ts` | Service-role Supabase client (bypasses RLS) |
+| `src/lib/utils/generateRequestId.ts` | Web requestId tracing for server actions |
+| `src/lib/types/database.types.ts` | Generated Supabase types (31 tables) |
+| `src/lib/types/plans.ts` | Plan tiers, tier comparison, price ID mapping |
+| `src/middleware.ts` | Clerk middleware (edge) |
+
 ---
 
-**See also:** [docs/SECURITY.md](./SECURITY.md) (security architecture, threat model), [docs/MCP.md](./MCP.md) (tool inventory, auth flow), [docs/DATABASE.md](./DATABASE.md) (schema details)
+**See also:** [docs/SECURITY.md](./SECURITY.md) (security architecture, threat model), [docs/MCP.md](./MCP.md) (tool inventory, auth flow), [docs/DATABASE.md](./DATABASE.md) (schema details), [docs/INNGEST.md](./INNGEST.md) (background jobs detail)
 
 [Back to README](../README.md)
