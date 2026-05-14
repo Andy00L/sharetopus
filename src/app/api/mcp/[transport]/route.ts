@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import {
   assertExhaustiveKind,
   resolveMcpPrincipal,
@@ -7,10 +8,8 @@ import {
 } from "@/lib/mcp/auth";
 import { hashClientIp } from "@/lib/mcp/ipHash";
 import { registerPrompts } from "@/lib/mcp/prompts";
-import { registerResources } from "@/lib/mcp/resources";
 import { registerTools } from "@/lib/mcp/tools";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
-import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -104,7 +103,6 @@ function readClientIp(req: Request): string | null {
 const handler = createMcpHandler(
   (server) => {
     registerTools(server);
-    registerResources(server);
     registerPrompts(server);
   },
   {

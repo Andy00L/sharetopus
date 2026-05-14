@@ -1,5 +1,5 @@
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
 
 /**
  * Prompt: plan a week of content for a specific platform.
@@ -14,9 +14,7 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
       platform: z
         .enum(["linkedin", "tiktok", "pinterest", "instagram"])
         .describe("Which platform to plan for"),
-      theme: z
-        .string()
-        .describe("The content theme or topic for the week"),
+      theme: z.string().describe("The content theme or topic for the week"),
     },
     async ({ platform, theme }) => ({
       messages: [
@@ -30,7 +28,7 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
               "For each day (Monday through Friday, optionally weekend):",
               "1. Suggest a post topic that fits the theme",
               "2. Write a draft caption/text",
-              "3. Suggest the best time to post (in UTC)",
+              "3. Suggest the best time to post (use your local timezone; mention the timezone explicitly)",
               "4. Note whether it needs an image, video, or is text-only",
               "",
               "After drafting the plan, ask me which posts I want to schedule.",
@@ -42,6 +40,6 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
           },
         },
       ],
-    })
+    }),
   );
 }
