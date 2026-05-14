@@ -32,7 +32,7 @@ async function SocialPostFormWithData() {
       accounts={accounts.data ?? []}
       userId={userId}
       postType="text"
-      planId={subscriptionInfo.plan ?? undefined}
+      planId={subscriptionInfo.priceId ?? undefined}
     />
   );
 }

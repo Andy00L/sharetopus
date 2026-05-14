@@ -5,7 +5,7 @@ import { authCheck } from "@/actions/server/authCheck";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
-import { checkUserSubscription } from "./checkUserSubscription";
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 
 /**
  * Creates a Stripe customer portal session for the authenticated user
@@ -70,7 +70,7 @@ export async function createCustomerPortal(): Promise<{
     console.log(
       `[CreateCustomerPortal]: Checking subscription status for user: ${userId}`
     );
-    const hasActiveSubscription = await checkUserSubscription(userId);
+    const hasActiveSubscription = (await checkActiveSubscription(userId)).isActive;
 
     if (!hasActiveSubscription) {
       console.error(

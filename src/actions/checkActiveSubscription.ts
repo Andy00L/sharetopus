@@ -1,34 +1,47 @@
+"use server";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { priceIdToTier, type PlanTier } from "@/lib/types/plans";
-import "server-only";
+
+export type ActiveSubscription = {
+  isActive: boolean;
+  priceId: string | null;
+  tier: PlanTier | null;
+  status: string;
+  currentPeriodEnd: string | null;
+  startDate: string | null;
+};
 
 /**
- * Checks if a user has an active subscription and resolves the plan tier.
+ * Canonical subscription reader. Used by both MCP and web paths.
  *
- * The `plan` field is the raw value from the DB (a priceId string).
- * The `tier` field is derived via priceIdToTier at this single call site.
- * Callers should use `tier` for business logic and `plan` for Stripe ops.
+ * Reads stripe_price_id from the DB and resolves the tier via
+ * priceIdToTier at this single call site. Callers consume .tier
+ * for business logic and .priceId for Stripe ops.
+ *
+ * The "use server" directive makes this callable from both server
+ * components and client components (as a server action).
  */
-export async function checkActiveSubscription(userId: string | null): Promise<{
-  plan: string | null;
-  tier: PlanTier | null;
-  isActive: boolean;
-}> {
-  const emptyResult = {
+export async function checkActiveSubscription(
+  userId: string | null,
+): Promise<ActiveSubscription> {
+  const emptyResult: ActiveSubscription = {
     isActive: false,
-    plan: null,
+    priceId: null,
     tier: null,
+    status: "none",
+    currentPeriodEnd: null,
+    startDate: null,
   };
 
-  if (!userId) {
-    console.error(`[checkActiveSubscription] No userId provided`);
+  if (userId === null) {
     return emptyResult;
   }
 
   try {
     const { data, error } = await adminSupabase
       .from("stripe_subscriptions")
-      .select("stripe_price_id, status, current_period_end")
+      .select("stripe_price_id, status, current_period_end, start_date")
       .eq("user_id", userId)
       .in("status", ["active", "trialing"])
       .order("created_at", { ascending: false })
@@ -52,8 +65,11 @@ export async function checkActiveSubscription(userId: string | null): Promise<{
 
     return {
       isActive: true,
-      plan: priceId,
+      priceId,
       tier,
+      status: data.status,
+      currentPeriodEnd: data.current_period_end,
+      startDate: data.start_date,
     };
   } catch (err) {
     console.error("[checkActiveSubscription] Unexpected error:", err);

@@ -1,6 +1,6 @@
 "use client";
 import { checkOutSession } from "@/actions/server/stripe/checkOutSession";
-import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,7 +65,7 @@ export default function PricingSection() {
       }
 
       // Check if user has an active subscription
-      const hasActiveSubscription = await checkUserSubscription(userId);
+      const hasActiveSubscription = (await checkActiveSubscription(userId)).isActive;
       let redirectUrl;
 
       if (hasActiveSubscription) {

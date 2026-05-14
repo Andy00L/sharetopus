@@ -51,10 +51,10 @@ export async function applySubscriptionGate(
     setCachedSubscription(candidate.principalId, {
       isActive: true,
       plan: sub.tier,
-      priceId: sub.plan ?? null,
+      priceId: sub.priceId,
     });
 
-    candidate.priceId = sub.plan ?? null;
+    candidate.priceId = sub.priceId;
     candidate.plan = sub.tier;
     return candidate;
   } catch (err) {

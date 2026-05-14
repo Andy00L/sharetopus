@@ -1,6 +1,6 @@
 "use client";
 
-import { checkUserSubscription } from "@/actions/server/stripe/checkUserSubscription";
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -63,7 +63,7 @@ export function NavUser() {
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
-      const hasActiveSubscription = await checkUserSubscription(userId!);
+      const hasActiveSubscription = (await checkActiveSubscription(userId!)).isActive;
       if (!hasActiveSubscription) {
         router.push("/#pricing"); // This is the correct way to redirect client-side
         return;

@@ -97,8 +97,8 @@ const MONTHLY_CAPS: Partial<
  * Checks whether a principal is entitled to perform the given action.
  *
  * Runs on every MCP tool call (via the withMcpTool HOF). The plan tier
- * is read from `principal.plan`, which the auth dispatcher populates via
- * priceIdToTier on every request from the live stripe_subscriptions row.
+ * is read from `principal.plan`, which the auth dispatcher populates
+ * from checkActiveSubscription on every request.
  *
  * Order of checks:
  *   1. Tier gate: compare `principal.plan` to ACTION_PLAN_GATE[action].
