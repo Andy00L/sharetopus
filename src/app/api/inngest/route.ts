@@ -8,6 +8,7 @@ import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
 import { sweepOrphanStorageFiles } from "@/inngest/functions/sweepOrphanStorageFiles";
 import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthClientsCron";
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
+import { processTikTokPublishWebhook } from "@/inngest/functions/processTikTokPublishWebhook";
 import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
 import { serve } from "inngest/next";
 
@@ -27,6 +28,7 @@ export const { GET, POST, PUT } = serve({
     processSinglePost,
     processDirectPost,
     tikTokPublishStatusPollWorker,
+    processTikTokPublishWebhook,
     sweepStuckDirectPosts,
     sweepOrphanStorageFiles,
     sweepStaleOauthClientsCron,
