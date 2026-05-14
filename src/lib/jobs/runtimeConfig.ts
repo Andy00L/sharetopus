@@ -55,13 +55,12 @@ export const RUNTIME = {
   dispatcherBatchSize: readPositiveInt("DISPATCHER_BATCH_SIZE", 200),
   signedUrlTtlS: readPositiveInt("SIGNED_URL_TTL_S", 300),
 
-  // TikTok publish status polling.
-  // TikTok pulls media asynchronously after init returns publish_id.
-  // We poll TikTok's status endpoint until terminal state to know when
-  // the pull is done and the file can be released for cleanup.
-  // Total ceiling = maxAttempts x intervalMs = 60 x 10s = 10 minutes.
+  // TikTok publish status polling (safety net for webhooks).
+  // Webhook is the fast path; polling catches missed deliveries.
+  // Total ceiling = 60 x 60s = 60 minutes (matches TikTok's
+  // documented 1-hour PROCESSING_DOWNLOAD timeout).
   tikTokPublishPollMaxAttempts: 60,
-  tikTokPublishPollIntervalMs: 10_000,
+  tikTokPublishPollIntervalMs: 60_000,
 } as const;
 
 function readPositiveInt(key: string, fallback: number): number {

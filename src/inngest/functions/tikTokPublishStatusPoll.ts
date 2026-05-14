@@ -2,16 +2,11 @@ import { inngest } from "@/inngest/client";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { getTikTokPublishStatus } from "@/lib/api/tiktok/getTikTokPublishStatus";
 import {
-  finalizeTikTokPullAsCompleted,
-  finalizeTikTokPullAsFailed,
   findPendingTikTokPullByPublishId,
   incrementTikTokPullAttemptCount,
 } from "@/actions/server/data/pendingTikTokPulls";
-import {
-  resolveTikTokAccessTokenForAccount,
-  updateContentHistoryStatusToFailed,
-} from "./tikTokPublishStatusPollHelpers";
-import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
+import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
+import { resolveTikTokAccessTokenForAccount } from "./tikTokPublishStatusPollHelpers";
 
 /**
  * Inngest worker that polls TikTok's /v2/post/publish/status/fetch/
@@ -22,13 +17,14 @@ import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
  * RUNTIME.tikTokPublishPollMaxAttempts iterations with
  * RUNTIME.tikTokPublishPollIntervalMs between each.
  *
- * On terminal success: marks the pending_tiktok_pulls row as completed.
- * On terminal failure: marks the row as failed, updates content_history
- * to status='failed' with the reason.
- * On timeout: same as terminal failure with reason "Timeout".
+ * All finalization goes through finalizeTikTokPostByPublishId, which
+ * handles pending_tiktok_pulls status, content_history updates, and
+ * media cleanup. The webhook worker uses the same function, so both
+ * paths converge. Early-exit at top of each iteration detects when
+ * the webhook already finalized the post.
  *
  * Retries: 0 (retry logic is internal via the poll loop).
- * Concurrency: 50 per social_account_id (safety valve).
+ * Concurrency: 5 per social_account_id (safety valve).
  */
 export const tikTokPublishStatusPollWorker = inngest.createFunction(
   {
@@ -39,7 +35,7 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     triggers: [{ event: "tiktok.publish.poll" }],
   },
   async ({ event, step }) => {
-    const { publish_id, social_account_id, content_history_id } =
+    const { publish_id, social_account_id } =
       event.data as {
         publish_id: string;
         social_account_id: string;
@@ -52,6 +48,28 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     let consecutiveErrors = 0;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Early-exit: if webhook already finalized this post, stop polling.
+      const currentPull = await step.run(
+        `check-pending-${attempt}`,
+        async () => {
+          return await findPendingTikTokPullByPublishId(publish_id);
+        },
+      );
+
+      if (!currentPull.success) {
+        console.log(
+          `[tiktokPublishStatusPollWorker] Pull row gone for ${publish_id}, exiting`,
+        );
+        return { outcome: "skipped", reason: "pull_not_found" };
+      }
+
+      if (currentPull.pull.status !== "pending") {
+        console.log(
+          `[tiktokPublishStatusPollWorker] Already finalized via ${currentPull.pull.status}, exiting (likely webhook)`,
+        );
+        return { outcome: "skipped", reason: "already_finalized" };
+      }
+
       // Resolve a fresh access token (handles refresh if expired)
       const token = await step.run(`resolve-token-${attempt}`, async () => {
         return await resolveTikTokAccessTokenForAccount(social_account_id);
@@ -61,19 +79,11 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
           await step.run("finalize-token-failure", async () => {
-            await finalizeTikTokPullAsFailed(
-              publish_id,
-              "Could not resolve access token for polling",
-            );
-          });
-          await step.run("update-history-token-failure", async () => {
-            await updateContentHistoryStatusToFailed(
-              content_history_id,
-              "Token resolution failed during polling",
-            );
-          });
-          await step.run("cleanup-on-token-failure", async () => {
-            return cleanupMediaForPull(publish_id);
+            await finalizeTikTokPostByPublishId(publish_id, {
+              source: "poll",
+              outcome: "failed",
+              fail_reason: "Could not resolve access token for polling",
+            });
           });
           return {
             outcome: "failed",
@@ -97,19 +107,11 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
           await step.run("finalize-poll-errors", async () => {
-            await finalizeTikTokPullAsFailed(
-              publish_id,
-              `Status fetch errors exceeded: ${status.message}`,
-            );
-          });
-          await step.run("update-history-poll-errors", async () => {
-            await updateContentHistoryStatusToFailed(
-              content_history_id,
-              "Status polling exceeded error threshold",
-            );
-          });
-          await step.run("cleanup-on-poll-errors", async () => {
-            return cleanupMediaForPull(publish_id);
+            await finalizeTikTokPostByPublishId(publish_id, {
+              source: "poll",
+              outcome: "failed",
+              fail_reason: `Status fetch errors exceeded: ${status.message}`,
+            });
           });
           return {
             outcome: "failed",
@@ -125,10 +127,11 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
 
       if (status.terminal && status.kind === "completed") {
         await step.run("finalize-completed", async () => {
-          await finalizeTikTokPullAsCompleted(publish_id);
-        });
-        await step.run("cleanup-on-completed", async () => {
-          return cleanupMediaForPull(publish_id);
+          await finalizeTikTokPostByPublishId(publish_id, {
+            source: "poll",
+            outcome: "completed",
+            tiktok_post_id: status.tiktok_post_id ?? null,
+          });
         });
         return { outcome: "completed", raw_status: status.raw_status };
       }
@@ -136,13 +139,11 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
       if (status.terminal && status.kind === "failed") {
         const reason = status.reason ?? `TikTok status: ${status.raw_status}`;
         await step.run("finalize-failed", async () => {
-          await finalizeTikTokPullAsFailed(publish_id, reason);
-        });
-        await step.run("update-history-failed", async () => {
-          await updateContentHistoryStatusToFailed(content_history_id, reason);
-        });
-        await step.run("cleanup-on-failed", async () => {
-          return cleanupMediaForPull(publish_id);
+          await finalizeTikTokPostByPublishId(publish_id, {
+            source: "poll",
+            outcome: "failed",
+            fail_reason: reason,
+          });
         });
         return {
           outcome: "failed",
@@ -157,46 +158,13 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
 
     // Max attempts exhausted without terminal status
     await step.run("finalize-timeout", async () => {
-      await finalizeTikTokPullAsFailed(
-        publish_id,
-        "Timeout waiting for TikTok publish status",
-      );
-    });
-    await step.run("update-history-timeout", async () => {
-      await updateContentHistoryStatusToFailed(
-        content_history_id,
-        "Timeout waiting for TikTok publish status",
-      );
-    });
-    await step.run("cleanup-on-timeout", async () => {
-      return cleanupMediaForPull(publish_id);
+      await finalizeTikTokPostByPublishId(publish_id, {
+        source: "poll",
+        outcome: "failed",
+        fail_reason: "Timeout waiting for TikTok publish status",
+      });
     });
 
     return { outcome: "failed", reason: "timeout" };
   },
 );
-
-/**
- * Fetches the pending_tiktok_pulls row for a given publish_id and
- * calls cleanupMediaIfUnreferenced with its media_storage_path.
- * Best effort: logs warnings but does not fail the worker.
- */
-async function cleanupMediaForPull(
-  publishId: string
-): Promise<{ cleaned: boolean; message: string }> {
-  const pull = await findPendingTikTokPullByPublishId(publishId);
-  if (!pull.success) {
-    console.warn(
-      `[tikTokPublishStatusPoll] Could not fetch pull for cleanup: ${pull.message}`
-    );
-    return { cleaned: false, message: pull.message };
-  }
-  if (!pull.pull.media_storage_path) {
-    return { cleaned: false, message: "No media_storage_path on pull row" };
-  }
-  const result = await cleanupMediaIfUnreferenced(
-    pull.pull.media_storage_path,
-    pull.pull.principal_id
-  );
-  return { cleaned: result.deleted, message: result.message };
-}

@@ -18,6 +18,7 @@ export interface TikTokPostResult {
   message?: string;
   status?: string;
   content_id?: string;
+  creator_username?: string;
 }
 
 // Interfaces for API responses

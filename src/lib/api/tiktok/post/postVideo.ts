@@ -104,10 +104,11 @@ export async function handleVideoPost({
       success: true,
       publishId,
       postUrl: `https://www.tiktok.com/@${creatorInfo.data.creator_username}`,
-      data: { status: "PUBLISH_COMPLETE" }, // Simulate completed status
-      message: `Video submitted to TikTok and marked as posted`,
+      data: { status: "PUBLISH_COMPLETE" },
+      message: "Video submitted to TikTok for processing",
       status: "posted",
       content_id: publishId,
+      creator_username: creatorInfo.data.creator_username,
     };
   } catch (error) {
     console.error("[tiktok Post Function] Unexpected error:", error);
