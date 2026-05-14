@@ -539,6 +539,8 @@ export type Database = {
           last_polled_at: string | null;
           finalized_at: string | null;
           failure_reason: string | null;
+          tiktok_post_id: string | null;
+          creator_username: string | null;
           created_at: string;
         };
         Insert: {
@@ -553,6 +555,8 @@ export type Database = {
           last_polled_at?: string | null;
           finalized_at?: string | null;
           failure_reason?: string | null;
+          tiktok_post_id?: string | null;
+          creator_username?: string | null;
           created_at?: string;
         };
         Update: {
@@ -567,6 +571,8 @@ export type Database = {
           last_polled_at?: string | null;
           finalized_at?: string | null;
           failure_reason?: string | null;
+          tiktok_post_id?: string | null;
+          creator_username?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -1287,6 +1293,23 @@ export type Database = {
         Update: never; // idempotency log: INSERT or DELETE only
         Relationships: [];
       };
+      // ────────────────────────────────────────────────────────────────
+
+      tiktok_webhook_events: {
+        Row: {
+          event_id: string;
+          event_type: string;
+          processed_at: string;
+        };
+        Insert: {
+          event_id: string;
+          event_type: string;
+          processed_at?: string;
+        };
+        Update: never;
+        Relationships: [];
+      };
+
       // ────────────────────────────────────────────────────────────────
       usage_quotas: {
         Row: {

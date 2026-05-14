@@ -18,6 +18,7 @@ export async function insertPendingTikTokPull(input: {
   scheduled_post_id?: string | null;
   content_history_id?: string | null;
   media_storage_path: string;
+  creator_username: string | null;
 }): Promise<{ success: true } | { success: false; message: string }> {
   const { error } = await adminSupabase.from("pending_tiktok_pulls").insert({
     publish_id: input.publish_id,
@@ -26,6 +27,7 @@ export async function insertPendingTikTokPull(input: {
     scheduled_post_id: input.scheduled_post_id ?? null,
     content_history_id: input.content_history_id ?? null,
     media_storage_path: input.media_storage_path,
+    creator_username: input.creator_username,
     status: "pending",
     attempt_count: 0,
   });

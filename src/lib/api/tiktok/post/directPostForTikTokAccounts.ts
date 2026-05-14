@@ -105,6 +105,7 @@ export async function directPostForTikTokAccounts(
             ? (historyResult.recordId ?? null)
             : null,
           media_storage_path: pt.config.mediaPath,
+          creator_username: null, // Populated in commit 3 via TikTokPostResult.creator_username
         });
         if (!pendingInsert.success) {
           console.error(
