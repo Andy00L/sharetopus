@@ -1,5 +1,9 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { TIER_ACCOUNT_LIMITS, type PlanTier } from "@/lib/types/plans";
+import {
+  priceIdToTier,
+  TIER_ACCOUNT_LIMITS,
+  type PlanTier,
+} from "@/lib/types/plans";
 import "server-only";
 
 export async function checkAccountLimits(
@@ -24,8 +28,13 @@ export async function checkAccountLimits(
     };
   }
 
-  const tier = (plan as PlanTier) ?? "free";
-  const maxAllowed = TIER_ACCOUNT_LIMITS[tier] ?? 0;
+  // priceIdToTier resolves:
+  //   - null -> "free"
+  //   - a Stripe priceId -> proper tier from PRICE_ID_TO_TIER map
+  //   - a tier name (defensive, for legacy data) -> same tier
+  //   - anything unknown -> "free" (fail-closed, logs)
+  const tier: PlanTier = priceIdToTier(plan ?? null);
+  const maxAllowed = TIER_ACCOUNT_LIMITS[tier];
   const isUnlimited = !Number.isFinite(maxAllowed);
 
   try {
@@ -43,21 +52,21 @@ export async function checkAccountLimits(
         canAddMore: false,
         currentCount: 0,
         maxAllowed,
-        isUnlimited: false,
+        isUnlimited,
       };
     }
 
     const currentCount = data?.length ?? 0;
-    const canAddMore = currentCount < maxAllowed;
+    const canAddMore = isUnlimited || currentCount < maxAllowed;
 
     return {
       success: true,
       message: canAddMore
-        ? `User can connect more (${currentCount}/${maxAllowed})`
+        ? `User can connect more (${currentCount}/${isUnlimited ? "unlimited" : maxAllowed})`
         : `Account limit reached (${currentCount}/${maxAllowed})`,
-      canAddMore: isUnlimited || currentCount < maxAllowed,
+      canAddMore,
       currentCount,
-      maxAllowed: isUnlimited ? Infinity : maxAllowed,
+      maxAllowed,
       isUnlimited,
     };
   } catch (err) {
