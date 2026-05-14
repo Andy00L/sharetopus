@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomBytes, createHash } from "crypto";
+import { randomBytes, createHash } from "node:crypto";
 
 /**
  * Generates a new MCP API key and its SHA-256 hash.

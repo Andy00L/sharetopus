@@ -1,19 +1,12 @@
-// src/lib/mcp/tools/bulkSchedule.ts
+import "server-only";
+
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
 
@@ -82,20 +75,33 @@ const postSchema = z.object({
 
 type BulkSchedulePostInput = z.infer<typeof postSchema>;
 
+type BulkScheduleArgs = {
+  posts: BulkSchedulePostInput[];
+  batch_id?: string;
+};
+
 /**
  * MCP tool: schedule up to 30 posts in a single bulk insert.
  *
- * Plan gate: Creator+
+ * Plan gate: creator+ (entitlement gate + monthly quota enforced by HOF).
  * Tables touched: scheduled_posts (bulk upsert), social_accounts (ownership),
- *                 platform_quotas (daily cap check)
+ *                 platform_quotas (daily cap check).
  * Calls: src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
  *
- * Thin wrapper: entitlement check + audit log. All validation, ownership,
- * platform quota, insert, and idempotency logic lives in the core.
+ * Thin wrapper: HOF runs the entitlement check + audit, this handler
+ * only does shape translation and core delegation. All validation,
+ * ownership, platform quota, insert, and idempotency logic lives in
+ * the core.
  *
  * Idempotency: if the agent supplies batch_id, each post gets
- * idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id
- * are no-ops via the partial unique index on (principal_id, idempotency_key).
+ * idempotency_key = `${batch_id}:${index}`. Retries with the same
+ * batch_id are no-ops via the partial unique index on
+ * (principal_id, idempotency_key).
+ *
+ * Audit: the full posts array is large, so we summarize args to
+ * { count } via auditArgsBuilder for deny + thrown-error paths, and
+ * to { count, batch_id } via the handler-returned auditArgs on
+ * success / handler-error paths.
  */
 export function registerBulkSchedule(server: McpServer): void {
   server.registerTool(
@@ -128,145 +134,110 @@ export function registerBulkSchedule(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (toolArgs, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const startTime = Date.now();
+    withMcpTool(
+      "bulk_schedule",
+      async (ctx, args: BulkScheduleArgs) => {
+        // Shared batch_id for all posts in this call. Agent-supplied
+        // if present, else generated server-side.
+        const sharedBatchId = args.batch_id ?? generateBatchId();
+        const agentSuppliedBatchId = Boolean(args.batch_id);
 
-      // Plan-tier gate (MCP-specific, separate from web's Clerk subscription).
-      const entitlement = await entitlementFor(principal, "bulk_schedule");
-      if (entitlement.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "bulk_schedule",
-          args: { count: toolArgs.posts.length },
-          resultStatus:
-            entitlement.reason === "platform_quota"
-              ? "quota_exceeded"
-              : "denied",
-          latencyMs: Date.now() - startTime,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
-            },
-          ],
-          isError: true,
-        };
-      }
+        // Translate MCP input shape -> SchedulePostData shape.
+        const scheduledPostsData: SchedulePostData[] = args.posts.map(
+          (inputPost, postIndex) => {
+            const pinterestOptions =
+              inputPost.platform === "pinterest"
+                ? {
+                    privacyLevel: "PUBLIC" as const,
+                    board: inputPost.pinterest_board_id ?? "",
+                    link: inputPost.pinterest_link ?? "",
+                  }
+                : null;
 
-      // Shared batch_id for all posts in this call. Agent-supplied if present,
-      // else generated server-side.
-      const batchId = toolArgs.batch_id ?? generateBatchId();
-      const agentSuppliedBatchId = Boolean(toolArgs.batch_id);
+            return {
+              socialAccountId: inputPost.social_account_id,
+              platform: inputPost.platform,
+              scheduledAt: inputPost.scheduled_at,
+              postType: inputPost.post_type,
+              title: inputPost.title ?? null,
+              description: inputPost.description,
+              mediaStoragePath: inputPost.media_storage_path,
+              postOptions: pinterestOptions,
+              batch_id: sharedBatchId,
+              // Derive per-post idempotency_key from agent batch_id
+              // for retry safety. If agent did not supply batch_id,
+              // leave undefined and let core generate its own
+              // per-row keys.
+              idempotency_key: agentSuppliedBatchId
+                ? `${sharedBatchId}:${postIndex}`
+                : undefined,
+            };
+          },
+        );
 
-      // Translate MCP input shape -> SchedulePostData shape.
-      const posts: SchedulePostData[] = toolArgs.posts.map(
-        (inputPost: BulkSchedulePostInput, postIndex: number) => {
-          const postOptions =
-            inputPost.platform === "pinterest"
-              ? {
-                  privacyLevel: "PUBLIC" as const,
-                  board: inputPost.pinterest_board_id ?? "",
-                  link: inputPost.pinterest_link ?? "",
-                }
-              : null;
+        const scheduleResult = await schedulePostBatch(
+          scheduledPostsData,
+          ctx.principal.principalId,
+          "mcp",
+        );
 
+        if (!scheduleResult.success) {
           return {
-            socialAccountId: inputPost.social_account_id,
-            platform: inputPost.platform,
-            scheduledAt: inputPost.scheduled_at,
-            postType: inputPost.post_type,
-            title: inputPost.title ?? null,
-            description: inputPost.description,
-            mediaStoragePath: inputPost.media_storage_path,
-            postOptions,
-            batch_id: batchId,
-            // Derive per-post idempotency_key from agent batch_id for retry
-            // safety. If agent didn't supply batch_id, leave undefined and
-            // let core generate its own per-row keys.
-            idempotency_key: agentSuppliedBatchId
-              ? `${batchId}:${postIndex}`
-              : undefined,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    success: false,
+                    batch_id: scheduleResult.batchId,
+                    message: scheduleResult.message,
+                    details: scheduleResult.details,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+            isError: true,
+            auditArgs: {
+              count: args.posts.length,
+              batch_id: scheduleResult.batchId,
+            },
           };
-        },
-      );
+        }
 
-      const scheduleResult = await schedulePostBatch(
-        posts,
-        principal.principalId,
-        "mcp",
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "bulk_schedule",
-        args: {
-          count: toolArgs.posts.length,
-          batch_id: scheduleResult.batchId,
-        },
-        resultStatus: scheduleResult.success ? "ok" : "error",
-        latencyMs: Date.now() - startTime,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (!scheduleResult.success) {
         return {
           content: [
             {
               type: "text",
               text: JSON.stringify(
                 {
-                  success: false,
+                  success: true,
                   batch_id: scheduleResult.batchId,
+                  total: scheduleResult.details.total,
+                  inserted: scheduleResult.details.inserted,
+                  duplicates: scheduleResult.details.duplicates,
+                  rejected: scheduleResult.details.rejected,
+                  schedule_ids: scheduleResult.scheduleIds,
                   message: scheduleResult.message,
-                  details: scheduleResult.details,
                 },
                 null,
                 2,
               ),
             },
           ],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                batch_id: scheduleResult.batchId,
-                total: scheduleResult.details.total,
-                inserted: scheduleResult.details.inserted,
-                duplicates: scheduleResult.details.duplicates,
-                rejected: scheduleResult.details.rejected,
-                schedule_ids: scheduleResult.scheduleIds,
-                message: scheduleResult.message,
-              },
-              null,
-              2,
-            ),
+          auditArgs: {
+            count: args.posts.length,
+            batch_id: scheduleResult.batchId,
           },
-        ],
-      };
-    },
+        };
+      },
+      {
+        // Applied on deny + thrown-error paths. The handler-returned
+        // auditArgs above takes precedence on success / handler-error
+        // paths and includes the resolved batch_id.
+        auditArgsBuilder: (args) => ({ count: args.posts.length }),
+      },
+    ),
   );
 }

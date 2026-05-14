@@ -1,50 +1,56 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { registerListConnections } from "./listConnections";
-import { registerListScheduledPosts } from "./listScheduledPosts";
-import { registerListContentHistory } from "./listContentHistory";
-import { registerSchedulePost } from "./schedulePost";
-import { registerPostNow } from "./postNow";
-import { registerBulkSchedule } from "./bulkSchedule";
-import { registerBulkPostNow } from "./bulkPostNow";
-import { registerCancelScheduledPosts } from "./cancelScheduledPosts";
-import { registerResumeScheduledPosts } from "./resumeScheduledPosts";
-import { registerReschedulePosts } from "./reschedulePosts";
-import { registerDeleteScheduledPosts } from "./deleteScheduledPosts";
-import { registerGetAccountAnalytics } from "./getAccountAnalytics";
-import { registerGeneratePostDraft } from "./generatePostDraft";
 import { registerAttachMediaFromUrl } from "./attachMediaFromUrl";
-import { registerRequestUploadUrl } from "./requestUploadUrl";
-import { registerRequestAccountReauthLink } from "./requestAccountReauthLink";
+import { registerBulkPostNow } from "./bulkPostNow";
+import { registerBulkSchedule } from "./bulkSchedule";
+import { registerCancelScheduledPosts } from "./cancelScheduledPosts";
+import { registerDeleteScheduledPosts } from "./deleteScheduledPosts";
+import { registerGeneratePostDraft } from "./generatePostDraft";
+import { registerGetAccountAnalytics } from "./getAccountAnalytics";
 import { registerListBillingSummary } from "./listBillingSummary";
+import { registerListConnections } from "./listConnections";
+import { registerListContentHistory } from "./listContentHistory";
 import { registerListPinterestBoards } from "./listPinterestBoards";
+import { registerListScheduledPosts } from "./listScheduledPosts";
+import { registerPostNow } from "./postNow";
+import { registerRequestAccountReauthLink } from "./requestAccountReauthLink";
+import { registerRequestUploadUrl } from "./requestUploadUrl";
+import { registerReschedulePosts } from "./reschedulePosts";
+import { registerResumeScheduledPosts } from "./resumeScheduledPosts";
+import { registerSchedulePost } from "./schedulePost";
 
 /**
- * Registers all 18 MCP tool handlers on the server instance.
+ * Registers every MCP tool on the server instance. Adding a tool means:
+ *   1. Add its name to MCP_TOOL_NAMES in src/lib/mcp/toolNames.ts
+ *   2. Add an entry to ACTION_PLAN_GATE (and MONTHLY_CAPS if it has one)
+ *   3. Create the register* file and add it to the array below
  *
- * Each tool file exports a register function that calls server.registerTool()
- * with the tool name, config (title, description, inputSchema, annotations),
- * and handler callback.
- *
- * Called by: src/app/api/mcp/[transport]/route.ts
+ * The compiler will surface step 2 misses as type errors thanks to the
+ * Record<McpToolName, ...> typing in entitlement.ts.
  */
+const TOOL_REGISTRARS: ReadonlyArray<(server: McpServer) => void> = [
+  registerListConnections,
+  registerListPinterestBoards,
+  registerListScheduledPosts,
+  registerListContentHistory,
+  registerListBillingSummary,
+  registerRequestAccountReauthLink,
+  registerAttachMediaFromUrl,
+  registerRequestUploadUrl,
+  registerSchedulePost,
+  registerPostNow,
+  registerCancelScheduledPosts,
+  registerResumeScheduledPosts,
+  registerReschedulePosts,
+  registerDeleteScheduledPosts,
+  registerBulkSchedule,
+  registerBulkPostNow,
+  registerGetAccountAnalytics,
+  registerGeneratePostDraft,
+];
+
 export function registerTools(server: McpServer): void {
-  registerListConnections(server);
-  registerListPinterestBoards(server);
-  registerListScheduledPosts(server);
-  registerListContentHistory(server);
-  registerSchedulePost(server);
-  registerPostNow(server);
-  registerBulkSchedule(server);
-  registerBulkPostNow(server);
-  registerCancelScheduledPosts(server);
-  registerResumeScheduledPosts(server);
-  registerReschedulePosts(server);
-  registerDeleteScheduledPosts(server);
-  registerGetAccountAnalytics(server);
-  registerGeneratePostDraft(server);
-  registerAttachMediaFromUrl(server);
-  registerRequestUploadUrl(server);
-  registerRequestAccountReauthLink(server);
-  registerListBillingSummary(server);
+  for (const register of TOOL_REGISTRARS) {
+    register(server);
+  }
 }

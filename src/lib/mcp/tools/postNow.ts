@@ -1,25 +1,35 @@
+import "server-only";
+
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { MediaType, Platform } from "@/lib/types/database.types";
+import { withMcpTool } from "../withMcpTool";
+
+type PostNowArgs = {
+  social_account_id: string;
+  platform: Platform;
+  post_type: MediaType;
+  title?: string;
+  description: string | null;
+  media_storage_path: string;
+  cover_timestamp?: number;
+  pinterest_board_id?: string;
+  pinterest_board_name?: string;
+  pinterest_link?: string;
+  batch_id?: string;
+  idempotency_key?: string;
+};
 
 /**
- * MCP tool: publish ONE post immediately. Wraps single post into a batch
- * of N=1 and delegates to directPostBatch.
+ * MCP tool: publish ONE post immediately. Wraps the single post into a
+ * batch of N=1 and delegates to directPostBatch.
  *
- * Plan gate: Starter+
- * Tables touched: social_accounts (ownership), pending_direct_posts (lock)
- * Inngest events: 1 post.now
+ * Plan gate: starter+ (entitlement gate + monthly quota enforced by HOF).
+ * Tables touched: social_accounts (ownership), pending_direct_posts (lock).
+ * Inngest events: 1 post.now.
  */
 export function registerPostNow(server: McpServer): void {
   server.registerTool(
@@ -100,93 +110,41 @@ export function registerPostNow(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (toolArgs, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const startTime = Date.now();
-
-      const entitlement = await entitlementFor(principal, "post_now");
-      if (entitlement.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "post_now",
-          args: toolArgs,
-          resultStatus:
-            entitlement.reason === "platform_quota" ||
-            entitlement.reason === "monthly_quota"
-              ? "quota_exceeded"
-              : "denied",
-          latencyMs: Date.now() - startTime,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const post: DirectPostData = {
-        socialAccountId: toolArgs.social_account_id,
-        platform: toolArgs.platform,
-        postType: toolArgs.post_type,
-        title: toolArgs.title ?? null,
-        description: toolArgs.description,
-        mediaStoragePath: toolArgs.media_storage_path,
-        coverTimestamp: toolArgs.cover_timestamp,
-        pinterestBoardId: toolArgs.pinterest_board_id,
-        pinterestBoardName: toolArgs.pinterest_board_name,
-        pinterestLink: toolArgs.pinterest_link,
-        idempotency_key: toolArgs.idempotency_key,
+    withMcpTool("post_now", async (ctx, args: PostNowArgs) => {
+      const directPost: DirectPostData = {
+        socialAccountId: args.social_account_id,
+        platform: args.platform,
+        postType: args.post_type,
+        title: args.title ?? null,
+        description: args.description,
+        mediaStoragePath: args.media_storage_path,
+        coverTimestamp: args.cover_timestamp,
+        pinterestBoardId: args.pinterest_board_id,
+        pinterestBoardName: args.pinterest_board_name,
+        pinterestLink: args.pinterest_link,
+        idempotency_key: args.idempotency_key,
       };
 
-      const result = await directPostBatch(
-        [post],
-        principal.principalId,
+      const postBatchResult = await directPostBatch(
+        [directPost],
+        ctx.principal.principalId,
         "mcp",
-        toolArgs.batch_id,
+        args.batch_id,
       );
 
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "post_now",
-        args: toolArgs,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - startTime,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (!result.success) {
-        const firstRejection = result.details.rejected[0];
+      if (!postBatchResult.success) {
+        const firstRejection = postBatchResult.details.rejected[0];
+        const failureMessage = firstRejection
+          ? firstRejection.reason
+          : postBatchResult.message;
         return {
-          content: [
-            {
-              type: "text",
-              text: firstRejection ? firstRejection.reason : result.message,
-            },
-          ],
+          content: [{ type: "text", text: failureMessage }],
           isError: true,
         };
       }
 
-      const eventId = result.eventIds[0] ?? "";
-      const wasIdempotentRetry = result.details.duplicates > 0;
+      const eventId = postBatchResult.eventIds[0] ?? "";
+      const wasIdempotentRetry = postBatchResult.details.duplicates > 0;
 
       return {
         content: [
@@ -196,7 +154,7 @@ export function registerPostNow(server: McpServer): void {
               {
                 success: true,
                 event_id: eventId,
-                batch_id: result.batchId,
+                batch_id: postBatchResult.batchId,
                 idempotent_retry: wasIdempotentRetry,
                 message: wasIdempotentRetry
                   ? "Idempotent retry: returning existing event_id. No new post dispatched."
@@ -208,6 +166,6 @@ export function registerPostNow(server: McpServer): void {
           },
         ],
       };
-    },
+    }),
   );
 }

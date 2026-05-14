@@ -1,27 +1,26 @@
+import "server-only";
+
 import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
+
+type DeleteScheduledPostsArgs = {
+  post_ids: string[];
+};
 
 /**
  * Permanently deletes scheduled posts and cleans up orphaned media.
  *
- * Plan gate: Starter+
- * Tables touched: scheduled_posts (read + delete), Supabase Storage (delete)
+ * Plan gate: starter+.
+ * Tables touched: scheduled_posts (read + delete), Supabase Storage
+ *                 (delete orphaned media).
  * Calls: src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts
  *
- * The internal batch function now mirrors the web UI delete flow,
- * including storage cleanup for media files no longer referenced
- * by any remaining post.
+ * The internal batch function mirrors the web UI delete flow,
+ * including storage cleanup for media files no longer referenced by
+ * any remaining post.
  */
 export function registerDeleteScheduledPosts(server: McpServer): void {
   server.registerTool(
@@ -45,58 +44,22 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
+    withMcpTool(
+      "delete_scheduled_posts",
+      async (ctx, args: DeleteScheduledPostsArgs) => {
+        const deleteResult = await deleteScheduledPostBatch(
+          args.post_ids,
+          ctx.principal.principalId,
+          "mcp",
+        );
 
-      const ent = await entitlementFor(principal, "delete_scheduled_posts");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "delete_scheduled_posts",
-          args,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
         return {
           content: [
-            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+            { type: "text", text: JSON.stringify(deleteResult, null, 2) },
           ],
-          isError: true,
+          isError: !deleteResult.success,
         };
-      }
-
-      const result = await deleteScheduledPostBatch(
-        args.post_ids,
-        principal.principalId,
-        "mcp",
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "delete_scheduled_posts",
-        args,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-      });
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        isError: !result.success,
-      };
-    },
+      },
+    ),
   );
 }

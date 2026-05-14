@@ -1,23 +1,23 @@
+import "server-only";
+
 import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { Platform } from "@/lib/types/database.types";
+import { withMcpTool } from "../withMcpTool";
+
+type ListContentHistoryArgs = {
+  platform?: Platform;
+  limit: number;
+};
 
 /**
  * Lists content that has already been posted.
  *
- * Plan gate: any active subscription.
+ * Plan gate: free (any active subscription).
  * Tables read: content_history, social_accounts (join for avatar_url).
- * Calls:src/actions/server/contentHistoryActions/getContentHistory.ts
+ * Calls: src/actions/server/contentHistoryActions/getContentHistory.ts
  *
  * Output is JSON.stringify. No free-form user text.
  */
@@ -48,68 +48,31 @@ export function registerListContentHistory(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
-
-      const ent = await entitlementFor(principal, "list_content_history");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "list_content_history",
+    withMcpTool(
+      "list_content_history",
+      async (ctx, args: ListContentHistoryArgs) => {
+        const historyResult = await getContentHistory(
+          ctx.principal.principalId,
+          "mcp",
           args,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+        );
+
+        if (!historyResult.success) {
+          return {
+            content: [{ type: "text", text: historyResult.message }],
+            isError: true,
+          };
+        }
+
         return {
           content: [
-            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+            {
+              type: "text",
+              text: JSON.stringify(historyResult.data ?? [], null, 2),
+            },
           ],
-          isError: true,
         };
-      }
-
-      const result = await getContentHistory(
-        principal.principalId,
-        "mcp",
-        args,
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "list_content_history",
-        args,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (!result.success) {
-        return {
-          content: [{ type: "text", text: result.message }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(result.data ?? [], null, 2) },
-        ],
-      };
-    },
+      },
+    ),
   );
 }

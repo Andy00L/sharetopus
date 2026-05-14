@@ -1,13 +1,19 @@
-import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import "server-only";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import { entitlementFor } from "../entitlement";
-import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
 import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
-import { safeUserFetch } from "../_shared/safeUserFetch";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
+import { safeUserFetch } from "../_shared/safeUserFetch";
+import { withMcpTool } from "../withMcpTool";
+
+type AttachMediaFromUrlArgs = {
+  url: string;
+  filename?: string;
+};
 
 const ALLOWED_CONTENT_TYPES = [
   "image/jpeg",
@@ -22,18 +28,25 @@ const ALLOWED_CONTENT_TYPES = [
 const ALLOWED_CONTENT_TYPE_PREFIXES = ["image/", "video/"];
 
 /**
- * Fetches a media file from a public URL and uploads it to Supabase Storage.
+ * Fetches a media file from a public URL and uploads it to Supabase
+ * Storage.
  *
- * Plan gate: Starter+
- * Tables touched: none (writes to Supabase Storage, not a table)
+ * Plan gate: starter+ (entitlement gate + monthly quota enforced by HOF).
+ * Tables touched: none (writes to Supabase Storage, not a table).
  *
- * The returned storage path can be passed to schedule_post or bulk_schedule
- * as the media_storage_path field.
+ * The returned storage path can be passed to schedule_post or
+ * bulk_schedule as the media_storage_path field.
  *
- * Only accepts image and video content types. Per-user size caps are enforced
- * via streaming byte count (Content-Length is not trusted). URLs are validated
- * against SSRF attacks: DNS-resolved IPs are checked against private/reserved
- * ranges, redirects are rejected, and non-http(s) schemes are blocked.
+ * Only accepts image and video content types. Per-user size caps are
+ * enforced via streaming byte count (Content-Length is not trusted).
+ * URLs are validated against SSRF attacks: DNS-resolved IPs are checked
+ * against private/reserved ranges, redirects are rejected, and
+ * non-http(s) schemes are blocked.
+ *
+ * Audit: full args include only `url` for deny / rate_limited / error
+ * paths via auditArgsBuilder. On success, the handler-returned
+ * auditArgs adds the resolved storage_path so analytics can correlate
+ * uploads with downstream schedule_post / post_now calls.
  */
 export function registerAttachMediaFromUrl(server: McpServer): void {
   server.registerTool(
@@ -57,256 +70,170 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
-
-      const ent = await entitlementFor(principal, "attach_media_from_url");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
-          isError: true,
-        };
-      }
-
-      // Rate limit (before any network I/O)
-      const rateCheck = await checkRateLimit(
-        "mcp_attach_media_from_url",
-        principal.principalId,
-        10,
-        60,
-      );
-      if (!rateCheck.success) {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: "rate_limited",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: rateCheck.message ?? `Rate limit exceeded. Try again in ${rateCheck.resetIn ?? 60}s.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Per-user upload size caps (MB -> bytes)
-      const limits = getUploadLimitsForPrincipal(principal.priceId);
-      const maxBytes = Math.max(limits.image, limits.video) * 1024 * 1024;
-
-      const result = await safeUserFetch(args.url, {
-        maxBytes,
-        allowedContentTypePrefixes: ALLOWED_CONTENT_TYPE_PREFIXES,
-        allowedContentTypes: ALLOWED_CONTENT_TYPES,
-        connectTimeoutMs: 5_000,
-        totalTimeoutMs: 30_000,
-      });
-
-      if (!result.success) {
-        const isDenied =
-          result.reason === "blocked_scheme" ||
-          result.reason === "blocked_host" ||
-          result.reason === "blocked_ip" ||
-          result.reason === "redirect_not_allowed" ||
-          result.reason === "content_type_not_allowed" ||
-          result.reason === "too_large" ||
-          result.reason === "invalid_url";
-
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: isDenied ? "denied" : "error",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [{ type: "text", text: result.message }],
-          isError: true,
-        };
-      }
-
-      // Type-specific size cap (image vs video)
-      const isVideo = result.contentType.startsWith("video/");
-      const specificCapMb = isVideo ? limits.video : limits.image;
-      const specificCapBytes = specificCapMb * 1024 * 1024;
-      if (result.bytes.length > specificCapBytes) {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `File too large: ${Math.round(result.bytes.length / 1024 / 1024)} MB. ` +
-                `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      // Aggregate storage quota check (after download, before upload)
-      const quota = await enforceStorageQuota(
-        principal.principalId,
-        principal.priceId,
-        result.bytes.length,
-      );
-      if (!quota.success) {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: quota.reason === "quota_exceeded" ? "denied" : "error",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [{ type: "text", text: quota.message }],
-          isError: true,
-        };
-      }
-
-      // Determine filename
-      let parsedUrl: URL;
-      try {
-        parsedUrl = new URL(args.url);
-      } catch {
-        parsedUrl = new URL("https://unknown/media");
-      }
-      const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
-      const ext = result.contentType.startsWith("video/") ? ".mp4" : ".jpg";
-      const filename =
-        args.filename ?? (urlBasename.includes(".") ? urlBasename : `${urlBasename}${ext}`);
-
-      const storagePath = `${principal.principalId}/${Date.now()}_${filename}`;
-
-      try {
-        const { error: uploadError } = await adminSupabase.storage
-          .from("scheduled-videos")
-          .upload(storagePath, result.bytes, {
-            contentType: result.contentType,
-            upsert: false,
-          });
-
-        if (uploadError) {
-          await logToolCall({
-            principal,
-            sessionId,
-            toolName: "attach_media_from_url",
-            args: { url: args.url },
-            resultStatus: "error",
-            latencyMs: Date.now() - start,
-            ipHash,
-            userAgent,
-          });
+    withMcpTool(
+      "attach_media_from_url",
+      async (ctx, args: AttachMediaFromUrlArgs) => {
+        // Rate limit before any network I/O.
+        const rateLimitResult = await checkRateLimit(
+          "mcp_attach_media_from_url",
+          ctx.principal.principalId,
+          10,
+          60,
+        );
+        if (!rateLimitResult.success) {
           return {
             content: [
-              { type: "text", text: `Storage upload failed: ${uploadError.message}` },
+              {
+                type: "text",
+                text:
+                  rateLimitResult.message ??
+                  `Rate limit exceeded. Try again in ${rateLimitResult.resetIn ?? 60}s.`,
+              },
+            ],
+            isError: true,
+            auditStatus: "rate_limited",
+          };
+        }
+
+        // Per-user upload size caps (MB -> bytes).
+        const uploadLimits = getUploadLimitsForPrincipal(ctx.principal.priceId);
+        const maxBytes =
+          Math.max(uploadLimits.image, uploadLimits.video) * 1024 * 1024;
+
+        const fetchResult = await safeUserFetch(args.url, {
+          maxBytes,
+          allowedContentTypePrefixes: ALLOWED_CONTENT_TYPE_PREFIXES,
+          allowedContentTypes: ALLOWED_CONTENT_TYPES,
+          connectTimeoutMs: 5_000,
+          totalTimeoutMs: 30_000,
+        });
+
+        if (!fetchResult.success) {
+          const isDenied =
+            fetchResult.reason === "blocked_scheme" ||
+            fetchResult.reason === "blocked_host" ||
+            fetchResult.reason === "blocked_ip" ||
+            fetchResult.reason === "redirect_not_allowed" ||
+            fetchResult.reason === "content_type_not_allowed" ||
+            fetchResult.reason === "too_large" ||
+            fetchResult.reason === "invalid_url";
+
+          return {
+            content: [{ type: "text", text: fetchResult.message }],
+            isError: true,
+            auditStatus: isDenied ? "denied" : "error",
+          };
+        }
+
+        // Type-specific size cap (image vs video).
+        const isVideo = fetchResult.contentType.startsWith("video/");
+        const specificCapMb = isVideo ? uploadLimits.video : uploadLimits.image;
+        const specificCapBytes = specificCapMb * 1024 * 1024;
+        if (fetchResult.bytes.length > specificCapBytes) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `File too large: ${Math.round(fetchResult.bytes.length / 1024 / 1024)} MB. ` +
+                  `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
+              },
+            ],
+            isError: true,
+            auditStatus: "denied",
+          };
+        }
+
+        // Aggregate storage quota check (after download, before upload).
+        const quotaResult = await enforceStorageQuota(
+          ctx.principal.principalId,
+          ctx.principal.priceId,
+          fetchResult.bytes.length,
+        );
+        if (!quotaResult.success) {
+          return {
+            content: [{ type: "text", text: quotaResult.message }],
+            isError: true,
+            auditStatus:
+              quotaResult.reason === "quota_exceeded" ? "denied" : "error",
+          };
+        }
+
+        // Determine filename.
+        let parsedUrl: URL;
+        try {
+          parsedUrl = new URL(args.url);
+        } catch {
+          parsedUrl = new URL("https://unknown/media");
+        }
+        const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
+        const ext = fetchResult.contentType.startsWith("video/")
+          ? ".mp4"
+          : ".jpg";
+        const resolvedFilename =
+          args.filename ??
+          (urlBasename.includes(".") ? urlBasename : `${urlBasename}${ext}`);
+
+        const storagePath = `${ctx.principal.principalId}/${Date.now()}_${resolvedFilename}`;
+
+        try {
+          const { error: uploadError } = await adminSupabase.storage
+            .from("scheduled-videos")
+            .upload(storagePath, fetchResult.bytes, {
+              contentType: fetchResult.contentType,
+              upsert: false,
+            });
+
+          if (uploadError) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Storage upload failed: ${uploadError.message}`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        } catch (uploadThrown) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to upload media: ${uploadThrown instanceof Error ? uploadThrown.message : "unknown error"}`,
+              },
             ],
             isError: true,
           };
         }
-      } catch (err) {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "attach_media_from_url",
-          args: { url: args.url },
-          resultStatus: "error",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+
         return {
           content: [
             {
               type: "text",
-              text: `Failed to upload media: ${err instanceof Error ? err.message : "unknown error"}`,
+              text: JSON.stringify(
+                {
+                  success: true,
+                  storage_path: storagePath,
+                  content_type: fetchResult.contentType,
+                  size_bytes: fetchResult.bytes.length,
+                  message:
+                    "Media uploaded. Use this storage_path as media_storage_path in schedule_post.",
+                },
+                null,
+                2,
+              ),
             },
           ],
-          isError: true,
+          auditArgs: { url: args.url, storagePath },
         };
-      }
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "attach_media_from_url",
-        args: { url: args.url, storagePath },
-        resultStatus: "ok",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: true,
-                storage_path: storagePath,
-                content_type: result.contentType,
-                size_bytes: result.bytes.length,
-                message:
-                  "Media uploaded. Use this storage_path as media_storage_path in schedule_post.",
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
+      },
+      {
+        // Default for deny / rate_limited / denied / error / thrown paths.
+        // Success path overrides via handler-returned auditArgs to include
+        // the resolved storage_path.
+        auditArgsBuilder: (args) => ({ url: args.url }),
+      },
+    ),
   );
 }

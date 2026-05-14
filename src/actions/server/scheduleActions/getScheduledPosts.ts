@@ -2,7 +2,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { CreatedVia } from "@/lib/types/database.types";
+import type { CreatedVia, PostStatus } from "@/lib/types/database.types";
 import type { ScheduledPost } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
@@ -25,7 +25,7 @@ export async function getScheduledPosts(
   source: CreatedVia,
   filters?: {
     platform?: string;
-    status?: "scheduled" | "processing" | "posted" | "failed" | "cancelled";
+    status?: PostStatus;
     limit?: number;
   },
 ): Promise<{

@@ -1,23 +1,24 @@
+import "server-only";
+
 import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
+import { Platform, PostStatus } from "@/lib/types/database.types";
+
+type ListScheduledPostsArgs = {
+  platform?: Platform;
+  status?: PostStatus;
+  limit: number;
+};
 
 /**
  * Reads scheduled_posts rows owned by the calling principal.
  *
- * Plan gate: any active subscription.
+ * Plan gate: free (any active subscription).
  * Tables read: scheduled_posts, social_accounts (join).
- * Calls: src/actions/server/scheduleActions/get/getScheduledPosts.ts
+ * Calls: src/actions/server/scheduleActions/getScheduledPosts.ts
  *
  * Output is JSON.stringify of the rows. No free-form user text returned.
  */
@@ -52,68 +53,31 @@ export function registerListScheduledPosts(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
-
-      const ent = await entitlementFor(principal, "list_scheduled_posts");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "list_scheduled_posts",
+    withMcpTool(
+      "list_scheduled_posts",
+      async (ctx, args: ListScheduledPostsArgs) => {
+        const scheduledPostsResult = await getScheduledPosts(
+          ctx.principal.principalId,
+          "mcp",
           args,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+        );
+
+        if (!scheduledPostsResult.success) {
+          return {
+            content: [{ type: "text", text: scheduledPostsResult.message }],
+            isError: true,
+          };
+        }
+
         return {
           content: [
-            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+            {
+              type: "text",
+              text: JSON.stringify(scheduledPostsResult.data ?? [], null, 2),
+            },
           ],
-          isError: true,
         };
-      }
-
-      const result = await getScheduledPosts(
-        principal.principalId,
-        "mcp",
-        args,
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "list_scheduled_posts",
-        args,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (!result.success) {
-        return {
-          content: [{ type: "text", text: result.message }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [
-          { type: "text", text: JSON.stringify(result.data ?? [], null, 2) },
-        ],
-      };
-    },
+      },
+    ),
   );
 }

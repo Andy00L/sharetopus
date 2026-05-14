@@ -1,10 +1,10 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { entitlementFor } from "../entitlement";
-import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
-import { tierLabel } from "@/lib/types/plans";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
+import { tierLabel } from "@/lib/types/plans";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import "server-only";
+
+import { withMcpTool } from "../withMcpTool";
 
 /**
  * Fetches the raw subscription row for a user.
@@ -20,36 +20,37 @@ async function fetchSubscription(userId: string): Promise<{
     current_period_end: string | null;
   };
 }> {
-  const { data, error } = await adminSupabase
-    .from("stripe_subscriptions")
-    .select("plan, status, start_date, current_period_end")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: subscriptionRow, error: subscriptionError } =
+    await adminSupabase
+      .from("stripe_subscriptions")
+      .select("plan, status, start_date, current_period_end")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
+  if (subscriptionError) {
     return {
       success: false,
-      message: `Failed to fetch subscription: ${error.message}`,
+      message: `Failed to fetch subscription: ${subscriptionError.message}`,
     };
   }
 
-  if (!data) {
+  if (!subscriptionRow) {
     return { success: true, message: "No subscription found" };
   }
 
   return {
     success: true,
     message: "Subscription found",
-    subscription: data,
+    subscription: subscriptionRow,
   };
 }
 
 /**
  * Returns the user's current subscription status and usage quotas.
  *
- * Plan gate: any active subscription.
+ * Plan gate: free (any active subscription).
  * Tables read: stripe_subscriptions, usage_quotas
  *
  * No free-form user text in the output.
@@ -68,59 +69,28 @@ export function registerListBillingSummary(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (_args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
-
-      const ent = await entitlementFor(principal, "list_billing_summary");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "list_billing_summary",
-          args: null,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
-          isError: true,
-        };
-      }
-
-      const subResult = await fetchSubscription(principal.principalId);
+    withMcpTool("list_billing_summary", async (ctx) => {
+      const subscriptionResult = await fetchSubscription(
+        ctx.principal.principalId,
+      );
 
       // Fetch current month usage.
       // Query filter uses YYYY-MM-DD (matches the date column in usage_quotas).
-      // The display `period` field below stays YYYY-MM because it's user-facing.
+      // The display `period` field below stays YYYY-MM because it is user-facing.
       const periodFilter = currentQuotaPeriod();
-      const { data: quotas } = await adminSupabase
+      const { data: usageQuotas } = await adminSupabase
         .from("usage_quotas")
         .select("action, count")
-        .eq("principal_id", principal.principalId)
+        .eq("principal_id", ctx.principal.principalId)
         .eq("period", periodFilter);
 
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "list_billing_summary",
-        args: null,
-        resultStatus: "ok",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
+      const usageByAction = (usageQuotas ?? []).reduce(
+        (accumulator, quotaRow) => {
+          accumulator[quotaRow.action] = quotaRow.count;
+          return accumulator;
+        },
+        {} as Record<string, number>,
+      );
 
       return {
         content: [
@@ -128,32 +98,27 @@ export function registerListBillingSummary(server: McpServer): void {
             type: "text",
             text: JSON.stringify(
               {
-                subscription: subResult.subscription
+                subscription: subscriptionResult.subscription
                   ? {
-                      plan_tier: principal.plan,
-                      plan_label: tierLabel(principal.plan),
-                      price_id: subResult.subscription.plan,
-                      status: subResult.subscription.status,
-                      start_date: subResult.subscription.start_date,
-                      current_period_end: subResult.subscription.current_period_end,
+                      plan_tier: ctx.principal.plan,
+                      plan_label: tierLabel(ctx.principal.plan),
+                      price_id: subscriptionResult.subscription.plan,
+                      status: subscriptionResult.subscription.status,
+                      start_date: subscriptionResult.subscription.start_date,
+                      current_period_end:
+                        subscriptionResult.subscription.current_period_end,
                     }
                   : null,
-                usage_this_month: (quotas ?? []).reduce(
-                  (acc, q) => {
-                    acc[q.action] = q.count;
-                    return acc;
-                  },
-                  {} as Record<string, number>
-                ),
+                usage_this_month: usageByAction,
                 // Display YYYY-MM (user-facing); the DB filter above uses YYYY-MM-DD.
                 period: periodFilter.slice(0, 7),
               },
               null,
-              2
+              2,
             ),
           },
         ],
       };
-    }
+    }),
   );
 }

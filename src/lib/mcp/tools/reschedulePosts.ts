@@ -1,22 +1,22 @@
+import "server-only";
+
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
+
+type ReschedulePostsArgs = {
+  post_ids: string[];
+  new_scheduled_time: string;
+};
 
 /**
- * Reschedules posts to a new time. Cancelled posts get resumed automatically.
+ * Reschedules posts to a new time. Cancelled posts get resumed
+ * automatically.
  *
- * Plan gate: Starter+
- * Tables touched: scheduled_posts (read + update)
+ * Plan gate: starter+.
+ * Tables touched: scheduled_posts (read + update).
  * Calls: src/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch.ts
  */
 export function registerReschedulePosts(server: McpServer): void {
@@ -48,64 +48,20 @@ export function registerReschedulePosts(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (toolArgs, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const startTime = Date.now();
-
-      const entitlement = await entitlementFor(principal, "reschedule_posts");
-      if (entitlement.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "reschedule_posts",
-          args: toolArgs,
-          resultStatus: "denied",
-          latencyMs: Date.now() - startTime,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
-      const result = await updateScheduledTimeBatch(
-        toolArgs.post_ids,
-        toolArgs.new_scheduled_time,
-        principal.principalId,
+    withMcpTool("reschedule_posts", async (ctx, args: ReschedulePostsArgs) => {
+      const rescheduleResult = await updateScheduledTimeBatch(
+        args.post_ids,
+        args.new_scheduled_time,
+        ctx.principal.principalId,
         "mcp",
       );
 
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "reschedule_posts",
-        args: toolArgs,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - startTime,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        isError: !result.success,
+        content: [
+          { type: "text", text: JSON.stringify(rescheduleResult, null, 2) },
+        ],
+        isError: !rescheduleResult.success,
       };
-    },
+    }),
   );
 }

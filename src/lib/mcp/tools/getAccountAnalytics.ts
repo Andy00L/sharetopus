@@ -1,15 +1,24 @@
-import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import "server-only";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { entitlementFor } from "../entitlement";
-import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+import { withMcpTool } from "../withMcpTool";
+import { Platform } from "@/lib/types/database.types";
+
+type GetAccountAnalyticsArgs = {
+  platform?: Platform;
+  content_id?: string;
+  days: number;
+  limit: number;
+};
 
 /**
  * Reads analytics_metrics for the calling principal's content.
  *
- * Plan gate: Creator+
- * Tables read: analytics_metrics
+ * Plan gate: creator+.
+ * Tables read: analytics_metrics.
  *
  * This returns whatever is stored. We do not refresh metrics on demand
  * in this phase, so data may be up to 24 hours stale. A background job
@@ -56,78 +65,52 @@ export function registerGetAccountAnalytics(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
+    withMcpTool(
+      "get_account_analytics",
+      async (ctx, args: GetAccountAnalyticsArgs) => {
+        const sinceDate = new Date();
+        sinceDate.setDate(sinceDate.getDate() - args.days);
+        const sinceIsoDate = sinceDate.toISOString().split("T")[0];
 
-      const ent = await entitlementFor(principal, "get_account_analytics");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "get_account_analytics",
-          args,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+        let analyticsQuery = adminSupabase
+          .from("analytics_metrics")
+          .select("*")
+          .eq("principal_id", ctx.principal.principalId)
+          .gte("metric_date", sinceIsoDate)
+          .order("metric_date", { ascending: false })
+          .limit(args.limit);
+
+        if (args.platform) {
+          analyticsQuery = analyticsQuery.eq("platform", args.platform);
+        }
+        if (args.content_id) {
+          analyticsQuery = analyticsQuery.eq("content_id", args.content_id);
+        }
+
+        const { data: analyticsRows, error: analyticsError } =
+          await analyticsQuery;
+
+        if (analyticsError) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to fetch analytics: ${analyticsError.message}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
-          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(analyticsRows ?? [], null, 2),
+            },
+          ],
         };
-      }
-
-      const since = new Date();
-      since.setDate(since.getDate() - args.days);
-
-      let query = adminSupabase
-        .from("analytics_metrics")
-        .select("*")
-        .eq("principal_id", principal.principalId)
-        .gte("metric_date", since.toISOString().split("T")[0])
-        .order("metric_date", { ascending: false })
-        .limit(args.limit);
-
-      if (args.platform) {
-        query = query.eq("platform", args.platform);
-      }
-      if (args.content_id) {
-        query = query.eq("content_id", args.content_id);
-      }
-
-      const { data, error } = await query;
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "get_account_analytics",
-        args,
-        resultStatus: error ? "error" : "ok",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (error) {
-        return {
-          content: [{ type: "text", text: `Failed to fetch analytics: ${error.message}` }],
-          isError: true,
-        };
-      }
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(data ?? [], null, 2) }],
-      };
-    }
+      },
+    ),
   );
 }

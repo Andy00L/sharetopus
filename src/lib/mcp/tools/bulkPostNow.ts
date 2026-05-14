@@ -1,17 +1,11 @@
+import "server-only";
+
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
 
@@ -50,14 +44,27 @@ const postNowItemSchema = z.object({
     .describe("Pinterest pin destination URL. Max 2048 chars."),
 });
 
+type BulkPostNowItemInput = z.infer<typeof postNowItemSchema>;
+
+type BulkPostNowArgs = {
+  posts: BulkPostNowItemInput[];
+  batch_id?: string;
+};
+
 /**
  * MCP tool: publish up to 30 posts immediately in one batch.
  *
- * Plan gate: Creator+
+ * Plan gate: creator+ (entitlement gate + monthly quota enforced by HOF).
  * Calls: src/actions/server/directPostActions/directPostBatch.ts
  *
- * Thin wrapper: entitlement + audit. All validation, ownership, URL
- * minting, and dispatch lives in the core.
+ * Thin wrapper: HOF runs the entitlement check + audit, this handler
+ * only does shape translation and core delegation. All validation,
+ * ownership, URL minting, and dispatch lives in the core.
+ *
+ * Audit: the full posts array is large, so we summarize args to
+ * { count } via auditArgsBuilder for deny + thrown-error paths, and
+ * to { count, batch_id } via the handler-returned auditArgs on
+ * success / handler-error paths.
  */
 export function registerBulkPostNow(server: McpServer): void {
   server.registerTool(
@@ -90,99 +97,61 @@ export function registerBulkPostNow(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (toolArgs, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const startTime = Date.now();
+    withMcpTool(
+      "bulk_post_now",
+      async (ctx, args: BulkPostNowArgs) => {
+        const directPostsData: DirectPostData[] = args.posts.map(
+          (inputPost) => ({
+            socialAccountId: inputPost.social_account_id,
+            platform: inputPost.platform,
+            postType: inputPost.post_type,
+            title: inputPost.title ?? null,
+            description: inputPost.description,
+            mediaStoragePath: inputPost.media_storage_path,
+            coverTimestamp: inputPost.cover_timestamp,
+            pinterestBoardId: inputPost.pinterest_board_id,
+            pinterestBoardName: inputPost.pinterest_board_name,
+            pinterestLink: inputPost.pinterest_link,
+          }),
+        );
 
-      const entitlement = await entitlementFor(principal, "bulk_post_now");
-      if (entitlement.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "bulk_post_now",
-          args: { count: toolArgs.posts.length },
-          resultStatus:
-            entitlement.reason === "platform_quota" ||
-            entitlement.reason === "monthly_quota"
-              ? "quota_exceeded"
-              : "denied",
-          latencyMs: Date.now() - startTime,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+        const postBatchResult = await directPostBatch(
+          directPostsData,
+          ctx.principal.principalId,
+          "mcp",
+          args.batch_id,
+        );
+
         return {
           content: [
             {
               type: "text",
-              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
+              text: JSON.stringify(
+                {
+                  success: postBatchResult.success,
+                  batch_id: postBatchResult.batchId,
+                  total: postBatchResult.details.total,
+                  dispatched: postBatchResult.details.dispatched,
+                  duplicates: postBatchResult.details.duplicates,
+                  rejected: postBatchResult.details.rejected,
+                  event_ids: postBatchResult.eventIds,
+                  message: postBatchResult.message,
+                },
+                null,
+                2,
+              ),
             },
           ],
-          isError: true,
-        };
-      }
-
-      const posts: DirectPostData[] = toolArgs.posts.map((inputPost) => ({
-        socialAccountId: inputPost.social_account_id,
-        platform: inputPost.platform,
-        postType: inputPost.post_type,
-        title: inputPost.title ?? null,
-        description: inputPost.description,
-        mediaStoragePath: inputPost.media_storage_path,
-        coverTimestamp: inputPost.cover_timestamp,
-        pinterestBoardId: inputPost.pinterest_board_id,
-        pinterestBoardName: inputPost.pinterest_board_name,
-        pinterestLink: inputPost.pinterest_link,
-      }));
-
-      const result = await directPostBatch(
-        posts,
-        principal.principalId,
-        "mcp",
-        toolArgs.batch_id,
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "bulk_post_now",
-        args: { count: toolArgs.posts.length, batch_id: result.batchId },
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - startTime,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                success: result.success,
-                batch_id: result.batchId,
-                total: result.details.total,
-                dispatched: result.details.dispatched,
-                duplicates: result.details.duplicates,
-                rejected: result.details.rejected,
-                event_ids: result.eventIds,
-                message: result.message,
-              },
-              null,
-              2,
-            ),
+          isError: !postBatchResult.success,
+          auditArgs: {
+            count: args.posts.length,
+            batch_id: postBatchResult.batchId,
           },
-        ],
-        isError: !result.success,
-      };
-    },
+        };
+      },
+      {
+        auditArgsBuilder: (args) => ({ count: args.posts.length }),
+      },
+    ),
   );
 }

@@ -1,26 +1,19 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import "server-only";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
 
 /**
  * Lists the user's connected social accounts.
  *
- * Plan gate: any active subscription.
+ * Plan gate: free (any active subscription).
  * Tables read: social_accounts
- * Calls: src/actions/server/_internal/data/fetchSocialAccounts.ts
+ * Calls: src/actions/server/data/fetchSocialAccounts.ts
  *
  * Returns text/plain JSON so the output is never mistaken for free-form
- * text that the user authored.
+ * text that the user authored. Tokens are stripped before serialization.
  */
 export function registerListConnections(server: McpServer): void {
   server.registerTool(
@@ -42,77 +35,38 @@ export function registerListConnections(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async ({ include_unavailable }, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
+    withMcpTool(
+      "list_connections",
+      async (ctx, args: { include_unavailable: boolean }) => {
+        const fetchResult = await fetchSocialAccounts(
+          ctx.principal.principalId,
+          "mcp",
+          !args.include_unavailable,
+        );
 
-      const ent = await entitlementFor(principal, "list_connections");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "list_connections",
-          args: { include_unavailable },
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
+        if (!fetchResult.success) {
+          return {
+            content: [{ type: "text", text: fetchResult.message }],
+            isError: true,
+          };
+        }
+
+        const safeAccounts = (fetchResult.data ?? []).map((account) => ({
+          id: account.id,
+          platform: account.platform,
+          display_name: account.display_name,
+          username: account.username,
+          avatar_url: account.avatar_url,
+          is_available: account.is_available,
+          follower_count: account.follower_count,
+        }));
+
         return {
           content: [
-            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+            { type: "text", text: JSON.stringify(safeAccounts, null, 2) },
           ],
-          isError: true,
         };
-      }
-
-      const result = await fetchSocialAccounts(
-        principal.principalId,
-        "mcp",
-        !include_unavailable,
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "list_connections",
-        args: { include_unavailable },
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      if (!result.success) {
-        return {
-          content: [{ type: "text", text: result.message }],
-          isError: true,
-        };
-      }
-
-      // Strip sensitive fields (tokens) before returning
-      const safe = (result.data ?? []).map((a) => ({
-        id: a.id,
-        platform: a.platform,
-        display_name: a.display_name,
-        username: a.username,
-        avatar_url: a.avatar_url,
-        is_available: a.is_available,
-        follower_count: a.follower_count,
-      }));
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(safe, null, 2) }],
-      };
-    },
+      },
+    ),
   );
 }

@@ -1,25 +1,42 @@
-import { z } from "zod";
+import "server-only";
+
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { entitlementFor } from "../entitlement";
-import { logToolCall } from "../audit";
-import { extractPrincipal, extractSessionId, extractIpHash, extractUserAgent, extractClientName, extractClientVersion } from "@/lib/mcp/context";
+import { z } from "zod";
+
+import { withMcpTool } from "../withMcpTool";
+
+type GeneratePostDraftArgs = {
+  platform: "linkedin" | "tiktok" | "pinterest" | "instagram";
+  topic: string;
+  tone: "professional" | "casual" | "humorous" | "educational" | "promotional";
+  max_length: number;
+  additional_context?: string;
+};
+
+const PLATFORM_GUIDELINES: Record<GeneratePostDraftArgs["platform"], string> = {
+  linkedin:
+    "LinkedIn: professional tone, 1-3 paragraphs, use relevant hashtags sparingly (3-5). No emojis overload.",
+  tiktok:
+    "TikTok: short, punchy caption under 300 chars. Hook in the first line. Trending hashtags welcome.",
+  pinterest:
+    "Pinterest: descriptive pin caption, include keywords naturally, 100-500 chars.",
+  instagram:
+    "Instagram: engaging caption, mix of storytelling and call-to-action, emoji-friendly, up to 2200 chars.",
+};
 
 /**
- * Generates a post draft using MCP sampling.
+ * Generates a post draft prompt that the client's own LLM can run.
  *
- * This tool sends a sampling/createMessage request back to the client,
- * asking the client's own LLM to produce the draft. This costs Sharetopus
- * zero AI credits since the client does the inference.
+ * Plan gate: pro (entitlement gate + monthly quota enforced by HOF).
+ * Tables touched: none (sampling is a client-side operation).
  *
- * Plan gate: Pro
- * Tables touched: none (sampling is a client-side operation)
+ * This tool builds a structured prompt string and returns it so the
+ * calling agent can generate the draft using its own inference budget.
+ * Sharetopus pays zero AI credits.
  *
- * The tool returns the client LLM's response as the tool result.
- * If the client does not support sampling, the tool returns an error.
- *
- * Note: sampling support depends on the MCP client. Claude Desktop and
- * Cursor support it, but not all clients do. The tool gracefully handles
- * the case where sampling is unavailable.
+ * Auditing: we scrub `additional_context` from the audit row because
+ * it can contain free-form user secrets or brand-confidential text.
+ * Only `platform` and `topic` are persisted.
  */
 export function registerGeneratePostDraft(server: McpServer): void {
   server.registerTool(
@@ -34,7 +51,13 @@ export function registerGeneratePostDraft(server: McpServer): void {
           .describe("Target platform for the draft"),
         topic: z.string().describe("Topic or theme for the post"),
         tone: z
-          .enum(["professional", "casual", "humorous", "educational", "promotional"])
+          .enum([
+            "professional",
+            "casual",
+            "humorous",
+            "educational",
+            "promotional",
+          ])
           .optional()
           .default("professional")
           .describe("Tone of voice for the draft"),
@@ -57,98 +80,43 @@ export function registerGeneratePostDraft(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
+    withMcpTool(
+      "generate_post_draft",
+      async (_ctx, args: GeneratePostDraftArgs) => {
+        const draftPrompt = [
+          `Write a ${args.tone} social media post for ${args.platform}.`,
+          `Topic: ${args.topic}`,
+          `Max length: ~${args.max_length} characters.`,
+          PLATFORM_GUIDELINES[args.platform],
+          args.additional_context
+            ? `Additional context: ${args.additional_context}`
+            : "",
+          "",
+          "Return ONLY the post text, no commentary or metadata.",
+        ]
+          .filter(Boolean)
+          .join("\n");
 
-      const ent = await entitlementFor(principal, "generate_post_draft");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "generate_post_draft",
-          args: { platform: args.platform, topic: args.topic },
-          resultStatus: ent.reason === "platform_quota" ? "quota_exceeded" : "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
         return {
-          content: [{ type: "text", text: `Denied: ${ent.detail ?? ent.reason}` }],
-          isError: true,
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  action: "draft_prompt",
+                  platform: args.platform,
+                  prompt: draftPrompt,
+                  instructions:
+                    "Use this prompt to generate the draft. Then pass the result to schedule_post when ready.",
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          auditArgs: { platform: args.platform, topic: args.topic },
         };
-      }
-
-      // Build the prompt for the client's LLM.
-      // We do not call any external AI API ourselves.
-      const platformGuidelines: Record<string, string> = {
-        linkedin:
-          "LinkedIn: professional tone, 1-3 paragraphs, use relevant hashtags sparingly (3-5). No emojis overload.",
-        tiktok:
-          "TikTok: short, punchy caption under 300 chars. Hook in the first line. Trending hashtags welcome.",
-        pinterest:
-          "Pinterest: descriptive pin caption, include keywords naturally, 100-500 chars.",
-        instagram:
-          "Instagram: engaging caption, mix of storytelling and call-to-action, emoji-friendly, up to 2200 chars.",
-      };
-
-      const prompt = [
-        `Write a ${args.tone} social media post for ${args.platform}.`,
-        `Topic: ${args.topic}`,
-        `Max length: ~${args.max_length} characters.`,
-        platformGuidelines[args.platform] ?? "",
-        args.additional_context ? `Additional context: ${args.additional_context}` : "",
-        "",
-        "Return ONLY the post text, no commentary or metadata.",
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      // The tool returns the prompt as its result. The calling LLM (client-side)
-      // will see this and can use it to generate the draft directly.
-      // We cannot call sampling/createMessage from inside a tool handler
-      // because the SDK does not expose that on the server instance passed
-      // to tool registration. Instead, we return the structured prompt
-      // and let the client's agent generate the draft in the next turn.
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "generate_post_draft",
-        args: { platform: args.platform, topic: args.topic },
-        resultStatus: "ok",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                action: "draft_prompt",
-                platform: args.platform,
-                prompt,
-                instructions:
-                  "Use this prompt to generate the draft. Then pass the result to schedule_post when ready.",
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
+      },
+    ),
   );
 }

@@ -1,25 +1,24 @@
+import "server-only";
+
 import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { withMcpTool } from "../withMcpTool";
+
+type ResumeScheduledPostsArgs = {
+  post_ids: string[];
+};
 
 /**
  * Resumes cancelled posts back to "scheduled" status.
  *
- * Plan gate: Starter+
- * Tables touched: scheduled_posts (read + update)
+ * Plan gate: starter+.
+ * Tables touched: scheduled_posts (read + update).
  * Calls: src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
  *
- * If a post's scheduled_at is in the past, it gets bumped to 1 hour from now.
+ * If a post's scheduled_at is in the past, it gets bumped to 1 hour
+ * from now.
  */
 export function registerResumeScheduledPosts(server: McpServer): void {
   server.registerTool(
@@ -43,58 +42,22 @@ export function registerResumeScheduledPosts(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (args, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const start = Date.now();
+    withMcpTool(
+      "resume_scheduled_posts",
+      async (ctx, args: ResumeScheduledPostsArgs) => {
+        const resumeResult = await resumeScheduledPostBatch(
+          args.post_ids,
+          ctx.principal.principalId,
+          "mcp",
+        );
 
-      const ent = await entitlementFor(principal, "resume_scheduled_posts");
-      if (ent.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "resume_scheduled_posts",
-          args,
-          resultStatus: "denied",
-          latencyMs: Date.now() - start,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
         return {
           content: [
-            { type: "text", text: `Denied: ${ent.detail ?? ent.reason}` },
+            { type: "text", text: JSON.stringify(resumeResult, null, 2) },
           ],
-          isError: true,
+          isError: !resumeResult.success,
         };
-      }
-
-      const result = await resumeScheduledPostBatch(
-        args.post_ids,
-        principal.principalId,
-        "mcp",
-      );
-
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "resume_scheduled_posts",
-        args,
-        resultStatus: result.success ? "ok" : "error",
-        latencyMs: Date.now() - start,
-        ipHash,
-        userAgent,
-      });
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        isError: !result.success,
-      };
-    },
+      },
+    ),
   );
 }

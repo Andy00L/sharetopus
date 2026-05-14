@@ -1,30 +1,39 @@
-// src/lib/mcp/tools/schedulePost.ts
+import "server-only";
+
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractIpHash,
-  extractPrincipal,
-  extractSessionId,
-  extractUserAgent,
-} from "@/lib/mcp/context";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { logToolCall } from "../audit";
-import { entitlementFor } from "../entitlement";
+
+import { MediaType, Platform } from "@/lib/types/database.types";
+import { withMcpTool } from "../withMcpTool";
+
+type SchedulePostArgs = {
+  social_account_id: string;
+  platform: Platform;
+  scheduled_at: string;
+  post_type: MediaType;
+  title?: string;
+  description: string | null;
+  media_storage_path: string;
+  batch_id?: string;
+  pinterest_board_id?: string;
+  pinterest_board_name?: string;
+  pinterest_link?: string;
+  idempotency_key?: string;
+};
 
 /**
  * MCP tool: schedule a single post for future publishing.
  *
- * Plan gate: Starter+
- * Tables touched: scheduled_posts (insert), social_accounts (ownership check),
- *                 platform_quotas (daily cap check)
+ * Plan gate: starter+ (entitlement gate + monthly quota enforced by HOF).
+ * Tables touched: scheduled_posts (insert), social_accounts (ownership
+ *                 check), platform_quotas (daily cap check).
  * Calls: src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
  *
- * Implementation: wraps the single post into a batch of N=1.
- * Same code path as bulk_schedule, just unwraps the single result.
+ * Implementation: wraps the single post into a batch of N=1. Same code
+ * path as bulk_schedule, just unwraps the single result.
  */
 export function registerSchedulePost(server: McpServer): void {
   server.registerTool(
@@ -117,99 +126,47 @@ export function registerSchedulePost(server: McpServer): void {
         openWorldHint: true,
       },
     },
-    async (toolArgs, extra) => {
-      const principal = extractPrincipal(extra);
-      const sessionId = extractSessionId(extra);
-      const ipHash = await extractIpHash();
-      const userAgent = await extractUserAgent();
-      const clientName = extractClientName(extra);
-      const clientVersion = extractClientVersion(extra);
-      const startTime = Date.now();
-
-      // Plan-tier gate (MCP-specific, separate from web's Clerk subscription).
-      const entitlement = await entitlementFor(principal, "schedule_post");
-      if (entitlement.mode === "deny") {
-        await logToolCall({
-          principal,
-          sessionId,
-          toolName: "schedule_post",
-          args: toolArgs,
-          resultStatus:
-            entitlement.reason === "platform_quota"
-              ? "quota_exceeded"
-              : "denied",
-          latencyMs: Date.now() - startTime,
-          ipHash,
-          userAgent,
-          clientName,
-          clientVersion,
-        });
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Denied: ${entitlement.detail ?? entitlement.reason}`,
-            },
-          ],
-          isError: true,
-        };
-      }
-
+    withMcpTool("schedule_post", async (ctx, args: SchedulePostArgs) => {
       // Pinterest options only when platform is pinterest. Core re-validates.
-      const postOptions =
-        toolArgs.platform === "pinterest"
+      const pinterestOptions =
+        args.platform === "pinterest"
           ? {
               privacyLevel: "PUBLIC" as const,
-              board: toolArgs.pinterest_board_id ?? "",
-              link: toolArgs.pinterest_link ?? "",
+              board: args.pinterest_board_id ?? "",
+              link: args.pinterest_link ?? "",
             }
           : null;
 
-      const post: SchedulePostData = {
-        socialAccountId: toolArgs.social_account_id,
-        platform: toolArgs.platform,
-        scheduledAt: toolArgs.scheduled_at,
-        postType: toolArgs.post_type,
-        title: toolArgs.title ?? null,
-        description: toolArgs.description,
-        mediaStoragePath: toolArgs.media_storage_path,
-        postOptions,
-        batch_id: toolArgs.batch_id ?? generateBatchId(),
-        idempotency_key: toolArgs.idempotency_key,
+      const scheduledPost: SchedulePostData = {
+        socialAccountId: args.social_account_id,
+        platform: args.platform,
+        scheduledAt: args.scheduled_at,
+        postType: args.post_type,
+        title: args.title ?? null,
+        description: args.description,
+        mediaStoragePath: args.media_storage_path,
+        postOptions: pinterestOptions,
+        batch_id: args.batch_id ?? generateBatchId(),
+        idempotency_key: args.idempotency_key,
       };
 
       const scheduleResult = await schedulePostBatch(
-        [post],
-        principal.principalId,
+        [scheduledPost],
+        ctx.principal.principalId,
         "mcp",
       );
 
-      await logToolCall({
-        principal,
-        sessionId,
-        toolName: "schedule_post",
-        args: toolArgs,
-        resultStatus: scheduleResult.success ? "ok" : "error",
-        latencyMs: Date.now() - startTime,
-        ipHash,
-        userAgent,
-        clientName,
-        clientVersion,
-      });
-
-      // Failure path: surface per-post rejection if any, else generic message.
       if (!scheduleResult.success) {
         const firstRejection = scheduleResult.details.rejected[0];
-        const userFacingMessage = firstRejection
+        const failureMessage = firstRejection
           ? firstRejection.reason
           : scheduleResult.message;
         return {
-          content: [{ type: "text", text: userFacingMessage }],
+          content: [{ type: "text", text: failureMessage }],
           isError: true,
         };
       }
 
-      // Success path: unwrap the single result.
       const scheduleId = scheduleResult.scheduleIds[0] ?? null;
       const wasIdempotentRetry = scheduleResult.details.duplicates > 0;
 
@@ -231,6 +188,6 @@ export function registerSchedulePost(server: McpServer): void {
           },
         ],
       };
-    },
+    }),
   );
 }
