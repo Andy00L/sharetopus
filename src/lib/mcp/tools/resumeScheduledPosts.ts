@@ -49,6 +49,7 @@ export function registerResumeScheduledPosts(server: McpServer): void {
           args.post_ids,
           ctx.principal.principalId,
           "mcp",
+          ctx.requestId,
         );
 
         return {

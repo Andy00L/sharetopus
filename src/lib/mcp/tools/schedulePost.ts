@@ -154,6 +154,7 @@ export function registerSchedulePost(server: McpServer): void {
         [scheduledPost],
         ctx.principal.principalId,
         "mcp",
+        ctx.requestId,
       );
 
       if (!scheduleResult.success) {

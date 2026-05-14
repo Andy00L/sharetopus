@@ -19,6 +19,9 @@ type PostDueEventData = {
   social_account_id: string;
   platform: Platform;
   scheduled_at: string;
+  // Correlation ID propagated from the originating request. Optional because
+  // cron-dispatched events do not carry one.
+  request_id?: string | null;
 };
 
 /**
@@ -42,6 +45,7 @@ export const processSinglePost = inngest.createFunction(
   },
   async ({ event, step }) => {
     const data = event.data as PostDueEventData;
+    const requestId = data.request_id ?? null;
 
     const fetched = await step.run("fetch-post-and-account", () =>
       fetchPostAndAccount(data.scheduled_post_id),

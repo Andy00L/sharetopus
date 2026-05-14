@@ -19,6 +19,7 @@ export async function resumeScheduledPostBatch(
   postIds: string[],
   principalId: string,
   source: CreatedVia,
+  requestId?: string | null,
 ): Promise<{
   success: boolean;
   message: string;
@@ -31,7 +32,7 @@ export async function resumeScheduledPostBatch(
   };
 }> {
   console.log(
-    `[resumeScheduledPostBatch] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
+    `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
   );
 
   try {
@@ -65,7 +66,7 @@ export async function resumeScheduledPostBatch(
     );
     if (unauthorizedPosts.length > 0) {
       console.warn(
-        `[resumeScheduledPostBatch] Ownership violation: ${principalId} tried to resume ${unauthorizedPosts.length} post(s) they don't own`,
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to resume ${unauthorizedPosts.length} post(s) they don't own`,
       );
       return {
         success: false,
@@ -111,7 +112,7 @@ export async function resumeScheduledPostBatch(
         .in("id", pastIds);
       if (updatePastError) {
         console.error(
-          `[resumeScheduledPostBatch] Past update error:`,
+          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Past update error:`,
           updatePastError.message,
         );
         allUpdatesOk = false;
@@ -125,7 +126,7 @@ export async function resumeScheduledPostBatch(
         .in("id", futureIds);
       if (updateFutureError) {
         console.error(
-          `[resumeScheduledPostBatch] Future update error:`,
+          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Future update error:`,
           updateFutureError.message,
         );
         allUpdatesOk = false;
@@ -148,7 +149,7 @@ export async function resumeScheduledPostBatch(
     };
   } catch (err) {
     console.error(
-      `[resumeScheduledPostBatch] Unexpected error:`,
+      `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return { success: false, message: "Unexpected error resuming posts." };

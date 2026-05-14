@@ -35,6 +35,7 @@ export const processDirectPost = inngest.createFunction(
   },
   async ({ event, step }) => {
     const data = event.data as PostNowEventData;
+    const requestId = data.request_id ?? null;
 
     // Step 1: fetch account
     const fetched = await step.run("fetch-account", () =>

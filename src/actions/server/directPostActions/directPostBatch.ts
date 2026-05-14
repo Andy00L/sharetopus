@@ -78,12 +78,13 @@ export async function directPostBatch(
   principalId: string,
   source: CreatedVia,
   agentSuppliedBatchId?: string,
+  requestId?: string | null,
 ): Promise<DirectPostBatchResult> {
   const batchId = agentSuppliedBatchId ?? generateBatchId();
   const useAgentBatchId = Boolean(agentSuppliedBatchId);
 
   console.log(
-    `[directPostBatch] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s), batchId=${batchId}`,
+    `[directPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s), batchId=${batchId}`,
   );
 
   const emptyDetails = {
@@ -246,13 +247,14 @@ export async function directPostBatch(
       principalId,
       source,
       useAgentBatchId,
+      requestId,
     );
 
     // Step 6: lock + dispatch
     const dispatch = await dispatchPostNowEvents(events);
     if (!dispatch.success) {
       console.error(
-        `[directPostBatch] Dispatch failed (${dispatch.phase}):`,
+        `[directPostBatch] [req=${requestId ?? "?"}] Dispatch failed (${dispatch.phase}):`,
         dispatch.message,
       );
       return {
@@ -285,7 +287,7 @@ export async function directPostBatch(
     };
   } catch (err) {
     console.error(
-      `[directPostBatch] Unexpected error:`,
+      `[directPostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return {
@@ -428,6 +430,7 @@ function buildEventPayloads(
   principalId: string,
   source: CreatedVia,
   useAgentBatchIdForIdempotency: boolean,
+  requestId?: string | null,
 ): { name: "post.now"; data: PostNowEventData }[] {
   return posts.map((post, index) => {
     const fileName = post.mediaStoragePath
@@ -495,6 +498,7 @@ function buildEventPayloads(
       idempotency_key:
         post.idempotency_key ??
         (useAgentBatchIdForIdempotency ? `${batchId}:${index}` : undefined),
+      request_id: requestId ?? null,
     };
 
     return { name: "post.now" as const, data };

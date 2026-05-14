@@ -39,6 +39,9 @@ export type PostNowEventData = {
   dispatch_id?: string;
   created_via?: "web" | "mcp" | "x402" | "api";
   idempotency_key?: string;
+  // Correlation ID propagated from the originating request. Optional because
+  // pre-existing scheduled posts may dispatch events without one.
+  request_id?: string | null;
 };
 
 // ---------- fetch-account ----------

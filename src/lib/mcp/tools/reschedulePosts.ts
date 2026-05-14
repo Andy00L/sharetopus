@@ -54,6 +54,7 @@ export function registerReschedulePosts(server: McpServer): void {
         args.new_scheduled_time,
         ctx.principal.principalId,
         "mcp",
+        ctx.requestId,
       );
 
       return {

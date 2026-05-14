@@ -39,9 +39,10 @@ export async function updateScheduledTimeBatch(
   newScheduledTime: string | Date,
   principalId: string,
   source: CreatedVia,
+  requestId?: string | null,
 ): Promise<UpdateScheduledTimeBatchResult> {
   console.log(
-    `[updateScheduledTimeBatch] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s)`,
+    `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s)`,
   );
 
   try {
@@ -84,7 +85,7 @@ export async function updateScheduledTimeBatch(
 
     if (fetchError) {
       console.error(
-        `[updateScheduledTimeBatch] Fetch error:`,
+        `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Fetch error:`,
         fetchError.message,
       );
       return {
@@ -124,7 +125,7 @@ export async function updateScheduledTimeBatch(
         .in("id", scheduledIds);
       if (error) {
         console.error(
-          `[updateScheduledTimeBatch] Update scheduled error:`,
+          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update scheduled error:`,
           error.message,
         );
         ok = false;
@@ -141,7 +142,7 @@ export async function updateScheduledTimeBatch(
         .in("id", cancelledIds);
       if (error) {
         console.error(
-          `[updateScheduledTimeBatch] Update cancelled error:`,
+          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update cancelled error:`,
           error.message,
         );
         ok = false;
@@ -176,7 +177,7 @@ export async function updateScheduledTimeBatch(
     };
   } catch (err) {
     console.error(
-      `[updateScheduledTimeBatch] Unexpected error:`,
+      `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return { success: false, message: "Unexpected error rescheduling posts." };

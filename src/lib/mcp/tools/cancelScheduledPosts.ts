@@ -46,6 +46,7 @@ export function registerCancelScheduledPosts(server: McpServer): void {
           args.post_ids,
           ctx.principal.principalId,
           "mcp",
+          ctx.requestId,
         );
 
         return {

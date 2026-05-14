@@ -59,11 +59,12 @@ export async function schedulePostBatch(
   posts: SchedulePostData[],
   principalId: string,
   source: CreatedVia,
+  requestId?: string | null,
 ): Promise<SchedulePostBatchResult> {
   const batchId = generateBatchId();
 
   console.log(
-    `[schedulePostBatch] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s) requested, batchId=${batchId}`,
+    `[schedulePostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s) requested, batchId=${batchId}`,
   );
 
   const emptyDetails = { total: 0, inserted: 0, duplicates: 0, rejected: [] };
@@ -147,7 +148,7 @@ export async function schedulePostBatch(
     );
     if (!ownershipResult.success) {
       console.error(
-        `[schedulePostBatch] Ownership check error:`,
+        `[schedulePostBatch] [req=${requestId ?? "?"}] Ownership check error:`,
         ownershipResult.message,
       );
       return {
@@ -178,7 +179,7 @@ export async function schedulePostBatch(
 
     if (ownedPosts.length === 0) {
       console.warn(
-        `[schedulePostBatch] No owned posts for principal=${principalId}`,
+        `[schedulePostBatch] [req=${requestId ?? "?"}] No owned posts for principal=${principalId}`,
       );
       return {
         success: false,
@@ -195,7 +196,7 @@ export async function schedulePostBatch(
     }
 
     // Step 4: platform daily quota (applies to all sources: web, mcp, x402)
-    const quotaCheck = await checkPlatformDailyQuotas(ownedPosts, principalId);
+    const quotaCheck = await checkPlatformDailyQuotas(ownedPosts, principalId, requestId);
     if (!quotaCheck.success) {
       return {
         success: false,
@@ -224,7 +225,7 @@ export async function schedulePostBatch(
       .select("id, idempotency_key");
 
     if (upsertError) {
-      console.error(`[schedulePostBatch] Upsert error:`, upsertError.message);
+      console.error(`[schedulePostBatch] [req=${requestId ?? "?"}] Upsert error:`, upsertError.message);
       return {
         success: false,
         message: `Failed to insert posts: ${upsertError.message}`,
@@ -265,7 +266,7 @@ export async function schedulePostBatch(
 
       if (fetchError) {
         console.error(
-          `[schedulePostBatch] Failed to fetch duplicate IDs:`,
+          `[schedulePostBatch] [req=${requestId ?? "?"}] Failed to fetch duplicate IDs:`,
           fetchError.message,
         );
         // Non-fatal: the inserts already succeeded. Caller just won't get
@@ -303,7 +304,7 @@ export async function schedulePostBatch(
     };
   } catch (err) {
     console.error(
-      `[schedulePostBatch] Unexpected error:`,
+      `[schedulePostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return {
@@ -393,6 +394,7 @@ async function checkOwnership(
 async function checkPlatformDailyQuotas(
   posts: SchedulePostData[],
   principalId: string,
+  requestId?: string | null,
 ): Promise<{ success: true } | { success: false; message: string }> {
   const platforms = [...new Set(posts.map((post) => post.platform))];
   const now = new Date();
@@ -413,7 +415,7 @@ async function checkPlatformDailyQuotas(
 
     if (countError) {
       console.error(
-        `[schedulePostBatch] Quota count failed for ${platform}:`,
+        `[schedulePostBatch] [req=${requestId ?? "?"}] Quota count failed for ${platform}:`,
         countError.message,
       );
       return { success: false, message: "Platform quota lookup failed." };
@@ -427,7 +429,7 @@ async function checkPlatformDailyQuotas(
 
     if (quotaError) {
       console.error(
-        `[schedulePostBatch] Quota fetch failed for ${platform}:`,
+        `[schedulePostBatch] [req=${requestId ?? "?"}] Quota fetch failed for ${platform}:`,
         quotaError.message,
       );
       return { success: false, message: "Platform quota lookup failed." };

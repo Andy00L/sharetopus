@@ -23,6 +23,7 @@ export async function cancelScheduledPostBatch(
   postIds: string[],
   principalId: string,
   source: CreatedVia,
+  requestId?: string | null,
 ): Promise<{
   success: boolean;
   message: string;
@@ -30,7 +31,7 @@ export async function cancelScheduledPostBatch(
   details?: { total: number; succeeded: number; failed: number };
 }> {
   console.log(
-    `[cancelScheduledPostBatch] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
+    `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
   );
   try {
     if (!postIds || postIds.length === 0) {
@@ -66,7 +67,7 @@ export async function cancelScheduledPostBatch(
     );
     if (unauthorizedPosts.length > 0) {
       console.warn(
-        `[cancelScheduledPostBatch] Ownership violation: ${principalId} tried to cancel ${unauthorizedPosts.length} post(s) they don't own`,
+        `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to cancel ${unauthorizedPosts.length} post(s) they don't own`,
       );
       return {
         success: false,
@@ -94,7 +95,7 @@ export async function cancelScheduledPostBatch(
 
     if (updateError) {
       console.error(
-        `[cancelScheduledPostBatch] Update error:`,
+        `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Update error:`,
         updateError.message,
       );
       return { success: false, message: "Database error cancelling posts." };
@@ -111,7 +112,7 @@ export async function cancelScheduledPostBatch(
     };
   } catch (err) {
     console.error(
-      `[cancelScheduledPostBatch] Unexpected error:`,
+      `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return {

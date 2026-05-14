@@ -39,6 +39,8 @@ export type DispatchPostNowEventsResult =
 export async function dispatchPostNowEvents(
   events: { name: "post.now"; data: PostNowEventData }[]
 ): Promise<DispatchPostNowEventsResult> {
+  const requestId = events[0]?.data.request_id ?? null;
+
   if (events.length === 0) {
     return {
       success: false,
@@ -116,7 +118,7 @@ export async function dispatchPostNowEvents(
     const lockResult = await insertPendingDirectPosts(lockRows);
     if (!lockResult.success) {
       console.error(
-        "[dispatchPostNowEvents] Lock insert failed:",
+        `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Lock insert failed:`,
         lockResult.message
       );
       return {
@@ -129,14 +131,14 @@ export async function dispatchPostNowEvents(
     try {
       await inngest.send(newEvents);
       console.log(
-        `[dispatchPostNowEvents] Dispatched ${newEvents.length} post.now event(s)` +
+        `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${newEvents.length} post.now event(s)` +
           (existingMap.size > 0
             ? ` (${existingMap.size} skipped as idempotent)`
             : "")
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[dispatchPostNowEvents] Inngest send failed:", message);
+      console.error(`[dispatchPostNowEvents] [req=${requestId ?? "?"}] Inngest send failed:`, message);
       return {
         success: false,
         message: `Failed to dispatch events: ${message}`,
@@ -145,7 +147,7 @@ export async function dispatchPostNowEvents(
     }
   } else {
     console.log(
-      `[dispatchPostNowEvents] All ${events.length} event(s) already dispatched (idempotent)`
+      `[dispatchPostNowEvents] [req=${requestId ?? "?"}] All ${events.length} event(s) already dispatched (idempotent)`
     );
   }
 

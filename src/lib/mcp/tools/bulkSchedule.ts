@@ -179,6 +179,7 @@ export function registerBulkSchedule(server: McpServer): void {
           scheduledPostsData,
           ctx.principal.principalId,
           "mcp",
+          ctx.requestId,
         );
 
         if (!scheduleResult.success) {

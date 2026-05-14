@@ -32,6 +32,7 @@ export async function deleteScheduledPostBatch(
   postIds: string[],
   principalId: string,
   source: CreatedVia,
+  requestId?: string | null,
 ): Promise<{
   success: boolean;
   message: string;
@@ -44,7 +45,7 @@ export async function deleteScheduledPostBatch(
   };
 }> {
   console.log(
-    `[deleteScheduledPostBatch] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
+    `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
   );
 
   try {
@@ -81,7 +82,7 @@ export async function deleteScheduledPostBatch(
     );
     if (unauthorizedPosts.length > 0) {
       console.warn(
-        `[deleteScheduledPostBatch] Ownership violation: ${principalId} tried to delete ${unauthorizedPosts.length} post(s) they don't own`,
+        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to delete ${unauthorizedPosts.length} post(s) they don't own`,
       );
       return {
         success: false,
@@ -98,7 +99,7 @@ export async function deleteScheduledPostBatch(
 
     if (deleteError) {
       console.error(
-        `[deleteScheduledPostBatch] Delete error:`,
+        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Delete error:`,
         deleteError.message,
       );
       return { success: false, message: "Database error deleting posts." };
@@ -133,7 +134,7 @@ export async function deleteScheduledPostBatch(
         mediaDeleted++;
       } else if (cleanupResult.status === "rejected") {
         console.error(
-          `[deleteScheduledPostBatch] Media cleanup threw:`,
+          `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Media cleanup threw:`,
           cleanupResult.reason,
         );
       }
@@ -151,7 +152,7 @@ export async function deleteScheduledPostBatch(
     };
   } catch (err) {
     console.error(
-      `[deleteScheduledPostBatch] Unexpected error:`,
+      `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
     return { success: false, message: "Unexpected error deleting posts." };

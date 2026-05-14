@@ -130,6 +130,7 @@ export function registerPostNow(server: McpServer): void {
         ctx.principal.principalId,
         "mcp",
         args.batch_id,
+        ctx.requestId,
       );
 
       if (!postBatchResult.success) {
