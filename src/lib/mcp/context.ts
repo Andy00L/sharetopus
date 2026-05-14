@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import type { McpPrincipal } from "./auth";
+import type { McpPrincipal } from "./auth/types";
 import { hashClientIp } from "./ipHash";
 
 /**

@@ -4,7 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
 import { type PlanTier, tierLabel, tierMeets } from "@/lib/types/plans";
 
-import type { McpPrincipal } from "./auth";
+import type { McpPrincipal } from "./auth/types";
 import type { McpToolName } from "./toolNames";
 
 /**

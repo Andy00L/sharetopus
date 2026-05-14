@@ -1,7 +1,7 @@
 import "server-only";
 
 import { logToolCall } from "./audit";
-import type { McpPrincipal } from "./auth";
+import type { McpPrincipal } from "./auth/types";
 import {
   extractClientName,
   extractClientVersion,

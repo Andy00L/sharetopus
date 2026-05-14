@@ -1,11 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import {
-  assertExhaustiveKind,
-  resolveMcpPrincipal,
-  type McpPrincipal,
-} from "@/lib/mcp/auth";
+import { resolveMcpPrincipal } from "@/lib/mcp/auth/resolve";
+import { assertExhaustiveKind, type McpPrincipal } from "@/lib/mcp/auth/types";
 import { hashClientIp } from "@/lib/mcp/ipHash";
 import { registerPrompts } from "@/lib/mcp/prompts";
 import { registerTools } from "@/lib/mcp/tools";

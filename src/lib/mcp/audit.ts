@@ -6,7 +6,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { upsertMcpSession } from "@/actions/server/data/mcpSessions";
 import type { Json } from "@/lib/types/database.types";
 
-import { assertExhaustiveKind, type McpPrincipal } from "./auth";
+import { assertExhaustiveKind, type McpPrincipal } from "./auth/types";
 
 /**
  * Fields that get scrubbed from tool arguments before persisting.
