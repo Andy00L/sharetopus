@@ -11,7 +11,6 @@ import { invalidateCachedOAuthClientsByUser } from "@/lib/mcp/auth/oauthClientCa
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 
 import stripe from "@/lib/stripe";
-import { priceIdToTier } from "@/lib/types/plans";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -138,7 +137,7 @@ async function handleSubscriptionEvent(
     end_date: periodEndIso,
     current_period_end: periodEndIso,
     stripe_price_id: priceId,
-    plan: priceIdToTier(priceId),
+    plan: priceId,
   };
 
   if (type === "deleted") {

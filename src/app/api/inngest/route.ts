@@ -1,5 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanupCancelledPostsAfterGraceCron";
+import { cleanupMcpAuditLogCron } from "@/inngest/functions/cleanupMcpAuditLogCron";
 import { cleanupStripeWebhookEvents } from "@/inngest/functions/cleanupStripeWebhookEvents";
 import { processDirectPost } from "@/inngest/functions/processDirectPost";
 import { processSinglePost } from "@/inngest/functions/processSinglePost";
@@ -31,5 +32,6 @@ export const { GET, POST, PUT } = serve({
     sweepStaleOauthClientsCron,
     cleanupCancelledPostsAfterGraceCron,
     cleanupStripeWebhookEvents,
+    cleanupMcpAuditLogCron,
   ],
 });
