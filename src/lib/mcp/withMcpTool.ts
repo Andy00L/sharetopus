@@ -7,6 +7,7 @@ import {
   extractClientVersion,
   extractIpHash,
   extractPrincipal,
+  extractRequestId,
   extractSessionId,
   extractUserAgent,
 } from "./context";
@@ -22,6 +23,7 @@ import type { McpToolName } from "./toolNames";
 export type McpToolContext = {
   principal: McpPrincipal;
   sessionId: string | null;
+  requestId: string | null;
   ipHash: string | null;
   userAgent: string | null;
   clientName: string | null;
@@ -177,6 +179,7 @@ async function buildContext(
 ): Promise<McpToolContext> {
   const principal = extractPrincipal(extra);
   const sessionId = extractSessionId(extra);
+  const requestId = extractRequestId(extra);
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
   const clientName = extractClientName(extra);
@@ -185,6 +188,7 @@ async function buildContext(
   return {
     principal,
     sessionId,
+    requestId,
     ipHash,
     userAgent,
     clientName,
@@ -223,6 +227,7 @@ async function emitAudit(
   await logToolCall({
     principal: ctx.principal,
     sessionId: ctx.sessionId,
+    requestId: ctx.requestId,
     toolName,
     args,
     resultStatus,

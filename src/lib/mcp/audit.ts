@@ -8,6 +8,12 @@ import type { Json } from "@/lib/types/database.types";
 
 import { assertExhaustiveKind, type McpPrincipal } from "./auth/types";
 
+function logPrefix(
+  toolName: string,
+  requestId: string | null | undefined,
+): string {
+  return `[logToolCall] [req=${requestId ?? "?"}] [${toolName}]`;
+}
 /**
  * Fields that get scrubbed from tool arguments before persisting.
  *
@@ -27,6 +33,7 @@ const MAX_ARGS_LENGTH = 4096;
 interface AuditEntry {
   principal: McpPrincipal | null;
   sessionId: string | null;
+  requestId?: string | null;
   toolName: string;
   args: Record<string, unknown> | null;
   resultStatus: "ok" | "error" | "denied" | "rate_limited" | "quota_exceeded";
@@ -121,13 +128,13 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
               !sessionResult.success
             ) {
               console.error(
-                `[logToolCall] Session upsert failed for ${entry.toolName}:`,
+                `${logPrefix(entry.toolName, entry.requestId)} Session upsert failed for ${entry.toolName}:`,
                 "message" in sessionResult ? sessionResult.message : "",
               );
             }
           } catch (sessionErr) {
             console.error(
-              `[logToolCall] Session upsert threw for ${entry.toolName}:`,
+              `${logPrefix(entry.toolName, entry.requestId)} Session upsert threw for ${entry.toolName}:`,
               sessionErr instanceof Error ? sessionErr.message : sessionErr,
             );
           }
@@ -159,13 +166,13 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
 
     if (auditError) {
       console.error(
-        `[logToolCall] Failed to insert audit row for ${entry.toolName}:`,
+        `${logPrefix(entry.toolName, entry.requestId)} Failed to insert audit row for ${entry.toolName}:`,
         auditError.message,
       );
     }
   } catch (err) {
     console.error(
-      `[logToolCall] Unexpected error writing audit log:`,
+      `${logPrefix(entry.toolName, entry.requestId)} Unexpected error writing audit log:`,
       err instanceof Error ? err.message : err,
     );
   }
