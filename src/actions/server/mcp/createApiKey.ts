@@ -4,6 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { generateMcpApiKey } from "@/lib/mcp/tokens";
+import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
@@ -26,12 +27,15 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
  */
 export async function createApiKey(
   userId: string | null,
-  name: string
+  name: string,
+  expiresInDays: number,
 ): Promise<{
   success: boolean;
   message: string;
   rawKey?: string;
   keyId?: string;
+  prefix?: string;
+  expiresAtIso?: string;
 }> {
   try {
     const authResult = await authCheck(userId);
@@ -63,6 +67,13 @@ export async function createApiKey(
       return { success: false, message: "Key name must be under 100 characters." };
     }
 
+    if (!isValidApiKeyExpiryDays(expiresInDays)) {
+      return {
+        success: false,
+        message: "Invalid expiry duration. Allowed: 7, 30, 90, or 365 days.",
+      };
+    }
+
     // Check existing key count (limit to 10 active keys per user)
     const { count } = await adminSupabase
       .from("api_keys")
@@ -80,6 +91,11 @@ export async function createApiKey(
 
     const { rawKey, prefix, tokenHash } = generateMcpApiKey();
 
+    const millisecondsPerDay = 24 * 60 * 60 * 1000;
+    const apiKeyExpiresAtIso = new Date(
+      Date.now() + expiresInDays * millisecondsPerDay,
+    ).toISOString();
+
     const { data: newKey, error } = await adminSupabase
       .from("api_keys")
       .insert({
@@ -89,6 +105,7 @@ export async function createApiKey(
         token_hash: tokenHash,
         kind: "mcp",
         scopes: ["mcp:*"],
+        expires_at: apiKeyExpiresAtIso,
       })
       .select("id")
       .single();
@@ -106,6 +123,8 @@ export async function createApiKey(
       message: "API key created. Copy the key now, it will not be shown again.",
       rawKey,
       keyId: newKey.id,
+      prefix,
+      expiresAtIso: apiKeyExpiresAtIso,
     };
   } catch (err) {
     console.error(

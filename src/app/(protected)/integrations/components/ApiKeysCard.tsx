@@ -12,6 +12,11 @@ import {
 } from "@/components/ui/card";
 import { createApiKey } from "@/actions/server/mcp/createApiKey";
 import { revokeApiKey } from "@/actions/server/mcp/revokeApiKey";
+import {
+  API_KEY_EXPIRY_DAYS_OPTIONS,
+  DEFAULT_API_KEY_EXPIRY_DAYS,
+  type ApiKeyExpiryDays,
+} from "@/lib/mcp/apiKeyExpiry";
 
 interface ApiKey {
   id: string;
@@ -31,6 +36,34 @@ interface ApiKey {
  * Called by: src/app/(protected)/integrations/page.tsx
  * Server actions used: createApiKey, revokeApiKey
  */
+function labelForExpiryDays(days: ApiKeyExpiryDays): string {
+  switch (days) {
+    case 7:
+      return "7 days (testing)";
+    case 30:
+      return "30 days";
+    case 90:
+      return "90 days (recommended)";
+    case 365:
+      return "1 year (advanced)";
+  }
+}
+
+function expiryColorClass(expiresAtIso: string): string {
+  const millisecondsUntilExpiry =
+    new Date(expiresAtIso).getTime() - Date.now();
+  const daysUntilExpiry = millisecondsUntilExpiry / (24 * 60 * 60 * 1000);
+  if (daysUntilExpiry < 7) return "text-destructive";
+  if (daysUntilExpiry < 30) return "text-yellow-600 dark:text-yellow-400";
+  return "text-emerald-600 dark:text-emerald-400";
+}
+
+function expiryLabel(expiresAtIso: string): string {
+  const expiresAt = new Date(expiresAtIso);
+  if (expiresAt < new Date()) return "Expired";
+  return `Expires ${expiresAt.toLocaleDateString()}`;
+}
+
 export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
   const { userId } = useAuth();
   const [keys, setKeys] = useState<ApiKey[]>(initialKeys);
@@ -39,6 +72,8 @@ export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [selectedExpiresInDays, setSelectedExpiresInDays] =
+    useState<ApiKeyExpiryDays>(DEFAULT_API_KEY_EXPIRY_DAYS);
 
   async function handleCreate() {
     if (!newKeyName.trim()) {
@@ -48,7 +83,7 @@ export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
     setLoading(true);
     setError(null);
 
-    const result = await createApiKey(userId ?? null, newKeyName.trim());
+    const result = await createApiKey(userId ?? null, newKeyName.trim(), selectedExpiresInDays);
     setLoading(false);
 
     if (!result.success) {
@@ -64,10 +99,10 @@ export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
         {
           id: result.keyId!,
           name: newKeyName.trim(),
-          prefix: result.rawKey?.slice(0, 16) ?? "stp_mcp_...",
+          prefix: result.prefix ?? "stp_mcp_...",
           created_at: new Date().toISOString(),
           last_used_at: null,
-          expires_at: null,
+          expires_at: result.expiresAtIso ?? null,
         },
         ...prev,
       ]);
@@ -119,6 +154,35 @@ export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
             {loading ? "Creating..." : "Create Key"}
           </Button>
         </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-muted-foreground whitespace-nowrap">
+            Expires in:
+          </label>
+          <select
+            value={selectedExpiresInDays}
+            onChange={(event) =>
+              setSelectedExpiresInDays(
+                Number(event.target.value) as ApiKeyExpiryDays,
+              )
+            }
+            className="rounded-md border bg-background px-3 py-2 text-sm"
+            aria-label="Key expiry duration"
+          >
+            {API_KEY_EXPIRY_DAYS_OPTIONS.map((days) => (
+              <option key={days} value={days}>
+                {labelForExpiryDays(days)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {selectedExpiresInDays === 365 && (
+          <p className="text-xs text-destructive">
+            Long-lived keys (1 year) are a security risk. Consider 90 days
+            unless you have a specific reason to extend.
+          </p>
+        )}
 
         {error && (
           <p className="text-sm text-destructive">{error}</p>
@@ -175,6 +239,14 @@ export function ApiKeysCard({ initialKeys }: { initialKeys: ApiKey[] }) {
                       <>
                         {" | "}
                         Last used {new Date(key.last_used_at).toLocaleDateString()}
+                      </>
+                    )}
+                    {key.expires_at && (
+                      <>
+                        {" | "}
+                        <span className={expiryColorClass(key.expires_at)}>
+                          {expiryLabel(key.expires_at)}
+                        </span>
                       </>
                     )}
                   </p>
