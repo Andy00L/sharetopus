@@ -93,7 +93,7 @@ export function registerRequestUploadUrl(server: McpServer): void {
 
         if (!uploadUrlResult.success) {
           console.error(
-            `[mcp/request_upload_url] Helper rejected: ${uploadUrlResult.reason} -- ${uploadUrlResult.message}`,
+            `[mcp/request_upload_url] [req=${ctx.requestId ?? "?"}] Helper rejected: ${uploadUrlResult.reason} -- ${uploadUrlResult.message}`,
           );
           return {
             content: [{ type: "text", text: uploadUrlResult.message }],

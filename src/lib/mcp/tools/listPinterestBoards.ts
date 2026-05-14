@@ -81,7 +81,7 @@ export function registerListPinterestBoards(server: McpServer): void {
 
         if (accountFetchError) {
           console.error(
-            "[mcp/list_pinterest_boards] Account fetch error:",
+            `[mcp/list_pinterest_boards] [req=${ctx.requestId ?? "?"}] Account fetch error:`,
             accountFetchError.message,
           );
           return {
