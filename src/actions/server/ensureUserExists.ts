@@ -1,6 +1,7 @@
 import "server-only";
 import { currentUser } from "@clerk/nextjs/server";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 import stripe from "@/lib/stripe";
 
 /**
@@ -121,6 +122,7 @@ async function syncStripeSubscriptions(
     if (subscriptions.data.length === 0) return;
 
     for (const subscription of subscriptions.data) {
+      const priceId = subscription.items.data[0]?.plan.id ?? null;
       const subscriptionData = {
         user_id: userId,
         stripe_customer_id: stripeCustomerId,
@@ -132,7 +134,7 @@ async function syncStripeSubscriptions(
             ...subscription.items.data.map((i) => i.current_period_end)
           ) * 1000
         ).toISOString(),
-        plan: subscription.items.data[0]?.plan.id,
+        stripe_price_id: priceId,
       };
 
       // Check if this subscription already exists in Supabase
@@ -150,7 +152,7 @@ async function syncStripeSubscriptions(
             .update({
               status: subscription.status,
               end_date: subscriptionData.end_date,
-              plan: subscriptionData.plan,
+              stripe_price_id: subscriptionData.stripe_price_id,
             })
             .eq("stripe_subscription_id", subscription.id);
 
@@ -160,6 +162,7 @@ async function syncStripeSubscriptions(
               error
             );
           } else {
+            invalidateCachedSubscription(userId);
             console.log(
               `[ensureUserExists] Subscription ${subscription.id} updated: ${existing.status} → ${subscription.status}`
             );
@@ -179,6 +182,7 @@ async function syncStripeSubscriptions(
           error
         );
       } else {
+        invalidateCachedSubscription(userId);
         console.log(
           `[ensureUserExists] Subscription ${subscription.id} synced for user ${userId}`
         );

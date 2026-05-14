@@ -137,18 +137,17 @@ async function handleSubscriptionEvent(
     end_date: periodEndIso,
     current_period_end: periodEndIso,
     stripe_price_id: priceId,
-    plan: priceId,
   };
 
   if (type === "deleted") {
     const { error } = await adminSupabase
       .from("stripe_subscriptions")
-      .update({ status: "cancelled" })
+      .update({ status: "canceled" })
       .eq("stripe_subscription_id", subscription.id);
 
     if (error) {
       throw new Error(
-        `Failed to mark subscription cancelled: ${error.message}`,
+        `Failed to mark subscription canceled: ${error.message}`,
       );
     }
 

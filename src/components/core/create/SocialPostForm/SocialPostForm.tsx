@@ -44,7 +44,6 @@ interface SocialPostFormProps {
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
   readonly uploadLimits?: { image: number; video: number };
-  readonly planId?: string;
 }
 
 export default function SocialPostForm({
@@ -52,7 +51,6 @@ export default function SocialPostForm({
   userId,
   postType,
   uploadLimits,
-  planId,
 }: SocialPostFormProps) {
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 8) * 1024 * 1024;
   const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 8) * 1024 * 1024;
@@ -279,7 +277,6 @@ export default function SocialPostForm({
           isScheduled,
           {
             onProgress: (progress) => setUploadProgress(progress),
-            planId,
           },
         );
 

@@ -35,7 +35,6 @@ async function SocialPostFormWithData() {
       accounts={accounts.data ?? []}
       uploadLimits={uploadLimits}
       userId={userId}
-      planId={subscriptionInfo.priceId ?? undefined}
       postType="image"
     />
   );

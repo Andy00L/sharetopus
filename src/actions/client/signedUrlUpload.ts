@@ -18,7 +18,6 @@ export interface UploadOptions {
   onProgress?: (progress: number) => void;
   onSuccess?: (path: string) => void;
   onError?: (error: Error) => void;
-  planId?: string;
 }
 
 /**
@@ -26,12 +25,9 @@ export interface UploadOptions {
  */
 export async function getSignedUploadUrl(
   filename: string,
-
   contentType: string,
   fileSize: number,
   isScheduled: boolean,
-  planId?: string,
-
   bucketName: string = "scheduled-videos"
 ): Promise<SignedUrlResponse> {
   try {
@@ -44,7 +40,6 @@ export async function getSignedUploadUrl(
         filename,
         contentType,
         fileSize,
-        planId,
         isScheduled,
         bucketName,
       }),
@@ -77,19 +72,17 @@ export async function getSignedUploadUrl(
 export async function uploadWithSignedUrl(
   file: File,
   isScheduled: boolean,
-  options: UploadOptions & { planId?: string } = {}
+  options: UploadOptions = {}
 ): Promise<{ success: boolean; path?: string; message?: string }> {
-  const { onProgress, onSuccess, onError, planId } = options;
+  const { onProgress, onSuccess, onError } = options;
 
   try {
     // Step 1: Get a signed upload URL from our API
-
     const signedUrlResponse = await getSignedUploadUrl(
       file.name,
       file.type,
       file.size,
       isScheduled,
-      planId
     );
     if (!signedUrlResponse.success) {
       const errorMessage =
