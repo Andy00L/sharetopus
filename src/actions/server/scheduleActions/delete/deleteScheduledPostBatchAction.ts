@@ -2,6 +2,7 @@
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { authCheckCronJob } from "../../authCheckCronJob";
 import { deleteScheduledPostBatch } from "./deleteScheduledPostBatch";
 
@@ -38,5 +39,6 @@ export async function deleteScheduledPostBatchAction(
     return { success: false, message: "Missing user ID." };
   }
 
-  return deleteScheduledPostBatch(postIds, userId, "web");
+  const requestId = generateRequestId();
+  return deleteScheduledPostBatch(postIds, userId, "web", requestId);
 }

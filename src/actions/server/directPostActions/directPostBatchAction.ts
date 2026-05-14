@@ -1,6 +1,7 @@
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import {
   directPostBatch,
   type DirectPostBatchResult,
@@ -37,5 +38,6 @@ export async function directPostBatchAction(
     };
   }
 
-  return directPostBatch(posts, userId, "web", batchId);
+  const requestId = generateRequestId();
+  return directPostBatch(posts, userId, "web", batchId, requestId);
 }

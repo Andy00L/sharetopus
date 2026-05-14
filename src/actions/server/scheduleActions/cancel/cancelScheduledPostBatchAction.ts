@@ -3,6 +3,7 @@
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { cancelScheduledPostBatch } from "./cancelScheduledPostBatch";
 
 /**
@@ -30,5 +31,6 @@ export async function cancelScheduledPostBatchAction(
     };
   }
 
-  return cancelScheduledPostBatch(postIds, userId, "web");
+  const requestId = generateRequestId();
+  return cancelScheduledPostBatch(postIds, userId, "web", requestId);
 }

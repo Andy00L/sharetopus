@@ -1,6 +1,7 @@
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import {
   updateScheduledTimeBatch,
   type UpdateScheduledTimeBatchResult,
@@ -32,5 +33,6 @@ export async function updateScheduledTimeBatchAction(
     };
   }
 
-  return updateScheduledTimeBatch(postIds, newScheduledTime, userId, "web");
+  const requestId = generateRequestId();
+  return updateScheduledTimeBatch(postIds, newScheduledTime, userId, "web", requestId);
 }

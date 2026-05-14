@@ -2,6 +2,7 @@
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { resumeScheduledPostBatch } from "./resumeScheduledPostBatch";
 
 /**
@@ -29,5 +30,6 @@ export async function resumeScheduledPostBatchAction(
     };
   }
 
-  return resumeScheduledPostBatch(postIds, userId, "web");
+  const requestId = generateRequestId();
+  return resumeScheduledPostBatch(postIds, userId, "web", requestId);
 }

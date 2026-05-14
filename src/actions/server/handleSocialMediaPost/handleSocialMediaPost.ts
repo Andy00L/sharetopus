@@ -7,6 +7,7 @@ import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/del
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import { MediaType } from "@/lib/types/database.types";
+import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { getMimeTypeFromFileName } from "../../../lib/utils/getMimeTypeFromFileName";
@@ -131,6 +132,8 @@ export async function handleSocialMediaPost(config: {
     cleanupFiles = true,
     cronSecret,
   } = config;
+
+  const requestId = generateRequestId();
 
   // Step 1: account count guard
   const totalAccounts =
@@ -281,6 +284,7 @@ export async function handleSocialMediaPost(config: {
       postType,
       userId: userId!,
       batchId,
+      requestId,
     });
   }
 
@@ -300,6 +304,7 @@ export async function handleSocialMediaPost(config: {
     postType,
     userId: userId!,
     batchId,
+    requestId,
   });
 }
 
@@ -338,6 +343,7 @@ async function scheduleAllPosts(args: {
   postType: MediaType;
   userId: string;
   batchId: string;
+  requestId: string;
 }): Promise<PostResult> {
   const scheduledAtIso = new Date(
     `${args.scheduledDate}T${args.scheduledTime}`,
@@ -459,7 +465,7 @@ async function scheduleAllPosts(args: {
   }
 
   // Step: bulk upsert via shared core
-  const scheduleResult = await schedulePostBatch(posts, args.userId, "web");
+  const scheduleResult = await schedulePostBatch(posts, args.userId, "web", args.requestId);
 
   // Translate core result -> legacy PostResult shape
   const rejectedAccountIds = new Set(
@@ -533,6 +539,7 @@ async function directPostFromForm(args: {
   postType: MediaType;
   userId: string;
   batchId: string;
+  requestId: string;
 }): Promise<PostResult> {
   const findContent = (accountId: string) =>
     args.accountContent.find((c) => c.accountId === accountId);
@@ -614,7 +621,7 @@ async function directPostFromForm(args: {
     };
   }
 
-  const result = await directPostBatch(posts, args.userId, "web", args.batchId);
+  const result = await directPostBatch(posts, args.userId, "web", args.batchId, args.requestId);
 
   const counts: PlatformCounts = { ...ZERO_COUNTS };
   const rejectedIds = new Set(
