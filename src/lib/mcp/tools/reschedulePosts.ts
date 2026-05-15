@@ -28,7 +28,7 @@ export function registerReschedulePosts(server: McpServer): void {
         "Change the scheduled time for one or more posts (up to 50). Cancelled posts are automatically resumed (status returns to scheduled).",
       inputSchema: {
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe(

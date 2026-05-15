@@ -11,7 +11,7 @@ import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { Platform } from "@/lib/x402/connect/types";
 
-const ConnectionIdSchema = z.string().uuid();
+const ConnectionIdSchema = z.guid();
 const OAUTH_EXPIRY_MINUTES = 15;
 
 /**

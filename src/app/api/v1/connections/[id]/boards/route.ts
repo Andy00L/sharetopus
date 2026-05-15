@@ -10,7 +10,7 @@ import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards"
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
-const ConnectionIdSchema = z.string().uuid();
+const ConnectionIdSchema = z.guid();
 
 /**
  * GET /v1/connections/[id]/boards -- list Pinterest boards.

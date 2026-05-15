@@ -6,7 +6,7 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toAnalyticsDTO } from "@/lib/api/rest/dto/toAnalyticsDTO";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
-const PostIdSchema = z.string().uuid();
+const PostIdSchema = z.guid();
 
 /**
  * GET /v1/posts/[id]/analytics -- per-post analytics metrics.

@@ -25,7 +25,7 @@ export const PostTypeEnum = z.enum(["text", "image", "video"]);
  */
 export const PostCreateInputSchema = z
   .object({
-    social_account_id: z.string().uuid(),
+    social_account_id: z.guid(),
     platform: SocialPlatformEnum,
     post_type: PostTypeEnum,
     title: z.string().max(500).optional(),

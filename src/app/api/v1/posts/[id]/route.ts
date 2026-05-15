@@ -13,7 +13,7 @@ import {
   PostDeleteQuerySchema,
 } from "@/lib/api/rest/validation/postPatchSchemas";
 
-const PostIdSchema = z.string().uuid();
+const PostIdSchema = z.guid();
 
 /**
  * GET /v1/posts/[id] -- fetch one post by ID.

@@ -29,7 +29,7 @@ export function registerResumeScheduledPosts(server: McpServer): void {
         "Resume one or more cancelled posts. Posts with past dates are rescheduled to 1 hour from now.",
       inputSchema: {
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to resume"),

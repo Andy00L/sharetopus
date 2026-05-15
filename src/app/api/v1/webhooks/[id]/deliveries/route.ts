@@ -7,7 +7,7 @@ import { toWebhookDeliveryDTO } from "@/lib/api/rest/dto/toWebhookDeliveryDTO";
 import { WebhookDeliveryListQuerySchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
-const SubscriptionIdSchema = z.string().uuid();
+const SubscriptionIdSchema = z.guid();
 
 /**
  * GET /v1/webhooks/[id]/deliveries -- list delivery log for a subscription.

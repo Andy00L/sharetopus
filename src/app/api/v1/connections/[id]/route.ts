@@ -6,7 +6,7 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
-const ConnectionIdSchema = z.string().uuid();
+const ConnectionIdSchema = z.guid();
 
 /**
  * GET /v1/connections/[id] -- fetch a single connected social account.

@@ -26,7 +26,7 @@ export function registerCancelScheduledPosts(server: McpServer): void {
         "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
       inputSchema: {
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to cancel"),

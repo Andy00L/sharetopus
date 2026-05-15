@@ -12,7 +12,7 @@ import type { Database } from "@/lib/types/database.types";
 type WebhookSubscriptionUpdate =
   Database["public"]["Tables"]["webhook_subscriptions"]["Update"];
 
-const SubscriptionIdSchema = z.string().uuid();
+const SubscriptionIdSchema = z.guid();
 
 /**
  * GET /v1/webhooks/[id] -- fetch a single webhook subscription.

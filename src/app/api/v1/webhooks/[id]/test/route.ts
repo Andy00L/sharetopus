@@ -7,7 +7,7 @@ import { WebhookTestInputSchema } from "@/lib/api/rest/validation/webhookSchemas
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
-const SubscriptionIdSchema = z.string().uuid();
+const SubscriptionIdSchema = z.guid();
 const DELIVERY_TIMEOUT_MS = 10_000;
 
 /**

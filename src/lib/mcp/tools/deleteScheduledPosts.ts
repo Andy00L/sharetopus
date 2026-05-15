@@ -31,7 +31,7 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
         "Permanently delete one or more scheduled posts. This action cannot be undone.",
       inputSchema: {
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to delete"),
