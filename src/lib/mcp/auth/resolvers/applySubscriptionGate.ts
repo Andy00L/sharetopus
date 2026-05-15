@@ -1,8 +1,8 @@
 import "server-only";
 
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
+import type { GatablePrincipal } from "@/lib/types/principal";
 
-import type { McpPrincipal } from "../types";
 import {
   getCachedSubscription,
   setCachedSubscription,
@@ -13,15 +13,20 @@ import {
  * Stripe subscription. Returns null when no active subscription exists
  * or the DB query throws (fails closed in both cases).
  *
+ * Generic over any principal type that satisfies GatablePrincipal, so
+ * both McpPrincipal and RestPrincipal pass through without casting.
+ * The return type preserves the caller's concrete type (discriminant,
+ * apiKeyId, oauthClientId, etc. all retained).
+ *
  * Hot path: this runs on every MCP tool call. The subscriptionCache
  * layer short-circuits the stripe_subscriptions SELECT for 60s windows
  * per principal. See subscriptionCache.ts for the cache semantics.
  *
  * Source: extracted from src/lib/mcp/auth.ts:110-133.
  */
-export async function applySubscriptionGate(
-  candidate: McpPrincipal,
-): Promise<McpPrincipal | null> {
+export async function applySubscriptionGate<T extends GatablePrincipal>(
+  candidate: T,
+): Promise<T | null> {
   const cached = getCachedSubscription(candidate.principalId);
   if (cached) {
     if (!cached.isActive) return null;
