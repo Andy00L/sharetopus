@@ -3,7 +3,7 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";

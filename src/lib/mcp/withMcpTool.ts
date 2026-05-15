@@ -2,14 +2,13 @@ import "server-only";
 
 import { logToolCall } from "./audit";
 import type { McpPrincipal } from "./auth/types";
+import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import {
   extractClientName,
   extractClientVersion,
-  extractIpHash,
   extractPrincipal,
   extractRequestId,
   extractSessionId,
-  extractUserAgent,
 } from "./context";
 import { entitlementFor } from "./entitlement";
 import type { McpToolName } from "./toolNames";

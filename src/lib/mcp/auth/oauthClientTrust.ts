@@ -205,7 +205,7 @@ async function firstSightInsert(
  */
 async function logRateLimitEvent(scope: string): Promise<void> {
   try {
-    const { extractIpHash } = await import("@/lib/mcp/context");
+    const { extractIpHash } = await import("@/lib/api/context");
     const ipHash = await extractIpHash();
 
     await adminSupabase.from("rate_limit_events").insert({

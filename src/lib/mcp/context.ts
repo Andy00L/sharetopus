@@ -1,12 +1,6 @@
 import type { McpPrincipal } from "./auth/types";
 
 /**
- * @deprecated Import from `@/lib/api/context` instead. Re-exported
- * here for backward compatibility during the REST API rollout.
- */
-export { extractIpHash, extractUserAgent } from "@/lib/api/context";
-
-/**
  * Helper to extract the McpPrincipal from the tool handler's extra context.
  *
  * mcp-handler injects the AuthInfo (from withMcpAuth) into the second argument

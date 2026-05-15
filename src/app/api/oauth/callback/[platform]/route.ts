@@ -3,7 +3,7 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-import { extractIpHash, extractUserAgent } from "@/lib/mcp/context";
+import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { handleOAuthCallback } from "@/lib/x402/oauth/callback/handleOAuthCallback";
 import type { Platform } from "@/lib/x402/connect/types";
@@ -19,14 +19,13 @@ const VALID_PLATFORMS = new Set<Platform>([
 ]);
 
 /**
- * GET /api/x402/oauth/callback/linkedin?code=...&state=...
- * GET /api/x402/oauth/callback/tiktok?code=...&state=...
+ * GET /api/oauth/callback/linkedin?code=...&state=...
+ * GET /api/oauth/callback/tiktok?code=...&state=...
  * etc.
  *
- * OAuth callback for x402-originated connections. Different from
- * /api/social/[platform]/connect which requires Clerk auth.
- *
- * No Clerk session required. State param validation is the only auth.
+ * Shared OAuth callback for x402-originated and REST-originated
+ * connections. No Clerk session required. State param validation
+ * via social_connections row lookup is the only auth.
  */
 export async function GET(
   request: NextRequest,
@@ -69,7 +68,7 @@ export async function GET(
     );
   }
 
-  // Process callback
+  // Process callback via shared handler (looks up social_connections by state)
   const result = await handleOAuthCallback({
     platform,
     code,
@@ -87,7 +86,7 @@ export async function GET(
     await logX402Call({
       principal: null,
       action: "connect_account",
-      endpoint: `/api/x402/oauth/callback/${platform}`,
+      endpoint: `/api/oauth/callback/${platform}`,
       chargeId: null,
       resultStatus: "error",
       latencyMs: Math.round(performance.now() - startMs),
@@ -104,7 +103,7 @@ export async function GET(
   await logX402Call({
     principal: null,
     action: "connect_account",
-    endpoint: `/api/x402/oauth/callback/${platform}`,
+    endpoint: `/api/oauth/callback/${platform}`,
     chargeId: null,
     resultStatus: "ok",
     latencyMs: Math.round(performance.now() - startMs),

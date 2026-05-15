@@ -3,7 +3,7 @@ import "server-only";
 import { waitUntil } from "@vercel/functions";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { extractIpHash } from "@/lib/mcp/context";
+import { extractIpHash } from "@/lib/api/context";
 import { hashToken } from "@/lib/mcp/tokens";
 
 import type { McpPrincipal } from "../types";

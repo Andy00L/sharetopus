@@ -14,6 +14,17 @@ import {
 } from "../audit/writeRestAuditLog";
 import type { RestApiKeyContext } from "../auth/types";
 
+/**
+ * Union return type for REST handlers.
+ *
+ * Handlers may return a plain NextResponse (backward-compatible with
+ * Phase 2) or an object pairing the response with an enriched audit
+ * summary. The HOF dispatches on `instanceof NextResponse`.
+ */
+export type RestHandlerResult =
+  | NextResponse
+  | { response: NextResponse; auditSummary: Record<string, unknown> };
+
 export type WithRestEndpointConfig = {
   /** Required scopes. For Phase 2 MVP, all routes use ["api:full"]. */
   scopes: string[];
@@ -22,7 +33,8 @@ export type WithRestEndpointConfig = {
   /**
    * Route handler. Receives resolved context and raw Next.js request.
    * Does its own JSON body parsing and Zod validation. Returns a
-   * NextResponse for ALL outcomes (success or error).
+   * NextResponse (legacy) or { response, auditSummary } for enriched
+   * audit logging.
    *
    * Convention: never throw. Use restErrorResponse for any 4xx/5xx.
    * HOF wraps in try/catch as defense; uncaught throws produce a 500
@@ -31,7 +43,7 @@ export type WithRestEndpointConfig = {
   handler: (
     ctx: RestApiKeyContext,
     request: NextRequest,
-  ) => Promise<NextResponse>;
+  ) => Promise<RestHandlerResult>;
 };
 
 /**
@@ -145,11 +157,11 @@ export function withRestEndpoint(
       );
     }
 
-    // Step 6: call handler. Handler returns NextResponse. If it throws,
-    // we still write an audit row and convert to a 500.
-    let handlerResponse: NextResponse;
+    // Step 6: call handler. Handler returns RestHandlerResult. If it
+    // throws, we still write an audit row and convert to a 500.
+    let handlerResult: RestHandlerResult;
     try {
-      handlerResponse = await config.handler(restRequestContext, request);
+      handlerResult = await config.handler(restRequestContext, request);
     } catch (handlerError) {
       const errorMessage =
         handlerError instanceof Error
@@ -174,6 +186,16 @@ export function withRestEndpoint(
       );
     }
 
+    // Unwrap: plain NextResponse (Phase 2 compat) vs enriched result.
+    const handlerResponse =
+      handlerResult instanceof NextResponse
+        ? handlerResult
+        : handlerResult.response;
+    const enrichedAuditSummary =
+      handlerResult instanceof NextResponse
+        ? null
+        : handlerResult.auditSummary;
+
     // Step 7: audit the outcome derived from handler's status code.
     const responseStatusCode = handlerResponse.status;
     const outcome: RestAuditOutcome =
@@ -193,7 +215,7 @@ export function withRestEndpoint(
       outcome,
       errorCode: outcome === "success" ? null : "see_response",
       argsPayload: null,
-      responseSummary: { status: responseStatusCode },
+      responseSummary: enrichedAuditSummary ?? { status: responseStatusCode },
     });
 
     return handlerResponse;

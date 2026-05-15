@@ -106,10 +106,19 @@ export const POST = withRestEndpoint({
         );
       }
 
-      return NextResponse.json(toPostDTO(postRow), {
-        status: 200,
-        headers: { "x-request-id": ctx.requestId },
-      });
+      const directPostDto = toPostDTO(postRow);
+      return {
+        response: NextResponse.json(directPostDto, {
+          status: 200,
+          headers: { "x-request-id": ctx.requestId },
+        }),
+        auditSummary: {
+          post_id: directPostDto.id,
+          scheduled: false,
+          platform: directPostDto.platform,
+          batch_id: directPostDto.batch_id,
+        },
+      };
     }
 
     // Scheduled path via schedulePostBatch.
@@ -159,10 +168,19 @@ export const POST = withRestEndpoint({
       );
     }
 
-    return NextResponse.json(toPostDTO(postRow), {
-      status: 200,
-      headers: { "x-request-id": ctx.requestId },
-    });
+    const scheduledPostDto = toPostDTO(postRow);
+    return {
+      response: NextResponse.json(scheduledPostDto, {
+        status: 200,
+        headers: { "x-request-id": ctx.requestId },
+      }),
+      auditSummary: {
+        post_id: scheduledPostDto.id,
+        scheduled: true,
+        platform: scheduledPostDto.platform,
+        batch_id: scheduledPostDto.batch_id,
+      },
+    };
   },
 });
 
@@ -231,15 +249,14 @@ export const GET = withRestEndpoint({
       ? pagedRows[pagedRows.length - 1].created_at
       : null;
 
-    return NextResponse.json(
-      {
-        data: pagedRows.map(toPostDTO),
-        next_cursor: nextCursor,
-      },
-      {
-        status: 200,
-        headers: { "x-request-id": ctx.requestId },
-      },
-    );
+    const postDtos = pagedRows.map(toPostDTO);
+
+    return {
+      response: NextResponse.json(
+        { data: postDtos, next_cursor: nextCursor },
+        { status: 200, headers: { "x-request-id": ctx.requestId } },
+      ),
+      auditSummary: { count: postDtos.length, has_more: hasMore },
+    };
   },
 });

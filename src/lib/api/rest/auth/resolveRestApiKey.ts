@@ -3,7 +3,7 @@ import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { hashToken, isApiKeyToken } from "@/lib/api/tokens";
 import { applySubscriptionGate } from "@/lib/mcp/auth/resolvers/applySubscriptionGate";
-import { extractIpHash } from "@/lib/mcp/context";
+import { extractIpHash } from "@/lib/api/context";
 import { waitUntil } from "@vercel/functions";
 import type { RestPrincipal } from "./types";
 
