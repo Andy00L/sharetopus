@@ -2,6 +2,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
   CreatedVia,
   Json,
@@ -10,7 +11,6 @@ import type {
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
-import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 const MAX_BATCH_SIZE = 50;
 const RATE_LIMIT = 10;
@@ -116,7 +116,7 @@ export async function schedulePostBatch(
     const validPosts: SchedulePostData[] = [];
 
     for (const post of posts) {
-      const validationError = validatePostFields(post);
+      const validationError = validatePostFields(post, principalId);
       if (validationError) {
         rejectedPosts.push({
           socialAccountId: post.socialAccountId ?? "unknown",
@@ -197,7 +197,11 @@ export async function schedulePostBatch(
     }
 
     // Step 4: platform daily quota (applies to all sources: web, mcp, x402)
-    const quotaCheck = await checkPlatformDailyQuotas(ownedPosts, principalId, requestId);
+    const quotaCheck = await checkPlatformDailyQuotas(
+      ownedPosts,
+      principalId,
+      requestId,
+    );
     if (!quotaCheck.success) {
       return {
         success: false,
@@ -226,7 +230,10 @@ export async function schedulePostBatch(
       .select("id, idempotency_key");
 
     if (upsertError) {
-      console.error(`[schedulePostBatch] [req=${requestId ?? "?"}] Upsert error:`, upsertError.message);
+      console.error(
+        `[schedulePostBatch] [req=${requestId ?? "?"}] Upsert error:`,
+        upsertError.message,
+      );
       return {
         success: false,
         message: `Failed to insert posts: ${upsertError.message}`,
@@ -332,7 +339,10 @@ export async function schedulePostBatch(
  * Returns null if valid, error message string if invalid.
  * Checks required fields + Pinterest-specific rules.
  */
-function validatePostFields(post: SchedulePostData): string | null {
+function validatePostFields(
+  post: SchedulePostData,
+  principalId: string,
+): string | null {
   if (
     !post.socialAccountId ||
     !post.platform ||
@@ -344,6 +354,15 @@ function validatePostFields(post: SchedulePostData): string | null {
 
   if (post.postType !== "text" && !post.mediaStoragePath) {
     return `Media file is required for ${post.postType} posts.`;
+  }
+
+  // Vuln 1 fix: prevent cross-user media file reference.
+  // Storage paths are scoped {principalId}/<filename>. Reject anything else.
+  if (
+    post.mediaStoragePath &&
+    !post.mediaStoragePath.startsWith(`${principalId}/`)
+  ) {
+    return "Media path is not owned by the calling principal.";
   }
 
   const opts = post.postOptions as Record<string, unknown> | null | undefined;

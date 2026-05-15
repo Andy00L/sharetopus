@@ -138,11 +138,11 @@ export async function directPostBatch(
     const validPosts: DirectPostData[] = [];
 
     for (const post of posts) {
-      const error = validatePostFields(post);
-      if (error) {
+      const validationError = validatePostFields(post, principalId);
+      if (validationError) {
         rejected.push({
           socialAccountId: post.socialAccountId ?? "unknown",
-          reason: error,
+          reason: validationError,
         });
         continue;
       }
@@ -303,7 +303,10 @@ export async function directPostBatch(
 // ---------- helpers ----------
 
 /** Returns null if valid, error message if invalid. */
-function validatePostFields(post: DirectPostData): string | null {
+function validatePostFields(
+  post: DirectPostData,
+  principalId: string,
+): string | null {
   if (!post.socialAccountId || !post.platform || !post.postType) {
     return "Missing required fields (socialAccountId, platform, postType).";
   }
@@ -311,6 +314,13 @@ function validatePostFields(post: DirectPostData): string | null {
     return `Media file is required for ${post.postType} posts.`;
   }
 
+  // Vuln 1 fix: prevent cross-user media file reference.
+  if (
+    post.mediaStoragePath &&
+    !post.mediaStoragePath.startsWith(`${principalId}/`)
+  ) {
+    return "Media path is not owned by the calling principal.";
+  }
   // Pinterest rules
   if (post.platform === "pinterest" && !post.pinterestBoardId) {
     return "Pinterest posts require pinterestBoardId.";

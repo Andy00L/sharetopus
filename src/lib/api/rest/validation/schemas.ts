@@ -46,8 +46,7 @@ export const PostCreateInputSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["pinterest_board_id"],
-        message:
-          "pinterest_board_id is required when platform is pinterest",
+        message: "pinterest_board_id is required when platform is pinterest",
       });
     }
     // Text posts: LinkedIn only.
@@ -66,8 +65,17 @@ export const PostCreateInputSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["media_storage_path"],
+        message: "media_storage_path is required for image and video posts",
+      });
+    }
+
+    // Vuln 1 fix: basic format guard. Server-side enforces principal ownership.
+    if (data.media_storage_path && !data.media_storage_path.includes("/")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["media_storage_path"],
         message:
-          "media_storage_path is required for image and video posts",
+          "media_storage_path must include a principal prefix (format: {principal_id}/filename)",
       });
     }
     // scheduled_at, if provided, must be a future timestamp.
