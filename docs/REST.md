@@ -1,6 +1,6 @@
 # REST API
 
-27 HTTP endpoint handlers across 21 route files under `/api/v1/`. All endpoints use Bearer authentication with `stp_rest_*` API keys. Every request is audited to the append-only `rest_audit_log` table. Rate limiting is per-principal via Upstash Redis.
+28 HTTP endpoint handlers across 21 route files under `/api/v1/`. 27 use Bearer authentication via `withRestEndpoint`. 1 (`GET /api/v1/openapi.json`) is public with no auth. Every request is audited to the append-only `rest_audit_log` table. Rate limiting is per-principal via Upstash Redis.
 
 Built with Zod 4 for request validation and `zod-openapi@5.4.6` for OpenAPI 3.1 spec generation.
 
@@ -46,7 +46,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 
 ## Endpoint inventory
 
-27 handlers across posts, connections, media, webhooks, analytics, usage, content history, and OpenAPI.
+28 handlers across posts, connections, media, webhooks, analytics, usage, content history, and OpenAPI.
 
 ### Posts
 

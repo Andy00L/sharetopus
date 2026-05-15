@@ -19,7 +19,7 @@ Current state of shipped features, deferred work, and known issues. Reflects wha
 ```mermaid
 graph TD
     subgraph Shipped["Shipped (Production)"]
-        RESTAPI["REST API v1 (27 endpoints)"]
+        RESTAPI["REST API v1 (28 endpoints)"]
         WebhookSub["Webhook Subsystem (HMAC + delivery + replay)"]
         OpenAPIDocs["OpenAPI + Scalar Docs + MDX Pages"]
         Zod4["Zod 4 Upgrade (v3 compat for MCP)"]
@@ -132,7 +132,7 @@ Publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent
 
 ### 17. REST API v1
 
-27 HTTP endpoint handlers across 21 route files under `/api/v1/`. Bearer auth via `stp_rest_*` keys. Every request passes through `withRestEndpoint` (auth, validation, audit logging, error handling, rate limiting). Audit trail in `rest_audit_log` (append-only). See [docs/REST.md](./REST.md).
+28 HTTP endpoint handlers across 21 route files under `/api/v1/`. Bearer auth via `stp_rest_*` keys. Every request passes through `withRestEndpoint` (auth, validation, audit logging, error handling, rate limiting). Audit trail in `rest_audit_log` (append-only). See [docs/REST.md](./REST.md).
 
 ### 18. Webhook Subsystem
 

@@ -6,7 +6,7 @@
 
 ## Summary
 
-Updated all 12 existing docs + README to reflect the current code state. Created 2 new docs (REST.md, WEBHOOKS.md). Removed phantom MCP resources section (documented but never built). Moved REST API from "planned" to "shipped" across all files. Updated all counts (34 tables, 12 Inngest functions, 27 REST endpoints, 0 MCP resources).
+Updated all 12 existing docs + README to reflect the current code state. Created 2 new docs (REST.md, WEBHOOKS.md). Removed phantom MCP resources section (documented but never built). Moved REST API from "planned" to "shipped" across all files. Updated all counts (34 tables, 12 Inngest functions, 28 REST endpoints, 0 MCP resources).
 
 ## Files Modified
 
@@ -30,7 +30,7 @@ Updated all 12 existing docs + README to reflect the current code state. Created
 
 | File | Lines | Reason |
 |---|---|---|
-| docs/REST.md | 234 | No existing doc for 27 shipped REST endpoints |
+| docs/REST.md | 234 | No existing doc for 28 shipped REST endpoints |
 | docs/WEBHOOKS.md | 228 | No existing doc for webhook subsystem internals |
 | DOCS_SYNC_REPORT.md | this file | Required by prompt |
 
@@ -40,7 +40,7 @@ Updated all 12 existing docs + README to reflect the current code state. Created
 |---|---|---|
 | 34 database tables | Count table definitions in database.types.ts | 34 |
 | 2168 lines in database.types.ts | `wc -l` | 2168 |
-| 27 REST endpoint handlers | `grep "export const (GET\|POST\|PATCH\|DELETE)"` in api/v1 | 27 |
+| 28 REST endpoint handlers | 27 via `withRestEndpoint` + 1 public `function GET()` (openapi.json) | 28 |
 | 18 MCP tools | `grep registerTool(` in src/lib/mcp | 18 |
 | 3 MCP prompts | `grep server.prompt(` in src/lib/mcp | 3 |
 | 0 MCP resources | `grep registerResource(` + `grep server.resource(` | 0 |
