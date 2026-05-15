@@ -10,6 +10,7 @@ import type {
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 const MAX_BATCH_SIZE = 50;
 const RATE_LIMIT = 10;
@@ -288,6 +289,14 @@ export async function schedulePostBatch(
         const id = keyToScheduleId.get(row.idempotency_key);
         if (id) scheduleIds.push(id);
       }
+    }
+
+    // Dispatch post.scheduled webhook for each newly inserted post.
+    for (const insertedRow of inserted) {
+      dispatchWebhook(principalId, "post.scheduled", {
+        post_id: insertedRow.id,
+        batch_id: batchId,
+      });
     }
 
     return {

@@ -836,6 +836,116 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      webhook_subscriptions: {
+        Row: {
+          id: string;
+          principal_id: string;
+          url: string;
+          events: string[];
+          secret: string;
+          active: boolean;
+          failure_count: number;
+          last_delivery_at: string | null;
+          last_disabled_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          principal_id: string;
+          url: string;
+          events: string[];
+          secret: string;
+          active?: boolean;
+          failure_count?: number;
+          last_delivery_at?: string | null;
+          last_disabled_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          principal_id?: string;
+          url?: string;
+          events?: string[];
+          secret?: string;
+          active?: boolean;
+          failure_count?: number;
+          last_delivery_at?: string | null;
+          last_disabled_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "webhook_subscriptions_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
+      webhook_deliveries: {
+        Row: {
+          id: string;
+          subscription_id: string;
+          event_type: string;
+          event_id: string;
+          payload: Json;
+          status_code: number | null;
+          response_body: string | null;
+          attempt: number;
+          latency_ms: number | null;
+          delivered_at: string | null;
+          failed_at: string | null;
+          error_message: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          subscription_id: string;
+          event_type: string;
+          event_id: string;
+          payload: Json;
+          status_code?: number | null;
+          response_body?: string | null;
+          attempt?: number;
+          latency_ms?: number | null;
+          delivered_at?: string | null;
+          failed_at?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          subscription_id?: string;
+          event_type?: string;
+          event_id?: string;
+          payload?: Json;
+          status_code?: number | null;
+          response_body?: string | null;
+          attempt?: number;
+          latency_ms?: number | null;
+          delivered_at?: string | null;
+          failed_at?: string | null;
+          error_message?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "webhook_deliveries_subscription_id_fkey";
+            columns: ["subscription_id"];
+            isOneToOne: false;
+            referencedRelation: "webhook_subscriptions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
       sanctions_screenings: {
         Row: {
           id: number;
@@ -2054,3 +2164,5 @@ export type UsageQuota = Tables<"usage_quotas">;
 export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;
 export type PlatformQuota = Tables<"platform_quotas">;
 export type RateLimitEvent = Tables<"rate_limit_events">;
+export type WebhookSubscription = Tables<"webhook_subscriptions">;
+export type WebhookDelivery = Tables<"webhook_deliveries">;

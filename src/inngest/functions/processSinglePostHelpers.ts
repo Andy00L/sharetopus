@@ -8,6 +8,7 @@ import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directP
 import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
 import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
+import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
   Platform,
   PostStatus,
@@ -520,10 +521,20 @@ export async function recordPostStatus(args: {
         updated: false,
       };
     }
+    const wasPosted = !!(data && data.length > 0);
+
+    // Dispatch post.published webhook on successful status transition.
+    if (wasPosted) {
+      dispatchWebhook(post.principal_id, "post.published", {
+        post_id: post.id,
+        platform: post.platform,
+      });
+    }
+
     return {
       success: true,
-      message: data && data.length > 0 ? "marked posted" : "already moved on",
-      updated: !!(data && data.length > 0),
+      message: wasPosted ? "marked posted" : "already moved on",
+      updated: wasPosted,
     };
   }
 
@@ -585,6 +596,25 @@ export async function recordPostStatus(args: {
       );
       // Continue. The scheduled_posts UPDATE already succeeded;
       // losing the failed_posts row is non-fatal.
+    }
+  }
+
+  // Dispatch post.failed webhook on terminal failure transition.
+  if (wasUpdated) {
+    dispatchWebhook(post.principal_id, "post.failed", {
+      post_id: post.id,
+      platform: post.platform,
+      reason: result.reason,
+      error_message: result.message,
+    });
+
+    // If the failure reason is auth_expired, also notify about the connection.
+    if (result.reason === "auth_expired") {
+      dispatchWebhook(post.principal_id, "connection.expired", {
+        social_account_id: account.id,
+        platform: post.platform,
+        reason: "auth_expired",
+      });
     }
   }
 

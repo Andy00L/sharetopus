@@ -6,6 +6,7 @@ import { exchangeLinkedInForX402 } from "./linkedinTokenExchange";
 import { exchangeTikTokForX402 } from "./tiktokTokenExchange";
 import { exchangePinterestForX402 } from "./pinterestTokenExchange";
 import { exchangeInstagramForX402 } from "./instagramTokenExchange";
+import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -224,6 +225,13 @@ export async function handleOAuthCallback(
       },
     };
   }
+
+  // Dispatch connection.connected webhook after both DB ops succeed.
+  dispatchWebhook(connection.principal_id, "connection.connected", {
+    connection_id: connection.id,
+    social_account_id: socialAccount.id,
+    platform: input.platform,
+  });
 
   return { ok: true, connectionId: connection.id, redirectUrl };
 }

@@ -10,6 +10,7 @@ import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthC
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
 import { processTikTokPublishWebhook } from "@/inngest/functions/processTikTokPublishWebhook";
 import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
+import { deliverWebhook } from "@/inngest/functions/deliverWebhook";
 import { serve } from "inngest/next";
 
 export const runtime = "nodejs";
@@ -35,5 +36,6 @@ export const { GET, POST, PUT } = serve({
     cleanupCancelledPostsAfterGraceCron,
     cleanupStripeWebhookEvents,
     cleanupMcpAuditLogCron,
+    deliverWebhook,
   ],
 });
