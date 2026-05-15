@@ -23,7 +23,6 @@ Built with mcp-handler 1.1.0 and @modelcontextprotocol/sdk 1.29.0.
 - [Tool inventory](#tool-inventory)
 - [Tool details](#tool-details)
 - [Tool annotations](#tool-annotations)
-- [Resources](#resources)
 - [Prompts](#prompts)
 - [Usage examples](#usage-examples)
 - [MCP request lifecycle](#mcp-request-lifecycle)
@@ -623,18 +622,6 @@ All 18 tools carry MCP Connectors Directory annotations via `registerTool`. Read
 
 ---
 
-## Resources
-
-3 read-only resources. Same entitlement checks as the corresponding tools. Return empty contents if the user's plan does not qualify.
-
-| URI | MIME Type | Description |
-|-----|-----------|-------------|
-| `mcp://sharetopus/scheduled-posts` | application/json | Scheduled posts (limit 100) |
-| `mcp://sharetopus/connections` | application/json | Connected social accounts (tokens stripped) |
-| `mcp://sharetopus/content-history` | application/json | Published content history (limit 100) |
-
----
-
 ## Prompts
 
 3 reusable message templates that guide agent workflows.
@@ -844,8 +831,9 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 - **Stateless mode only.** mcp-handler 1.1.0 forces stateless mode on both Streamable HTTP and SSE transports. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
 - **`generate_post_draft` requires sampling.** Clients without MCP sampling/createMessage support (some older clients) will get an error.
 - **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
-- **`bulk_schedule` and `bulk_post_now` are MCP-only.** No REST or web UI equivalent exists yet.
+- **`bulk_schedule` and `bulk_post_now` have REST equivalents.** `POST /api/v1/posts/bulk` handles bulk scheduling via the REST API. See [docs/REST.md](./REST.md).
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
+- **Zod v3 compatibility.** All MCP tool files import from `zod/v3` (not `zod`) because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0`, which expects Zod 3 typings. REST API code uses Zod 4 (`from "zod"`). The two coexist in the same repo via Zod 4's v3 compatibility layer.
 
 ---
 

@@ -233,6 +233,22 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `npm run start` | Start production server (`next start`) |
 | `npm run lint` | Run ESLint (`next lint`) |
 
+### REST API
+
+REST API endpoints live in `src/app/api/v1/`. The OpenAPI spec is served at `/api/v1/openapi.json`. Interactive API docs (Scalar) are at `/docs/api`.
+
+### Zod 4 / v3 split
+
+REST API code uses `import { z } from "zod"` (Zod 4). MCP code uses `import { z } from "zod/v3"` because `@modelcontextprotocol/sdk` expects Zod 3 typings. Do not mix them.
+
+### MDX docs
+
+Pages in `src/content/docs/*.mdx` are served at `/docs/<slug>`. The `@next/mdx` loader is configured in `next.config.ts` with `pageExtensions: ["ts", "tsx", "mdx"]`.
+
+### Build-time type checking
+
+`typescript.ignoreBuildErrors: true` is set in `next.config.ts`. tsc runs in CI and pre-commit hooks, not during Vercel builds (OOM mitigation). Always run `npx tsc --noEmit` locally before pushing.
+
 ## Type checking
 
 ```bash
@@ -319,6 +335,11 @@ Production uses Vercel environment variables with production keys. `NODE_ENV=pro
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
 | `src/app/api/webhooks/tiktok/publish/route.ts` | TikTok publish status webhook handler |
 | `src/lib/jobs/runtimeConfig.ts` | Runtime constants including max duration |
+| `src/app/api/v1/` | REST API v1 route handlers |
+| `src/app/api/v1/openapi.json/route.ts` | OpenAPI spec endpoint |
+| `src/lib/api/rest/` | REST API middleware, auth, DTOs, validation, webhooks |
+| `src/content/docs/` | MDX documentation pages (served at /docs/<slug>) |
+| `next.config.ts` | MDX loader, pageExtensions, typescript.ignoreBuildErrors |
 
 ---
 

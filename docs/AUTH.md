@@ -1,6 +1,6 @@
 # Authentication
 
-Two auth systems: Clerk for web users, MCP API keys + Clerk OAuth for AI agents. Both resolve to a `principal_id` in the `principals` table.
+Three auth systems: Clerk for web users, MCP API keys + Clerk OAuth for AI agents, and REST API Bearer tokens. All resolve to a `principal_id` in the `principals` table.
 
 [Back to README](../README.md)
 
@@ -9,13 +9,14 @@ Two auth systems: Clerk for web users, MCP API keys + Clerk OAuth for AI agents.
 1. [Principal model](#principal-model)
 2. [Web authentication (Clerk)](#web-authentication-clerk)
 3. [MCP authentication](#mcp-authentication)
-4. [API key lifecycle](#api-key-lifecycle)
-5. [OAuth discovery](#oauth-discovery)
-6. [OAuth client trust enforcement](#oauth-client-trust-enforcement)
-7. [Entitlement and plan gating](#entitlement-and-plan-gating)
-8. [IP hashing](#ip-hashing)
-9. [Future: wallet authentication (deferred)](#future-wallet-authentication-deferred)
-10. [Source files referenced](#source-files-referenced)
+4. [REST API authentication](#rest-api-authentication)
+5. [API key lifecycle](#api-key-lifecycle)
+6. [OAuth discovery](#oauth-discovery)
+7. [OAuth client trust enforcement](#oauth-client-trust-enforcement)
+8. [Entitlement and plan gating](#entitlement-and-plan-gating)
+9. [IP hashing](#ip-hashing)
+10. [Future: wallet authentication (deferred)](#future-wallet-authentication-deferred)
+11. [Source files referenced](#source-files-referenced)
 
 ---
 
@@ -196,6 +197,14 @@ The `plan` field starts as `null` and is populated by `applySubscriptionGate` fr
 
 ---
 
+## REST API authentication
+
+REST API requests carry a Bearer token with prefix `stp_rest_`. Auth is resolved by the `withRestEndpoint` middleware in `src/lib/api/rest/middleware/withRestEndpoint.ts`. The token is SHA-256 hashed and looked up in the `api_keys` table where `kind = 'rest'`. Every request is logged to `rest_audit_log` (append-only). Rate limiting is per-principal via Upstash Redis.
+
+The REST auth path shares the same `api_keys` table and principal model as MCP. The only difference is the key prefix (`stp_rest_` vs `stp_mcp_`) and the `kind` column value.
+
+---
+
 ## API key lifecycle
 
 ### Key format
@@ -372,9 +381,11 @@ This code path is not built. The `wallets` table FK to `principals` exists but i
 | `src/actions/server/data/demoteOauthClientsOnCancel.ts` | Demote verified clients on subscription cancel |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | Daily stale OAuth client cleanup |
 | `src/app/.well-known/oauth-protected-resource/route.ts` | RFC 9728 OAuth discovery |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware, rate limiting, audit logging |
+| `src/lib/api/rest/auth/` | REST API key resolver and auth types |
 
 ---
 
-**See also:** [docs/MCP.md](./MCP.md) (tool inventory, entitlement), [docs/SECURITY.md](./SECURITY.md) (identity flow diagram, audit log), [docs/BILLING.md](./BILLING.md) (plan tier definitions)
+**See also:** [docs/MCP.md](./MCP.md) (tool inventory, entitlement), [docs/REST.md](./REST.md) (REST API endpoints, OpenAPI spec), [docs/SECURITY.md](./SECURITY.md) (identity flow diagram, audit log), [docs/BILLING.md](./BILLING.md) (plan tier definitions)
 
 [Back to README](../README.md)

@@ -65,10 +65,14 @@ MCP route-level rate limiting (100/60s per IP) runs before auth. All other rate 
 | 15 | XSS via MCP `clientInfo` | `sanitizeClientField` strips control chars + HTML injection chars | MCP server init |
 | 16 | Stripe webhook replay | Signature verification + `stripe_webhook_events` idempotency table | Stripe webhook handler |
 | 17 | TikTok webhook replay | HMAC-SHA256 + 300s tolerance + `tiktok_webhook_events` idempotency table | TikTok webhook handler |
+| 18 | REST API unauthorized access | Bearer token (`stp_rest_*`) + SHA-256 hash lookup + revocation check | `withRestEndpoint.ts` |
+| 19 | REST API request forgery | Per-principal rate limiting + append-only `rest_audit_log` | `withRestEndpoint.ts`, `writeRestAuditLog.ts` |
+| 20 | Outbound webhook forgery | HMAC-SHA256 per-subscription signing with `X-Sharetopus-Signature` header | `signWebhookPayload.ts`, `deliverWebhook.ts` |
+| 21 | Webhook endpoint abuse | Auto-disable after 10 consecutive delivery failures | `deliverWebhook.ts` (`AUTO_DISABLE_THRESHOLD = 10`) |
 
 ## Identity Flow
 
-Two auth paths converge on a single `McpPrincipal` with a cached subscription tier. Free and Starter tiers are blocked at the subscription gate (Creator+ required for MCP).
+Three auth surfaces share the same identity model. MCP and REST API both resolve to a principal with subscription tier. Free and Starter tiers are blocked at the MCP subscription gate (Creator+ required for MCP). REST API auth is handled by `withRestEndpoint` in `src/lib/api/rest/middleware/withRestEndpoint.ts`, which resolves `stp_rest_*` Bearer tokens via SHA-256 hash lookup in `api_keys` (where `kind = 'rest'`). Every REST request is logged to the append-only `rest_audit_log` table.
 
 ```mermaid
 sequenceDiagram
@@ -128,6 +132,7 @@ All per-request rate limits use Upstash Redis sliding window (`@upstash/ratelimi
 | `createCustomerPortal` | per user | 20 | 60s | Upstash |
 | `directPostBatch` | per source | 20 | 60s | Upstash |
 | `schedulePostBatch` | per source | 10 | 60s | Upstash |
+| REST API endpoints | per principal | varies per endpoint | varies | Upstash |
 | DCR registration | per IP | 1/min, 10/day | | Supabase `rate_limit_events` |
 | Pinterest board listing | per account | 15 | 60s | Upstash |
 
@@ -369,13 +374,29 @@ TikTok webhooks are verified with HMAC-SHA256. The signed payload is `${timestam
 
 Clerk webhooks are verified using the Svix library's signature verification. This validates the webhook signature, timestamp, and payload integrity.
 
+### Outbound (Sharetopus webhook subscriptions)
+
+User-created webhook subscriptions receive HMAC-SHA256 signed deliveries. Each subscription has a unique `secret` (generated at creation via `secretGenerator.ts`).
+
+- **Algorithm:** HMAC-SHA256
+- **Payload signed:** the full JSON body string
+- **Header:** `X-Sharetopus-Signature: sha256=<hex digest>`
+- **Additional headers:** `X-Sharetopus-Event` (event type), `X-Sharetopus-Delivery` (delivery UUID), `User-Agent: Sharetopus-Webhook/1.0`
+- **Delivery timeout:** 10 seconds
+- **Retries:** 3 (via Inngest backoff) for retryable failures (5xx, 408, 429, network errors)
+- **Auto-disable:** subscriptions are disabled after 10 consecutive failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`)
+- **Re-enable:** PATCH `/api/v1/webhooks/:id` with `{"active": true}` resets `failure_count` to 0
+
+Verification: recipients should compute `HMAC-SHA256(rawBody, subscription_secret)` and compare with constant-time comparison against the `sha256=` value in the `X-Sharetopus-Signature` header.
+
 ## Append-Only Audit
 
-Eight tables are append-only (`Update: never` in database types, enforced at the DB layer):
+Nine tables are append-only (`Update: never` in database types, enforced at the DB layer):
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
 | `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days (cleanup cron) |
+| `rest_audit_log` | Every REST API request with endpoint, method, status code, latency | Grows indefinitely (no cleanup cron yet) |
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
 | `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
@@ -413,6 +434,7 @@ Token, password, secret, and JWT patterns are redacted before insert (see [Argum
 | Data | Retention |
 |------|-----------|
 | `mcp_audit_log` | 90 days (via `cleanup-mcp-audit-log` cron) |
+| `rest_audit_log` | Grows indefinitely (no cleanup cron yet) |
 | `stripe_webhook_events` | 90 days (via `cleanup-stripe-webhook-events` cron) |
 | Cancelled scheduled posts | 7-day grace period |
 | `stripe_invoices` | Grows indefinitely (no cleanup) |
@@ -478,9 +500,14 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 | `src/app/api/media/route.ts` | Media proxy (HMAC verification, path traversal guard) |
 | `src/app/api/storage/generate-view-url/route.ts` | Web view URL generation (Clerk auth, path ownership) |
 | `src/app/api/storage/generate-upload-url/route.ts` | Web upload URL generation (storage quota check) |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper (auth, validation, audit, rate limit) |
+| `src/lib/api/rest/audit/writeRestAuditLog.ts` | REST API audit log writer |
+| `src/lib/api/rest/webhooks/signWebhookPayload.ts` | HMAC-SHA256 signing for outbound webhooks |
+| `src/lib/api/rest/webhooks/secretGenerator.ts` | Webhook subscription secret generation |
+| `src/inngest/functions/deliverWebhook.ts` | Webhook delivery with retry and auto-disable |
 
 ---
 
-**See also:** [docs/AUTH.md](./AUTH.md) (principal model, auth paths), [docs/MCP.md](./MCP.md) (tool inventory, annotations, idempotency), [docs/STORAGE.md](./STORAGE.md) (upload paths, orphan sweep)
+**See also:** [docs/AUTH.md](./AUTH.md) (principal model, auth paths), [docs/MCP.md](./MCP.md) (tool inventory, annotations, idempotency), [docs/REST.md](./REST.md) (REST API endpoints, withRestEndpoint HOF), [docs/WEBHOOKS.md](./WEBHOOKS.md) (webhook subsystem, signing, replay), [docs/STORAGE.md](./STORAGE.md) (upload paths, orphan sweep)
 
 [Back to README](../README.md)

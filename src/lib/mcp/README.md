@@ -30,7 +30,6 @@ Creator+. AI draft generation needs Pro.
 - `audit.ts` - append-only mcp_audit_log writer
 - `tokens.ts` - API key generation and SHA-256 hashing
 - `tools/` - 18 tool handlers, one per file
-- `resources/` - 3 MCP resources (scheduled posts, connections, history)
 - `prompts/` - 3 MCP prompt templates
 
 ## Adding a new tool

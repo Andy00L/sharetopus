@@ -1,6 +1,6 @@
 # Storage
 
-Media files (images and videos) are stored in Supabase Storage. Three upload paths exist: web UI, MCP `request_upload_url`, and MCP `attach_media_from_url`. An Inngest cron sweeps orphaned files daily.
+Media files (images and videos) are stored in Supabase Storage. Upload paths exist via web UI, MCP tools, and REST API endpoints. An Inngest cron sweeps orphaned files daily.
 
 [Back to README](../README.md)
 
@@ -11,6 +11,7 @@ Media files (images and videos) are stored in Supabase Storage. Three upload pat
   - [Web UI upload](#web-ui-upload)
   - [MCP request_upload_url](#mcp-request_upload_url)
   - [MCP attach_media_from_url](#mcp-attach_media_from_url)
+  - [REST API media endpoints](#rest-api-media-endpoints)
 - [Storage quota enforcement](#storage-quota-enforcement)
 - [View URLs](#view-urls)
 - [Media proxy](#media-proxy)
@@ -108,6 +109,19 @@ flowchart TD
 - **Monthly quota:** creator 500/mo, pro unlimited.
 - **Allowed MIME types:** image/jpeg, image/png, image/gif, image/webp, video/mp4, video/quicktime, video/webm.
 - **SSRF guard:** `safeUserFetch` blocks private/reserved IP ranges, rejects non-http(s) schemes, blocks 3xx redirects, and validates content-type. See [docs/SECURITY.md](./SECURITY.md#ssrf-guard) for the full list.
+
+### REST API media endpoints
+
+The REST API exposes four media routes, authenticated via `stp_rest_` Bearer token:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/media/upload-url` | Generate a signed upload URL |
+| `POST` | `/api/v1/media/attach-from-url` | Server-side download and upload from a public URL |
+| `GET` | `/api/v1/media/[...path]` | Serve media (signed URL redirect) |
+| `DELETE` | `/api/v1/media/[...path]` | Delete media |
+
+These endpoints use the same validation pipeline, storage quotas, and size limits as the web and MCP upload paths.
 
 ## Storage quota enforcement
 
@@ -304,6 +318,9 @@ Platform-specific timestamp formats for video cover images:
 | `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed proxy URL builder for TikTok |
 | `src/lib/types/plans.ts` | STORAGE_LIMITS and plan definitions |
 | `src/inngest/functions/sweep-orphan-storage-files.ts` | Daily orphan file cleanup cron |
+| `src/app/api/v1/media/upload-url/route.ts` | REST API signed upload URL endpoint |
+| `src/app/api/v1/media/attach-from-url/route.ts` | REST API server-side media attach endpoint |
+| `src/app/api/v1/media/[...path]/route.ts` | REST API media serve and delete endpoint |
 
 ---
 

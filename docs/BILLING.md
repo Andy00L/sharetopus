@@ -110,6 +110,8 @@ All 18 MCP tools are gated by `ACCESS_PLAN_GATE`, which requires Creator minimum
 | Creator | All 18 tools | Subject to monthly quotas (see below). |
 | Pro | All 18 tools | Unlimited usage (no quotas). |
 
+REST API endpoints share the same quota system and plan gates. The `withRestEndpoint` middleware resolves the principal's plan and enforces the same tier and quota checks that MCP uses.
+
 ### Storage quotas
 
 | Tier | Storage cap |
@@ -229,6 +231,7 @@ No code path is built for these. See [docs/ROADMAP.md](./ROADMAP.md).
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
 | `src/lib/mcp/_shared/entitlement.ts` | `MONTHLY_CAPS`, `ACCESS_PLAN_GATE`, MCP tier gating |
 | `src/lib/mcp/_shared/currentQuotaPeriod.ts` | `currentQuotaPeriod()`, period format for usage tracking |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware (enforces same plan gates) |
 
 ---
 

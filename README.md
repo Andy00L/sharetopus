@@ -12,10 +12,10 @@
 
 [![Web App](https://img.shields.io/badge/Surface-Web_App-22c55e)]()
 [![MCP Server](https://img.shields.io/badge/Surface-MCP_Server-8b5cf6)]()
-[![REST API](https://img.shields.io/badge/Surface-REST_API_(planned)-9ca3af)]()
+[![REST API](https://img.shields.io/badge/Surface-REST_API-22c55e)]()
 [![x402](https://img.shields.io/badge/Surface-x402_USDC_(planned)-3b82f6)]()
 
-Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Instagram. One dashboard, one MCP server, four platforms. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools.
+Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Instagram. One dashboard, one MCP server, one REST API, four platforms. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools. The REST API exposes 27 endpoints with Bearer auth, webhook subscriptions, and OpenAPI docs.
 
 **Production:** [sharetopus.com](https://sharetopus.com)
 
@@ -25,7 +25,7 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools that let AI agents manage posts, query analytics, and handle media uploads on their behalf. Background jobs (Inngest) handle dispatch, polling, webhook processing, and storage cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 27-endpoint REST API. Background jobs (12 Inngest functions) handle dispatch, polling, webhook delivery, and storage cleanup.
 
 ## ✨ Surfaces
 
@@ -33,14 +33,14 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 |---------|--------|------|-------------|
 | Web UI | Shipped | Clerk session | Browser dashboard at sharetopus.com |
 | MCP | Shipped | Clerk OAuth / API key | 18 tools for AI agents (Claude Desktop, Cursor) |
-| REST API | Planned | `stp_rest_*` API key | Mirrors MCP tools. Schema ready, code not built. |
+| REST API | Shipped | `stp_rest_*` Bearer token | 27 endpoints, webhooks, OpenAPI docs |
 | x402 Wallet | Planned | SIWE signature | Per-action USDC payments. Schema ready, code not built. |
 
 **Web App.** Clerk authentication, Stripe billing, post creation with per-platform customization, scheduling calendar, content history. See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 **MCP Server.** Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Requires Creator plan or above ($18/mo). 18 tools across read (list connections, posts, analytics) and write (schedule, post now, bulk operations, media upload). See [docs/MCP.md](./docs/MCP.md).
 
-**REST API** (planned). Public API mirroring MCP tools with `stp_rest_*` API keys. Schema ready (`api_keys.kind=rest`, `created_via=api`), code path not built. See [docs/ROADMAP.md](./docs/ROADMAP.md).
+**REST API.** 27 endpoints under `/api/v1/` with Bearer auth via `stp_rest_*` keys. Every request audited to `rest_audit_log`. Rate-limited per principal. Webhook subscriptions with HMAC-SHA256 signing (5 event types, auto-disable after 10 failures). OpenAPI spec at `/api/v1/openapi.json`, interactive docs at `/docs/api` (Scalar). See [docs/REST.md](./docs/REST.md).
 
 **x402 Wallet** (planned). Pay-per-action with USDC credits via SIWE wallet authentication. Schema tables exist, code path not built. See [docs/ROADMAP.md](./docs/ROADMAP.md).
 
@@ -56,6 +56,9 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 | Payments | Stripe | 18.5.0 |
 | Background Jobs | Inngest | 4.3.0 |
 | Rate Limiting | Upstash Redis + `@upstash/ratelimit` | 1.38.0 / 2.0.8 |
+| Validation | Zod (v4 for REST, v3 compat for MCP) | 4.4.3 |
+| OpenAPI | zod-openapi + @scalar/nextjs-api-reference | 5.4.6 / 0.10.16 |
+| MDX | @next/mdx + @mdx-js/loader | 16.2.6 / 3.1.1 |
 | MCP | `@modelcontextprotocol/sdk` + `mcp-handler` | 1.29.0 / 1.1.0 |
 | Deployment | Vercel | |
 
@@ -102,7 +105,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 
 ## ⚡ Background Jobs
 
-11 Inngest functions handle scheduling, posting, polling, and cleanup:
+12 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
@@ -111,6 +114,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 | process-direct-post | Event `post.now` | Process one direct post (no retry) |
 | tiktok-publish-status-poll | Event `tiktok.publish.poll` | Poll TikTok for publish completion (60 attempts, 60s interval) |
 | process-tiktok-publish-webhook | Event `tiktok.publish.webhook.received` | Process TikTok webhook events (retries 3) |
+| deliver-webhook | Event `webhook.dispatch.v1` | Deliver one webhook event to a subscriber (HMAC signed, retries 3) |
 | sweep-stuck-direct-posts | Cron `*/5 * * * *` | Recover stuck pending posts (>10 min) |
 | sweep-orphan-storage-files | Cron daily 03:00 UTC | Delete unreferenced storage files (>24h) |
 | sweep-stale-oauth-clients | Cron daily 04:00 UTC | Purge unverified OAuth clients (>90 days) |
@@ -139,10 +143,12 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System map, component interactions, data flows, state diagrams |
 | [docs/AUTH.md](./docs/AUTH.md) | Clerk, MCP auth (API key + OAuth), principal model, entitlement |
 | [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
-| [docs/DATABASE.md](./docs/DATABASE.md) | All 31 tables, relationships, RLS posture |
+| [docs/DATABASE.md](./docs/DATABASE.md) | All 34 tables, relationships, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
-| [docs/INNGEST.md](./docs/INNGEST.md) | 11 background functions, cron schedules, sweep jobs |
+| [docs/INNGEST.md](./docs/INNGEST.md) | 12 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |
+| [docs/REST.md](./docs/REST.md) | REST API: 27 endpoints, withRestEndpoint HOF, validation, audit |
+| [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Webhook subsystem: signing, retry, replay, auto-disable |
 | [docs/PLATFORMS.md](./docs/PLATFORMS.md) | Per-platform OAuth, posting flows, quirks |
 | [docs/ROADMAP.md](./docs/ROADMAP.md) | Shipped features, deferred work, open issues |
 | [docs/SCHEDULING.md](./docs/SCHEDULING.md) | Schedule lifecycle, locks, retries, created_via |
@@ -165,15 +171,15 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 
 ## 🔒 Security
 
-Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Audit logs are append-only with 90-day retention. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Stripe and TikTok webhooks are verified via signatures with idempotency tables preventing replay.
+Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests), both with 90-day retention. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
 
 Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## 🛣️ Roadmap
 
-**Recently shipped:** TikTok webhook integration, hybrid pricing (MCP Creator+ minimum), withMcpTool HOF refactor, API key expiry (7/30/90/365 days), web requestId tracing, generic adapter pattern, OAuth client trust enforcement, data retention crons.
+**Recently shipped:** REST API v1 (27 endpoints), webhook subsystem (HMAC + delivery + replay), OpenAPI + Scalar docs, MDX doc pages, Zod 4 upgrade, TikTok webhook integration, hybrid pricing, withMcpTool HOF, API key expiry, generic adapter pattern, OAuth client trust enforcement, data retention crons.
 
-**Near-term:** REST API v1. **Mid-term:** x402 wallet access, additional platforms. **Long-term:** Analytics pipeline, federated agent features.
+**Mid-term:** x402 wallet access, additional platforms. **Long-term:** Analytics pipeline, federated agent features.
 
 Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 
@@ -184,7 +190,7 @@ Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 - i18n is declared (fr, en, es) but no translation files exist. UI is English only.
 - Studio/Analytics page shows "Coming Soon". The analytics_metrics table exists but has no data pipeline.
 - TikTok default privacy is SELF_ONLY (private). Users must select a public level.
-- `@upstash/qstash` is in dependencies but unused (legacy from pre-Inngest era).
+- `next.config.ts` sets `typescript.ignoreBuildErrors: true` for Vercel OOM mitigation. Type checking runs via `npx tsc --noEmit` in CI/pre-commit instead.
 
 ## 🤝 Contributing
 

@@ -1,8 +1,8 @@
 # Database
 
-31 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
+34 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
 
-Generated types live in `src/lib/types/database.types.ts` (1 991 lines). Regenerate after schema changes with `supabase gen types typescript --linked > src/lib/types/database.types.ts`.
+Generated types live in `src/lib/types/database.types.ts` (2 168 lines). Regenerate after schema changes with `supabase gen types typescript --linked > src/lib/types/database.types.ts`.
 
 [Back to README](../README.md)
 
@@ -17,6 +17,8 @@ Generated types live in `src/lib/types/database.types.ts` (1 991 lines). Regener
    - [Posts (5)](#posts)
    - [Billing (4)](#billing)
    - [MCP (4)](#mcp)
+   - [REST API (1)](#rest-api)
+   - [Webhooks (2)](#webhooks)
    - [Analytics (1)](#analytics)
    - [x402 / Wallet (9)](#x402--wallet)
    - [Infrastructure (3)](#infrastructure)
@@ -84,6 +86,10 @@ erDiagram
 
     api_keys ||--o{ mcp_sessions : "api_key_id"
     api_keys ||--o{ mcp_audit_log : "api_key_id"
+    api_keys ||--o{ rest_audit_log : "api_key_id"
+
+    principals ||--o{ webhook_subscriptions : "owns"
+    webhook_subscriptions ||--o{ webhook_deliveries : "subscription_id"
 ```
 
 ---
@@ -132,6 +138,19 @@ erDiagram
 | `mcp_sessions` | Session tracking for MCP connections. | id, principal_id, oauth_client_id, api_key_id, protocol_version, started_at, last_activity_at, ended_at, client_name, client_version, ip_hash |
 | `mcp_audit_log` | Append-only log of every MCP tool call. | id, principal_id, oauth_client_id, api_key_id, session_id, tool_name, args_redacted, result_status (`ok` &#124; `error` &#124; `denied` &#124; `rate_limited` &#124; `quota_exceeded`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
 | `mcp_oauth_clients` | Registered OAuth clients for MCP. | client_id (PK), client_name, redirect_uris, software_id, software_version, registered_by_user_id, trust_level (`unverified` &#124; `verified` &#124; `blocked`), revoked_at, metadata, created_at, updated_at |
+
+### REST API
+
+| Table | Purpose | Columns |
+|-------|---------|---------|
+| `rest_audit_log` | Append-only log of every REST API request. | id, principal_id, api_key_id, endpoint, http_method, request_id, ip_hash, user_agent, status_code, outcome (`success` &#124; `validation_error` &#124; `auth_error` &#124; `rate_limited` &#124; `internal_error`), error_code, latency_ms, args_redacted, response_summary, created_at |
+
+### Webhooks
+
+| Table | Purpose | Columns |
+|-------|---------|---------|
+| `webhook_subscriptions` | User-created webhook endpoint registrations. | id, principal_id, url, events, secret, active, failure_count, last_delivery_at, last_disabled_at, created_at, updated_at |
+| `webhook_deliveries` | Record of each webhook delivery attempt. | id, subscription_id, event_type, event_id, payload, status_code, response_body, attempt, latency_ms, delivered_at, failed_at, error_message, created_at |
 
 ### Analytics
 
@@ -188,16 +207,18 @@ All enum-like values are enforced by CHECK constraints in Postgres (not Postgres
 | `x402_access_log.result_status` | `ok`, `402_required`, `sanctioned`, `rate_limited`, `error` |
 | `pricing_actions.recurrence` | `one_time`, `monthly` |
 | `sanctions_screenings.result` | `clean`, `sanctioned`, `error` |
+| `rest_audit_log.outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `internal_error` |
 
 ---
 
 ## Append-only tables
 
-Eight tables set `Update: never` in the generated types. Rows can be inserted but never modified via application code, ensuring audit and financial records stay tamper-proof.
+Nine tables set `Update: never` in the generated types. Rows can be inserted but never modified via application code, ensuring audit and financial records stay tamper-proof.
 
 | Table | What it logs |
 |-------|-------------|
 | `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency). Insert happens fire-and-forget in `logToolCall` (`src/lib/mcp/audit.ts`). |
+| `rest_audit_log` | Every REST API request (endpoint, method, status code, latency). Insert via `writeRestAuditLog` (`src/lib/api/rest/audit/writeRestAuditLog.ts`). |
 | `stripe_invoices` | Stripe payment records. |
 | `wallet_credits_ledger` | Credit transaction history for x402 wallets. |
 | `x402_access_log` | x402 endpoint access audit trail. |
@@ -237,7 +258,7 @@ Two server-side Postgres functions, called via `adminSupabase.rpc()`:
 
 ## RLS posture
 
-All 31 tables have Row Level Security (RLS) enabled at the Supabase level. The application uses a service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) that bypasses RLS entirely. Access control is enforced in application code by filtering on `principal_id` in every query.
+All 34 tables have Row Level Security (RLS) enabled at the Supabase level. The application uses a service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) that bypasses RLS entirely. Access control is enforced in application code by filtering on `principal_id` in every query.
 
 What this means in practice:
 
@@ -296,9 +317,11 @@ stateDiagram-v2
 
 | File | Description |
 |------|-------------|
-| `src/lib/types/database.types.ts` | Generated Supabase types (31 tables, 2 RPC functions, type aliases) |
+| `src/lib/types/database.types.ts` | Generated Supabase types (34 tables, 2 RPC functions, type aliases) |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client that bypasses RLS |
 | `src/lib/mcp/audit.ts` | Fire-and-forget `logToolCall` insert into `mcp_audit_log` |
+| `src/lib/api/rest/audit/writeRestAuditLog.ts` | Audit log writer for REST API requests |
+| `src/lib/api/rest/webhooks/dispatch.ts` | Dispatches webhook events to Inngest for delivery |
 
 ---
 

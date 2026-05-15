@@ -8,7 +8,6 @@ Current state of shipped features, deferred work, and known issues. Reflects wha
 
 - [Implementation Status](#implementation-status)
 - [Shipped](#shipped)
-- [Near-Term (Next 30 Days)](#near-term-next-30-days)
 - [Mid-Term (1-3 Months)](#mid-term-1-3-months)
 - [Long-Term (3+ Months)](#long-term-3-months)
 - [Open Issues](#open-issues)
@@ -20,6 +19,10 @@ Current state of shipped features, deferred work, and known issues. Reflects wha
 ```mermaid
 graph TD
     subgraph Shipped["Shipped (Production)"]
+        RESTAPI["REST API v1 (27 endpoints)"]
+        WebhookSub["Webhook Subsystem (HMAC + delivery + replay)"]
+        OpenAPIDocs["OpenAPI + Scalar Docs + MDX Pages"]
+        Zod4["Zod 4 Upgrade (v3 compat for MCP)"]
         TikTokWH["TikTok Webhook + Inngest Processor"]
         HybridPricing["Hybrid Pricing / MCP Creator+ Gate"]
         WithMcpTool["withMcpTool HOF (auth, audit, entitlement)"]
@@ -38,10 +41,6 @@ graph TD
         IdempotentRetries["Idempotent Retries on Write Tools"]
     end
 
-    subgraph NearTerm["Near-Term (Schema Ready)"]
-        REST["REST API v1"]
-    end
-
     subgraph MidTerm["Mid-Term (Schema Exists, Code Deferred)"]
         x402["x402 Wallet Access"]
         NewPlatforms["YouTube, X, Threads, Facebook"]
@@ -53,10 +52,11 @@ graph TD
         AnalyticsPipeline["Analytics Pipeline"]
     end
 
-    SharedFinalize -->|"converges on"| TikTokWH
-    GenericAdapter -->|"enables"| NewPlatforms
-    HybridPricing -->|"alternative path"| x402
-    REST -->|"mirrors"| WithMcpTool
+    SharedFinalize --> TikTokWH
+    GenericAdapter --> NewPlatforms
+    HybridPricing --> x402
+    RESTAPI --> WebhookSub
+    RESTAPI --> OpenAPIDocs
 ```
 
 ## Shipped
@@ -130,15 +130,21 @@ Publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent
 
 `schedule_post`, `post_now`, and `bulk_post_now` accept an optional `idempotency_key` parameter. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors without creating duplicates.
 
-## Near-Term (Next 30 Days)
+### 17. REST API v1
 
-### REST API v1
+27 HTTP endpoint handlers across 21 route files under `/api/v1/`. Bearer auth via `stp_rest_*` keys. Every request passes through `withRestEndpoint` (auth, validation, audit logging, error handling, rate limiting). Audit trail in `rest_audit_log` (append-only). See [docs/REST.md](./REST.md).
 
-A public REST API mirroring the MCP tools (schedule, cancel, list, etc.) with `stp_rest_*` API keys. The `api_keys` table already supports `kind=rest` and the `created_via=api` enum value exists.
+### 18. Webhook Subsystem
 
-A code comment in `src/lib/mcp/auth/resolve.ts` references "Phase 2 adds stp_rest_ branch", confirming the planned approach: reuse the same auth resolution logic with a new key prefix.
+User-created webhook subscriptions with HMAC-SHA256 signing. 5 event types: `post.scheduled`, `post.published`, `post.failed`, `connection.connected`, `connection.expired`. Delivery via the `deliver-webhook` Inngest function with 3 retries and auto-disable after 10 consecutive failures. Delivery log, test endpoint, and replay endpoint. See [docs/WEBHOOKS.md](./WEBHOOKS.md).
 
-**Status:** Schema ready, code not started.
+### 19. OpenAPI + Scalar Docs + MDX Pages
+
+`/api/v1/openapi.json` serves a generated OpenAPI 3.1 document (via `zod-openapi@5.x` using native Zod 4 `.meta()` API). `/docs/api` renders the Scalar interactive viewer. MDX doc pages at `/docs/quickstart`, `/docs/authentication`, `/docs/webhooks` (via `@next/mdx` with `pageExtensions: ["ts", "tsx", "mdx"]`).
+
+### 20. Zod 4 Upgrade
+
+Upgraded from Zod 3 to Zod 4 (`zod@^4.4.3`). REST API and OpenAPI code imports `from "zod"`. MCP code imports `from "zod/v3"` because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0` which expects Zod 3 typings. `z.string().uuid()` migrated to `z.guid()` in REST schemas (Zod 4's strict RFC 4122 rejected some UUIDs).
 
 ## Mid-Term (1-3 Months)
 
@@ -148,7 +154,7 @@ Wallet-based authentication using SIWE (Sign-In With Ethereum). Users pay per-ac
 
 Schema tables exist and are migrated: `wallets`, `wallet_credits`, `wallet_credits_ledger`, `x402_charges`, `x402_refunds`, `x402_access_log`, `pricing_actions`, `siwe_nonces`, `usdc_fmv_daily`, `sanctions_screenings`. The `principals.kind=wallet` path and `created_via=x402` enum are wired. Dependencies installed: `@x402/core`, `@x402/evm`, `@coinbase/cdp-sdk`.
 
-No code path is built. This is schema-only at this point.
+No code path is built. This is schema-only at this point. Five x402-related env vars (`X402_HMAC_SECRET`, `X402_INSTAGRAM_REDIRECT_URI`, `X402_LINKEDIN_REDIRECT_URI`, `X402_PINTEREST_REDIRECT_URI`, `X402_TIKTOK_REDIRECT_URI`) are referenced in code but intentionally excluded from `.env.example` until the x402 path ships.
 
 ### Additional Platforms
 
@@ -195,15 +201,7 @@ Internationalization is configured in `i18n-config.ts` (fr, en, es) and dependen
 
 The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analytics data pipeline).
 
-### 6. Unused QStash Dependency
-
-`@upstash/qstash` is listed in `package.json` but not imported anywhere. Legacy from pre-Inngest era. See "Won't Fix" below.
-
 ## Won't Fix (For Now)
-
-### QStash Removal
-
-`@upstash/qstash` is a dead dependency. Removing it is low-risk but low priority. No code references it.
 
 ---
 
@@ -229,4 +227,8 @@ The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analyti
 | `src/inngest/functions/cleanupStripeWebhookEvents.ts` | Stripe events retention cron |
 | `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Cancelled posts cleanup cron |
 | `i18n-config.ts` | i18n language configuration |
-| `package.json` | Dependency declarations (x402, QStash, cdp-sdk) |
+| `package.json` | Dependency declarations (x402, cdp-sdk) |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper |
+| `src/lib/api/rest/webhooks/dispatch.ts` | Webhook dispatch pipeline |
+| `src/lib/api/rest/openapi/buildDocument.ts` | OpenAPI document generation |
+| `src/content/docs/quickstart.mdx` | MDX quickstart doc page |

@@ -1,6 +1,6 @@
 # Inngest Functions
 
-11 background functions registered in `src/app/api/inngest/route.ts`. The Inngest client ID is `sharetopus` (`src/inngest/client.ts`).
+12 background functions registered in `src/app/api/inngest/route.ts`. The Inngest client ID is `sharetopus` (`src/inngest/client.ts`).
 
 Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env-overridable defaults tuned for Vercel Hobby (300s max function duration, ~2048 MB memory).
 
@@ -20,6 +20,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 - [cleanup-cancelled-posts-after-grace](#cleanup-cancelled-posts-after-grace)
 - [cleanup-stripe-webhook-events](#cleanup-stripe-webhook-events)
 - [cleanup-mcp-audit-log](#cleanup-mcp-audit-log)
+- [deliver-webhook](#deliver-webhook)
 - [Event vocabulary](#event-vocabulary)
 - [Runtime configuration](#runtime-configuration)
 - [Cron schedule coordination](#cron-schedule-coordination)
@@ -41,6 +42,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | cleanup-cancelled-posts-after-grace | Cron `0 5 * * *` | default | 0 | Delete posts after subscription cancel grace period |
 | cleanup-stripe-webhook-events | Cron `0 3 * * *` | default | 0 | Purge processed Stripe webhook events (>90 days) |
 | cleanup-mcp-audit-log | Cron `0 4 * * *` | default | 0 | Truncate MCP audit log entries (>90 days) |
+| deliver-webhook | Event `webhook.dispatch.v1` | default | 3 | Deliver one webhook event to a subscriber (HMAC signed) |
 
 ## scheduled-posts-tick
 
@@ -227,6 +229,38 @@ Purges processed Stripe webhook event records older than 90 days. These records 
 
 Truncates MCP audit log entries older than 90 days. Uses the service-role client to bypass the append-only RLS trigger on the audit table, since normal clients can only insert.
 
+## deliver-webhook
+
+**File:** `src/inngest/functions/deliverWebhook.ts` (166 lines)
+**Trigger:** Event `webhook.dispatch.v1`
+**Retries:** 3
+**Throttle:** 100 per 60s
+
+Delivers a single webhook event to one subscriber endpoint.
+
+```mermaid
+flowchart TD
+    A[Event: webhook.dispatch.v1] --> B[Load subscription]
+    B --> C{Active?}
+    C -->|No| D[Return skipped]
+    C -->|Yes| E[Build JSON payload + HMAC-SHA256 signature]
+    E --> F[POST to subscriber URL\n10s timeout]
+    F --> G{2xx?}
+    G -->|Yes| H[Reset failure_count\nRecord delivery]
+    G -->|No| I[Increment failure_count\nRecord delivery]
+    I --> J{failure_count >= 10?}
+    J -->|Yes| K[Auto-disable subscription]
+    J -->|No| L{Retryable status?\n408,429,5xx,network}
+    L -->|Yes| M[throw for Inngest retry]
+    L -->|No| N[Return terminal failure]
+```
+
+Headers sent: `X-Sharetopus-Event`, `X-Sharetopus-Delivery`, `X-Sharetopus-Signature` (`sha256=<hex>`), `User-Agent: Sharetopus-Webhook/1.0`.
+
+Auto-disable threshold: 10 consecutive failures (`AUTO_DISABLE_THRESHOLD`). Re-enabling via PATCH `/api/v1/webhooks/:id` resets `failure_count` to 0.
+
+Retryable status codes: 408, 429, 500, 502, 503, 504. Terminal failures (other 4xx) are recorded but do not trigger Inngest retry.
+
 ## Event vocabulary
 
 | Event Name | Emitted By | Consumed By | Payload Key Fields |
@@ -235,6 +269,7 @@ Truncates MCP audit log entries older than 90 days. Uses the service-role client
 | `post.now` | directPostBatch (server action) | process-direct-post | post and account details |
 | `tiktok.publish.poll` | process-direct-post, process-single-post | tiktok-publish-status-poll | publish ID, account, media path |
 | `tiktok.publish.webhook.received` | `/api/webhooks/tiktok/publish` (route handler) | process-tiktok-publish-webhook | TikTok event type, publish ID, post ID |
+| `webhook.dispatch.v1` | `dispatchWebhook` (`src/lib/api/rest/webhooks/dispatch.ts`) | deliver-webhook | subscription_id, event_type, event_id, payload |
 
 ## Runtime configuration
 
@@ -280,7 +315,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 ## Source files referenced
 
 - `src/inngest/client.ts` (Inngest client, ID: "sharetopus")
-- `src/app/api/inngest/route.ts` (function registration, 11 functions)
+- `src/app/api/inngest/route.ts` (function registration, 12 functions)
 - `src/lib/jobs/runtimeConfig.ts` (RUNTIME config object)
 - `src/inngest/functions/scheduledPostsTick.ts`
 - `src/inngest/functions/processSinglePost.ts`
@@ -293,4 +328,6 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 - `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts`
 - `src/inngest/functions/cleanupStripeWebhookEvents.ts`
 - `src/inngest/functions/cleanupMcpAuditLogCron.ts`
+- `src/inngest/functions/deliverWebhook.ts`
 - `src/inngest/functions/platformErrors.ts`
+- `src/lib/api/rest/webhooks/dispatch.ts`

@@ -99,6 +99,8 @@ Every post-related table (`scheduled_posts`, `failed_posts`, `content_history`) 
 | `x402` | Created through x402 anonymous wallet |
 | `api` | Created through REST API |
 
+REST API creates posts with `created_via = 'api'`. Webhook events (`post.scheduled`, `post.published`, `post.failed`) are dispatched on post lifecycle transitions via `src/lib/api/rest/webhooks/dispatch.ts`.
+
 ## Direct posting (post now)
 
 Direct posts bypass the `scheduled_posts` table entirely. The flow uses `pending_direct_posts` as a lock table so media cleanup cannot race with in-flight publishes.
@@ -299,6 +301,7 @@ Platform-specific options are stored in the `post_options` JSONB column on `sche
 | `src/actions/server/data/resumeCancelledPostsOnResubscribe.ts` | Resume posts on resubscribe |
 | `src/actions/server/data/storageFiles/deleteSupabaseFile.ts` | Checks both lock tables before deleting media |
 | `src/inngest/functions/processSinglePostHelpers.ts` | Cross-table reference check before media removal |
+| `src/lib/api/rest/webhooks/dispatch.ts` | REST webhook event dispatch on post lifecycle transitions |
 
 ---
 

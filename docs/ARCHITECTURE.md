@@ -1,8 +1,8 @@
 # Architecture
 
-System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, Inngest background jobs, and integrations with 4 social platforms.
+System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-346 TypeScript source files. 21 API routes. 31 database tables. 18 MCP tools. 11 Inngest functions.
+34 database tables. 18 MCP tools. 27 REST API endpoints. 12 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -42,26 +42,32 @@ graph TD
             PubActions["Public Actions (auth + rate limit)"]
             IntActions["Internal Actions (no auth, MCP use)"]
         end
-        subgraph API["API Routes (21 endpoints)"]
+        subgraph API["API Routes"]
             SocialRoutes["Social OAuth + Post Routes"]
             StorageRoutes["Storage URL Routes"]
             WebhookRoutes["Webhook Handlers (Clerk, Stripe, TikTok)"]
             PostStatus["Post Status Polling"]
             X402Routes["x402 Routes (deferred)"]
         end
+        subgraph RESTAPI["REST API v1 (27 endpoints)"]
+            RESTRoute["/api/v1/* (posts, connections, media, webhooks, analytics)"]
+            RESTAuth["withRestEndpoint (Bearer stp_rest_*)"]
+            RESTAudit["rest_audit_log (append-only)"]
+        end
         subgraph MCP["MCP Server"]
             MCPRoute["POST /api/mcp/mcp"]
             MCPAuth["withMcpAuth (Bearer token)"]
-            MCPTools["18 Tools, 3 Resources, 3 Prompts"]
+            MCPTools["18 Tools, 3 Prompts"]
         end
     end
 
-    subgraph Background["Background (Inngest, 11 functions)"]
-        subgraph EventHandlers["Event-driven (4)"]
+    subgraph Background["Background (Inngest, 12 functions)"]
+        subgraph EventHandlers["Event-driven (5)"]
             Worker["process-single-post (post.due, retries 3)"]
             DirectWorker["process-direct-post (post.now, retries 0)"]
             TikTokPoll["tiktok-publish-status-poll (tiktok.publish.poll)"]
             TikTokWebhook["process-tiktok-publish-webhook (tiktok.publish.webhook.received, retries 3)"]
+            WebhookDeliver["deliver-webhook (webhook.dispatch.v1, retries 3)"]
         end
         subgraph Crons["Cron jobs (7)"]
             Dispatcher["scheduled-posts-tick (*/5 min)"]
@@ -75,7 +81,7 @@ graph TD
     end
 
     subgraph Data["Data Layer"]
-        Supabase["Supabase Postgres (31 tables)"]
+        Supabase["Supabase Postgres (34 tables)"]
         Storage["Supabase Storage (scheduled-videos)"]
         Redis["Upstash Redis (rate limits)"]
     end
@@ -90,7 +96,12 @@ graph TD
     end
 
     Browser --> ClerkMW --> Actions
+    Browser --> RESTRoute
     AI --> MCPRoute
+    AI --> RESTRoute
+    RESTRoute --> RESTAuth --> RESTAudit
+    RESTAuth --> Supabase
+    RESTAuth --> Redis
     MCPRoute --> MCPAuth --> MCPTools
     MCPTools --> IntActions
     PubActions --> Supabase
@@ -103,6 +114,7 @@ graph TD
     DirectWorker --> LI & TK & PI & IG
     TikTokPoll --> TK
     TikTokWebhook --> Supabase
+    WebhookDeliver --> Supabase
     StuckSweep --> Supabase
     OrphanSweep --> Storage
     StripeSweep --> Supabase
@@ -158,8 +170,17 @@ src/
       oauth-protected-resource/ # RFC 9728 OAuth discovery for MCP clients
     api/
       auth/[clerk]/             # Clerk auth UI
-      inngest/                  # Inngest serve() endpoint (11 functions)
+      inngest/                  # Inngest serve() endpoint (12 functions)
       mcp/[transport]/          # MCP server (Streamable HTTP + SSE)
+      v1/                       # REST API v1 (27 endpoints)
+        posts/                  # CRUD + bulk schedule
+        connections/            # List, get, initiate, reauth, boards
+        media/                  # Upload URL, attach from URL, serve, delete
+        webhooks/               # CRUD + test + deliveries + replay
+        analytics/              # Per-content metrics
+        content-history/        # Published content history
+        usage/                  # Quota usage
+        openapi.json/           # Generated OpenAPI 3.1 spec
       media/                    # HMAC-signed media proxy
       posts/status/             # Inngest job status polling (max 50 event IDs)
       social/
@@ -206,6 +227,7 @@ src/
       sweepStaleOauthClientsCron.ts   # Cron daily 04:00: purge unverified OAuth clients > 90d
       cleanupMcpAuditLogCron.ts       # Cron daily 04:00: purge mcp_audit_log > 90d
       cleanupCancelledPostsAfterGraceCron.ts  # Cron daily 05:00: delete cancelled posts past 7d grace
+      deliverWebhook.ts         # Event webhook.dispatch.v1: deliver one webhook (HMAC signed, retries 3)
       platformErrors.ts         # Error classification (retryable vs terminal)
   lib/
     api/
@@ -219,6 +241,16 @@ src/
       pinterest/                # OAuth, posting (streaming video), scheduling
       tiktok/                   # OAuth, posting (async pull), scheduling, finalize
       inngest/                  # Inngest API helpers
+      rest/                     # REST API infrastructure
+        auth/                   # Bearer token resolution
+        audit/                  # writeRestAuditLog (append-only)
+        errors/                 # Error format and codes
+        middleware/              # withRestEndpoint HOF (auth, validation, audit, rate limit)
+        validation/             # Zod schemas (posts, connections, media, webhooks, analytics)
+        webhooks/               # Webhook dispatch, signing, event types
+        openapi/                # OpenAPI 3.1 document generation (zod-openapi)
+        dto/                    # Data transfer objects
+        adapters/               # Service adapters
     jobs/
       runtimeConfig.ts          # Runtime tuning (concurrency, timeouts, batch sizes)
     mcp/
@@ -229,10 +261,10 @@ src/
       ipHash.ts                 # SHA-256 IP hashing with configurable salt
       withMcpTool.ts            # HOF wrapper: auth, entitlement, audit, error handling
       _shared/                  # safeUserFetch, enforceStorageQuota, currentQuotaPeriod
-      tools/                    # 18 tool definitions (one file per tool)
+      tools/                    # 18 tool definitions (one file per tool, import zod/v3)
       prompts/                  # 3 prompt definitions (auditCalendar, planWeekForPlatform, repurposePost)
     types/
-      database.types.ts         # Generated Supabase types (31 tables)
+      database.types.ts         # Generated Supabase types (34 tables)
       plans.ts                  # Plan tiers (Starter, Creator, Pro), price IDs, account/storage limits
     utils/
       generateRequestId.ts      # Web requestId tracing for server actions
@@ -480,7 +512,11 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 **Streaming multipart for Pinterest video.** Pinterest requires uploading video files to S3 via multipart form-data. The `buildStreamingMultipartFormDataBody` helper streams the file chunk-by-chunk (~64KB) to avoid loading the entire video into memory. This adds complexity (Content-Length precomputation, `duplex: "half"` on fetch) but keeps memory usage bounded even for 250 MB videos.
 
-**4 surfaces, 2 shipped.** The system is designed for 4 access surfaces: Web (shipped), MCP (shipped), REST API (deferred), x402 wallet-based access (deferred). The `created_via` enum and `principals` table accommodate all four, but only Web and MCP have working code paths today.
+**4 surfaces, 3 shipped.** The system is designed for 4 access surfaces: Web (shipped), MCP (shipped), REST API (shipped), x402 wallet-based access (deferred). The `created_via` enum and `principals` table accommodate all four. Web, MCP, and REST API have working code paths. The REST API uses a `withRestEndpoint` HOF similar to `withMcpTool`, centralizing auth, validation, audit logging, and rate limiting.
+
+**Zod 4 with v3 compatibility.** The codebase runs Zod 4 (`zod@^4.4.3`). REST API and OpenAPI code imports `from "zod"`. MCP tool files import `from "zod/v3"` because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0`, which expects Zod 3 typings. The two coexist via Zod 4's built-in v3 compatibility layer. `z.string().uuid()` was migrated to `z.guid()` in REST schemas because Zod 4's strict RFC 4122 validation rejected some Supabase-generated UUIDs.
+
+**Webhook delivery via Inngest.** Outbound webhook delivery is handled by the `deliver-webhook` Inngest function, not inline in the HTTP request. This decouples delivery latency from the API response. Each delivery is HMAC-SHA256 signed with the subscription's secret. Retries use Inngest's backoff. Subscriptions auto-disable after 10 consecutive failures.
 
 ## Tech stack
 
@@ -500,7 +536,10 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | MCP SDK | @modelcontextprotocol/sdk | 1.29.0 |
 | MCP Handler | mcp-handler | 1.1.0 |
 | HTTP Client | axios | 1.16.0 |
-| Validation | zod | 3.25.76 |
+| Validation | zod (v4, with v3 compat for MCP) | 4.4.3 |
+| OpenAPI | zod-openapi | 5.4.6 |
+| API Docs | @scalar/nextjs-api-reference | 0.10.16 |
+| MDX | @next/mdx + @mdx-js/loader | 16.2.6 / 3.1.1 |
 | UI Components | shadcn (Radix UI) | 2.10.0 |
 | Date Handling | date-fns | 4.1.0 |
 | ID Generation | nanoid / uuid | 5.1.11 / 11.1.1 |
@@ -514,7 +553,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 | File | What it does |
 |------|-------------|
-| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 11 functions |
+| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 12 functions |
 | `src/inngest/client.ts` | Inngest client instance (id: "sharetopus") |
 | `src/inngest/functions/scheduledPostsTick.ts` | Cron: dispatch due scheduled posts every 5 min |
 | `src/inngest/functions/processSinglePost.ts` | Event worker: process one scheduled post |
@@ -540,12 +579,16 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/actions/server/data/finalizeTikTokPostByPublishId.ts` | Shared TikTok finalize (webhook + polling converge here) |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client (bypasses RLS) |
 | `src/lib/utils/generateRequestId.ts` | Web requestId tracing for server actions |
-| `src/lib/types/database.types.ts` | Generated Supabase types (31 tables) |
+| `src/lib/types/database.types.ts` | Generated Supabase types (34 tables) |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper (auth, validation, audit, rate limit) |
+| `src/lib/api/rest/webhooks/dispatch.ts` | Webhook event dispatch to Inngest |
+| `src/lib/api/rest/openapi/buildDocument.ts` | OpenAPI 3.1 document generation |
+| `src/inngest/functions/deliverWebhook.ts` | Inngest function: deliver one webhook event |
 | `src/lib/types/plans.ts` | Plan tiers, tier comparison, price ID mapping |
 | `src/proxy.ts` | Clerk middleware (edge) |
 
 ---
 
-**See also:** [docs/SECURITY.md](./SECURITY.md) (security architecture, threat model), [docs/MCP.md](./MCP.md) (tool inventory, auth flow), [docs/DATABASE.md](./DATABASE.md) (schema details), [docs/INNGEST.md](./INNGEST.md) (background jobs detail)
+**See also:** [docs/SECURITY.md](./SECURITY.md) (security architecture, threat model), [docs/MCP.md](./MCP.md) (tool inventory, auth flow), [docs/REST.md](./REST.md) (REST API endpoints), [docs/WEBHOOKS.md](./WEBHOOKS.md) (webhook subsystem), [docs/DATABASE.md](./DATABASE.md) (schema details), [docs/INNGEST.md](./INNGEST.md) (background jobs detail)
 
 [Back to README](../README.md)
