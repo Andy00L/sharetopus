@@ -1,7 +1,7 @@
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import "server-only";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 

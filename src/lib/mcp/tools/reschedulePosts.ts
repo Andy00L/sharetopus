@@ -2,7 +2,7 @@ import "server-only";
 
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -28,7 +28,7 @@ export function registerReschedulePosts(server: McpServer): void {
         "Change the scheduled time for one or more posts (up to 50). Cancelled posts are automatically resumed (status returns to scheduled).",
       inputSchema: {
         post_ids: z
-          .array(z.guid())
+          .array(z.string().uuid())
           .min(1)
           .max(50)
           .describe(

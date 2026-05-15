@@ -2,7 +2,7 @@ import "server-only";
 
 import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 import { Platform, PostStatus } from "@/lib/types/database.types";

@@ -3,7 +3,7 @@ import "server-only";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { MediaType, Platform } from "@/lib/types/database.types";
 import { withMcpTool } from "../withMcpTool";

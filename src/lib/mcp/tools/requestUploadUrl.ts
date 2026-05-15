@@ -3,7 +3,7 @@ import "server-only";
 import { generateServerSignedUploadUrl } from "@/actions/server/data/generateServerSignedUploadUrl";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 

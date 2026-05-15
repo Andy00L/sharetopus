@@ -4,7 +4,7 @@ import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/sch
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 

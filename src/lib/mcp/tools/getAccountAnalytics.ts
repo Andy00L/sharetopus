@@ -2,7 +2,7 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 import { Platform } from "@/lib/types/database.types";

@@ -3,14 +3,14 @@ import "server-only";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
 
 const postNowItemSchema = z.object({
-  social_account_id: z.guid().describe("UUID of the social account"),
+  social_account_id: z.string().uuid().describe("UUID of the social account"),
   platform: z
     .enum(["linkedin", "tiktok", "pinterest", "instagram"])
     .describe("Target platform"),

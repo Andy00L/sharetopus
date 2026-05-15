@@ -2,7 +2,7 @@ import "server-only";
 
 import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { Platform } from "@/lib/types/database.types";
 import { withMcpTool } from "../withMcpTool";

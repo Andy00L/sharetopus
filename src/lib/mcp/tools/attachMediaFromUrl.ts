@@ -3,7 +3,7 @@ import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
