@@ -771,6 +771,71 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      rest_audit_log: {
+        Row: {
+          id: number;
+          principal_id: string;
+          api_key_id: string;
+          endpoint: string;
+          http_method: string;
+          request_id: string;
+          ip_hash: string | null;
+          user_agent: string | null;
+          status_code: number;
+          outcome:
+            | "success"
+            | "validation_error"
+            | "auth_error"
+            | "rate_limited"
+            | "internal_error";
+          error_code: string | null;
+          latency_ms: number;
+          args_redacted: Json | null;
+          response_summary: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          principal_id: string;
+          api_key_id: string;
+          endpoint: string;
+          http_method: string;
+          request_id: string;
+          ip_hash?: string | null;
+          user_agent?: string | null;
+          status_code: number;
+          outcome:
+            | "success"
+            | "validation_error"
+            | "auth_error"
+            | "rate_limited"
+            | "internal_error";
+          error_code?: string | null;
+          latency_ms: number;
+          args_redacted?: Json | null;
+          response_summary?: Json | null;
+          created_at?: string;
+        };
+        Update: never; // append-only
+        Relationships: [
+          {
+            foreignKeyName: "rest_audit_log_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "rest_audit_log_api_key_id_fkey";
+            columns: ["api_key_id"];
+            isOneToOne: false;
+            referencedRelation: "api_keys";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
       sanctions_screenings: {
         Row: {
           id: number;
@@ -1983,6 +2048,7 @@ export type X402Charge = Tables<"x402_charges">;
 export type X402Refund = Tables<"x402_refunds">;
 export type UsdcFmvDaily = Tables<"usdc_fmv_daily">;
 export type McpAuditLog = Tables<"mcp_audit_log">;
+export type RestAuditLog = Tables<"rest_audit_log">;
 export type X402AccessLog = Tables<"x402_access_log">;
 export type UsageQuota = Tables<"usage_quotas">;
 export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;

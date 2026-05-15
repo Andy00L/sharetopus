@@ -1,6 +1,10 @@
-import { headers } from "next/headers";
 import type { McpPrincipal } from "./auth/types";
-import { hashClientIp } from "./ipHash";
+
+/**
+ * @deprecated Import from `@/lib/api/context` instead. Re-exported
+ * here for backward compatibility during the REST API rollout.
+ */
+export { extractIpHash, extractUserAgent } from "@/lib/api/context";
 
 /**
  * Helper to extract the McpPrincipal from the tool handler's extra context.
@@ -43,30 +47,6 @@ export function extractSessionId(
     | undefined;
   const stashed = authInfo?.extra?.requestSessionId;
   return typeof stashed === "string" ? stashed : null;
-}
-
-/**
- * Reads the client IP from request headers (x-forwarded-for first, then
- * x-real-ip), hashes it, and returns the hex digest. Returns null if no
- * IP header is present.
- */
-export async function extractIpHash(): Promise<string | null> {
-  const h = await headers();
-  const fwd = h.get("x-forwarded-for");
-  const real = h.get("x-real-ip");
-  const raw = fwd ? fwd.split(",")[0].trim() : (real ?? null);
-  return hashClientIp(raw);
-}
-
-/**
- * Reads User-Agent from request headers. Truncates to 512 chars to match
- * mcp_audit_log column behavior.
- */
-export async function extractUserAgent(): Promise<string | null> {
-  const h = await headers();
-  const ua = h.get("user-agent");
-  if (!ua) return null;
-  return ua.length > 512 ? ua.slice(0, 512) : ua;
 }
 
 /**
