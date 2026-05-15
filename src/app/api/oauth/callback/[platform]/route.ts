@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
+import { escapeHtml } from "@/lib/api/oauth/escapeHtml";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { handleOAuthCallback } from "@/lib/x402/oauth/callback/handleOAuthCallback";
 import type { Platform } from "@/lib/x402/connect/types";
@@ -155,11 +156,3 @@ function buildHtmlPage(title: string, message: string): string {
 </html>`;
 }
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}

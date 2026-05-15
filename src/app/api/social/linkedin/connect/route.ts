@@ -2,6 +2,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeLinkedInCode } from "@/lib/api/linkedin/data/exchangeLinkedInCode";
 import { getLinkedInProfile } from "@/lib/api/linkedin/data/getLinkedInProfile";
+import { toJsString } from "@/lib/api/oauth/escapeHtml";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     <title>Connection Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("${errorDescription ?? error}");
+        window.opener.onLinkedInConnectFailure(${toJsString(errorDescription ?? error ?? "")});
         window.close();
       }
     </script>
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
     <title>Security Verification Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Security verification failed");
+        window.opener.onLinkedInConnectFailure(${toJsString("Security verification failed")});
         window.close();
       }
     </script>
@@ -103,7 +104,7 @@ export async function GET(request: NextRequest) {
     <title>Missing Parameters</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Missing code or state");
+        window.opener.onLinkedInConnectFailure(${toJsString("Missing code or state")});
         window.close();
       }
     </script>
@@ -143,7 +144,7 @@ export async function GET(request: NextRequest) {
     <title>Token Exchange Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Token exchange failure");
+        window.opener.onLinkedInConnectFailure(${toJsString("Token exchange failure")});
         window.close();
       }
     </script>
@@ -200,7 +201,7 @@ export async function GET(request: NextRequest) {
     <title>Database Error</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Database error");
+        window.opener.onLinkedInConnectFailure(${toJsString("Database error")});
         window.close();
       }
     </script>
@@ -254,7 +255,7 @@ export async function GET(request: NextRequest) {
     <title>Update Error</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Error updating LinkedIn account");
+        window.opener.onLinkedInConnectFailure(${toJsString("Error updating LinkedIn account")});
         window.close();
       }
     </script>
@@ -303,7 +304,7 @@ export async function GET(request: NextRequest) {
     <title>Creation Error</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("Error creating LinkedIn account");
+        window.opener.onLinkedInConnectFailure(${toJsString("Error creating LinkedIn account")});
         window.close();
       }
     </script>
@@ -361,7 +362,7 @@ export async function GET(request: NextRequest) {
     <title>Unexpected Error</title>
     <script>
       if (window.opener) {
-        window.opener.onLinkedInConnectFailure("An unexpected error occurred");
+        window.opener.onLinkedInConnectFailure(${toJsString("An unexpected error occurred")});
         window.close();
       }
     </script>

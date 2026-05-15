@@ -2,6 +2,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeInstagramCode } from "@/lib/api/instagram/data/exchangeInstagramCode";
 import { getInstagramProfile } from "@/lib/api/instagram/data/getInstagramProfile";
+import { toJsString } from "@/lib/api/oauth/escapeHtml";
 
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
@@ -37,7 +38,7 @@ export async function GET(request: NextRequest) {
     <title>Connection Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("${errorDescription ?? error}");
+        window.opener.onInstagramConnectFailure(${toJsString(errorDescription ?? error ?? "")});
         window.close();
       }
     </script>
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
     <title>Security Verification Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Security verification failed");
+        window.opener.onInstagramConnectFailure(${toJsString("Security verification failed")});
         window.close();
       }
     </script>
@@ -102,7 +103,7 @@ export async function GET(request: NextRequest) {
     <title>Missing Parameters</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Missing authorization code");
+        window.opener.onInstagramConnectFailure(${toJsString("Missing authorization code")});
         window.close();
       }
     </script>
@@ -139,9 +140,7 @@ export async function GET(request: NextRequest) {
     <title>Token Exchange Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("${
-          tokenResponse.message || "Token exchange failure"
-        }");
+        window.opener.onInstagramConnectFailure(${toJsString(tokenResponse.message ?? "Token exchange failure")});
         window.close();
       }
     </script>
@@ -197,9 +196,7 @@ export async function GET(request: NextRequest) {
 <title>Profile Error</title>
 <script>
   if (window.opener) {
-    window.opener.onInstagramConnectFailure("${
-      instagramProfile.message || "Unable to retrieve profile"
-    }");
+    window.opener.onInstagramConnectFailure(${toJsString(instagramProfile.message ?? "Unable to retrieve profile")});
     window.close();
   }
 </script>
@@ -250,7 +247,7 @@ export async function GET(request: NextRequest) {
     <title>Database Error</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Database error");
+        window.opener.onInstagramConnectFailure(${toJsString("Database error")});
         window.close();
       }
     </script>
@@ -308,7 +305,7 @@ export async function GET(request: NextRequest) {
     <title>Update Error</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Error updating Instagram account");
+        window.opener.onInstagramConnectFailure(${toJsString("Error updating Instagram account")});
         window.close();
       }
     </script>
@@ -360,7 +357,7 @@ export async function GET(request: NextRequest) {
     <title>Creation Error</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("Error creating Instagram account");
+        window.opener.onInstagramConnectFailure(${toJsString("Error creating Instagram account")});
         window.close();
       }
     </script>
@@ -418,7 +415,7 @@ export async function GET(request: NextRequest) {
     <title>Unexpected Error</title>
     <script>
       if (window.opener) {
-        window.opener.onInstagramConnectFailure("An unexpected error occurred");
+        window.opener.onInstagramConnectFailure(${toJsString("An unexpected error occurred")});
         window.close();
       }
     </script>

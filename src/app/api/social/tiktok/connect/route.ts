@@ -2,6 +2,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangeTikTokCode } from "@/lib/api/tiktok/data/exchangeTikTokCode";
 import { getTikTokProfile } from "@/lib/api/tiktok/data/getTikTokProfile";
+import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -37,15 +38,13 @@ export async function GET(request: NextRequest) {
     <title>Connection Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onTikTokConnectFailure("${errorDescription ?? error}");
+        window.opener.onTikTokConnectFailure(${toJsString(errorDescription ?? error ?? "")});
         window.close();
       }
     </script>
   </head>
   <body>
-    <p>TikTok connection failed: ${
-      errorDescription ?? error
-    }. This window will close automatically.</p>
+    <p>TikTok connection failed: ${escapeHtml(errorDescription ?? error ?? "")}. This window will close automatically.</p>
   </body>
 </html>
     `,
@@ -72,7 +71,7 @@ export async function GET(request: NextRequest) {
     <title>Security Verification Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onTikTokConnectFailure("Security verification failed");
+        window.opener.onTikTokConnectFailure(${toJsString("Security verification failed")});
         window.close();
       }
     </script>
@@ -104,7 +103,7 @@ export async function GET(request: NextRequest) {
     <title>Missing Parameter</title>
     <script>
       if (window.opener) {
-        window.opener.onTikTokConnectFailure("Missing authorization code");
+        window.opener.onTikTokConnectFailure(${toJsString("Missing authorization code")});
         window.close();
       }
     </script>
@@ -132,7 +131,7 @@ export async function GET(request: NextRequest) {
       );
       const errorHtml = `
         <!DOCTYPE html><html><body>
-        <p>Erreur lors de la connexion: ${exchangeResult.message}</p>
+        <p>Erreur lors de la connexion: ${escapeHtml(exchangeResult.message ?? "")}</p>
         <script>window.close();</script>
         </body></html>`;
       return new NextResponse(errorHtml, {
@@ -285,11 +284,7 @@ export async function GET(request: NextRequest) {
       // Still try to close the popup, maybe show error message first
       const errorHtml = `
         <!DOCTYPE html><html><body>
-        <p>Erreur lors de la connexion: ${
-          integrationError instanceof Error
-            ? integrationError.message
-            : "Erreur inconnue"
-        }</p>
+        <p>Erreur lors de la connexion: ${escapeHtml(integrationError instanceof Error ? integrationError.message : "Erreur inconnue")}</p>
         <script>window.close();</script>
         </body></html>`;
       return new NextResponse(errorHtml, {

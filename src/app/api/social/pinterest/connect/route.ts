@@ -2,6 +2,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { exchangePinterestCode } from "@/lib/api/pinterest/data/exchangePinterestCode";
 import { getPinterestProfile } from "@/lib/api/pinterest/data/getPinterestProfile";
+import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -36,15 +37,13 @@ export async function GET(request: NextRequest) {
     <title>Connection Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onPinterestConnectFailure("${errorDescription ?? error}");
+        window.opener.onPinterestConnectFailure(${toJsString(errorDescription ?? error ?? "")});
         window.close();
       }
     </script>
   </head>
   <body>
-    <p>Pinterest connection failed: ${
-      errorDescription ?? error
-    }. This window will close automatically.</p>
+    <p>Pinterest connection failed: ${escapeHtml(errorDescription ?? error ?? "")}. This window will close automatically.</p>
   </body>
 </html>
         `,
@@ -73,7 +72,7 @@ export async function GET(request: NextRequest) {
     <title>Security Verification Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onPinterestConnectFailure("Security verification failed");
+        window.opener.onPinterestConnectFailure(${toJsString("Security verification failed")});
         window.close();
       }
     </script>
@@ -108,7 +107,7 @@ export async function GET(request: NextRequest) {
     <title>Missing Parameter</title>
     <script>
       if (window.opener) {
-        window.opener.onPinterestConnectFailure("Missing authorization code");
+        window.opener.onPinterestConnectFailure(${toJsString("Missing authorization code")});
         window.close();
       }
     </script>
@@ -145,7 +144,7 @@ export async function GET(request: NextRequest) {
     <title>Token Exchange Failed</title>
     <script>
       if (window.opener) {
-        window.opener.onPinterestConnectFailure("Token exchange failure");
+        window.opener.onPinterestConnectFailure(${toJsString("Token exchange failure")});
         window.close();
       }
     </script>
@@ -315,7 +314,7 @@ export async function GET(request: NextRequest) {
     <title>Unexpected Error</title>
     <script>
       if (window.opener) {
-        window.opener.onPinterestConnectFailure("An unexpected error occurred");
+        window.opener.onPinterestConnectFailure(${toJsString("An unexpected error occurred")});
         window.close();
       }
     </script>
