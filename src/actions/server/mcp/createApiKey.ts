@@ -3,7 +3,7 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
-import { generateMcpApiKey } from "@/lib/mcp/tokens";
+import { generateApiKey } from "@/lib/api/tokens";
 import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
@@ -89,7 +89,7 @@ export async function createApiKey(
       };
     }
 
-    const { rawKey, prefix, tokenHash } = generateMcpApiKey();
+    const { rawKey, prefix, tokenHash } = generateApiKey("mcp");
 
     const millisecondsPerDay = 24 * 60 * 60 * 1000;
     const apiKeyExpiresAtIso = new Date(

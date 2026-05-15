@@ -1,6 +1,6 @@
 import "server-only";
 
-import { isMcpApiKeyToken } from "@/lib/mcp/tokens";
+import { isApiKeyToken } from "@/lib/api/tokens";
 
 import { resolveApiKey } from "./resolvers/apiKey";
 import { applySubscriptionGate } from "./resolvers/applySubscriptionGate";
@@ -43,7 +43,7 @@ export async function resolveMcpPrincipal(
 
   // API key path: single resolver runs verify + (its own light)
   // tracking, then we apply the shared subscription gate.
-  if (isMcpApiKeyToken(bearerToken)) {
+  if (isApiKeyToken(bearerToken, "mcp")) {
     const apiKeyCandidate = await resolveApiKey(bearerToken);
     if (!apiKeyCandidate) return null;
     return applySubscriptionGate(apiKeyCandidate);

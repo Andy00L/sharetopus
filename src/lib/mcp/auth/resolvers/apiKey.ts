@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { extractIpHash } from "@/lib/api/context";
-import { hashToken } from "@/lib/mcp/tokens";
+import { hashToken } from "@/lib/api/tokens";
 
 import type { McpPrincipal } from "../types";
 
