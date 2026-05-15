@@ -1,0 +1,47 @@
+# Authentication
+
+All REST API requests require a Bearer token in the `Authorization` header.
+
+## API keys
+
+Create keys at [/integrations](https://sharetopus.com/integrations). Keys have the prefix `stp_rest_` followed by 64 hex characters.
+
+```bash
+curl https://sharetopus.com/api/v1/posts \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY"
+```
+
+## Key properties
+
+| Property | Description |
+|----------|-------------|
+| Prefix | `stp_rest_` |
+| Scopes | `api:full` (all v1 endpoints) |
+| Expiry | Optional. Set at creation time. |
+| Revocation | Instant via the integrations page or API. |
+
+## Security best practices
+
+- Store keys in environment variables, never in source code.
+- Rotate keys periodically. Revoke any key you suspect is compromised.
+- Use HTTPS for all requests. The API rejects plain HTTP.
+
+## Rate limits
+
+Each endpoint has per-principal rate limits. When exceeded, the API returns `429 Too Many Requests` with a `retry_after_seconds` field.
+
+## Error responses
+
+All errors follow a consistent shape:
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Invalid or expired API key"
+  },
+  "request_id": "req_abc123"
+}
+```
+
+Error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `rate_limited`, `internal_error`.

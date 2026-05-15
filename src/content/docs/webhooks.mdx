@@ -1,0 +1,118 @@
+# Webhooks
+
+Receive real-time notifications when events happen in your Sharetopus account.
+
+## Overview
+
+Instead of polling, subscribe to events and Sharetopus will POST a JSON payload to your HTTPS endpoint. Each delivery is signed with HMAC-SHA256 so you can verify authenticity.
+
+## Create a subscription
+
+```bash
+curl -X POST https://sharetopus.com/api/v1/webhooks \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-server.com/webhook",
+    "events": ["post.scheduled", "post.published", "post.failed"]
+  }'
+```
+
+The response includes a `secret` (starts with `whsec_`). Save it securely. It is shown only once.
+
+## Event types
+
+| Event | Trigger |
+|-------|---------|
+| `post.scheduled` | A post was scheduled |
+| `post.published` | A post was published successfully |
+| `post.failed` | A post failed to publish (terminal) |
+| `connection.connected` | A social account was connected |
+| `connection.expired` | A social account token expired |
+
+## Payload format
+
+```json
+{
+  "event_type": "post.published",
+  "event_id": "evt_abc123",
+  "delivery_id": "del_abc123",
+  "created_at": "2026-07-01T15:00:00Z",
+  "data": {
+    "post_id": "...",
+    "platform": "linkedin"
+  }
+}
+```
+
+## Verifying signatures
+
+Every delivery includes an `X-Sharetopus-Signature` header:
+
+```
+X-Sharetopus-Signature: sha256=<hex-digest>
+```
+
+To verify:
+
+1. Read the raw request body as a string.
+2. Compute `HMAC-SHA256(body, your_webhook_secret)`.
+3. Compare the hex digest with constant-time comparison.
+
+Example (Node.js):
+
+```javascript
+const crypto = require("crypto");
+
+function verify(body, secret, signatureHeader) {
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(body)
+    .digest("hex");
+  const received = signatureHeader.replace("sha256=", "");
+  return crypto.timingSafeEqual(
+    Buffer.from(expected, "hex"),
+    Buffer.from(received, "hex")
+  );
+}
+```
+
+## Retry behavior
+
+Failed deliveries (5xx, timeout, network error) are retried up to 3 times with exponential backoff. After 10 consecutive failures, the subscription is automatically disabled.
+
+Re-enable a disabled subscription:
+
+```bash
+curl -X PATCH https://sharetopus.com/api/v1/webhooks/SUB_ID \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"active": true}'
+```
+
+## Testing
+
+Send a test event to verify your endpoint:
+
+```bash
+curl -X POST https://sharetopus.com/api/v1/webhooks/SUB_ID/test \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY"
+```
+
+## Delivery log
+
+View past deliveries:
+
+```bash
+curl https://sharetopus.com/api/v1/webhooks/SUB_ID/deliveries \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY"
+```
+
+## Replay
+
+Re-send a past delivery:
+
+```bash
+curl -X POST https://sharetopus.com/api/v1/webhooks/SUB_ID/deliveries/DELIVERY_ID/replay \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY"
+```

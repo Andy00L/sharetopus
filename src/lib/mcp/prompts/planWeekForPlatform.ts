@@ -10,6 +10,7 @@ import { z } from "zod";
 export function registerPlanWeekForPlatform(server: McpServer): void {
   server.prompt(
     "plan_week_for_platform",
+    "Plan a full week of content for a specific social platform around a chosen theme",
     {
       platform: z
         .enum(["linkedin", "tiktok", "pinterest", "instagram"])

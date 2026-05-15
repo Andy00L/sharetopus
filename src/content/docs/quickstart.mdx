@@ -1,0 +1,50 @@
+# Quickstart: First post in 5 minutes
+
+Schedule your first post via the Sharetopus REST API.
+
+## 1. Create an API key
+
+Visit [/integrations](https://sharetopus.com/integrations) and click **Create REST API Key**. Copy the key (starts with `stp_rest_`). You will not see it again.
+
+## 2. Connect a social account
+
+If you have not connected a social account yet, visit [/connections](https://sharetopus.com/connections) or use the REST API:
+
+```bash
+curl -X POST https://sharetopus.com/api/v1/connections/initiate \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"platform": "linkedin"}'
+```
+
+Open the returned `connect_url` in your browser to authorize.
+
+## 3. Schedule a post
+
+```bash
+curl -X POST https://sharetopus.com/api/v1/posts \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "platform": "linkedin",
+    "post_type": "text",
+    "description": "Hello from Sharetopus!",
+    "scheduled_at": "2026-07-01T15:00:00Z",
+    "social_account_id": "YOUR_ACCOUNT_UUID"
+  }'
+```
+
+The response includes the post ID and status.
+
+## 4. Check your post
+
+```bash
+curl https://sharetopus.com/api/v1/posts/POST_ID \
+  -H "Authorization: Bearer stp_rest_YOUR_KEY"
+```
+
+## Next steps
+
+- [Authentication guide](/docs/authentication) for key management and scopes
+- [Webhooks guide](/docs/webhooks) for real-time event notifications
+- [Interactive API reference](/docs/api) to explore all endpoints

@@ -31,6 +31,11 @@ export function NavigationItems() {
             <Link href="#pricing">Platforms </Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
+        <NavigationMenuItem>
+          <NavigationMenuLink asChild>
+            <Link href="/docs">Docs </Link>
+          </NavigationMenuLink>
+        </NavigationMenuItem>
       </NavigationMenuList>
     </NavigationMenu>
   );

@@ -1,6 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-
 /**
  * Prompt: repurpose an existing post for other platforms.
  *
@@ -15,6 +14,7 @@ import { z } from "zod";
 export function registerRepurposePost(server: McpServer): void {
   server.prompt(
     "repurpose_post",
+    "Repurpose an existing post for other social platforms with platform-specific adaptations",
     {
       post_id: z
         .string()

@@ -24,6 +24,7 @@ import {
   LogOutIcon,
   MoreVerticalIcon,
   UserCircleIcon,
+  WebhookIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -169,6 +170,12 @@ export function NavUser() {
                 <span className="ml-1">
                   {isLoading ? "Loading..." : "Billing"}
                 </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild className="cursor-pointer">
+                <Link href="/settings/webhooks">
+                  <WebhookIcon className="mr-2 h-4 w-4" />
+                  <span className="ml-1">Webhooks</span>
+                </Link>
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

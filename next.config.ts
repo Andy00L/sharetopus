@@ -1,13 +1,15 @@
 import type { NextConfig } from "next";
+import createMDX from "@next/mdx";
 
 const nextConfig: NextConfig = {
+  pageExtensions: ["ts", "tsx", "mdx"],
+
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
     },
   },
 
-  /* config options here */
   images: {
     remotePatterns: [
       {
@@ -24,24 +26,33 @@ const nextConfig: NextConfig = {
       },
       {
         protocol: "https",
-        hostname: "media.licdn.com", // LinkedIn media domain
+        hostname: "media.licdn.com",
         port: "",
-        pathname: "/**", // Allow any path
+        pathname: "/**",
       },
       {
         protocol: "https",
-        hostname: "qgotbtbdouetxjjdoysz.supabase.co", // Supabase
+        hostname: "qgotbtbdouetxjjdoysz.supabase.co",
         port: "",
-        pathname: "/**", // Allow any path
+        pathname: "/**",
       },
       {
         protocol: "https",
-        hostname: "scontent-iad3-2.cdninstagram.com", // Supabase
+        hostname: "scontent-iad3-2.cdninstagram.com",
         port: "",
-        pathname: "/**", // Allow any path
+        pathname: "/**",
       },
     ],
   },
+
+  async rewrites() {
+    return [
+      // Serve MDX docs as raw markdown for AI agents and CLI tools.
+      { source: "/docs/:slug.md", destination: "/api/docs/:slug" },
+    ];
+  },
 };
 
-export default nextConfig;
+const withMDX = createMDX({ extension: /\.mdx?$/ });
+
+export default withMDX(nextConfig);
