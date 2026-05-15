@@ -60,7 +60,7 @@ MCP route-level rate limiting (100/60s per IP) runs before auth. All other rate 
 | 10 | Concurrent quota race condition | `atomic_increment_quota` Postgres function | `entitlement.ts` |
 | 11 | Monthly cap exhaustion | Per-tier quotas enforced atomically | `entitlement.ts` |
 | 12 | IP tracking privacy leak | SHA-256 hash with configurable salt | `ipHash.ts` |
-| 13 | Sensitive args in audit log | Regex redaction of 13 key patterns + JWT detection | `audit.ts` |
+| 13 | Sensitive args in audit log | Regex redaction of 12 key patterns + JWT detection | `audit.ts` |
 | 14 | Unauthorized MCP access flood | Route-level rate limit: 100/60s per IP (before auth) | MCP route handler |
 | 15 | XSS via MCP `clientInfo` | `sanitizeClientField` strips control chars + HTML injection chars | MCP server init |
 | 16 | Stripe webhook replay | Signature verification + `stripe_webhook_events` idempotency table | Stripe webhook handler |
@@ -388,7 +388,7 @@ Eight tables are append-only (`Update: never` in database types, enforced at the
 
 The `mcp_audit_log` insert happens in `logToolCall`, which runs fire-and-forget after every tool call. Arguments are redacted before insert:
 
-- **13 key patterns** replaced with `[REDACTED]`: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt, and any key containing these as substrings.
+- **12 key patterns** replaced with `[REDACTED]`: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt.
 - **JWT detector** replaces strings matching the three-segment base64url pattern (`xxx.yyy.zzz`) with `[REDACTED_JWT]`.
 - **Truncation** to 4096 chars after redaction.
 

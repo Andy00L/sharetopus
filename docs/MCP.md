@@ -782,7 +782,7 @@ The table has an update-blocking trigger. Rows are append-only.
 
 Before persisting, args pass through `redactSecrets()`:
 
-- **13 key patterns** matched case-insensitively: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt
+- **12 key patterns** matched case-insensitively: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt
 - **JWT detector:** any value matching three base64url segments separated by dots is replaced with `[REDACTED_JWT]`
 - **Truncation:** args are capped at 4,096 characters. Oversized payloads are replaced with `{ _truncated: true, _preview: "..." }`
 

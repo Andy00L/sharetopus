@@ -301,7 +301,7 @@ Platform-specific timestamp formats for video cover images:
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF-guarded HTTP fetch |
 | `src/lib/mcp/tools/request_upload_url.ts` | MCP upload URL tool |
 | `src/lib/mcp/tools/attach_media_from_url.ts` | MCP server-side media attach tool |
-| `src/lib/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed proxy URL builder for TikTok |
+| `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed proxy URL builder for TikTok |
 | `src/lib/types/plans.ts` | STORAGE_LIMITS and plan definitions |
 | `src/inngest/functions/sweep-orphan-storage-files.ts` | Daily orphan file cleanup cron |
 

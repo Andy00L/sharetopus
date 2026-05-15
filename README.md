@@ -1,12 +1,4 @@
-# Sharetopus
-
-Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Instagram. One dashboard, one MCP server, four platforms. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools.
-
-**Production:** [sharetopus.com](https://sharetopus.com)
-
-![Landing Page](./public/landing.png)
-![Dashboard](./public/dashboard.png)
-![Create Post](./public/create-post.png)
+# 🐙 Sharetopus
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
@@ -23,11 +15,19 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 [![REST API](https://img.shields.io/badge/Surface-REST_API_(planned)-9ca3af)]()
 [![x402](https://img.shields.io/badge/Surface-x402_USDC_(planned)-3b82f6)]()
 
-## What is Sharetopus
+Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Instagram. One dashboard, one MCP server, four platforms. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools.
+
+**Production:** [sharetopus.com](https://sharetopus.com)
+
+![Landing Page](./public/landing.png)
+![Dashboard](./public/dashboard.png)
+![Create Post](./public/create-post.png)
+
+## 📦 What is Sharetopus
 
 Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools that let AI agents manage posts, query analytics, and handle media uploads on their behalf. Background jobs (Inngest) handle dispatch, polling, webhook processing, and storage cleanup.
 
-## Surfaces
+## ✨ Surfaces
 
 | Surface | Status | Auth | Description |
 |---------|--------|------|-------------|
@@ -44,11 +44,11 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 
 **x402 Wallet** (planned). Pay-per-action with USDC credits via SIWE wallet authentication. Schema tables exist, code path not built. See [docs/ROADMAP.md](./docs/ROADMAP.md).
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 | Category | Technology | Version |
 |----------|-----------|---------|
-| Framework | Next.js (App Router, Turbopack) | 16.1.6 |
+| Framework | Next.js (App Router, Turbopack) | 16.2.6 |
 | Language | TypeScript | 5.9.3 |
 | UI | React + Tailwind CSS + shadcn/ui | 19.2.0 / 4.2.4 |
 | Auth | Clerk (`@clerk/nextjs`) | 7.3.2 |
@@ -61,7 +61,7 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 
 Full dependency list: [package.json](./package.json).
 
-## Quick Start
+## 🚀 Quick Start
 
 ```bash
 git clone <repo-url>
@@ -76,7 +76,7 @@ Prerequisites: Node.js 20+, Supabase project, Clerk application, Stripe account,
 
 Full setup guide: [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
 
-## Platforms
+## 🌍 Platforms
 
 | Platform | Media Types | Post Model |
 |----------|-------------|------------|
@@ -87,7 +87,7 @@ Full setup guide: [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md).
 
 Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
 
-## MCP Server
+## 🤖 MCP Server
 
 Two transports: Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Both stateless (mcp-handler 1.1.0). Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
 
@@ -100,7 +100,7 @@ Two transports: Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Bot
 
 Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](./docs/MCP.md) for the full tool inventory, parameter schemas, and usage examples.
 
-## Background Jobs
+## ⚡ Background Jobs
 
 11 Inngest functions handle scheduling, posting, polling, and cleanup:
 
@@ -120,7 +120,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 
 See [docs/INNGEST.md](./docs/INNGEST.md).
 
-## Billing
+## 💳 Billing
 
 Three Stripe subscription tiers. MCP access starts at Creator.
 
@@ -132,7 +132,7 @@ Three Stripe subscription tiers. MCP access starts at Creator.
 
 See [docs/BILLING.md](./docs/BILLING.md).
 
-## Documentation
+## 📚 Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -149,7 +149,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/SECURITY.md](./docs/SECURITY.md) | Threat model, SSRF, HMAC proxy, rate limits, audit |
 | [docs/STORAGE.md](./docs/STORAGE.md) | Supabase Storage, signed URLs, orphan sweep |
 
-## Configuration
+## ⚙️ Configuration
 
 Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for the full list):
 
@@ -163,13 +163,13 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 | Security | `MEDIA_PROXY_HMAC_SECRET` (64 hex), `MCP_IP_HASH_SALT` (32 bytes base64) |
 | Platforms | `LINKEDIN_CLIENT_ID/SECRET`, `TIKTOK_CLIENT_KEY/SECRET`, `PINTEREST_CLIENT_ID/SECRET`, `INSTAGRAM_CLIENT_ID/SECRET` |
 
-## Security
+## 🔒 Security
 
 Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Audit logs are append-only with 90-day retention. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Stripe and TikTok webhooks are verified via signatures with idempotency tables preventing replay.
 
 Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 
-## Roadmap
+## 🛣️ Roadmap
 
 **Recently shipped:** TikTok webhook integration, hybrid pricing (MCP Creator+ minimum), withMcpTool HOF refactor, API key expiry (7/30/90/365 days), web requestId tracing, generic adapter pattern, OAuth client trust enforcement, data retention crons.
 
@@ -177,7 +177,7 @@ Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 
 Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 
-## Known Limitations
+## ⚠️ Known Limitations
 
 - Threads, YouTube, X/Twitter, and Facebook are in type definitions but have no backend code.
 - Instagram connect button is commented out in the UI (backend OAuth and posting work).
@@ -186,15 +186,15 @@ Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 - TikTok default privacy is SELF_ONLY (private). Users must select a public level.
 - `@upstash/qstash` is in dependencies but unused (legacy from pre-Inngest era).
 
-## Contributing
+## 🤝 Contributing
 
 This is a private project. See [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for the development setup, code conventions, and deployment process.
 
-## License
+## 📄 License
 
 No LICENSE file in the repository.
 
-## Live
+## 🌐 Live
 
 **Production:** [https://sharetopus.com](https://sharetopus.com)
 

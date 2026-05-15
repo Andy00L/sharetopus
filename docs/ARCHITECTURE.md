@@ -486,7 +486,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 | Category | Package | Version |
 |----------|---------|---------|
-| Framework | next | 16.1.6 |
+| Framework | next | 16.2.6 |
 | React | react / react-dom | 19.2.0 |
 | TypeScript | typescript | 5.9.3 |
 | CSS | tailwindcss | 4.2.4 |
@@ -530,7 +530,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/inngest/functions/platformErrors.ts` | Error classification (retryable vs terminal) |
 | `src/lib/mcp/withMcpTool.ts` | HOF: auth, entitlement, audit, error handling for MCP tools |
 | `src/lib/mcp/entitlement.ts` | Plan gating (Creator+ minimum) + monthly quota enforcement |
-| `src/lib/mcp/auth.ts` | resolveMcpPrincipal (API key + OAuth paths) |
+| `src/lib/mcp/auth/resolve.ts` | resolveMcpPrincipal (API key + OAuth paths) |
 | `src/lib/mcp/audit.ts` | logToolCall, arg redaction, session upsert |
 | `src/lib/mcp/context.ts` | Extract principal, sessionId, ipHash from MCP request |
 | `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic direct-post adapter for all 4 platforms |
@@ -542,7 +542,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/lib/utils/generateRequestId.ts` | Web requestId tracing for server actions |
 | `src/lib/types/database.types.ts` | Generated Supabase types (31 tables) |
 | `src/lib/types/plans.ts` | Plan tiers, tier comparison, price ID mapping |
-| `src/middleware.ts` | Clerk middleware (edge) |
+| `src/proxy.ts` | Clerk middleware (edge) |
 
 ---
 

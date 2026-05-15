@@ -216,17 +216,17 @@ The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analyti
 | File | Relevance |
 |------|-----------|
 | `src/app/api/webhooks/tiktok/publish/route.ts` | TikTok webhook endpoint |
-| `src/lib/inngest/functions/processTikTokPublishWebhook.ts` | Webhook Inngest processor |
-| `src/lib/api/tiktok/finalizeTikTokPostByPublishId.ts` | Shared finalize (poll + webhook) |
+| `src/inngest/functions/processTikTokPublishWebhook.ts` | Webhook Inngest processor |
+| `src/actions/server/data/finalizeTikTokPostByPublishId.ts` | Shared finalize (poll + webhook) |
 | `src/lib/mcp/withMcpTool.ts` | HOF wrapping all 18 tools |
 | `src/lib/mcp/auth/resolve.ts` | Auth resolution, REST API phase 2 comment |
 | `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic adapter pattern |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard |
 | `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement |
-| `src/components/ApiKeysCard.tsx` | API key expiry display |
-| `src/lib/inngest/functions/sweepStaleOauthClients.ts` | OAuth trust sweep cron |
-| `src/lib/inngest/functions/cleanupMcpAuditLog.ts` | Audit log retention cron |
-| `src/lib/inngest/functions/cleanupStripeWebhookEvents.ts` | Stripe events retention cron |
-| `src/lib/inngest/functions/cleanupCancelledPostsAfterGrace.ts` | Cancelled posts cleanup cron |
+| `src/app/(protected)/integrations/components/ApiKeysCard.tsx` | API key expiry display |
+| `src/inngest/functions/sweepStaleOauthClientsCron.ts` | OAuth trust sweep cron |
+| `src/inngest/functions/cleanupMcpAuditLogCron.ts` | Audit log retention cron |
+| `src/inngest/functions/cleanupStripeWebhookEvents.ts` | Stripe events retention cron |
+| `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Cancelled posts cleanup cron |
 | `i18n-config.ts` | i18n language configuration |
 | `package.json` | Dependency declarations (x402, QStash, cdp-sdk) |

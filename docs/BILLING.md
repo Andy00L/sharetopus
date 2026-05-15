@@ -84,9 +84,8 @@ Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to g
 
 - `active`
 - `trialing`
-- `past_due`
 
-Returns `false` for `cancelled` or no subscription. Defaults to `false` on error (fail-closed).
+Returns `false` for `past_due`, `cancelled`, or no subscription. Defaults to `false` on error (fail-closed).
 
 ## Plan gating
 

@@ -287,15 +287,18 @@ Platform-specific options are stored in the `post_options` JSONB column on `sche
 | `src/inngest/functions/platformErrors.ts` | Error classification (retryable vs terminal) |
 | `src/inngest/functions/sweepStuckDirectPosts.ts` | Sweep for stuck `pending_direct_posts` rows |
 | `src/inngest/functions/sweepOrphanStorageFiles.ts` | Daily cleanup of unreferenced storage files |
-| `src/inngest/functions/cleanupCancelledPostsAfterGrace.ts` | 7-day grace period cleanup after subscription cancel |
-| `src/core/posting/schedulePostInternal.ts` | Core scheduling logic, idempotency handling |
-| `src/core/posting/directPostBatch.ts` | Fan-out for direct posts (max 30, rate limited) |
-| `src/core/posting/schedulePostBatch.ts` | Fan-out for scheduled posts (max 50, rate limited) |
-| `src/core/posting/finalizePendingDirectPost.ts` | Idempotent finalization of direct post lock rows |
-| `src/core/posting/cancelResumeReschedule.ts` | Cancel, resume, reschedule, delete operations |
-| `src/core/posting/subscriptionPostCancel.ts` | Subscription-triggered cancel and resume |
-| `src/core/storage/deleteSupabaseFile.ts` | Checks both lock tables before deleting media |
-| `src/core/storage/cleanupMediaIfUnreferenced.ts` | Cross-table reference check before media removal |
+| `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | 7-day grace period cleanup after subscription cancel |
+| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | Core scheduling logic, fan-out for scheduled posts (max 50, rate limited) |
+| `src/actions/server/directPostActions/directPostBatch.ts` | Fan-out for direct posts (max 30, rate limited) |
+| `src/actions/server/data/pendingDirectPosts.ts` | Idempotent finalization of direct post lock rows |
+| `src/actions/server/scheduleActions/cancel/cancelScheduledPostBatch.ts` | Cancel scheduled posts |
+| `src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts` | Resume cancelled posts |
+| `src/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch.ts` | Reschedule posts |
+| `src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts` | Delete scheduled posts |
+| `src/actions/server/data/cancelFutureScheduledPostsOnSubCancel.ts` | Subscription-triggered cancel |
+| `src/actions/server/data/resumeCancelledPostsOnResubscribe.ts` | Resume posts on resubscribe |
+| `src/actions/server/data/storageFiles/deleteSupabaseFile.ts` | Checks both lock tables before deleting media |
+| `src/inngest/functions/processSinglePostHelpers.ts` | Cross-table reference check before media removal |
 
 ---
 

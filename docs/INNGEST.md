@@ -251,8 +251,6 @@ Truncates MCP audit log entries older than 90 days. Uses the service-role client
 | signedUrlTtlS | 300 | `SIGNED_URL_TTL_S` |
 | tikTokPublishPollMaxAttempts | 60 | |
 | tikTokPublishPollIntervalMs | 60,000 (60 seconds) | |
-| directPostStatusPollIntervalMs | 1,500 | `DIRECT_POST_POLL_INTERVAL_MS` |
-| directPostStatusPollMaxAttempts | 120 | `DIRECT_POST_POLL_MAX_ATTEMPTS` |
 | pollWindowS | 120 | `POLL_WINDOW_S` |
 
 ## Cron schedule coordination

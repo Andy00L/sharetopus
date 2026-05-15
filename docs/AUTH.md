@@ -273,9 +273,9 @@ The `mcp_oauth_clients` table tracks every OAuth client that has authenticated a
 
 **First sight (new client_id):** The system upserts a row into `mcp_oauth_clients`. If the registering user has fewer than 5 verified clients, the new client is auto-verified. Otherwise it is inserted as unverified.
 
-**Subscription cancel:** All `verified` clients belonging to the user are demoted to `unverified` (see `demoteOauthClientsOnCancel`).
+**Subscription cancel:** All `verified` clients belonging to the user are demoted to `unverified` (see `demoteOauthClientsOnCancel`). Revoked clients (`revoked_at IS NOT NULL`) are excluded from demotion.
 
-**Resubscribe:** Up to 5 clients are promoted back to `verified`.
+**Resubscribe:** Unverified clients are promoted back to `verified`, filling available slots up to the 5-client-per-user cap. Blocked clients are never auto-promoted (requires admin intervention). Revoked clients are excluded from promotion.
 
 **Stale cleanup:** Unverified clients older than 90 days with no recent sessions are purged by the `sweep-stale-oauth-clients` Inngest cron at 04:00 UTC daily.
 

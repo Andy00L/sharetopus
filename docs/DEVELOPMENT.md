@@ -292,7 +292,6 @@ Vercel function timeout is configured per route using Next.js route segment conf
 | `src/app/api/inngest/route.ts` | 300s |
 | `src/app/api/x402/register/route.ts` | 60s |
 | `src/app/api/x402/connect/route.ts` | 60s |
-| `src/app/api/direct/**/*.ts` (via `vercel.json`) | 60s |
 | All other routes | Vercel default |
 
 ### Dev/prod environment strategy
@@ -311,7 +310,7 @@ Production uses Vercel environment variables with production keys. `NODE_ENV=pro
 |---|---|
 | `package.json` | Scripts, dependencies |
 | `tsconfig.json` | Path aliases, compiler options |
-| `vercel.json` | Function duration overrides for `api/direct/**` |
+| `vercel.json` | Vercel deployment configuration |
 | `.env.example` | Full list of environment variables with documentation |
 | `src/lib/types/plans.ts` | Stripe product and price ID configuration |
 | `src/app/api/mcp/[transport]/route.ts` | MCP server route (maxDuration 300) |
