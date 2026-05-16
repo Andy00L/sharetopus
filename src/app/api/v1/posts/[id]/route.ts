@@ -174,6 +174,7 @@ export const PATCH = withRestEndpoint({
       .from("scheduled_posts")
       .select("*")
       .eq("id", postId)
+      .eq("principal_id", ctx.principal.principalId)
       .single();
 
     if (fetchError || !updatedRow) {

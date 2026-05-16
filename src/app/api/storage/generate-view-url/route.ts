@@ -1,6 +1,12 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+
+const ViewUrlBodySchema = z.object({
+  path: z.string().min(1).max(2048),
+  expiresIn: z.coerce.number().int().min(1).max(3600).default(300),
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,14 +23,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { path, expiresIn } = await request.json();
-
-    if (!path || !expiresIn) {
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
       return NextResponse.json(
-        { success: false, error: "Path is required" },
+        { success: false, error: "Request body is not valid JSON" },
         { status: 400 }
       );
     }
+
+    const parseResult = ViewUrlBodySchema.safeParse(rawBody);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { success: false, error: "Invalid request body", issues: parseResult.error.issues },
+        { status: 400 }
+      );
+    }
+    const { path, expiresIn } = parseResult.data;
 
     if (!path.startsWith(`${userId}/`)) {
       console.warn(
