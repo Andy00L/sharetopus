@@ -32,9 +32,11 @@ export type OAuthClientHints = {
  *   3c. If row exists otherwise -> allow + cache
  *   4.  If row does NOT exist -> firstSightInsert() (not cached)
  *
- * Fails OPEN on lookup errors. Blocking legitimate users because the
- * DB hiccupped is worse than allowing an unknown client briefly.
- * Clerk token verification has already succeeded.
+ * Fails CLOSED on lookup errors. Clerk token verification and the
+ * subscription gate have already passed; this trust check is the
+ * admin override layer (blocked / revoked enforcement). A DB hiccup
+ * briefly denying a legit client is acceptable; bypassing an admin
+ * block is not.
  *
  * @param clientId   OAuth client ID from the Clerk-issued token
  * @param principalId User ID who is authenticating (consent giver)
@@ -73,9 +75,10 @@ export async function checkOAuthClientTrust(
         `[checkOAuthClientTrust] Lookup failed for ${clientId}:`,
         lookupErr.message,
       );
-      // Fail open. Do NOT cache: we want the next request to retry
-      // the SELECT instead of locking in a "lookup failed" state.
-      return { allowed: true };
+      // Fail CLOSED. Clerk token + subscription gate already passed.
+      // Trust check is the admin override layer; err on enforcement.
+      // Do NOT cache so the next request retries the SELECT.
+      return { allowed: false, reason: "lookup_failed" };
     }
 
     if (existing) {
@@ -108,7 +111,7 @@ export async function checkOAuthClientTrust(
       "[checkOAuthClientTrust] Unexpected error:",
       err instanceof Error ? err.message : err,
     );
-    return { allowed: true };
+    return { allowed: false, reason: "lookup_failed" };
   }
 }
 
@@ -181,7 +184,7 @@ async function firstSightInsert(
       `[firstSightInsert] INSERT failed for ${clientId}:`,
       insertErr.message,
     );
-    return { allowed: true }; // fail open after INSERT failure
+    return { allowed: false, reason: "lookup_failed" };
   }
 
   // Cache the freshly-inserted row so the next request from this
