@@ -23,7 +23,8 @@ export const MAX_ARGS_LENGTH = 4096;
 /**
  * Recursively walks an object and replaces values whose keys match
  * REDACT_KEYS with "[REDACTED]". Also catches anything that looks
- * like a JWT (three dot-separated base64 segments).
+ * like a JWT (three dot-separated base64 segments). Handles arrays
+ * at any nesting depth.
  */
 export function redactSecrets(
   obj: Record<string, unknown>,
@@ -32,19 +33,32 @@ export function redactSecrets(
   for (const [key, value] of Object.entries(obj)) {
     if (REDACT_KEYS.test(key)) {
       result[key] = "[REDACTED]";
-    } else if (typeof value === "string" && looksLikeJwt(value)) {
-      result[key] = "[REDACTED_JWT]";
-    } else if (
-      value !== null &&
-      typeof value === "object" &&
-      !Array.isArray(value)
-    ) {
-      result[key] = redactSecrets(value as Record<string, unknown>);
     } else {
-      result[key] = value;
+      result[key] = redactValue(value);
     }
   }
   return result;
+}
+
+/**
+ * Apply redaction to any value recursively.
+ *
+ * - String: check for JWT pattern
+ * - Plain object: recurse via redactSecrets (key-based redaction)
+ * - Array: map redactValue over every element
+ * - null / undefined / other primitives: pass through unchanged
+ */
+function redactValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return looksLikeJwt(value) ? "[REDACTED_JWT]" : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(redactValue);
+  }
+  if (value !== null && typeof value === "object") {
+    return redactSecrets(value as Record<string, unknown>);
+  }
+  return value;
 }
 
 /** Rough JWT detector: three base64url segments separated by dots. */
