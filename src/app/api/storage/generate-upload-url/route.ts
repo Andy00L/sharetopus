@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
     // 2. Parse body (same shape as before for backward compat)
     const body = await req.json();
-    const { filename, contentType, fileSize, isScheduled, bucketName } = body;
+    const { filename, contentType, fileSize, isScheduled } = body;
 
     if (!filename || !contentType || !fileSize) {
       console.error("[Generate Upload URL] Missing parameters:", {
@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
       contentType,
       fileSize,
       countTowardStorage: isScheduled === true,
-      bucketName,
     });
 
     if (!result.success) {

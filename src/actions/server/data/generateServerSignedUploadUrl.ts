@@ -30,7 +30,6 @@ export interface GenerateUploadUrlInput {
   contentType: string;
   fileSize: number;
   countTowardStorage: boolean;
-  bucketName?: string;
 }
 
 export type GenerateUploadUrlReason =
@@ -88,7 +87,7 @@ export async function generateServerSignedUploadUrl(
   }
 
   // 2. Resolve bucket
-  const bucket = input.bucketName ?? process.env.SUPABASE_BUCKET_NAME;
+  const bucket = process.env.SUPABASE_BUCKET_NAME;
   if (!bucket) {
     console.error(
       "[generateServerSignedUploadUrl] SUPABASE_BUCKET_NAME not configured"

@@ -50,11 +50,11 @@ export const GET = withRestEndpoint({
     }
 
     // Step 3: get storage usage via RPC.
-    const bucketName =
+    const storageBucket =
       process.env.SUPABASE_BUCKET_NAME ?? "scheduled-videos";
     const { data: storageBytes, error: storageError } =
       await adminSupabase.rpc("get_user_storage_bytes", {
-        _bucket: bucketName,
+        _bucket: storageBucket,
         _prefix: `${ctx.principal.principalId}/`,
       });
 

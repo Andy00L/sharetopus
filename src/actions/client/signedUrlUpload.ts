@@ -27,8 +27,7 @@ export async function getSignedUploadUrl(
   filename: string,
   contentType: string,
   fileSize: number,
-  isScheduled: boolean,
-  bucketName: string = "scheduled-videos"
+  isScheduled: boolean
 ): Promise<SignedUrlResponse> {
   try {
     const response = await fetch("/api/storage/generate-upload-url", {
@@ -41,7 +40,6 @@ export async function getSignedUploadUrl(
         contentType,
         fileSize,
         isScheduled,
-        bucketName,
       }),
     });
 
