@@ -148,13 +148,17 @@ Upgraded from Zod 3 to Zod 4 (`zod@^4.4.3`). REST API and OpenAPI code imports `
 
 ## Mid-Term (1-3 Months)
 
-### x402 Wallet Access
+### x402 Wallet Access (IMPLEMENTED)
 
-Wallet-based authentication using SIWE (Sign-In With Ethereum). Users pay per-action with USDC credits instead of a monthly subscription.
+Wallet-based pay-per-call access for AI agents via the x402 protocol. Agents pay USDC per action on Base or Solana. No Stripe subscription, no Clerk session, no website account.
 
-Schema tables exist and are migrated: `wallets`, `wallet_credits`, `wallet_credits_ledger`, `x402_charges`, `x402_refunds`, `x402_access_log`, `pricing_actions`, `siwe_nonces`, `usdc_fmv_daily`, `sanctions_screenings`. The `principals.kind=wallet` path and `created_via=x402` enum are wired. Dependencies installed: `@x402/core`, `@x402/evm`, `@coinbase/cdp-sdk`.
+**Status:** Fully implemented. 10 paid action routes under `/api/x402/*`, shared middleware (`x402PaidEndpoint` HOF), 1-step charge lifecycle (settled/refunded/failed), sanctions gating, and automatic refund on DB failure.
 
-No code path is built. This is schema-only at this point. Five x402-related env vars (`X402_HMAC_SECRET`, `X402_INSTAGRAM_REDIRECT_URI`, `X402_LINKEDIN_REDIRECT_URI`, `X402_PINTEREST_REDIRECT_URI`, `X402_TIKTOK_REDIRECT_URI`) are referenced in code but intentionally excluded from `.env.example` until the x402 path ships.
+**Routes:** post-now, schedule, upload-url, reauth, reschedule, cancel, delete, connections, scheduled-posts, history.
+
+**Infrastructure:** `src/lib/x402/middleware/x402PaidEndpoint.ts` (HOF), `src/lib/x402/charges/insertX402Charge.ts`, response builders, wallet storage quota enforcement, 2 cleanup crons (siwe_nonces, x402_access_log).
+
+**Pricing:** Seed SQL at `/x402_pricing_actions_seed.sql`. Ranges from $0.001 (list/cancel/delete) to $1.00 (video post).
 
 ### Additional Platforms
 

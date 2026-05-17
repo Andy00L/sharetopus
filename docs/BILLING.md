@@ -207,18 +207,42 @@ flowchart TD
     J --> K[sweep-orphan-storage-files<br>cleans media at 03:00 UTC next day]
 ```
 
-## Future: x402 (deferred)
+## x402 Pay-Per-Call
 
-Schema tables exist for wallet-based anonymous payments:
+AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base or Solana. No Stripe subscription required. Auth is via X-PAYMENT header (signed wallet payment).
 
-- `wallet_credits`: Balance tracking
-- `wallet_credits_ledger`: Credit transaction history
-- `x402_charges`: Per-action payment records
-- `x402_refunds`: Refund records
-- `x402_access_log`: Access audit trail
-- `pricing_actions`: Action pricing definitions
+### Pricing
 
-No code path is built for these. See [docs/ROADMAP.md](./ROADMAP.md).
+| Action | USDC | Description |
+|--------|------|-------------|
+| `register` | $1.00 | One-time wallet registration |
+| `connect_account` | $0.50 | OAuth connection or re-auth |
+| `post.text` | $0.50 | Single text post |
+| `post.image` | $0.75 | Single image post |
+| `post.video` | $1.00 | Single video post |
+| `upload_url` | $0.10 | Mint signed upload URL |
+| `reschedule` | $0.10 | Reschedule one post |
+| `cancel` | $0.001 | Cancel scheduled posts |
+| `delete` | $0.001 | Hard delete posts |
+| `list_connections` | $0.001 | Read social connections |
+| `list_posts` | $0.001 | Read scheduled posts |
+| `list_history` | $0.001 | Read content history |
+
+Prices are stored in the `pricing_actions` table. Seed SQL: `/x402_pricing_actions_seed.sql`.
+
+### Refund Policy
+
+- **Refundable:** Atomic DB insert failures after on-chain settlement trigger automatic refund.
+- **Non-refundable:** Publish failures at Inngest execute time (post.text, post.image, post.video). Pay-per-attempt model.
+- Refund records stored in `x402_refunds`. On-chain tx hash included in error response.
+
+### Charge Lifecycle
+
+Status flow: `settled` (default after INSERT) -> `refunded` (handler failure + refund) or `failed` (non-refundable error).
+
+### Storage
+
+Wallet users get 5 GB aggregate storage (same as Starter tier, independent constant `WALLET_STORAGE_LIMIT`). Per-file caps: 8 MB image, 250 MB video.
 
 ## Source files referenced
 
