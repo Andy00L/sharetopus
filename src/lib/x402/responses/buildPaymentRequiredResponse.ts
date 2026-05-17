@@ -8,7 +8,7 @@ import type { PaymentRequiredChallengeBody } from "@/lib/x402/register/handleReg
  *
  * Status: 402
  * Headers: Content-Type: application/json
- * Body: PaymentRequiredChallengeBody (x402 V2 spec + siweNonce extension)
+ * Body: PaymentRequiredChallengeBody (x402 V2 spec with extensions field)
  */
 export function buildPaymentRequiredResponse(
   body: PaymentRequiredChallengeBody

@@ -19,7 +19,7 @@ export type RegisterChallengeResult =
 /**
  * x402 protocol 402 response body with bundled SIWE nonce.
  *
- * The siweNonce and siweExpiresAt fields are extensions to the x402 spec.
+ * siweNonce and siweExpiresAt live inside `extensions` per x402 v2 spec.
  * They allow the agent to construct a SIWE message in a single round-trip.
  */
 export interface PaymentRequiredChallengeBody {
@@ -34,8 +34,10 @@ export interface PaymentRequiredChallengeBody {
     maxTimeoutSeconds: 300;
     extra: Record<string, unknown>;
   }>;
-  siweNonce: string;
-  siweExpiresAt: string;
+  extensions: {
+    siweNonce: string;
+    siweExpiresAt: string;
+  };
   error?: string;
 }
 
@@ -101,8 +103,10 @@ export async function handleRegisterChallenge(
         extra: {},
       },
     ],
-    siweNonce: nonceResult.nonce,
-    siweExpiresAt: nonceResult.expiresAt,
+    extensions: {
+      siweNonce: nonceResult.nonce,
+      siweExpiresAt: nonceResult.expiresAt,
+    },
   };
 
   return { ok: true, challengeBody };

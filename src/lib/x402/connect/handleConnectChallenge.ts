@@ -85,8 +85,10 @@ export async function handleConnectChallenge(
     ],
     // No SIWE nonce for connect: wallet is already registered.
     // Use empty strings to satisfy the type; the agent ignores these.
-    siweNonce: "",
-    siweExpiresAt: "",
+    extensions: {
+      siweNonce: "",
+      siweExpiresAt: "",
+    },
   };
 
   return { ok: true, challengeBody };
