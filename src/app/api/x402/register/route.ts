@@ -32,7 +32,7 @@ const ENDPOINT_PATH = "/api/x402/register";
  *   - If X-PAYMENT present: verify SIWE + payment, settle, atomic DB insert
  *
  * Query params:
- *   ?network=base-sepolia    use testnet network instead of default
+ *   ?network=polygon    override default network (mainnet only)
  *
  * Auth: none at request level. Wallet identity established via SIWE +
  * payment signature.
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const userAgent = await extractUserAgent();
 
   // ── Resolve network from query param ───────────────────────────────
-  // Default: mainnet (Drew decision #7). Testnet via ?network=base-sepolia.
+  // Default: mainnet base. Override with ?network=polygon|arbitrum|solana.
   const url = new URL(request.url);
   const networkParam = url.searchParams.get("network");
   const network = networkParam

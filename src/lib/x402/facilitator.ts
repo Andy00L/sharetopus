@@ -431,7 +431,7 @@ async function refundEvm(
 
   // CDP sendTransaction for EVM.
   // The network name in WalletChain matches SendEvmTransactionBodyNetwork
-  // for base, base-sepolia, polygon, arbitrum.
+  // for base, polygon, arbitrum.
   const result = await cdp.evm.sendTransaction({
     address: senderAddress as `0x${string}`,
     transaction: {
@@ -439,7 +439,7 @@ async function refundEvm(
       data: calldata,
       value: BigInt(0),
     },
-    network: input.network.name as "base" | "base-sepolia" | "polygon" | "arbitrum",
+    network: input.network.name as "base" | "polygon" | "arbitrum",
   });
 
   return {

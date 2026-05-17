@@ -56,10 +56,8 @@ export async function refundSolana(
   try {
     const cdp = getCdpClient();
 
-    // CDP Solana network mapping
-    const cdpNetwork = input.network.isTestnet
-      ? ("solana-devnet" as const)
-      : ("solana" as const);
+    // CDP Solana network mapping (testnets removed from registry)
+    const cdpNetwork = "solana" as const;
 
     // For SPL token transfers via CDP, we need to build the transaction
     // using @solana/kit primitives and send via cdp.solana.sendTransaction.

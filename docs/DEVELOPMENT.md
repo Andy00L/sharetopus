@@ -210,7 +210,6 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `X402_RECIPIENT_EVM` | For x402 | EVM wallet address for USDC payments |
 | `X402_RECIPIENT_SOLANA` | For x402 | Solana wallet address for USDC payments |
 | `X402_DEFAULT_NETWORK` | No | Default: `base` |
-| `X402_TESTNET_NETWORK` | No | Default: `base-sepolia` |
 | `X402_FACILITATOR_URL` | No | Default: Coinbase hosted facilitator |
 | `CDP_WEBHOOK_SIGNING_SECRET` | For x402 | HMAC verification of CDP webhook events |
 

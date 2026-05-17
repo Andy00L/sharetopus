@@ -39,7 +39,7 @@ const VALID_PLATFORMS = new Set<Platform>([
  *
  * Query params:
  *   ?platform=linkedin|tiktok|pinterest|instagram (required)
- *   ?network=base-sepolia (optional, defaults to base mainnet)
+ *   ?network=polygon|arbitrum|solana (optional, defaults to base mainnet)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const startMs = performance.now();
