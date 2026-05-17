@@ -348,16 +348,37 @@ openssl rand -base64 32
 
 ---
 
-## Future: wallet authentication (deferred)
+## x402 Wallet Authentication (IMPLEMENTED)
 
-The `principals` / `wallets` schema is in place for x402 wallet-based anonymous access. The planned flow:
+AI agents authenticate via the x402 payment protocol. No session, no API key, no Clerk. Identity is established through the payment signature itself.
 
-1. User presents a SIWE (Sign-In With Ethereum) signature
-2. System creates or finds a `principal` with `kind=wallet`
-3. Wallet credits are checked against `wallet_credits`
-4. Tool calls are charged to the wallet balance
+### Registration Flow (POST /api/x402/register)
 
-This code path is not built. The `wallets` table FK to `principals` exists but is unused. See [docs/ROADMAP.md](./ROADMAP.md).
+1. Agent sends POST without X-PAYMENT header, receives 402 challenge + SIWE nonce.
+2. Agent signs SIWE message with their wallet (proves ownership of address).
+3. Agent signs a USDC payment authorization (EIP-3009 `transferWithAuthorization`).
+4. Agent sends both signatures in X-PAYMENT header + request body.
+5. Server verifies SIWE, verifies payment via Coinbase facilitator, settles on-chain.
+6. Atomic DB insert creates: `principals` (kind=wallet), `wallets`, `sanctions_screenings`, `x402_charges`, `wallet_credits`.
+
+### Paid Action Flow (all other /api/x402/* routes)
+
+1. Agent includes X-PAYMENT header with signed USDC payment for the action's price.
+2. `x402PaidEndpoint` middleware: verify payment (off-chain), resolve wallet principal from payer address, sanctions gate, settle on-chain, insert charge, execute business logic.
+3. If business logic fails and is refundable: automatic on-chain USDC refund.
+4. Success response includes X-PAYMENT-RESPONSE header (base64 SettleResponse).
+
+### Wallet Principal Resolution
+
+Payer address is extracted from the payment signature (never from request body). Looked up via `resolveWalletPrincipal(address)` which queries `wallets` table case-insensitively. Wallet must be registered first (via /api/x402/register).
+
+### Sanctions Gating
+
+`applyWalletGate(walletId)` checks `wallets.sanctions_status`. Rejects "sanctioned", accepts "clean" and "unchecked". Fail-closed on DB errors. KYT screening also runs during payment verification via the Coinbase facilitator.
+
+### Networks
+
+EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Base mainnet. Override via `?network=base-sepolia` query param.
 
 ---
 
