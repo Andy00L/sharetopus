@@ -12,8 +12,8 @@ import { handleRegisterChallenge } from "@/lib/x402/register/handleRegisterChall
 import { handleRegisterVerify } from "@/lib/x402/register/handleRegisterVerify";
 import { handleRegisterSolanaVerify } from "@/lib/x402/register/handleRegisterSolanaVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
-import { buildSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
-import { buildErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
+import { buildRegisterSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
+import { buildRegisterErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 import type { RegisterNetworkContext } from "@/lib/x402/register/types";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ipHash,
         userAgent,
       });
-      return buildErrorResponse({
+      return buildRegisterErrorResponse({
         kind: "rate_limited",
         retryAfterSeconds: rateLimitResult.resetIn ?? 60,
       });
@@ -169,7 +169,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       userAgent,
     });
 
-    return buildErrorResponse(result.error);
+    return buildRegisterErrorResponse(result.error);
   }
 
   // ── Success ────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     userAgent,
   });
 
-  return buildSuccessResponse(
+  return buildRegisterSuccessResponse(
     result.payload,
     result.settleResponseHeader
   );

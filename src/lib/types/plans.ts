@@ -149,6 +149,11 @@ export const TIER_STORAGE_LIMITS: Record<PlanTier, number> = {
 // Fallback for users with no resolvable tier (most restrictive cap).
 export const DEFAULT_STORAGE_LIMIT: number = 5 * 1024 * 1024 * 1024; // 5 GB
 
+// Storage limit for x402 wallet users (anonymous, pay-per-call).
+// Single source of truth. Independent from TIER_STORAGE_LIMITS and DEFAULT_STORAGE_LIMIT.
+// Bump independently if wallet storage policy changes.
+export const WALLET_STORAGE_LIMIT: number = 5 * 1024 * 1024 * 1024; // 5 GB
+
 /**
  * Tier hierarchy used by MCP entitlement gates and any other code
  * that needs to compare plan levels. Order is rank: higher index

@@ -1,8 +1,6 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { getUserStorageBytes } from "@/lib/storage/getUserStorageBytes";
 import { TIER_STORAGE_LIMITS, DEFAULT_STORAGE_LIMIT, type PlanTier } from "@/lib/types/plans";
-
-const BUCKET = "scheduled-videos";
 
 export type StorageQuotaOk = {
   success: true;
@@ -22,8 +20,8 @@ export type StorageQuotaResult = StorageQuotaOk | StorageQuotaErr;
  * Checks whether adding `additionalBytes` to the principal's current
  * storage usage would exceed their plan's aggregate storage cap.
  *
- * Uses the `get_user_storage_bytes` Postgres RPC (reads storage.objects
- * directly) so the result is accurate regardless of file count.
+ * Uses getUserStorageBytes (wraps the `get_user_storage_bytes` RPC)
+ * so the result is accurate regardless of file count.
  *
  * Returns errors as values. Never throws across this boundary.
  */
@@ -36,21 +34,17 @@ export async function enforceStorageQuota(
     ? TIER_STORAGE_LIMITS[tier]
     : DEFAULT_STORAGE_LIMIT;
 
-  const { data, error } = await adminSupabase.rpc("get_user_storage_bytes", {
-    _bucket: BUCKET,
-    _prefix: `${principalId}/`,
-  });
+  const storageResult = await getUserStorageBytes(principalId);
 
-  if (error) {
-    console.error("[enforceStorageQuota] RPC failed:", error);
+  if (!storageResult.success) {
     return {
       success: false,
-      message: "Failed to verify storage quota. Please retry.",
+      message: storageResult.message,
       reason: "lookup_failed",
     };
   }
 
-  const currentBytes = Number(data ?? 0);
+  const currentBytes = storageResult.currentBytes;
   const projected = currentBytes + additionalBytes;
 
   if (projected > cap) {
