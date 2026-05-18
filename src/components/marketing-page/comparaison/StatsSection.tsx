@@ -4,7 +4,7 @@ export default function StatsSection() {
       <div className="max-w-6xl mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           {/* Weekly Time Saved */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border">
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-[var(--line-2)]">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
                 <svg
@@ -21,14 +21,14 @@ export default function StatsSection() {
                   />
                 </svg>
               </div>
-              <span className="text-sm text-gray-500">Weekly Time Saved ~</span>
+              <span className="text-sm text-[var(--muted)]">Weekly Time Saved ~</span>
             </div>
             <div className="text-3xl font-bold text-green-600 mb-1">3h 4m</div>
-            <div className="text-sm text-gray-500">Per active user</div>
+            <div className="text-sm text-[var(--muted)]">Per active user</div>
           </div>
 
           {/* Yearly Time Saved */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border">
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-[var(--line-2)]">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
                 <svg
@@ -45,16 +45,16 @@ export default function StatsSection() {
                   />
                 </svg>
               </div>
-              <span className="text-sm text-gray-500">Yearly Time Saved ~</span>
+              <span className="text-sm text-[var(--muted)]">Yearly Time Saved ~</span>
             </div>
             <div className="text-3xl font-bold text-blue-600 mb-1">
               13 <span className="text-lg">entire days</span>
             </div>
-            <div className="text-sm text-gray-500">Based on weekly average</div>
+            <div className="text-sm text-[var(--muted)]">Based on weekly average</div>
           </div>
 
           {/* Posts Published */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border">
+          <div className="bg-white rounded-xl p-6 shadow-sm border border-[var(--line-2)]">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
                 <svg
@@ -71,7 +71,7 @@ export default function StatsSection() {
                   />
                 </svg>
               </div>
-              <span className="text-sm text-gray-500">Posts Published</span>
+              <span className="text-sm text-[var(--muted)]">Posts Published</span>
             </div>
             <div className="text-3xl font-bold text-orange-600 mb-1">
               195,694

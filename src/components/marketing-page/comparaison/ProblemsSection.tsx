@@ -1,22 +1,22 @@
 export default function ProblemsSection() {
   return (
-    <section className="py-10 px-10 bg-base-100">
+    <section className="py-10 px-10">
       <div className="max-w-4xl mx-auto">
         <div className="flex flex-col">
           <div className="mb-12">
-            <h2 className="text-4xl md:text-5xl font-bold mx-auto leading-tight">
+            <h2 className="t-big-h2">
               Posting content shouldn&apos;t be this
               <span className="text-red-500"> hard</span>
             </h2>
           </div>
 
-          <p className="text-gray-800/50 dark:text-gray-100/70 mb-10">
+          <p className="t-body mb-10">
             Other solutions and tools...
           </p>
 
           <div className="grid md:grid-cols-2 gap-8 w-full max-w-4xl">
-            <div className="p-8 rounded-2xl bg-base-200/30 border border-base-300">
-              <div className="text-2xl mb-2 flex items-center gap-2">
+            <div className="p-8 rounded-2xl bg-white border border-[var(--line-2)]">
+              <div className="t-feature-h3 mb-2 flex items-center gap-2">
                 <svg
                   stroke="currentColor"
                   fill="currentColor"
@@ -31,14 +31,14 @@ export default function ProblemsSection() {
                 </svg>
                 Manually posting
               </div>
-              <div className="text-gray-800/50 dark:text-gray-100/70">
+              <div className="t-feature-body">
                 Hours of time you can&apos;t get back - spent posting your
                 content 1 by 1 to each platform (ouch)
               </div>
             </div>
 
-            <div className="p-8 rounded-2xl bg-base-200/30 border border-base-300">
-              <div className="text-2xl mb-2 flex items-center gap-2">
+            <div className="p-8 rounded-2xl bg-white border border-[var(--line-2)]">
+              <div className="t-feature-h3 mb-2 flex items-center gap-2">
                 <svg
                   stroke="currentColor"
                   fill="currentColor"
@@ -53,14 +53,14 @@ export default function ProblemsSection() {
                 </svg>
                 Unfairly expensive
               </div>
-              <div className="text-gray-800/50 dark:text-gray-100/70">
+              <div className="t-feature-body">
                 You&apos;re not an enterprise, or a Fortune 500 company, so why
                 are you paying as much as one?
               </div>
             </div>
 
-            <div className="p-8 rounded-2xl bg-base-200/30 border border-base-300">
-              <div className="text-2xl mb-2 flex items-center gap-2">
+            <div className="p-8 rounded-2xl bg-white border border-[var(--line-2)]">
+              <div className="t-feature-h3 mb-2 flex items-center gap-2">
                 <svg
                   stroke="currentColor"
                   fill="currentColor"
@@ -75,14 +75,14 @@ export default function ProblemsSection() {
                 </svg>
                 Features you don&apos;t need
               </div>
-              <div className="text-gray-800/50 dark:text-gray-100/70">
+              <div className="t-feature-body">
                 99 features and you only need one... but you&apos;ll have to pay
                 for all of them.
               </div>
             </div>
 
-            <div className="p-8 rounded-2xl bg-base-200/30 border border-base-300">
-              <div className="text-2xl mb-2 flex items-center gap-2">
+            <div className="p-8 rounded-2xl bg-white border border-[var(--line-2)]">
+              <div className="t-feature-h3 mb-2 flex items-center gap-2">
                 <svg
                   stroke="currentColor"
                   fill="currentColor"
@@ -97,14 +97,14 @@ export default function ProblemsSection() {
                 </svg>
                 Complex tools
               </div>
-              <div className="text-gray-800/50 dark:text-gray-100/70">
+              <div className="t-feature-body">
                 The learning curve is steeper than a UFO&apos;s flight path.
                 Houston, we have a problem!
               </div>
             </div>
           </div>
 
-          <p className="text-xl mt-12 text-gray-800/50 dark:text-gray-100/70">
+          <p className="t-body mt-12">
             Give up hours of your time or buckets of your cash? You
             shouldn&apos;t have to choose.
           </p>

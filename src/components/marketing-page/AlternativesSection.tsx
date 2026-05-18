@@ -65,7 +65,7 @@ function FeatureLine({ feature }: { readonly feature: Feature }) {
   return (
     <div className="mt-1 flex items-center">
       <span className={`${iconColor} mr-2`}>{icon}</span>
-      <span className="text-sm text-[#777]">{feature.label}</span>
+      <span className="text-sm text-[var(--muted)]">{feature.label}</span>
     </div>
   );
 }
@@ -80,8 +80,8 @@ function AlternativeCardComponent({
     <div
       className={`p-4 ${card.bg} muted border ${card.border}   flex flex-col text-left rounded-[16px] shadow`}
     >
-      <p className="text-sm font-semibold text-[#191919] mb-2">{card.title}</p>
-      <p className="text-sm text-[#777]">{card.description}</p>
+      <p className="text-sm font-semibold text-[var(--ink)] mb-2">{card.title}</p>
+      <p className="text-sm text-[var(--muted)]">{card.description}</p>
 
       {/* features */}
       <div className="mt-3">
@@ -100,7 +100,7 @@ export default function AlternativesSection() {
       id="product"
       className="w-full max-w-[900px] text-left mt-8 mx-auto py-10 px-10 "
     >
-      <h4 className="text-lg text-[#191919] font-semibold">
+      <h4 className="t-feature-h3">
         Alternatives are expensive.
       </h4>
 

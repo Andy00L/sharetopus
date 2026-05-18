@@ -65,7 +65,7 @@ interface Testimonial {
 
 // Reusable star component
 const StarIcon = () => (
-  <svg className="w-4 h-4 text-yellow-400 fill-current" viewBox="0 0 20 20">
+  <svg className="w-4 h-4 text-[var(--orange)] fill-current" viewBox="0 0 20 20">
     <path d="M10 15l-5.878 3.09 1.123-6.545L.489 6.91l6.572-.955L10 0l2.939 5.955 6.572.955-4.756 4.635 1.123 6.545z" />
   </svg>
 );
@@ -73,7 +73,7 @@ const StarIcon = () => (
 // Reusable testimonial card component
 function TestimonialCard({ testimonial }: { testimonial: Testimonial }) {
   return (
-    <div className="p-4 bg-[#EEEFE8] border border-[#DADBD2] flex items-start text-left rounded-[16px] shadow ">
+    <div className="p-4 bg-[var(--cream-2)] border border-[var(--line-2)] flex items-start text-left rounded-[16px] shadow">
       <AvatarWithFallback
         src={testimonial.avatar.src}
         alt={`${testimonial.name} ReelFarm`}
@@ -85,10 +85,10 @@ function TestimonialCard({ testimonial }: { testimonial: Testimonial }) {
             <StarIcon key={i} />
           ))}
         </div>
-        <p className="text-sm font-semibold text-[#191919]">
+        <p className="text-sm font-semibold text-[var(--ink)]">
           {testimonial.name}
         </p>
-        <p className="text-sm text-[#777] mr-4">{testimonial.text}</p>
+        <p className="text-sm text-[var(--muted)] mr-4">{testimonial.text}</p>
 
         <div className="flex gap-3 mt-2">
           {/** {testimonial.links.map((link, idx) => (

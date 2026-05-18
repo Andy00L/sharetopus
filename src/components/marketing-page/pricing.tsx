@@ -1,294 +1,229 @@
 "use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { useAuth } from "@clerk/nextjs";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Check } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { type Plan, planPrices } from "@/lib/types/plans";
 import { checkOutSession } from "@/actions/server/stripe/checkOutSession";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Plan, planPrices } from "@/lib/types/plans";
-import { useAuth } from "@clerk/nextjs";
-import { ArrowRight, Check } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { toast } from "sonner";
-import PlatformsListe from "./details/platformList";
 
+/* Renders feature text, handling **bold** wrapping used in planPrices.
+   Features like "**15 connected social accounts**" get bold styling.
+   Plain features render as-is. */
+function renderFeature(text: string): React.ReactNode {
+  if (text.startsWith("**") && text.endsWith("**")) {
+    return <strong>{text.slice(2, -2)}</strong>;
+  }
+  return text;
+}
+
+/* Compute yearly savings percentage for a plan.
+   Formula: 1 - (yearlyPrice / (monthlyPrice * 12)).
+   Returns a rounded integer (e.g. 40 for ~40%). */
+function savingsPct(plan: Plan): number {
+  const monthlyTotal = plan.monthlyPrice * 12;
+  return Math.round((1 - plan.yearlyPrice / monthlyTotal) * 100);
+}
+
+/* Pricing section. Three tiers (Starter, Creator, Pro) with monthly/yearly toggle.
+   Creator (popular) gets a "Best deal" pill, ink border, and hard offset shadow.
+   All plan data comes from planPrices in plans.ts (single source of truth).
+   CTAs go through existing Stripe checkout and portal server actions. */
 export default function PricingSection() {
-  const [isYearly, setIsYearly] = useState(true);
+  const [isYearly, setIsYearly] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const { userId, isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
-  // Function to render feature text with bold formatting if needed
-  const renderFeatureText = (feature: string) => {
-    if (feature.startsWith("**") && feature.endsWith("**")) {
-      const boldText = feature.slice(2, -2);
-      return (
-        <span>
-          <strong>{boldText}</strong>
-        </span>
-      );
-    }
-    return <span>{feature}</span>;
-  };
 
-  // Calculate the savings amount for yearly plans
-  const calculateSavings = (plan: Plan) => {
-    return Math.round(plan.monthlyPrice * 12 - plan.yearlyPrice);
-  };
+  /* The SAVE badge displays the featured tier's savings percentage.
+     Creator = ~40%. Computed, not hardcoded. */
+  const featuredPlan = planPrices.find((p) => p.popular);
+  const badgePct = featuredPlan ? savingsPct(featuredPlan) : 40;
 
-  // Calculate discount percentage based on the actual price difference
-  const calculateDiscountPercentage = (plan: Plan) => {
-    return Math.round(
-      ((plan.monthlyPrice - plan.monthlyYearlyprice) / plan.monthlyPrice) * 100
-    );
-  };
-
-  // Handle button click to subscribe
+  /* CTA handler. Routes through existing Stripe server actions.
+     Unauthenticated users go to /create (Clerk redirects to sign-in).
+     Already-subscribed users go to the Stripe customer portal.
+     New subscribers go to Stripe checkout. */
   const handleSubscribe = async (plan: Plan) => {
     try {
       setLoadingPlan(plan.title);
-      if (!isLoaded) {
-        // Auth isn't loaded yet, wait briefly
-        return;
-      }
 
-      // If user is not signed in, redirect to sign-up
+      if (!isLoaded) return;
+
       if (!isSignedIn) {
-        router.push("/create"); // Redirect to Clerk sign-up page
+        router.push("/create");
         return;
       }
 
-      // Check if user has an active subscription
-      const hasActiveSubscription = (await checkActiveSubscription(userId)).isActive;
-      let redirectUrl;
-
-      if (hasActiveSubscription) {
-        // This will redirect the user directly
-        const result = await createCustomerPortal();
-        if (!result.success) {
-          // Show error message to user
-          toast(result.message);
-          setLoadingPlan(null);
-          return;
-        } // If successful, result.data will contain the URL
-        redirectUrl = result.data;
-      } else {
-        // This would also use redirect internally
-        const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
-
-        const result = await checkOutSession(priceId);
-
-        // Check for success just like with the customer portal
-        if (!result.success) {
-          // Show error message to user
-          toast.error(result.message);
+      const sub = await checkActiveSubscription(userId);
+      if (sub.isActive) {
+        const portal = await createCustomerPortal();
+        if (!portal.success) {
+          toast.error(portal.message);
           setLoadingPlan(null);
           return;
         }
-
-        // If successful, result.data will contain the URL
-        redirectUrl = result.data;
+        if (portal.data) {
+          window.location.href = portal.data;
+        }
+        return;
       }
 
-      // Note: Code here might not run if redirect happens
-      // If we got a valid URL back, redirect the browser
-      if (redirectUrl) {
-        window.location.href = redirectUrl;
-      } else {
-        // Handle error
-        toast.error("Failed to get redirect URL");
+      const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
+      const session = await checkOutSession(priceId);
+      if (!session.success) {
+        toast.error(session.message);
         setLoadingPlan(null);
         return;
       }
+      if (session.data) {
+        window.location.href = session.data;
+      }
     } catch (error) {
-      console.error("Subscription error:", error);
-
-      toast.error(
-        "Unable to process subscription request. Please try again later."
-      );
+      console.error("[PricingSection] Subscription error:", error);
+      toast.error("Unable to process request. Please try again.");
       setLoadingPlan(null);
     }
   };
 
   return (
-    <section className="py-24 bg-white" id="pricing">
-      <div className="container mx-auto px-6 pb-5 mb-3  md:mb-8">
-        <div className="text-center mb-16">
-          <div className="inline-block px-3 py-1 mb-6 rounded-full bg-primary/10 text-primary text-sm font-medium">
-            Simple Pricing
-          </div>
-          <h2 className="text-3xl md:text-4xl font-bold mb-4 leading-tight">
-            Choose the Right Plan for Your Social Media Needs
-          </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            No matter your size, we have a plan that fits your social media
-            management needs.
-          </p>
-
-          {/* Billing period toggle */}
-          <div className="flex items-center justify-center mt-8 ">
-            <span
-              className={`mr-3 ${
-                !isYearly ? "font-medium" : "text-muted-foreground"
-              }`}
-            >
-              Monthly
-            </span>
-            <button
-              onClick={() => setIsYearly(!isYearly)}
-              className="relative inline-flex h-6 w-11 items-center rounded-full bg-primary/20 cursor-pointer"
-            >
-              <span
-                className={`inline-block h-4 w-4 transform rounded-full bg-primary transition ${
-                  isYearly ? "translate-x-6" : "translate-x-1"
-                }`}
-              />
-            </button>
-            <span
-              className={`ml-3 ${
-                isYearly ? "font-medium" : "text-muted-foreground"
-              }`}
-            >
-              Yearly
-            </span>
-          </div>
+    <section
+      id="pricing"
+      className="py-16 md:py-24 px-4 md:px-8 max-w-6xl mx-auto"
+    >
+      {/* Section header: eyebrow, display heading, serif-italic subheading. */}
+      <div className="text-center mb-8 md:mb-14">
+        <div className="t-eyebrow mb-3">
+          <span className="inline-block size-1.5 rounded-full bg-primary mr-2 align-middle" />
+          Pricing
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-          {planPrices.map((plan) => {
-            const discountPercentage = calculateDiscountPercentage(plan);
-            const isLoading = loadingPlan === plan.title;
-
-            return (
-              <Card
-                key={plan.title}
-                className={`relative overflow-hidden flex flex-col ${
-                  plan.popular
-                    ? "border-primary/30 shadow-md hover:shadow-lg transition-shadow scale-105 z-10"
-                    : "border-border/40 shadow-sm hover:shadow-md transition-shadow"
-                }`}
-              >
-                {isYearly && (
-                  <div className="absolute top-4 right-4 bg-red-400 text-white px-3 py-1 text-xs font-medium rounded-full">
-                    {discountPercentage}% OFF
-                  </div>
-                )}
-
-                {plan.popular && (
-                  <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
-                    Most popular
-                  </div>
-                )}
-
-                {plan.popular && (
-                  <div className="absolute top-1 left-1/2 -translate-x-1/2 bg-green-500 text-white px-4 py-1 text-xs font-medium rounded-full">
-                    Best deal
-                  </div>
-                )}
-
-                <CardHeader className="pb-4 pt-6">
-                  <CardTitle className="text-2xl">{plan.title}</CardTitle>
-                  <CardDescription className="mt-1">
-                    {plan.description}
-                  </CardDescription>
-                </CardHeader>
-
-                <CardContent className="flex-grow">
-                  <div className="mb-6">
-                    <div className="flex items-baseline">
-                      <span className="text-5xl font-bold">
-                        $
-                        {isYearly ? plan.monthlyYearlyprice : plan.monthlyPrice}
-                      </span>
-                      <span className="text-lg text-muted-foreground ml-1">
-                        /month
-                      </span>
-                    </div>
-
-                    {isYearly && (
-                      <>
-                        <div className="text-sm text-muted-foreground mt-1">
-                          Billed as ${plan.yearlyPrice}/year
-                        </div>
-                        <div className="text-sm text-green-500 font-medium mt-1">
-                          Save ${calculateSavings(plan)} with yearly pricing (
-                          {discountPercentage}% off)
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <ul className="space-y-3">
-                    {plan.features.map((feature) => (
-                      <li key={feature} className="flex items-start">
-                        <Check
-                          size={20}
-                          className="mr-3 text-green-500 shrink-0 mt-0.5"
-                        />
-                        {renderFeatureText(feature)}
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-
-                <CardFooter className="pt-4">
-                  <Button
-                    variant={plan.popular ? "default" : "outline"}
-                    className="w-full group cursor-pointer"
-                    onClick={() => handleSubscribe(plan)}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? (
-                      <div className="flex items-center justify-center">
-                        <svg
-                          className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          ></circle>
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          ></path>
-                        </svg>
-                        Processing...
-                      </div>
-                    ) : (
-                      <>
-                        {plan.actionLabel}
-                        <ArrowRight
-                          size={16}
-                          className={`ml-2 ${
-                            plan.popular
-                              ? "transition-transform group-hover:translate-x-1"
-                              : ""
-                          }`}
-                        />
-                      </>
-                    )}
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-          })}
-        </div>
+        <h2 className="t-section-h2">
+          Fairly priced.{" "}
+          <span className="t-section-accent">On purpose.</span>
+        </h2>
+        <p className="t-section-sub max-w-xl mx-auto mt-4">
+          No enterprise tax. Cancel anytime. Monthly or yearly, your call.
+        </p>
       </div>
-      {<PlatformsListe message="Post To:" />}
+
+      {/* Billing toggle: Monthly | Switch | Yearly | SAVE badge. */}
+      <div className="flex items-center justify-center gap-3.5">
+        <span
+          className={cn(
+            "text-sm font-semibold cursor-pointer select-none",
+            !isYearly ? "text-foreground" : "text-muted-foreground"
+          )}
+          onClick={() => setIsYearly(false)}
+        >
+          Monthly
+        </span>
+        <Switch checked={isYearly} onCheckedChange={setIsYearly} />
+        <span
+          className={cn(
+            "text-sm font-semibold cursor-pointer select-none",
+            isYearly ? "text-foreground" : "text-muted-foreground"
+          )}
+          onClick={() => setIsYearly(true)}
+        >
+          Yearly
+        </span>
+        <Badge className="bg-primary text-primary-foreground t-chip px-2.5 py-1 rounded-full border-transparent">
+          SAVE {badgePct}%
+        </Badge>
+      </div>
+
+      {/* Plan cards grid: 1 column mobile, 3 columns desktop. */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 mt-12 items-stretch">
+        {planPrices.map((plan) => {
+          const featured = !!plan.popular;
+          const loading = loadingPlan === plan.title;
+          const displayPrice = isYearly
+            ? plan.monthlyYearlyprice
+            : plan.monthlyPrice;
+
+          return (
+            <Card
+              key={plan.title}
+              className={cn(
+                "relative flex flex-col rounded-2xl border p-7 gap-0 shadow-none",
+                featured &&
+                  "border-2 border-foreground shadow-[var(--shadow-hard)]"
+              )}
+            >
+              {/* "Best deal" pill for the featured (Creator) card. */}
+              {featured && (
+                <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-3.5 py-1 t-chip rounded-full border-transparent">
+                  Best deal
+                </Badge>
+              )}
+
+              {/* Tier name (trim handles trailing space on "Pro "). */}
+              <div className="t-pricing-tier">
+                {plan.title.trim()}
+              </div>
+
+              {/* Short description. */}
+              <p className="mt-2 text-sm text-muted-foreground leading-snug min-h-[40px]">
+                {plan.description}
+              </p>
+
+              {/* Price display: big number + "/month" suffix. */}
+              <div className="mt-5 flex items-baseline gap-1.5">
+                <span className="t-pricing-price">
+                  ${displayPrice}
+                </span>
+                <span className="t-pricing-per">/month</span>
+              </div>
+
+              {/* Yearly billed line (visible only when yearly toggle is on).
+                  Non-breaking space preserves layout height when hidden. */}
+              <div className="mt-1 text-xs text-muted-foreground min-h-[18px]">
+                {isYearly
+                  ? `$${plan.yearlyPrice}/year billed annually`
+                  : "\u00A0"}
+              </div>
+
+              {/* Feature list with orange checkmarks. */}
+              <ul className="mt-5 mb-6 flex flex-col gap-2.5 flex-1">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex gap-2 text-sm items-start">
+                    <Check
+                      className="size-4 shrink-0 text-primary mt-0.5"
+                      strokeWidth={2.5}
+                    />
+                    <span>{renderFeature(f)}</span>
+                  </li>
+                ))}
+              </ul>
+
+              {/* CTA button. Featured card gets filled ink style, others get outline. */}
+              <Button
+                className={cn(
+                  "w-full justify-center rounded-full t-button py-3 gap-1.5 group cursor-pointer",
+                  featured
+                    ? "bg-foreground text-background hover:bg-[var(--ink-2)]"
+                    : "bg-transparent text-foreground border border-foreground hover:bg-foreground hover:text-background"
+                )}
+                onClick={() => handleSubscribe(plan)}
+                disabled={loading}
+              >
+                {loading ? "Loading..." : plan.actionLabel}
+                <span className="transition-transform group-hover:translate-x-1">
+                  →
+                </span>
+              </Button>
+            </Card>
+          );
+        })}
+      </div>
     </section>
   );
 }

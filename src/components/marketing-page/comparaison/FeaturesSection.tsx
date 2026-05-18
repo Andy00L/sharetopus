@@ -2,16 +2,16 @@ import Image from "next/image";
 import proof from "../../../../public/proof.webp";
 export default function FeaturesSection() {
   return (
-    <section className="py-10 px-10 bg-base-100" id="features">
+    <section className="py-10 px-10" id="features">
       <div className="max-w-4xl mx-auto">
-        <h2 className="text-4xl md:text-5xl font-bold leading-tight mb-12">
+        <h2 className="t-big-h2 mb-12">
           Grow your social reach with
           <span className="text-green-500"> less effort </span>
           for
           <span className="text-green-500"> less money</span>
         </h2>
 
-        <p className="text-gray-800/50 mb-10">Using Sharetopus features...</p>
+        <p className="t-body mb-10">Using Sharetopus features...</p>
 
         <div className="flex flex-col md:flex-row gap-12 md:gap-24">
           <div className="grid grid-cols-1 items-stretch gap-8 sm:gap-12 lg:grid-cols-2 lg:gap-20">
@@ -37,12 +37,12 @@ export default function FeaturesSection() {
                       />
                     </svg>
                   </span>
-                  <span className="flex-1 text-base-content text-green-500 font-semibold">
+                  <span className="flex-1 text-green-500 font-semibold">
                     <h3 className="inline">Cross-posting</h3>
                   </span>
                 </button>
                 <div
-                  className="transition-all duration-300 ease-in-out text-base-content-secondary overflow-hidden"
+                  className="transition-all duration-300 ease-in-out t-feature-body overflow-hidden"
                   style={{ opacity: 1 }}
                 >
                   <div className="pb-5 leading-relaxed">
@@ -74,12 +74,12 @@ export default function FeaturesSection() {
                       />
                     </svg>
                   </span>
-                  <span className="flex-1 text-base-content">
+                  <span className="flex-1">
                     <h3 className="inline">Scheduling</h3>
                   </span>
                 </button>
                 <div
-                  className="transition-all duration-300 ease-in-out text-base-content-secondary overflow-hidden"
+                  className="transition-all duration-300 ease-in-out t-feature-body overflow-hidden"
                   style={{ maxHeight: 0, opacity: 0 }}
                 >
                   <div className="pb-5 leading-relaxed">
@@ -110,12 +110,12 @@ export default function FeaturesSection() {
                       />
                     </svg>
                   </span>
-                  <span className="flex-1 text-base-content">
+                  <span className="flex-1">
                     <h3 className="inline">Content management</h3>
                   </span>
                 </button>
                 <div
-                  className="transition-all duration-300 ease-in-out text-base-content-secondary overflow-hidden"
+                  className="transition-all duration-300 ease-in-out t-feature-body overflow-hidden"
                   style={{ maxHeight: 0, opacity: 0 }}
                 >
                   <div className="pb-5 leading-relaxed">
@@ -146,15 +146,15 @@ export default function FeaturesSection() {
                       />
                     </svg>
                   </span>
-                  <span className="flex-1 text-base-content">
+                  <span className="flex-1">
                     <h3 className="inline">Content Studio</h3>
-                    <span className="text-sm text-gray-800/50">
-                      (comming soon)
+                    <span className="text-sm text-[var(--muted)]">
+                      (coming soon)
                     </span>
                   </span>
                 </button>
                 <div
-                  className="transition-all duration-300 ease-in-out text-base-content-secondary overflow-hidden"
+                  className="transition-all duration-300 ease-in-out t-feature-body overflow-hidden"
                   style={{ maxHeight: 0, opacity: 0 }}
                 >
                   <div className="pb-5 leading-relaxed">

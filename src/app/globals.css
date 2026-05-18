@@ -120,3 +120,285 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ============================================================
+   Marketing layout scope (sharetopus.com landing, /pricing, etc.)
+   ReelFarm-matched neutral palette + DM Sans typography.
+   Scoped to .marketing-theme only. Protected routes are untouched.
+   ============================================================ */
+.marketing-theme {
+  /* ===== ReelFarm-matched neutral palette =====
+     Page bg: --cream. Layered sections: --cream-2. Cards: pure white.
+     Dark CTA band: --ink bg + --cream text.
+     Orange NEVER on backgrounds; only on accents (buttons, eyebrows,
+     mark, feature numbers, "Best deal" chip, stars, checkmarks). */
+  --cream:    #F3F4EF;
+  --cream-2:  #E9EAE4;
+  --ink:      #1C1B18;
+  --ink-2:    #4A4845;
+  --muted:    #8B8A85;
+  --line:     #D6D5CF;
+  --line-2:   #E0E1DB;
+  --orange:   #FF5A36;
+  --orange-2: #E84A26;
+
+  --shadow-soft: 0 24px 60px -20px rgba(28,27,24,0.20), 0 0 0 1px rgba(28,27,24,0.04);
+  --shadow-hard: 6px 6px 0 0 var(--ink);
+
+  /* shadcn token overrides resolve via the cream palette inside marketing. */
+  --background: var(--cream);
+  --foreground: var(--ink);
+  --card: #ffffff;
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+  --primary: var(--orange);
+  --primary-foreground: #ffffff;
+  --secondary: var(--ink);
+  --secondary-foreground: var(--cream);
+  --muted-bg: var(--cream-2);
+  --muted-foreground: var(--muted);
+  --accent: var(--cream-2);
+  --accent-foreground: var(--ink);
+  --border: var(--line-2);
+  --input: var(--line-2);
+  --ring: var(--orange);
+
+  /* Typography: DM Sans primary. Serif + condensed reserved for future use. */
+  --display:   var(--font-dm-sans), system-ui, sans-serif;
+  --body:      var(--font-dm-sans), system-ui, sans-serif;
+  --serif:     'Cormorant Garamond', serif;
+  --condensed: 'Bebas Neue', 'Impact', sans-serif;
+
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+}
+
+/* Legacy helper classes (kept for any markup that still references them).
+   Both restyled to use DM Sans. .font-serif-italic NO LONGER COLORS ORANGE;
+   italic accents inherit the headline color per the new spec. */
+.marketing-theme .font-display {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.marketing-theme .font-serif-italic {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  font-style: italic;
+  font-weight: 800;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+/* ===== Role-based typography utilities =====
+   One class per role. Spec sizes/weights/tracking from the typography
+   table. Components compose these on text elements instead of inlining
+   font-size/font-weight/tracking. */
+
+/* HERO */
+.marketing-theme .t-hero-h1 {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  font-weight: 800;
+  font-size: clamp(52px, 8.5vw, 104px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.marketing-theme .t-hero-accent {
+  font-style: italic;
+  font-weight: 800;
+  letter-spacing: inherit;
+  color: inherit;
+}
+.marketing-theme .t-hero-sub {
+  font-weight: 400;
+  font-size: clamp(18px, 1.6vw, 21px);
+  letter-spacing: normal;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* SECTIONS (composer, reviews, pricing, FAQ) */
+.marketing-theme .t-section-h2 {
+  font-weight: 800;
+  font-size: clamp(34px, 5vw, 60px);
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.marketing-theme .t-section-accent {
+  font-style: italic;
+  font-weight: 800;
+  letter-spacing: inherit;
+  color: inherit;
+}
+.marketing-theme .t-section-sub {
+  font-weight: 400;
+  font-size: clamp(17px, 1.5vw, 20px);
+  letter-spacing: normal;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+/* BIG H2 (connector, features, crowd band) */
+.marketing-theme .t-big-h2 {
+  font-weight: 800;
+  font-size: clamp(36px, 5.5vw, 64px);
+  letter-spacing: -0.035em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+
+/* CTA BAND (dark) */
+.marketing-theme .t-cta-h2 {
+  font-weight: 800;
+  font-size: clamp(44px, 6.5vw, 82px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  color: var(--cream);
+}
+.marketing-theme .t-cta-sub {
+  font-weight: 400;
+  font-size: clamp(17px, 1.5vw, 21px);
+  line-height: 1.55;
+  color: rgba(243, 244, 239, 0.6);
+}
+
+/* FEATURE CARDS */
+.marketing-theme .t-feature-h3 {
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.marketing-theme .t-feature-body {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* PRICING */
+.marketing-theme .t-pricing-tier {
+  font-weight: 700;
+  font-size: 26px;
+  letter-spacing: -0.035em;
+  color: var(--ink);
+}
+.marketing-theme .t-pricing-price {
+  font-weight: 800;
+  font-size: 56px;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--ink);
+}
+.marketing-theme .t-pricing-per {
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--muted);
+}
+.marketing-theme .t-pricing-feature {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+
+/* FAQ */
+.marketing-theme .t-faq-q {
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+.marketing-theme .t-faq-a {
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* WORDMARK + NAV + BUTTONS */
+.marketing-theme .t-wordmark {
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+}
+.marketing-theme .t-nav-link {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.marketing-theme .t-button {
+  font-weight: 500;
+  font-size: 15px;
+  letter-spacing: -0.015em;
+}
+.marketing-theme .t-button-lg {
+  font-weight: 500;
+  font-size: 17px;
+  letter-spacing: -0.015em;
+}
+
+/* EYEBROW + BODY */
+.marketing-theme .t-eyebrow {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--orange);
+}
+.marketing-theme .t-body {
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* FOOTER */
+.marketing-theme .t-footer-h {
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.marketing-theme .t-footer-link {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+/* MISC */
+.marketing-theme .t-stars {
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: -1px;
+  color: var(--orange);
+}
+.marketing-theme .t-composer-body {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.marketing-theme .t-preview {
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.marketing-theme .t-preview-name {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--ink);
+}
+.marketing-theme .t-chip {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}

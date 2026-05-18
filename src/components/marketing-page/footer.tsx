@@ -9,12 +9,12 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
           <div>
             <div className="flex items-center mb-4">
-              <span className="font-display text-2xl font-semibold tracking-tight">
+              <span className="t-wordmark">
                 Sharetopus
               </span>
             </div>
-            <p className="text-muted-foreground mb-6">
-              Post once, share everywhere. Streamline your social media workflow
+            <p className="t-body mb-6">
+              Post once, share everywhere. Manage your social media workflow
               across TikTok, Instagram, Facebook, Threads, and YouTube.
             </p>
             <div className="flex space-x-4">
@@ -55,12 +55,12 @@ export default function Footer() {
 
           {/* Features section */}
           <div>
-            <h3 className="font-semibold text-lg mb-4">Features</h3>
+            <h3 className="t-footer-h mb-4">Features</h3>
             <ul className="space-y-2">
               <li>
                 <Link
                   href="#features"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Multi-platform Posting
                 </Link>
@@ -68,7 +68,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="#features"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Content Scheduling
                 </Link>
@@ -76,7 +76,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="#features"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Platform Integrations
                 </Link>
@@ -84,7 +84,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="#pricing"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Pricing Plans
                 </Link>
@@ -93,12 +93,12 @@ export default function Footer() {
           </div>
 
           <div>
-            <h3 className="font-semibold text-lg mb-4">Resources</h3>
+            <h3 className="t-footer-h mb-4">Resources</h3>
             <ul className="space-y-2">
               <li>
                 <Link
                   href="/guides"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Social Media Guides
                 </Link>
@@ -106,7 +106,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/faq"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   FAQ
                 </Link>
@@ -115,12 +115,12 @@ export default function Footer() {
           </div>
 
           <div>
-            <h3 className="font-semibold text-lg mb-4">Company</h3>
+            <h3 className="t-footer-h mb-4">Company</h3>
             <ul className="space-y-2">
               <li>
                 <Link
                   href="/about"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   About Us
                 </Link>
@@ -128,7 +128,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/contact"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Contact
                 </Link>
@@ -137,7 +137,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/PrivacyPolicy"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Privacy Policy
                 </Link>
@@ -145,7 +145,7 @@ export default function Footer() {
               <li>
                 <Link
                   href="/tos"
-                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  className="t-footer-link hover:text-foreground transition-colors"
                 >
                   Terms of Service
                 </Link>
