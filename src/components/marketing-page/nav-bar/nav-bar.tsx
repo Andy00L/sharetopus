@@ -28,6 +28,7 @@ import {
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { Octopus } from "../icons/octopus";
 
 /* Shared class for every desktop nav link + trigger. Matches the
@@ -115,9 +116,13 @@ function FeatureMenuItem({
 const GET_STARTED_BUTTON_CLASS =
   "w-full justify-center gap-1.5 rounded-full bg-primary py-3 text-[17px] font-medium text-primary-foreground hover:bg-[var(--orange-2)]";
 
+const DESKTOP_CTA_BUTTON_CLASS =
+  "gap-1.5 rounded-full bg-primary px-5 py-3 text-[15px] font-medium tracking-[-0.015em] text-primary-foreground hover:bg-[var(--orange-2)]";
+
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { isSignedIn } = useAuth();
+  const { userId, isLoaded } = useAuth();
+  const isSignedIn = Boolean(userId);
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b border-[var(--line)] bg-[#F3F4EF] px-4 py-3 md:px-6">
@@ -185,24 +190,37 @@ export default function Navbar() {
           </NavigationMenu>
         </div>
 
-        {/* Right side: Sign in + CTA on desktop, hamburger on mobile. */}
+        {/* Right side: CTAs on desktop, hamburger on mobile. */}
         <div className="flex items-center gap-3 md:flex-1 md:justify-end md:gap-4">
-          <Link
-            href="/create"
-            className="hidden text-[15px] font-medium text-[#545454] transition-opacity hover:opacity-50 md:inline-block"
-          >
-            Sign in
-          </Link>
-
-          <Button
-            asChild
-            className="hidden gap-1.5 rounded-full bg-primary px-5 py-3 text-[15px] font-medium tracking-[-0.015em] text-primary-foreground hover:bg-[var(--orange-2)] md:inline-flex"
-          >
-            <Link href="/create">
-              Get Started
-              <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
-            </Link>
-          </Button>
+          {isLoaded && isSignedIn ? (
+            <Button
+              asChild
+              className={cn("hidden md:inline-flex", DESKTOP_CTA_BUTTON_CLASS)}
+            >
+              <Link href="/create">
+                Hey Friend
+                <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+              </Link>
+            </Button>
+          ) : isLoaded ? (
+            <>
+              <Link
+                href="/sign-in"
+                className="hidden text-[15px] font-medium text-[#545454] transition-opacity hover:opacity-50 md:inline-block"
+              >
+                Sign in
+              </Link>
+              <Button
+                asChild
+                className={cn("hidden md:inline-flex", DESKTOP_CTA_BUTTON_CLASS)}
+              >
+                <Link href="/sign-up">
+                  Get Started
+                  <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
+                </Link>
+              </Button>
+            </>
+          ) : null}
 
           {/* Mobile hamburger. */}
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -218,7 +236,7 @@ export default function Navbar() {
 
             <SheetContent
               side="right"
-              className="w-[min(360px,85vw)] border-l border-[var(--line)] bg-[var(--cream)] p-0 [&>button.absolute]:hidden"
+              className="flex h-full w-[min(360px,85vw)] flex-col border-l border-[var(--line)] bg-[var(--cream)] p-0 [&>button.absolute]:hidden"
             >
               <SheetTitle className="sr-only">Navigation menu</SheetTitle>
 
@@ -277,36 +295,16 @@ export default function Navbar() {
                 ))}
               </div>
 
-              <div className="mt-auto flex flex-col gap-3 border-t border-[var(--line-2)] px-5 py-5">
-                {isSignedIn ? (
-                  <SheetClose asChild>
-                    <Button asChild className={GET_STARTED_BUTTON_CLASS}>
-                      <Link href="/create">
-                        Hey Friend
-                        <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
-                      </Link>
-                    </Button>
-                  </SheetClose>
-                ) : (
-                  <>
-                    <SheetClose asChild>
-                      <Link
-                        href="/sign-in"
-                        className="text-[15px] font-medium text-[#545454] hover:opacity-50"
-                      >
-                        Sign in
-                      </Link>
-                    </SheetClose>
-                    <SheetClose asChild>
-                      <Button asChild className={GET_STARTED_BUTTON_CLASS}>
-                        <Link href="/sign-up">
-                          Get Started
-                          <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
-                        </Link>
-                      </Button>
-                    </SheetClose>
-                  </>
-                )}
+              <div className="mt-auto border-t border-[var(--line-2)] px-5 py-5">
+                <SheetClose asChild>
+                  <Link
+                    href={isSignedIn ? "/create" : "/sign-up"}
+                    className={cn("inline-flex", GET_STARTED_BUTTON_CLASS)}
+                  >
+                    Hey Friend
+                    <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
+                  </Link>
+                </SheetClose>
               </div>
             </SheetContent>
           </Sheet>
