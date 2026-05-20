@@ -7,12 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { TikTokOptions } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
-import {
-  CalendarIcon,
-  Clock,
-  Loader2,
-  SendHorizontal,
-} from "lucide-react";
+import { CalendarIcon, Clock, Loader2, SendHorizontal } from "lucide-react";
 import FilePreview from "../../../../renderFilePreview";
 
 interface SchedulingPanelProps {
@@ -55,8 +50,7 @@ export default function SchedulingPanel({
   tikTokOptions,
 }: SchedulingPanelProps) {
   // TikTok declaration text (compliance mode only)
-  const showTikTokDeclaration =
-    tiktokComplianceEnabled && hasTikTokAccounts;
+  const showTikTokDeclaration = tiktokComplianceEnabled && hasTikTokAccounts;
   const showBrandedPolicyLink =
     tikTokOptions?.brandContentToggle === true &&
     tikTokOptions?.brandedContent === true;
@@ -67,7 +61,7 @@ export default function SchedulingPanel({
         <div className="border rounded-2xl  bg-white ">
           <div className="p-5">
             <h1 className="mb-3">Media Preview</h1>
-            <div className="rounded-lg overflow-hidden bg-white relative">
+            <div className="rounded-lg overflow-hidden bg-white relative max-h-72 flex items-center justify-center [&_img]:max-h-72 [&_video]:max-h-72 [&_img]:w-auto [&_video]:w-auto [&_img]:object-contain [&_video]:object-contain">
               <FilePreview
                 selectedFile={selectedFile}
                 mediaType={postType}
@@ -119,7 +113,7 @@ export default function SchedulingPanel({
               Will be posted on{" "}
               {format(
                 new Date(`${scheduledDate}T${scheduledTime}`),
-                "PPP 'at' p"
+                "PPP 'at' p",
               )}
             </div>
           </div>

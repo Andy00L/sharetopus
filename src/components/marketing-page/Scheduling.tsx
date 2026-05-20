@@ -9,7 +9,7 @@ import Link from "next/link";
 export default function Scheduling() {
   return (
     <section
-      id="scheduling"
+      id="features"
       className="py-16 md:py-24 px-4 md:px-8 max-w-6xl mx-auto"
       style={{
         fontFamily:

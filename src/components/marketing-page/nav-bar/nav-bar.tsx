@@ -6,7 +6,6 @@ import {
   NavigationMenuItem,
   NavigationMenuLink,
   NavigationMenuList,
-  NavigationMenuTrigger,
 } from "@/components/ui/navigation-menu";
 import {
   Sheet,
@@ -67,7 +66,7 @@ const FEATURES_ITEMS = [
 const NAV_LINKS = [
   { label: "Pricing", href: "#pricing" },
   { label: "Platforms", href: "#platforms" },
-  { label: "Reviews", href: "#reviews" },
+  { label: "FAQ", href: "#faq" },
   /* TODO. Wire docs route when /docs ships. */
   /* { label: "Docs", href: "#docs" }, */
 ];
@@ -147,9 +146,11 @@ export default function Navbar() {
               </NavigationMenuItem>
 
               <NavigationMenuItem>
-                <NavigationMenuTrigger className={NAV_LINK_CLASS}>
-                  Features
-                </NavigationMenuTrigger>
+                <NavigationMenuLink asChild>
+                  <Link href="#features" className={NAV_LINK_CLASS}>
+                    Features
+                  </Link>
+                </NavigationMenuLink>
               </NavigationMenuItem>
 
               {NAV_LINKS.filter((l) => l.label !== "Pricing").map((link) => (

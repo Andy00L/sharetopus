@@ -1,9 +1,9 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { AnimatedTestimonial } from "../hero/AnimatedTestimonial";
+import { AnimatedTestimonial } from "../AnimatedTestimonial";
 import { PlatformTilesBg } from "./sections/PlatformTilesBg";
 
 /* Marketing hero (v2). Replaces the original hero in (marketing)/page.tsx.

@@ -17,7 +17,7 @@ async function SocialPostFormWithData() {
     return <SubscriptionPrompt />;
   }
   if (!userId) {
-    redirect("/sign-in");
+    redirect("/create");
   }
 
   const subscriptionInfo = await checkActiveSubscription(userId);

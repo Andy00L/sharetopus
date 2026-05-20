@@ -467,7 +467,7 @@ export default function SocialPostForm({
                 ? "Write your post content here"
                 : "Write a caption for your post"
             }
-            className="max-h-60 overflow-y-auto  bg-white"
+            className="h-40 max-h-40 w-full resize-none overflow-y-auto break-words bg-white"
             maxLength={CAPTION_LIMITS.default}
             rows={6}
             required

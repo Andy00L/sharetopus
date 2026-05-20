@@ -2,11 +2,11 @@
 
 import Image from "next/image";
 import { useEffect, useState } from "react";
-import user1 from "../../../../public/logo_256x256.ico";
-import user4 from "../../../../public/userdemo1 .webp";
-import user2 from "../../../../public/userdemo2.webp";
-import user3 from "../../../../public/userdemo3.webp";
-import user5 from "../../../../public/userdemo5.webp";
+import user1 from "../../../public/logo_256x256.ico";
+import user4 from "../../../public/userdemo1 .webp";
+import user2 from "../../../public/userdemo2.webp";
+import user3 from "../../../public/userdemo3.webp";
+import user5 from "../../../public/userdemo5.webp";
 
 /* Social-proof row with 5 overlapping avatars, 5 stars (brand orange),
    and a rotating tagline ("Loved by 7447 entrepreneurs", etc.).
