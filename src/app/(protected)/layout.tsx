@@ -11,7 +11,7 @@ export default async function RootLayout({
   await ensureUserExists();
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="protected-theme">
       <AppSidebar variant="inset" />
       <SidebarInset>
         <SiteHeader />

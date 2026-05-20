@@ -1,159 +1,262 @@
-"use client";
-
-import Image from "next/image";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { CircuitBoard } from "@/components/ui/circuit-board";
-import { User } from "lucide-react";
-import { Octopus } from "./icons/octopus";
 
-/* Platform data. Shipped platforms have full integration (OAuth + posting).
-   Aspirational platforms exist in the DB enum but have no backend code yet.
-   Source: docs/PLATFORMS.md. Icons: public SVGs in /public/. */
+/* Cross-posting hub-and-spoke. Icon and spoke Y positions share RIGHT_Y so lines
+   meet nodes. Plain <img> for platform SVGs; hub uses the transparent logo.
+   #platforms lives on SupportedPlatforms (View platforms CTA scrolls there). */
+
 const PLATFORMS = [
-  { id: "linkedin", label: "LinkedIn", src: "/linkedin.svg", shipped: true },
-  { id: "tiktok", label: "TikTok", src: "/tiktok.svg", shipped: true },
-  { id: "pinterest", label: "Pinterest", src: "/pinterest.svg", shipped: true },
-  { id: "instagram", label: "Instagram", src: "/instagram.svg", shipped: true },
-  { id: "x", label: "X", src: "/x.svg", shipped: false },
-  { id: "facebook", label: "Facebook", src: "/facebook.svg", shipped: false },
-  { id: "youtube", label: "YouTube", src: "/youtube.svg", shipped: false },
-  { id: "threads", label: "Threads", src: "/threads.svg", shipped: false },
+  { label: "Facebook", src: "/facebook.svg" },
+  { label: "Instagram", src: "/instagram.svg" },
+  { label: "Twitter", src: "/x.svg" },
+  { label: "LinkedIn", src: "/linkedin.svg" },
+  { label: "TikTok", src: "/tiktok.svg" },
 ];
 
-const SHIPPED_COUNT = PLATFORMS.filter((p) => p.shipped).length;
+const RIGHT_Y = [15, 30, 50, 70, 85];
 
-/* CircuitBoard canvas geometry. Fixed pixel viewport.
-   User on the left, Sharetopus hub in the center, 8 platforms vertically
-   distributed on the right. The wrapper allows horizontal scroll on
-   viewports narrower than CANVAS_WIDTH. Canvas is 500px tall to give
-   platform nodes enough vertical breathing room (no label overlap). */
-const CANVAS_WIDTH = 580;
-const CANVAS_HEIGHT = 500;
-const USER_X = 30;
-const HUB_X = 290;
-const PLAT_X = 520;
-const CENTER_Y = CANVAS_HEIGHT / 2;
-const PLAT_Y_START = 40;
-const PLAT_Y_END = CANVAS_HEIGHT - 40;
-const PLAT_STEP = (PLAT_Y_END - PLAT_Y_START) / (PLATFORMS.length - 1);
+const HUB = { x: 50, y: 50 };
+const USER = { x: 15, y: 50 };
+const PLATFORM_X = 85;
 
-/* Crossposting section. Two-column on desktop, stacked on mobile.
-   Left: eyebrow + headline + body + two CTAs.
-   Right: animated CircuitBoard showing data flow user -> hub -> platforms.
-   On mobile, diagram renders first (order-1) for visual impact. */
+const LINE_ANIM_CSS = `
+@keyframes travelLineLeft {
+  0% { stroke-dashoffset: 300; opacity: 1; }
+  30% { stroke-dashoffset: -300; opacity: 1; }
+  30.01% { opacity: 0; }
+  100% { stroke-dashoffset: 300; opacity: 0; }
+}
+@keyframes travelLineRight {
+  0% { stroke-dashoffset: 400; opacity: 1; }
+  40% { stroke-dashoffset: -400; opacity: 1; }
+  40.01% { opacity: 0; }
+  100% { stroke-dashoffset: 400; opacity: 0; }
+}
+.animated-line-left { stroke-dasharray: 80 1000; animation: travelLineLeft 3s linear infinite; }
+.animated-line-right { stroke-dasharray: 80 1000; animation: travelLineRight 3s linear 0.2s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animated-line-left, .animated-line-right { animation: none; opacity: 0; }
+}
+`;
+
 export default function Crossposting() {
-  /* Build CircuitBoard nodes: 1 user + 1 hub + 8 platforms.
-     User and hub get labels. Platform nodes are label-free (the SVG icon
-     is self-explanatory and labels caused vertical overlap at this density).
-     Platform nodes use size "sm" (24px) for tighter visual weight. */
-  const nodes = [
-    {
-      id: "user",
-      x: USER_X,
-      y: CENTER_Y,
-      label: "You",
-      icon: <User className="w-4 h-4" strokeWidth={1.6} />,
-    },
-    {
-      id: "hub",
-      x: HUB_X,
-      y: CENTER_Y,
-      label: "Sharetopus",
-      icon: <Octopus size={20} />,
-    },
-    ...PLATFORMS.map((p, i) => ({
-      id: p.id,
-      x: PLAT_X,
-      y: Math.round(PLAT_Y_START + i * PLAT_STEP),
-      status: p.shipped ? ("active" as const) : ("inactive" as const),
-      size: "sm" as const,
-      icon: (
-        <Image
-          src={p.src}
-          alt={p.label}
-          width={14}
-          height={14}
-          className="object-contain"
-        />
-      ),
-    })),
-  ];
-
-  /* Connections: user -> hub first, then hub -> each platform.
-     All orange. The CircuitBoard staggers animation start times by index,
-     so the user->hub pulse fires first, then hub->platform pulses fan out. */
-  const connections = [
-    { from: "user", to: "hub", animated: true },
-    ...PLATFORMS.map((p) => ({
-      from: "hub",
-      to: p.id,
-      animated: true,
-    })),
-  ];
-
   return (
     <section
-      id="platforms"
       className="py-16 md:py-24 px-4 md:px-8 max-w-6xl mx-auto"
+      style={{
+        fontFamily:
+          "'DM Sans', system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+      }}
     >
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-16 items-center">
-        {/* Copy and CTAs. */}
-        <div className="order-2 md:order-1">
-          <div className="t-eyebrow mb-3">
-            <span className="inline-block size-1.5 rounded-full bg-primary mr-2 align-middle" />
-            Cross-posting
-          </div>
-          <h2 className="t-section-h2 mb-5">
-            Post to all platforms{" "}
-            <span className="t-section-accent">instantly.</span>
-          </h2>
-          <p className="t-body max-w-md mb-7">
-            Publish everywhere in 30 seconds, not 30 minutes. Manage personal
-            and brand accounts without switching tabs. One composer,{" "}
-            {SHIPPED_COUNT} networks (more on the way).
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <Button
-              asChild
-              className="rounded-full bg-primary text-primary-foreground t-button px-6 py-3 hover:bg-[var(--orange-2)]"
-            >
-              <Link href="/create">
-                Start posting <span className="ml-1">→</span>
-              </Link>
-            </Button>
-            <Button
-              asChild
-              variant="outline"
-              className="rounded-full t-button px-6 py-3 border-foreground text-foreground hover:bg-foreground hover:text-background"
-            >
-              <a href="#pricing">View pricing</a>
-            </Button>
-          </div>
-        </div>
+      <div className="container px-4 mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-[0.92fr_1.08fr] gap-12 lg:gap-20 items-center">
+          <div className="max-w-xl">
+            <div className="inline-flex items-center gap-2 mb-5">
+              <span className="inline-block w-[7px] h-[7px] rounded-full bg-[#FF5A36]" />
+              <span className="text-[12px] font-semibold tracking-[0.18em] uppercase text-[#FF5A36]">
+                Cross-posting
+              </span>
+            </div>
 
-        {/* CircuitBoard hub-and-spoke. Fixed pixel canvas.
-            The wrapper provides horizontal scroll on phones where
-            CANVAS_WIDTH (580px) exceeds viewport width.
-            The -mx-4/px-4 trick extends the scroll past the section padding
-            so the visual feels edge-to-edge on mobile. */}
-        <div
-          className="order-1 md:order-2 w-full -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto md:overflow-visible"
-          role="img"
-          aria-label="Cross-posting flow: one user, through the Sharetopus hub, out to every social platform"
-        >
-          <div className="flex justify-center min-w-fit">
-            <CircuitBoard
-              nodes={nodes}
-              connections={connections}
-              width={CANVAS_WIDTH}
-              height={CANVAS_HEIGHT}
-              variant="light"
-              traceColor="var(--line)"
-              traceWidth={2.5}
-              pulseColor="#FF5A36"
-              showGrid={false}
-            />
+            <h2 className="text-[40px] leading-[1.02] lg:text-[56px] font-extrabold tracking-[-0.035em] text-[#1C1B18] mb-6">
+              Post to all platforms{" "}
+              <span className="italic text-[#FF5A36]">instantly.</span>
+            </h2>
+
+            <p className="text-[17px] lg:text-[18px] leading-[1.55] text-[#4A4845] mb-8 max-w-[460px]">
+              Publish everywhere in 30 seconds, not 30 minutes. Manage personal
+              and brand accounts without switching tabs. One composer, every
+              network.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <Link
+                href="/create"
+                className="group inline-flex items-center justify-center gap-1.5 rounded-full bg-[#FF5A36] px-7 py-[14px] text-[15px] font-medium text-white shadow-[0_4px_14px_rgba(255,90,54,0.3)] transition-all hover:bg-[#E84A26] hover:shadow-[0_6px_18px_rgba(255,90,54,0.4)]"
+              >
+                <span>Start posting</span>
+                <span className="inline-block transition-transform group-hover:translate-x-[3px]">
+                  →
+                </span>
+              </Link>
+              <Link
+                href="#platforms"
+                className="inline-flex items-center justify-center gap-2 rounded-full border-[1.5px] border-[#D6D5CF] bg-transparent px-7 py-[14px] text-[15px] font-medium text-[#1C1B18] transition-all hover:border-[#1C1B18] hover:bg-[#1C1B18] hover:text-[#F3F4EF]"
+              >
+                <span>View platforms</span>
+              </Link>
+            </div>
+          </div>
+
+          <div className="w-full flex items-center justify-center">
+            <div
+              className="relative w-full max-w-[560px] rounded-[28px] border-[1.5px] border-[#1C1B18] bg-[#F3F4EF] p-8"
+              style={{ boxShadow: "6px 6px 0 0 #1C1B18" }}
+            >
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-[28px] opacity-[0.35]"
+                style={{
+                  backgroundImage:
+                    "radial-gradient(#1C1B18 0.6px, transparent 0.6px)",
+                  backgroundSize: "14px 14px",
+                  maskImage:
+                    "radial-gradient(ellipse at center, black 40%, transparent 75%)",
+                }}
+              />
+
+              <div
+                className="relative w-full h-[420px]"
+                role="img"
+                aria-label="Cross-posting flow: one user, through the Sharetopus hub, out to Facebook, Instagram, X, LinkedIn, and TikTok"
+              >
+                <svg
+                  className="absolute inset-0 w-full h-full pointer-events-none"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                  style={{ zIndex: 1 }}
+                >
+                  <defs>
+                    <style
+                      dangerouslySetInnerHTML={{ __html: LINE_ANIM_CSS }}
+                    />
+                  </defs>
+
+                  <line
+                    x1={USER.x}
+                    y1={USER.y}
+                    x2={HUB.x}
+                    y2={HUB.y}
+                    stroke="#C8C2B1"
+                    strokeWidth={1.4}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {RIGHT_Y.map((y) => (
+                    <line
+                      key={`base-${y}`}
+                      x1={HUB.x}
+                      y1={HUB.y}
+                      x2={PLATFORM_X}
+                      y2={y}
+                      stroke="#C8C2B1"
+                      strokeWidth={1.6}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  ))}
+
+                  <line
+                    x1={USER.x}
+                    y1={USER.y}
+                    x2={HUB.x}
+                    y2={HUB.y}
+                    stroke="#FF5A36"
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    vectorEffect="non-scaling-stroke"
+                    className="animated-line-left"
+                  />
+                  {RIGHT_Y.map((y) => (
+                    <line
+                      key={`pulse-${y}`}
+                      x1={HUB.x}
+                      y1={HUB.y}
+                      x2={PLATFORM_X}
+                      y2={y}
+                      stroke="#FF5A36"
+                      strokeWidth={1.8}
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                      className="animated-line-right"
+                    />
+                  ))}
+                </svg>
+
+                <div
+                  className="absolute group"
+                  style={{
+                    left: `${USER.x}%`,
+                    top: `${USER.y}%`,
+                    transform: "translate(-50%, -50%)",
+                    zIndex: 10,
+                  }}
+                >
+                  <div
+                    className="flex size-[68px] items-center justify-center rounded-full border-[1.5px] border-[#1C1B18] bg-white transition-transform duration-300 group-hover:scale-[1.06]"
+                    style={{ boxShadow: "3px 3px 0 0 #1C1B18" }}
+                  >
+                    <svg
+                      width="26"
+                      height="26"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#1C1B18"
+                      strokeWidth={1.7}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                    >
+                      <circle cx="12" cy="8" r="3.5" />
+                      <path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5" />
+                    </svg>
+                  </div>
+                </div>
+
+                <div
+                  className="absolute group"
+                  style={{
+                    left: `${HUB.x}%`,
+                    top: `${HUB.y}%`,
+                    transform: "translate(-50%, -50%)",
+                    zIndex: 20,
+                  }}
+                >
+                  <div
+                    className="flex size-[84px] items-center justify-center rounded-full border-[1.5px] border-[#1C1B18] bg-white overflow-hidden transition-transform duration-300 group-hover:scale-[1.06]"
+                    style={{ boxShadow: "4px 4px 0 0 #1C1B18" }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src="/trans_logo%20(1).webp"
+                      alt="Sharetopus"
+                      width={52}
+                      height={52}
+                      loading="lazy"
+                      decoding="async"
+                      className="w-[52px] h-[52px] object-contain"
+                    />
+                  </div>
+                </div>
+
+                {PLATFORMS.map((p, i) => (
+                  <div
+                    key={p.label}
+                    className="group absolute"
+                    style={{
+                      left: `${PLATFORM_X}%`,
+                      top: `${RIGHT_Y[i]}%`,
+                      transform: "translate(-50%, -50%)",
+                      zIndex: 10,
+                    }}
+                    title={p.label}
+                  >
+                    <div
+                      className="flex size-[58px] items-center justify-center rounded-full border-[1.5px] border-[#1C1B18] bg-white transition-transform duration-300 hover:scale-[1.08] cursor-pointer"
+                      style={{ boxShadow: "3px 3px 0 0 #1C1B18" }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={p.src}
+                        alt={p.label}
+                        width={24}
+                        height={24}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>

@@ -112,6 +112,11 @@
   --sidebar-ring: oklch(0.552 0.016 285.938);
 }
 
+.protected-theme {
+  --background: #F3F4EF;
+  --sidebar: #E9EAE4;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

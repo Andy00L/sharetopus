@@ -3,7 +3,6 @@
 import { Button } from "@/components/ui/button";
 import {
   NavigationMenu,
-  NavigationMenuContent,
   NavigationMenuItem,
   NavigationMenuLink,
   NavigationMenuList,
@@ -16,6 +15,8 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+import { useAuth } from "@clerk/nextjs";
 import {
   ArrowRight,
   Globe,
@@ -25,10 +26,8 @@ import {
   Repeat,
   X,
 } from "lucide-react";
-import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useState } from "react";
-import { cn } from "@/lib/utils";
 import { Octopus } from "../icons/octopus";
 
 /* Shared class for every desktop nav link + trigger. Matches the
@@ -70,7 +69,7 @@ const NAV_LINKS = [
   { label: "Platforms", href: "#platforms" },
   { label: "Reviews", href: "#reviews" },
   /* TODO. Wire docs route when /docs ships. */
-  { label: "Docs", href: "#docs" },
+  /* { label: "Docs", href: "#docs" }, */
 ];
 
 /* One row inside the Features dropdown. Plain icon (no colored wrapper),
@@ -151,30 +150,6 @@ export default function Navbar() {
                 <NavigationMenuTrigger className={NAV_LINK_CLASS}>
                   Features
                 </NavigationMenuTrigger>
-                <NavigationMenuContent>
-                  <ul className="grid gap-0 w-[400px]">
-                    {" "}
-                    {/* removed p-2 */}
-                    <div className="flex flex-col">
-                      {FEATURES_ITEMS.map((item) => (
-                        <FeatureMenuItem key={item.title} {...item} />
-                      ))}
-                    </div>
-                    <div className="border-t border-[#E5E5E5] mt-2 pt-2 px-2">
-                      <NavigationMenuLink asChild>
-                        <Link
-                          href="#features"
-                          className="rounded-lg px-2 py-2 text-sm font-medium text-[#545454] transition-colors hover:bg-[var(--cream)] hover:text-[#232323]"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>View all features</span>
-                            <ArrowRight className="h-4 w-4" strokeWidth={2} />
-                          </div>
-                        </Link>
-                      </NavigationMenuLink>
-                    </div>
-                  </ul>
-                </NavigationMenuContent>
               </NavigationMenuItem>
 
               {NAV_LINKS.filter((l) => l.label !== "Pricing").map((link) => (
@@ -212,7 +187,10 @@ export default function Navbar() {
               </Link>
               <Button
                 asChild
-                className={cn("hidden md:inline-flex", DESKTOP_CTA_BUTTON_CLASS)}
+                className={cn(
+                  "hidden md:inline-flex",
+                  DESKTOP_CTA_BUTTON_CLASS,
+                )}
               >
                 <Link href="/sign-up">
                   Get Started

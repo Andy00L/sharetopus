@@ -2,6 +2,7 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import SocialPostForm from "@/components/core/create/SocialPostForm/SocialPostForm";
 import RateLimitError from "@/components/RateLimitError";
+import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -10,6 +11,10 @@ import { Suspense } from "react";
 
 async function SocialPostFormWithData() {
   const { userId } = await auth();
+  const isPaid = await checkActiveSubscription(userId);
+  if (!isPaid.isActive) {
+    return <SubscriptionPrompt />;
+  }
 
   if (!userId) {
     redirect("/sign-in");

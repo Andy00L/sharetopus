@@ -17,10 +17,7 @@ import React from "react";
 
 export default async function CreatePostPage() {
   const { userId } = await auth();
-  const isPaid = await checkActiveSubscription(userId);
-  if (!isPaid.isActive) {
-    return <SubscriptionPrompt />;
-  }
+
   // Define the post types with their supported platforms
   const postTypes = [
     {
@@ -91,10 +88,10 @@ export default async function CreatePostPage() {
                         className="text-muted-foreground transition-colors [&>svg]:!w-4 [&>svg]:!h-4 duration-200 group-hover:text-primary/80 flex-shrink-0"
                       >
                         {React.createElement(
-                          platformIcons[platform as keyof typeof platformIcons]
+                          platformIcons[platform as keyof typeof platformIcons],
                         )}
                       </span>
-                    ) : null
+                    ) : null,
                   )}
                 </div>
               </div>

@@ -52,10 +52,7 @@ const FAQ_ITEMS = [
    on children handle the state-dependent styling. */
 export default function Faq() {
   return (
-    <section
-      id="faq"
-      className="py-16 md:py-24 px-4 md:px-8 max-w-4xl mx-auto"
-    >
+    <section id="faq" className="py-16 md:py-24 px-4 md:px-8 max-w-4xl mx-auto">
       {/* Section header. */}
       <div className="text-center mb-8 md:mb-12">
         <div className="t-eyebrow mb-3">
@@ -63,12 +60,8 @@ export default function Faq() {
           FAQ
         </div>
         <h2 className="t-section-h2">
-          Frequently asked{" "}
-          <span className="t-section-accent">questions.</span>
+          Frequently asked <span className="t-section-accent">questions.</span>
         </h2>
-        <p className="t-section-sub max-w-xl mx-auto mt-4">
-          Still curious? Email jack@sharetopus.com. A human will reply.
-        </p>
       </div>
 
       {/* Accordion. Single-expand: only one item open at a time.
@@ -85,9 +78,7 @@ export default function Faq() {
                 [&>svg]:hidden hides the default ChevronDownIcon (direct SVG child).
                 Our Plus/Minus are inside a span, so they are unaffected. */}
             <AccordionTrigger className="group hover:no-underline py-5 [&>svg]:hidden">
-              <span className="t-faq-q text-left flex-1">
-                {item.q}
-              </span>
+              <span className="t-faq-q text-left flex-1">{item.q}</span>
               <span className="size-8 rounded-full border border-foreground/60 flex items-center justify-center shrink-0 transition-colors group-data-[state=open]:bg-primary group-data-[state=open]:border-primary group-data-[state=open]:text-white">
                 <Plus className="size-3.5 group-data-[state=open]:hidden" />
                 <Minus className="size-3.5 hidden group-data-[state=open]:block" />
