@@ -56,16 +56,17 @@ export default function HeroV2() {
               {userId ? "Get back" : "Get Started"} <span>→</span>
             </Link>
           </Button>
+          {/* TODO: wire to demo video URL or modal when available.
           <Button
             asChild
             variant="outline"
             className="rounded-full t-button-lg px-7 py-4 border-foreground text-foreground hover:bg-foreground hover:text-background gap-1.5"
           >
-            {/* TODO. Wire to demo video URL or modal handler when available. */}
             <a href="#" onClick={(e) => e.preventDefault()}>
               Watch demo
             </a>
           </Button>
+          */}
         </div>
 
         {/* Social proof: animated testimonial (avatars + stars + rotating tagline). */}
