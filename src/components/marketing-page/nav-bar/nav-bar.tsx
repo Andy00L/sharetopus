@@ -27,7 +27,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { Octopus } from "../icons/octopus";
 
 /* Shared class for every desktop nav link + trigger. Matches the
    ReelFarm reference: 15px medium #545454, fades on hover/focus/open. */
@@ -110,7 +109,8 @@ function FeatureMenuItem({
 
 /* Sharetopus marketing top nav. Sticky cream bg, hairline border.
    Layout: brand flex-1 left, nav absolutely centered, CTAs flex-1 right.
-   Mobile: brand + hamburger. Hamburger opens a right-side Sheet. */
+   Mobile: brand + hamburger. Hamburger opens a right-side Sheet.
+   Brand logo: /public/trans_logo (1).webp via plain <img> (%20 encodes the space). */
 const GET_STARTED_BUTTON_CLASS =
   "w-full justify-center gap-1.5 rounded-full bg-primary py-3 text-[17px] font-medium text-primary-foreground hover:bg-[var(--orange-2)]";
 
@@ -127,7 +127,14 @@ export default function Navbar() {
       <div className="relative mx-auto flex max-w-6xl items-center justify-between">
         {/* Brand. flex-1 pushes content toward the edges so the centered nav sits between. */}
         <Link href="/" className="flex items-center gap-2 md:flex-1">
-          <Octopus size={28} />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/trans_logo%20(1).webp"
+            alt="Sharetopus"
+            width={28}
+            height={28}
+            className="h-7 w-7 object-contain"
+          />
           <span className="text-[18px] font-bold tracking-[-0.04em] text-[var(--ink)]">
             Sharetopus
           </span>
@@ -221,7 +228,14 @@ export default function Navbar() {
 
               <div className="flex items-center justify-between border-b border-[var(--line-2)] px-5 py-5">
                 <div className="flex items-center gap-2.5">
-                  <Octopus size={28} />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/trans_logo%20(1).webp"
+                    alt="Sharetopus"
+                    width={28}
+                    height={28}
+                    className="h-7 w-7 object-contain"
+                  />
                   <span className="text-[18px] font-bold tracking-[-0.04em] text-[var(--ink)]">
                     Sharetopus
                   </span>
