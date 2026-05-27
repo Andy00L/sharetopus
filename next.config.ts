@@ -4,10 +4,6 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   pageExtensions: ["ts", "tsx", "mdx"],
 
-  typescript: {
-    ignoreBuildErrors: true,
-  },
-
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
