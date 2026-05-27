@@ -102,7 +102,7 @@ export default function Navbar() {
           ) : isLoaded ? (
             <>
               <Link
-                href="/sign-in"
+                href="/create"
                 className="hidden text-[15px] font-medium text-[#545454] transition-opacity hover:opacity-50 md:inline-block"
               >
                 Sign in
@@ -111,7 +111,7 @@ export default function Navbar() {
                 asChild
                 className={cn("hidden md:inline-flex", CTA_BUTTON_CLASS)}
               >
-                <Link href="/sign-up">
+                <Link href="/create">
                   Get Started
                   <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.5} />
                 </Link>
@@ -180,7 +180,7 @@ export default function Navbar() {
           <div className="border-t border-[#E0E1DB] px-4 py-5">
             {!isSignedIn && (
               <Link
-                href="/sign-in"
+                href="/create"
                 onClick={() => setMobileOpen(false)}
                 className="mb-3 block w-full rounded-full border border-[#D6D5CF] py-3 text-center text-[16px] font-medium text-[#1C1B18]"
               >
@@ -188,7 +188,7 @@ export default function Navbar() {
               </Link>
             )}
             <Link
-              href={isSignedIn ? "/create" : "/sign-up"}
+              href={isSignedIn ? "/create" : "/create"}
               onClick={() => setMobileOpen(false)}
               className="flex w-full items-center justify-center gap-1.5 rounded-full bg-[#FF5A36] py-3 text-[16px] font-medium text-white hover:bg-[#E84A26]"
             >
