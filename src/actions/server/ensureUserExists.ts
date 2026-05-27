@@ -3,6 +3,8 @@ import { currentUser } from "@clerk/nextjs/server";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 import stripe from "@/lib/stripe";
+import { ensureReferralCode } from "@/actions/server/referral/generateReferralCode";
+import { recordReferralOnSignup } from "@/actions/server/referral/recordReferralOnSignup";
 
 /**
  * Ensures the authenticated Clerk user exists in Supabase and Stripe.
@@ -28,6 +30,10 @@ export async function ensureUserExists() {
         syncStripeInvoices(user.id, existingUser.stripe_customer_id),
       ]);
     }
+    // Ensure referral code exists (idempotent, non-blocking)
+    ensureReferralCode(user.id).catch((err) =>
+      console.error("[ensureUserExists] Referral code generation failed:", err),
+    );
     return;
   }
 
@@ -101,6 +107,15 @@ export async function ensureUserExists() {
       syncStripeSubscriptions(user.id, stripeCustomerId),
       syncStripeInvoices(user.id, stripeCustomerId),
     ]);
+
+    // --- Referral system: eager code gen + attribution (first creation only) ---
+    // Both are best-effort: failures are logged but never block user creation.
+    ensureReferralCode(user.id).catch((err) =>
+      console.error("[ensureUserExists] Referral code generation failed:", err),
+    );
+    recordReferralOnSignup(user.id, email).catch((err) =>
+      console.error("[ensureUserExists] Referral attribution failed:", err),
+    );
   }
 }
 

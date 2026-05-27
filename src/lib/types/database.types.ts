@@ -1549,6 +1549,7 @@ export type Database = {
           stripe_customer_id: string;
           locale: string | null;
           timezone: string | null;
+          creator_access_until: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1560,6 +1561,7 @@ export type Database = {
           stripe_customer_id: string;
           locale?: string | null;
           timezone?: string | null;
+          creator_access_until?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1571,6 +1573,7 @@ export type Database = {
           stripe_customer_id?: string;
           locale?: string | null;
           timezone?: string | null;
+          creator_access_until?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1580,6 +1583,124 @@ export type Database = {
             columns: ["id"];
             isOneToOne: true;
             referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
+      referral_codes: {
+        Row: {
+          user_id: string;
+          code: string;
+          created_at: string;
+        };
+        Insert: {
+          user_id: string;
+          code: string;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          code?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "referral_codes_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: true;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
+      referrals: {
+        Row: {
+          id: string;
+          referrer_id: string;
+          referred_id: string;
+          status: "pending" | "verified" | "redeemed" | "void";
+          created_at: string;
+          verified_at: string | null;
+          redeemed_at: string | null;
+          reward_batch_id: string | null;
+        };
+        Insert: {
+          id?: string;
+          referrer_id: string;
+          referred_id: string;
+          status?: "pending" | "verified" | "redeemed" | "void";
+          created_at?: string;
+          verified_at?: string | null;
+          redeemed_at?: string | null;
+          reward_batch_id?: string | null;
+        };
+        Update: {
+          id?: string;
+          referrer_id?: string;
+          referred_id?: string;
+          status?: "pending" | "verified" | "redeemed" | "void";
+          created_at?: string;
+          verified_at?: string | null;
+          redeemed_at?: string | null;
+          reward_batch_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "referrals_referrer_id_fkey";
+            columns: ["referrer_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "referrals_referred_id_fkey";
+            columns: ["referred_id"];
+            isOneToOne: true;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
+      referral_reward_grants: {
+        Row: {
+          id: string;
+          user_id: string;
+          weeks_granted: number;
+          granted_at: string;
+          creator_access_until_before: string | null;
+          creator_access_until_after: string;
+          referral_ids: string[];
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          weeks_granted: number;
+          granted_at?: string;
+          creator_access_until_before?: string | null;
+          creator_access_until_after: string;
+          referral_ids: string[];
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          weeks_granted?: number;
+          granted_at?: string;
+          creator_access_until_before?: string | null;
+          creator_access_until_after?: string;
+          referral_ids?: string[];
+        };
+        Relationships: [
+          {
+            foreignKeyName: "referral_reward_grants_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
             referencedColumns: ["id"];
           },
         ];
@@ -1978,6 +2099,12 @@ export type Database = {
         };
         Returns: number;
       };
+      grant_referral_rewards: {
+        Args: {
+          p_referrer_id: string;
+        };
+        Returns: number;
+      };
     };
     Enums: {
       [_ in never]: never;
@@ -2130,6 +2257,8 @@ export type McpAuditResultStatus =
 
 export type PricingRecurrence = "one_time" | "monthly";
 
+export type ReferralStatus = "pending" | "verified" | "redeemed" | "void";
+
 // ─────────────────────────────────────────────────────────────────────────
 // Convenience row-aliases for the most-touched tables.
 // Use them like:   const post: ScheduledPost = ...
@@ -2166,3 +2295,6 @@ export type PlatformQuota = Tables<"platform_quotas">;
 export type RateLimitEvent = Tables<"rate_limit_events">;
 export type WebhookSubscription = Tables<"webhook_subscriptions">;
 export type WebhookDelivery = Tables<"webhook_deliveries">;
+export type ReferralCode = Tables<"referral_codes">;
+export type Referral = Tables<"referrals">;
+export type ReferralRewardGrant = Tables<"referral_reward_grants">;

@@ -15,6 +15,7 @@ import * as React from "react";
 import { NavAccounts } from "./nav-accounts";
 import { NavCreate } from "./nav-create";
 import NavPost from "./nav-post";
+import { NavReferral } from "./nav-referral";
 import { NavUser } from "./nav-user";
 import Image from "next/image";
 
@@ -54,6 +55,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
       {/* Section Accounts */}
       <NavAccounts />
+
+      <SidebarSeparator />
+
+      {/* Section Referral */}
+      <NavReferral />
 
       <SidebarFooter className="mt-auto">
         <NavUser />

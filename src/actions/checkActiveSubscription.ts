@@ -57,6 +57,29 @@ export async function checkActiveSubscription(
     }
 
     if (!data) {
+      // Referral-granted Creator access fallback: if the user has no active
+      // Stripe subscription, check whether referral rewards have banked time
+      // via the creator_access_until column (set by the grant_referral_rewards RPC).
+      const { data: userData } = await adminSupabase
+        .from("users")
+        .select("creator_access_until")
+        .eq("id", userId)
+        .single();
+
+      if (
+        userData?.creator_access_until &&
+        new Date(userData.creator_access_until) > new Date()
+      ) {
+        return {
+          isActive: true,
+          priceId: null,
+          tier: "creator" as PlanTier,
+          status: "referral_grant",
+          currentPeriodEnd: userData.creator_access_until,
+          startDate: null,
+        };
+      }
+
       return emptyResult;
     }
 
