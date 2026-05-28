@@ -1124,6 +1124,55 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
+      share_links: {
+        Row: {
+          id: string;
+          owner_principal_id: string;
+          platform: string;
+          token: string;
+          expires_at: string | null;
+          max_uses: number | null;
+          used_count: number;
+          revoked_at: string | null;
+          last_used_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          owner_principal_id: string;
+          platform: string;
+          token: string;
+          expires_at?: string | null;
+          max_uses?: number | null;
+          used_count?: number;
+          revoked_at?: string | null;
+          last_used_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          owner_principal_id?: string;
+          platform?: string;
+          token?: string;
+          expires_at?: string | null;
+          max_uses?: number | null;
+          used_count?: number;
+          revoked_at?: string | null;
+          last_used_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "share_links_owner_principal_id_fkey";
+            columns: ["owner_principal_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────
       social_accounts: {
         Row: {
           id: string;
@@ -1241,7 +1290,7 @@ export type Database = {
         Row: {
           id: string;
           principal_id: string;
-          initiated_via: "web" | "mcp" | "api" | "x402";
+          initiated_via: "web" | "mcp" | "api" | "x402" | "share_link";
           initiated_x402_charge_id: string | null;
           platform:
             | "linkedin"
@@ -1262,6 +1311,7 @@ export type Database = {
           error_code: string | null;
           error_message: string | null;
           social_account_id: string | null;
+          share_link_id: string | null;
           poll_count: number;
           last_polled_at: string | null;
           last_polled_ip_hash: string | null;
@@ -1272,7 +1322,7 @@ export type Database = {
         Insert: {
           id: string;
           principal_id: string;
-          initiated_via: "web" | "mcp" | "api" | "x402";
+          initiated_via: "web" | "mcp" | "api" | "x402" | "share_link";
           initiated_x402_charge_id?: string | null;
           platform:
             | "linkedin"
@@ -1293,6 +1343,7 @@ export type Database = {
           error_code?: string | null;
           error_message?: string | null;
           social_account_id?: string | null;
+          share_link_id?: string | null;
           poll_count?: number;
           last_polled_at?: string | null;
           last_polled_ip_hash?: string | null;
@@ -1303,7 +1354,7 @@ export type Database = {
         Update: {
           id?: string;
           principal_id?: string;
-          initiated_via?: "web" | "mcp" | "api" | "x402";
+          initiated_via?: "web" | "mcp" | "api" | "x402" | "share_link";
           initiated_x402_charge_id?: string | null;
           platform?:
             | "linkedin"
@@ -1324,6 +1375,7 @@ export type Database = {
           error_code?: string | null;
           error_message?: string | null;
           social_account_id?: string | null;
+          share_link_id?: string | null;
           poll_count?: number;
           last_polled_at?: string | null;
           last_polled_ip_hash?: string | null;
@@ -1351,6 +1403,13 @@ export type Database = {
             columns: ["initiated_x402_charge_id"];
             isOneToOne: false;
             referencedRelation: "x402_charges";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "social_connections_share_link_id_fkey";
+            columns: ["share_link_id"];
+            isOneToOne: false;
+            referencedRelation: "share_links";
             referencedColumns: ["id"];
           },
         ];
@@ -2099,6 +2158,12 @@ export type Database = {
         };
         Returns: number;
       };
+      consume_share_link: {
+        Args: {
+          p_share_link_id: string;
+        };
+        Returns: { success: boolean; reason: string | null }[];
+      };
       grant_referral_rewards: {
         Args: {
           p_referrer_id: string;
@@ -2235,7 +2300,7 @@ export type PostStatus =
 export type MediaType = "text" | "image" | "video";
 
 export type CreatedVia = "web" | "mcp" | "x402" | "api";
-export type InitiatedVia = CreatedVia;
+export type InitiatedVia = CreatedVia | "share_link";
 
 export type LedgerReason = "topup" | "spend" | "refund" | "adjustment";
 
@@ -2272,6 +2337,7 @@ export type McpOauthClient = Tables<"mcp_oauth_clients">;
 export type McpSession = Tables<"mcp_sessions">;
 export type SanctionsScreening = Tables<"sanctions_screenings">;
 export type SiweNonce = Tables<"siwe_nonces">;
+export type ShareLink = Tables<"share_links">;
 export type SocialAccount = Tables<"social_accounts">;
 export type SocialConnection = Tables<"social_connections">;
 export type ScheduledPost = Tables<"scheduled_posts">;

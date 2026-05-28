@@ -4,6 +4,8 @@ import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import ConnectLinkedInButton from "@/components/core/accounts/connectAccountsButton/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/connectAccountsButton/ConnectPinterestButton";
 import ConnectTikTokButton from "@/components/core/accounts/connectAccountsButton/ConnectTikTokButton";
+import { CreateShareLinkDialog } from "@/components/connections/CreateShareLinkDialog";
+import { ShareLinkList } from "@/components/connections/ShareLinkList";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import PinterestSVGIcon, {
@@ -14,6 +16,7 @@ import RateLimitError from "@/components/RateLimitError";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
+import { tierMeets } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -30,6 +33,7 @@ const AccountsPageWithData = async () => {
   }
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
+  const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
 
   const fetchResult = await fetchSocialAccounts(userId, "web", false);
   if (!fetchResult.success) {
@@ -107,10 +111,16 @@ const AccountsPageWithData = async () => {
               currentCount={limitsCheck.currentCount}
               maxAllowed={limitsCheck.maxAllowed}
             />
+            {isCreatorOrHigher && <CreateShareLinkDialog />}
           </div>
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge accounts={tiktokAccounts} userId={userId} />
           </div>
+          {isCreatorOrHigher && (
+            <div className="mt-3">
+              <ShareLinkList />
+            </div>
+          )}
         </div>
 
         {/* Instagram */}

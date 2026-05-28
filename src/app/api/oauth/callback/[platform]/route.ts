@@ -78,6 +78,11 @@ export async function GET(
     errorDescription,
   });
 
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    process.env.NEXT_PUBLIC_BASE_URL ??
+    "https://sharetopus.com";
+
   if (!result.ok) {
     const errorMessage =
       result.error.kind === "provider_error"
@@ -95,6 +100,13 @@ export async function GET(
       userAgent,
     });
 
+    // Share-link flows redirect to the share error page instead of inline HTML
+    if (result.error.kind.startsWith("share_link_") || result.error.kind === "owner_account_limit_reached") {
+      return NextResponse.redirect(
+        `${baseUrl}/share/${platform}/error?reason=${encodeURIComponent(result.error.kind)}`,
+      );
+    }
+
     return new NextResponse(
       buildHtmlPage("Connection Failed", errorMessage),
       { status: 200, headers: { "Content-Type": "text/html" } }
@@ -111,6 +123,16 @@ export async function GET(
     ipHash,
     userAgent,
   });
+
+  // Share-link flows redirect to the share success page
+  if (result.shareLinkId) {
+    const maskedAccount = result.accountUsername
+      ? encodeURIComponent(result.accountUsername)
+      : "";
+    return NextResponse.redirect(
+      `${baseUrl}/share/${platform}/success${maskedAccount ? `?account=${maskedAccount}` : ""}`,
+    );
+  }
 
   // If a redirect URL was provided, redirect there
   if (result.redirectUrl) {

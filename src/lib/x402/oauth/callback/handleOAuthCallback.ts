@@ -2,6 +2,10 @@ import "server-only";
 
 import type { Platform } from "@/lib/x402/connect/types";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
+import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
+import { validateShareLinkById } from "@/actions/server/share-link/validateShareToken";
+import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { exchangeLinkedInForX402 } from "./linkedinTokenExchange";
 import { exchangeTikTokForX402 } from "./tiktokTokenExchange";
 import { exchangePinterestForX402 } from "./pinterestTokenExchange";
@@ -21,7 +25,14 @@ export interface OAuthCallbackInput {
 }
 
 export type OAuthCallbackResult =
-  | { ok: true; connectionId: string; redirectUrl: string | null }
+  | {
+      ok: true;
+      connectionId: string;
+      redirectUrl: string | null;
+      shareLinkId?: string | null;
+      initiatedVia?: string;
+      accountUsername?: string;
+    }
   | {
       ok: false;
       error:
@@ -30,7 +41,12 @@ export type OAuthCallbackResult =
         | { kind: "state_already_used"; message: string }
         | { kind: "provider_error"; code: string; message: string }
         | { kind: "token_exchange_failed"; message: string }
-        | { kind: "db_update_failed"; message: string };
+        | { kind: "db_update_failed"; message: string }
+        | { kind: "share_link_not_found"; message: string }
+        | { kind: "share_link_revoked"; message: string }
+        | { kind: "share_link_expired"; message: string }
+        | { kind: "share_link_max_uses_reached"; message: string }
+        | { kind: "owner_account_limit_reached"; message: string };
     };
 
 // ---------------------------------------------------------------------------
@@ -55,7 +71,7 @@ export async function handleOAuthCallback(
   const { data: connection, error: lookupError } = await adminSupabase
     .from("social_connections")
     .select(
-      "id, principal_id, platform, status, expires_at, metadata, redirect_uri"
+      "id, principal_id, platform, status, expires_at, metadata, redirect_uri, share_link_id, initiated_via"
     )
     .eq("oauth_state", input.state)
     .maybeSingle();
@@ -109,6 +125,95 @@ export async function handleOAuthCallback(
 
   const redirectUrl = extractRedirectUrl(connection.metadata);
 
+  // -- Share link steps 3-5: validate share link, owner tier, owner account limits
+  //    These run BEFORE token exchange so we abort early if the link was
+  //    revoked/expired between the friend clicking "Connect" and the callback.
+  const isShareLinkFlow = connection.share_link_id !== null;
+
+  if (isShareLinkFlow) {
+    // Step 3: read-only re-validate share link
+    const shareLinkValidation = await validateShareLinkById(
+      connection.share_link_id!,
+    );
+    if (!shareLinkValidation.success) {
+      const reasonToKind: Record<string, string> = {
+        not_found: "share_link_not_found",
+        revoked: "share_link_revoked",
+        expired: "share_link_expired",
+        max_uses_reached: "share_link_max_uses_reached",
+      };
+      const errorKind =
+        reasonToKind[shareLinkValidation.reason] ?? "share_link_not_found";
+
+      await adminSupabase
+        .from("social_connections")
+        .update({
+          status: "failed",
+          error_code: errorKind,
+          error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
+          failed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", connection.id);
+
+      logX402Call({
+        principal: null,
+        action: "share_link.use_failed",
+        endpoint: `/api/oauth/callback/${input.platform}`,
+        chargeId: null,
+        resultStatus: "error",
+      });
+
+      return {
+        ok: false,
+        error: {
+          kind: errorKind as "share_link_not_found",
+          message: `Share link is no longer valid: ${shareLinkValidation.reason}.`,
+        },
+      };
+    }
+
+    // Step 4: owner tier lookup
+    const ownerSubscription = await checkActiveSubscription(
+      connection.principal_id,
+    );
+
+    // Step 5: owner account limit check
+    const ownerLimits = await checkAccountLimits(
+      connection.principal_id,
+      ownerSubscription.tier,
+    );
+    if (!ownerLimits.success || !ownerLimits.canAddMore) {
+      await adminSupabase
+        .from("social_connections")
+        .update({
+          status: "failed",
+          error_code: "owner_account_limit_reached",
+          error_message: "Owner has reached their account limit.",
+          failed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", connection.id);
+
+      logX402Call({
+        principal: null,
+        action: "share_link.use_failed",
+        endpoint: `/api/oauth/callback/${input.platform}`,
+        chargeId: null,
+        resultStatus: "error",
+      });
+
+      return {
+        ok: false,
+        error: {
+          kind: "owner_account_limit_reached",
+          message:
+            "The link owner has reached their account limit. The connection cannot be completed.",
+        },
+      };
+    }
+  }
+
   // -- 2. Provider error (user denied consent)
   if (input.errorCode) {
     await adminSupabase
@@ -153,6 +258,63 @@ export async function handleOAuthCallback(
         message: exchangeResult.message,
       },
     };
+  }
+
+  // -- Step 7 (share link): consume_share_link RPC (atomic used_count increment)
+  //    Called AFTER token exchange succeeds so a failed exchange never burns a use.
+  //    Called BEFORE social_accounts upsert so we don't create an account if
+  //    the link was fully consumed by a concurrent request.
+  if (isShareLinkFlow) {
+    const { data: consumeRows, error: consumeError } = await adminSupabase.rpc(
+      "consume_share_link",
+      { p_share_link_id: connection.share_link_id! },
+    );
+
+    const consumeResult =
+      consumeRows && consumeRows.length > 0 ? consumeRows[0] : null;
+
+    if (consumeError || !consumeResult || !consumeResult.success) {
+      const reason = consumeResult?.reason ?? consumeError?.message ?? "unknown";
+      console.error(
+        `[handleOAuthCallback] consume_share_link failed: ${reason}`,
+      );
+
+      await adminSupabase
+        .from("social_connections")
+        .update({
+          status: "failed",
+          error_code: `share_link_${reason}`,
+          error_message: `Share link consumption failed: ${reason}`,
+          failed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", connection.id);
+
+      logX402Call({
+        principal: null,
+        action: "share_link.use_failed",
+        endpoint: `/api/oauth/callback/${input.platform}`,
+        chargeId: null,
+        resultStatus: "error",
+      });
+
+      // Map RPC reason to the appropriate error kind
+      const reasonKindMap: Record<string, string> = {
+        not_found: "share_link_not_found",
+        revoked: "share_link_revoked",
+        expired: "share_link_expired",
+        max_uses_reached: "share_link_max_uses_reached",
+      };
+      const errorKind = reasonKindMap[reason] ?? "share_link_not_found";
+
+      return {
+        ok: false,
+        error: {
+          kind: errorKind as "share_link_not_found",
+          message: `Share link could not be used: ${reason}.`,
+        },
+      };
+    }
   }
 
   // -- 4. INSERT social_accounts row
@@ -226,14 +388,38 @@ export async function handleOAuthCallback(
     };
   }
 
-  // Dispatch connection.connected webhook after both DB ops succeed.
+  // Step 10 (share link): audit log share_link.use_succeeded
+  if (isShareLinkFlow) {
+    logX402Call({
+      principal: null,
+      action: "share_link.use_succeeded",
+      endpoint: `/api/oauth/callback/${input.platform}`,
+      chargeId: null,
+      resultStatus: "ok",
+    });
+  }
+
+  // Step 11: dispatch webhook with enriched payload (initiated_via + share_link_id)
   dispatchWebhook(connection.principal_id, "connection.connected", {
     connection_id: connection.id,
     social_account_id: socialAccount.id,
     platform: input.platform,
+    initiated_via: connection.initiated_via,
+    share_link_id: connection.share_link_id,
   });
 
-  return { ok: true, connectionId: connection.id, redirectUrl };
+  // Derive the username for the success page redirect
+  const accountUsername =
+    exchangeResult.profile.username ?? exchangeResult.profile.name ?? null;
+
+  return {
+    ok: true,
+    connectionId: connection.id,
+    redirectUrl,
+    shareLinkId: connection.share_link_id,
+    initiatedVia: connection.initiated_via,
+    accountUsername: accountUsername ?? undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
