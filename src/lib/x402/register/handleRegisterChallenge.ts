@@ -14,7 +14,10 @@ export type RegisterChallengeResult =
   | { ok: true; challengeBody: PaymentRequired }
   | {
       ok: false;
-      error: "nonce_creation_failed" | "pricing_lookup_failed";
+      error:
+        | "nonce_creation_failed"
+        | "pricing_lookup_failed"
+        | "fee_payer_unavailable";
       message: string;
     };
 
@@ -56,7 +59,9 @@ export async function handleRegisterChallenge(
     };
   }
 
-  const challengeBody = buildPaymentRequired({
+  // On Solana this resolves the facilitator fee payer; failure means no
+  // payable 402 can be built (the already-created nonce row simply expires).
+  const challengeResult = await buildPaymentRequired({
     resourceUrl: context.resourceUrl,
     network: context.network,
     amountUsdc: priceResult.usdcPrice,
@@ -66,6 +71,13 @@ export async function handleRegisterChallenge(
       siweExpiresAt: nonceResult.expiresAt,
     },
   });
+  if (!challengeResult.ok) {
+    return {
+      ok: false,
+      error: challengeResult.reason,
+      message: challengeResult.message,
+    };
+  }
 
-  return { ok: true, challengeBody };
+  return { ok: true, challengeBody: challengeResult.paymentRequired };
 }

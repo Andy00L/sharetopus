@@ -278,6 +278,27 @@ export function x402PaidEndpoint<TBody, TResult>(
     // ── Step 6: Check payment header; 402 with requirements if absent ────
     const paymentHeader = readPaymentHeader(req);
     if (!paymentHeader) {
+      // A Solana 402 without extra.feePayer is unpayable by spec-compliant
+      // clients, so a fee-payer outage returns 502 instead of an empty 402.
+      // EVM networks never hit the failure branch (no fee payer involved).
+      const paymentRequiredResult = await buildPaymentRequired({
+        resourceUrl,
+        network,
+        amountUsdc: usdcPrice,
+        recipientAddress,
+        error: "PAYMENT-SIGNATURE header is required",
+      });
+      if (!paymentRequiredResult.ok) {
+        return logAndError({
+          principal: null,
+          action: actionKey,
+          chargeId: null,
+          resultStatus: "error",
+          httpStatus: 502,
+          errorKind: "facilitator_error",
+          message: paymentRequiredResult.message,
+        });
+      }
       await logX402Call({
         principal: null,
         action: actionKey,
@@ -288,15 +309,7 @@ export function x402PaidEndpoint<TBody, TResult>(
         ipHash,
         userAgent,
       });
-      return buildPaymentRequiredResponse(
-        buildPaymentRequired({
-          resourceUrl,
-          network,
-          amountUsdc: usdcPrice,
-          recipientAddress,
-          error: "PAYMENT-SIGNATURE header is required",
-        })
-      );
+      return buildPaymentRequiredResponse(paymentRequiredResult.paymentRequired);
     }
 
     // ── Step 7: Verify payment (off-chain) ───────────────────────────────

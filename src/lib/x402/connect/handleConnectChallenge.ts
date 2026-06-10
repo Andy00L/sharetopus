@@ -14,7 +14,10 @@ export type ConnectChallengeResult =
   | { ok: true; challengeBody: PaymentRequired }
   | {
       ok: false;
-      error: "pricing_lookup_failed" | "unsupported_platform";
+      error:
+        | "pricing_lookup_failed"
+        | "unsupported_platform"
+        | "fee_payer_unavailable";
       message: string;
     };
 
@@ -54,12 +57,21 @@ export async function handleConnectChallenge(
     };
   }
 
-  const challengeBody = buildPaymentRequired({
+  // On Solana this resolves the facilitator fee payer; failure means no
+  // payable 402 can be built.
+  const challengeResult = await buildPaymentRequired({
     resourceUrl: context.resourceUrl,
     network: context.network,
     amountUsdc: priceResult.usdcPrice,
     recipientAddress: context.recipientAddress,
   });
+  if (!challengeResult.ok) {
+    return {
+      ok: false,
+      error: challengeResult.reason,
+      message: challengeResult.message,
+    };
+  }
 
-  return { ok: true, challengeBody };
+  return { ok: true, challengeBody: challengeResult.paymentRequired };
 }

@@ -131,6 +131,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!result.ok) {
       console.error(`[POST /api/x402/register] Challenge build failed: ${result.message}`);
       await logRegisterCall({ principal: null, chargeId: null, resultStatus: "error" });
+      // A missing Solana fee payer is an upstream facilitator outage, not a
+      // server bug: 502 facilitator_unavailable, matching the verify paths.
+      if (result.error === "fee_payer_unavailable") {
+        return NextResponse.json(
+          { error: "facilitator_unavailable", message: result.message },
+          { status: 502 }
+        );
+      }
       return NextResponse.json(
         { error: "internal", message: result.message },
         { status: 500 }

@@ -170,7 +170,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "Sign the payment.",
-        body: "EVM networks: sign an EIP-3009 authorization under the USDC EIP-712 domain carried in extra (name USD Coin, version 2). Solana: the exact scheme carries a partially signed transaction. Client libraries such as @x402/evm build this payload from the accepts entry.",
+        body: "EVM networks: sign an EIP-3009 authorization under the USDC EIP-712 domain carried in extra (name USD Coin, version 2). Solana: extra carries the facilitator-provided feePayer, and the exact scheme builds a partially signed transaction with it. Client libraries such as @x402/evm and @x402/svm build this payload from the accepts entry.",
       },
       {
         title: "Retry with PAYMENT-SIGNATURE.",

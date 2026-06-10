@@ -21,24 +21,18 @@ import "server-only";
  *     It carries no blockNumber or facilitator fee; those fields are null in
  *     the wrapper result.
  *   - The CDP hosted facilitator requires CDP API-key JWTs on verify/settle;
- *     createFacilitatorConfig from @coinbase/x402 signs them for the CDP host
- *     specifically, so a custom X402_FACILITATOR_URL (e.g. the x402.org
- *     testnet facilitator, which takes no auth) gets a plain client instead.
+ *     the singleton client wiring lives in facilitatorClient.ts (shared with
+ *     solana/feePayer.ts).
  *   - Refunds go through the CDP SDK directly (merchant -> agent); the
  *     facilitator only handles agent -> merchant.
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
-import { createFacilitatorConfig } from "@coinbase/x402";
-import { HTTPFacilitatorClient } from "@x402/core/server";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import type { NetworkConfig } from "@/lib/x402/networks";
-import {
-  DEFAULT_FACILITATOR_URL,
-  getFacilitatorUrl,
-  getRecipientAddress,
-} from "@/lib/x402/config";
+import { getRecipientAddress } from "@/lib/x402/config";
+import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildPaymentRequirements } from "@/lib/x402/http/paymentHttp";
 import {
@@ -80,45 +74,6 @@ export function getCdpClient(): CdpClient {
 
   cdpClientInstance = new CdpClient();
   return cdpClientInstance;
-}
-
-// ---------------------------------------------------------------------------
-// Facilitator Client singleton
-// ---------------------------------------------------------------------------
-
-let facilitatorClientInstance: HTTPFacilitatorClient | null = null;
-
-/**
- * Lazy singleton facilitator client. The CDP hosted facilitator (the
- * default) 401s without CDP API-key JWTs, so that path always wires
- * createFacilitatorConfig (which reads CDP_API_KEY_ID/CDP_API_KEY_SECRET
- * from env). A custom X402_FACILITATOR_URL gets a plain client because the
- * CDP JWTs are signed for the CDP host and would be meaningless elsewhere.
- * Throws on missing CDP keys for the CDP path; callers catch and map to
- * facilitator_error (fail closed).
- */
-function getFacilitatorClient(): HTTPFacilitatorClient {
-  if (facilitatorClientInstance) return facilitatorClientInstance;
-
-  const facilitatorUrl = getFacilitatorUrl();
-  if (facilitatorUrl === DEFAULT_FACILITATOR_URL) {
-    if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
-      throw new Error(
-        "[getFacilitatorClient] CDP_API_KEY_ID / CDP_API_KEY_SECRET are required " +
-          "to call the CDP hosted facilitator. Set them, or point " +
-          "X402_FACILITATOR_URL at a facilitator that needs no auth."
-      );
-    }
-    // createFacilitatorConfig returns { url: <CDP url>, createAuthHeaders }.
-    facilitatorClientInstance = new HTTPFacilitatorClient(
-      createFacilitatorConfig()
-    );
-  } else {
-    facilitatorClientInstance = new HTTPFacilitatorClient({
-      url: facilitatorUrl,
-    });
-  }
-  return facilitatorClientInstance;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +139,22 @@ export async function verifyPayment(
     };
   }
 
-  // 2. Build expected requirements from the route configuration
-  const requirements: PaymentRequirements = buildPaymentRequirements({
+  // 2. Build expected requirements from the route configuration. On Solana
+  //    this resolves the facilitator fee payer (extra.feePayer), which the
+  //    facilitator's verify requires; without it the payment cannot be
+  //    verified, so the failure maps to facilitator_error (502 everywhere).
+  const requirementsResult = await buildPaymentRequirements({
     network: input.network,
     amountUsdc: input.amountUsdc,
     recipientAddress: input.recipientAddress,
   });
+  if (!requirementsResult.ok) {
+    return {
+      ok: false,
+      error: { kind: "facilitator_error", message: requirementsResult.message },
+    };
+  }
+  const requirements: PaymentRequirements = requirementsResult.requirements;
 
   // 3. Pre-verify checks: network and recipient mismatch
   const payloadNetwork = paymentPayload.accepted?.network;
