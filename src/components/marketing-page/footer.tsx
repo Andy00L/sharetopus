@@ -111,6 +111,14 @@ export default function Footer() {
                   FAQ
                 </Link>
               </li>
+              <li>
+                <Link
+                  href="/docs/x402"
+                  className="t-footer-link hover:text-foreground transition-colors"
+                >
+                  x402 API Reference
+                </Link>
+              </li>
             </ul>
           </div>
 
