@@ -88,14 +88,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const result = await handleStatusQuery({ connectionToken }, ipHash);
 
   if (!result.ok) {
-    const status =
-      result.error.kind === "missing_token" ||
-      result.error.kind === "invalid_token" ||
-      result.error.kind === "token_expired"
-        ? 401
-        : result.error.kind === "connection_not_found"
-          ? 404
-          : 500;
+    const status = mapStatusErrorToHttpStatus(result.error.kind);
 
     await logX402Call({
       principal: null,
@@ -126,4 +119,33 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   });
 
   return NextResponse.json(result.payload, { status: 200 });
+}
+
+/**
+ * server_misconfigured is a 500 on purpose: it means OUR HMAC secret is
+ * missing, and a 401 would send well-behaved agents into a re-auth loop.
+ */
+function mapStatusErrorToHttpStatus(
+  kind:
+    | "missing_token"
+    | "invalid_token"
+    | "token_expired"
+    | "server_misconfigured"
+    | "poll_limit_exceeded"
+    | "connection_not_found"
+    | "db_error"
+): number {
+  switch (kind) {
+    case "missing_token":
+    case "invalid_token":
+    case "token_expired":
+      return 401;
+    case "poll_limit_exceeded":
+      return 429;
+    case "connection_not_found":
+      return 404;
+    case "server_misconfigured":
+    case "db_error":
+      return 500;
+  }
 }

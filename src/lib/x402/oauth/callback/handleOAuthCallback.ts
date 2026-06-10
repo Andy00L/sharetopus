@@ -28,7 +28,6 @@ export type OAuthCallbackResult =
   | {
       ok: true;
       connectionId: string;
-      redirectUrl: string | null;
       shareLinkId?: string | null;
       initiatedVia?: string;
       accountUsername?: string;
@@ -54,15 +53,26 @@ export type OAuthCallbackResult =
 // ---------------------------------------------------------------------------
 
 /**
- * Shared callback handler for all 4 platforms.
+ * Shared callback handler for all 4 platforms, serving both x402-initiated
+ * and REST-initiated connections (owner resolved from social_connections by
+ * oauth_state; no session cookie involved).
  *
  * Flow:
- *   1. Look up social_connections WHERE oauth_state = $state
- *   2. If OAuth provider returned an error: update status to 'failed'
- *   3. Exchange code for token (per-platform wrapper)
- *   4. INSERT social_accounts row
- *   5. UPDATE social_connections SET status='connected', social_account_id
- *   6. Return success
+ *   1. Look up social_connections WHERE oauth_state = $state (must be pending)
+ *   2. Share-link flows: re-validate link + owner limits before any exchange
+ *   3. If the OAuth provider returned an error: transition to 'failed'
+ *   4. Exchange code for token (per-platform wrapper)
+ *   5. Share-link flows: consume_share_link RPC (atomic used_count)
+ *   6. UPSERT social_accounts row
+ *   7. Transition pending -> connected (status-scoped; a concurrent duplicate
+ *      callback loses this transition and reports state_already_used)
+ *
+ * Concurrency: the pending check in step 1 is advisory; correctness comes
+ * from every status transition being scoped to the expected prior status,
+ * so a duplicate delivery of the same callback can never overwrite a
+ * winner's 'connected' with 'failed'.
+ *
+ * Tables touched: social_connections, social_accounts, share_links (via RPC)
  */
 export async function handleOAuthCallback(
   input: OAuthCallbackInput
@@ -71,7 +81,7 @@ export async function handleOAuthCallback(
   const { data: connection, error: lookupError } = await adminSupabase
     .from("social_connections")
     .select(
-      "id, principal_id, platform, status, expires_at, metadata, redirect_uri, share_link_id, initiated_via"
+      "id, principal_id, platform, status, expires_at, share_link_id, initiated_via"
     )
     .eq("oauth_state", input.state)
     .maybeSingle();
@@ -98,21 +108,21 @@ export async function handleOAuthCallback(
   }
 
   if (connection.status !== "pending") {
+    // Generic on purpose: this page renders to whoever holds the state
+    // string, and the internal status value is none of their business.
     return {
       ok: false,
       error: {
         kind: "state_already_used",
-        message: `Connection is already in status: ${connection.status}.`,
+        message: "This connection link was already used.",
       },
     };
   }
 
   if (new Date(connection.expires_at) < new Date()) {
-    // Mark as expired
-    await adminSupabase
-      .from("social_connections")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("id", connection.id);
+    await transitionPendingTo(connection.id, {
+      status: "expired",
+    });
 
     return {
       ok: false,
@@ -123,18 +133,14 @@ export async function handleOAuthCallback(
     };
   }
 
-  const redirectUrl = extractRedirectUrl(connection.metadata);
+  // -- 2. Share link steps: validate share link, owner tier, owner account
+  //    limits. These run BEFORE token exchange so we abort early if the link
+  //    was revoked/expired between the friend clicking "Connect" and the
+  //    callback.
+  const shareLinkId = connection.share_link_id;
 
-  // -- Share link steps 3-5: validate share link, owner tier, owner account limits
-  //    These run BEFORE token exchange so we abort early if the link was
-  //    revoked/expired between the friend clicking "Connect" and the callback.
-  const isShareLinkFlow = connection.share_link_id !== null;
-
-  if (isShareLinkFlow) {
-    // Step 3: read-only re-validate share link
-    const shareLinkValidation = await validateShareLinkById(
-      connection.share_link_id!,
-    );
+  if (shareLinkId !== null) {
+    const shareLinkValidation = await validateShareLinkById(shareLinkId);
     if (!shareLinkValidation.success) {
       const reasonToKind: Record<string, string> = {
         not_found: "share_link_not_found",
@@ -145,24 +151,13 @@ export async function handleOAuthCallback(
       const errorKind =
         reasonToKind[shareLinkValidation.reason] ?? "share_link_not_found";
 
-      await adminSupabase
-        .from("social_connections")
-        .update({
-          status: "failed",
-          error_code: errorKind,
-          error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
-          failed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", connection.id);
-
-      logX402Call({
-        principal: null,
-        action: "share_link.use_failed",
-        endpoint: `/api/oauth/callback/${input.platform}`,
-        chargeId: null,
-        resultStatus: "error",
+      await transitionPendingTo(connection.id, {
+        status: "failed",
+        error_code: errorKind,
+        error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
       });
+
+      logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
       return {
         ok: false,
@@ -173,35 +168,22 @@ export async function handleOAuthCallback(
       };
     }
 
-    // Step 4: owner tier lookup
+    // Owner tier lookup + account limit check
     const ownerSubscription = await checkActiveSubscription(
       connection.principal_id,
     );
-
-    // Step 5: owner account limit check
     const ownerLimits = await checkAccountLimits(
       connection.principal_id,
       ownerSubscription.tier,
     );
     if (!ownerLimits.success || !ownerLimits.canAddMore) {
-      await adminSupabase
-        .from("social_connections")
-        .update({
-          status: "failed",
-          error_code: "owner_account_limit_reached",
-          error_message: "Owner has reached their account limit.",
-          failed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", connection.id);
-
-      logX402Call({
-        principal: null,
-        action: "share_link.use_failed",
-        endpoint: `/api/oauth/callback/${input.platform}`,
-        chargeId: null,
-        resultStatus: "error",
+      await transitionPendingTo(connection.id, {
+        status: "failed",
+        error_code: "owner_account_limit_reached",
+        error_message: "Owner has reached their account limit.",
       });
+
+      logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
       return {
         ok: false,
@@ -214,18 +196,13 @@ export async function handleOAuthCallback(
     }
   }
 
-  // -- 2. Provider error (user denied consent)
+  // -- 3. Provider error (user denied consent)
   if (input.errorCode) {
-    await adminSupabase
-      .from("social_connections")
-      .update({
-        status: "failed",
-        error_code: input.errorCode,
-        error_message: input.errorDescription ?? input.errorCode,
-        failed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", connection.id);
+    await transitionPendingTo(connection.id, {
+      status: "failed",
+      error_code: input.errorCode,
+      error_message: input.errorDescription ?? input.errorCode,
+    });
 
     return {
       ok: false,
@@ -237,19 +214,14 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- 3. Exchange code for token
+  // -- 4. Exchange code for token
   const exchangeResult = await dispatchTokenExchange(input.platform, input.code);
   if (!exchangeResult.ok) {
-    await adminSupabase
-      .from("social_connections")
-      .update({
-        status: "failed",
-        error_code: exchangeResult.error,
-        error_message: exchangeResult.message,
-        failed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", connection.id);
+    await transitionPendingTo(connection.id, {
+      status: "failed",
+      error_code: exchangeResult.error,
+      error_message: exchangeResult.message,
+    });
 
     return {
       ok: false,
@@ -260,14 +232,14 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- Step 7 (share link): consume_share_link RPC (atomic used_count increment)
-  //    Called AFTER token exchange succeeds so a failed exchange never burns a use.
-  //    Called BEFORE social_accounts upsert so we don't create an account if
-  //    the link was fully consumed by a concurrent request.
-  if (isShareLinkFlow) {
+  // -- 5. Share link: consume_share_link RPC (atomic used_count increment).
+  //    Called AFTER token exchange succeeds so a failed exchange never burns
+  //    a use. Called BEFORE social_accounts upsert so we don't create an
+  //    account if the link was fully consumed by a concurrent request.
+  if (shareLinkId !== null) {
     const { data: consumeRows, error: consumeError } = await adminSupabase.rpc(
       "consume_share_link",
-      { p_share_link_id: connection.share_link_id! },
+      { p_share_link_id: shareLinkId },
     );
 
     const consumeResult =
@@ -279,24 +251,13 @@ export async function handleOAuthCallback(
         `[handleOAuthCallback] consume_share_link failed: ${reason}`,
       );
 
-      await adminSupabase
-        .from("social_connections")
-        .update({
-          status: "failed",
-          error_code: `share_link_${reason}`,
-          error_message: `Share link consumption failed: ${reason}`,
-          failed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", connection.id);
-
-      logX402Call({
-        principal: null,
-        action: "share_link.use_failed",
-        endpoint: `/api/oauth/callback/${input.platform}`,
-        chargeId: null,
-        resultStatus: "error",
+      await transitionPendingTo(connection.id, {
+        status: "failed",
+        error_code: `share_link_${reason}`,
+        error_message: `Share link consumption failed: ${reason}`,
       });
+
+      logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
       // Map RPC reason to the appropriate error kind
       const reasonKindMap: Record<string, string> = {
@@ -317,12 +278,12 @@ export async function handleOAuthCallback(
     }
   }
 
-  // -- 4. INSERT social_accounts row
+  // -- 6. UPSERT social_accounts row
   const tokenExpiresAt = new Date(
     Date.now() + exchangeResult.expiresIn * 1000
   ).toISOString();
 
-  const { data: socialAccount, error: insertError } = await adminSupabase
+  const { data: socialAccount, error: upsertError } = await adminSupabase
     .from("social_accounts")
     .upsert(
       {
@@ -344,18 +305,13 @@ export async function handleOAuthCallback(
     .select("id")
     .single();
 
-  if (insertError || !socialAccount) {
-    console.error(`[handleOAuthCallback] Failed to upsert social_accounts: ${insertError?.message}`);
-    await adminSupabase
-      .from("social_connections")
-      .update({
-        status: "failed",
-        error_code: "db_upsert_failed",
-        error_message: insertError?.message ?? "Failed to save account.",
-        failed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", connection.id);
+  if (upsertError || !socialAccount) {
+    console.error(`[handleOAuthCallback] Failed to upsert social_accounts: ${upsertError?.message}`);
+    await transitionPendingTo(connection.id, {
+      status: "failed",
+      error_code: "db_upsert_failed",
+      error_message: upsertError?.message ?? "Failed to save account.",
+    });
 
     return {
       ok: false,
@@ -366,8 +322,8 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- 5. UPDATE social_connections
-  const { error: updateError } = await adminSupabase
+  // -- 7. Transition pending -> connected (status-scoped)
+  const { data: connectedRows, error: connectError } = await adminSupabase
     .from("social_connections")
     .update({
       status: "connected",
@@ -375,10 +331,21 @@ export async function handleOAuthCallback(
       social_account_id: socialAccount.id,
       updated_at: new Date().toISOString(),
     })
-    .eq("id", connection.id);
+    .eq("id", connection.id)
+    .eq("status", "pending")
+    .select("id");
 
-  if (updateError) {
-    console.error(`[handleOAuthCallback] Failed to update social_connections: ${updateError.message}`);
+  if (connectError) {
+    console.error(`[handleOAuthCallback] Failed to update social_connections: ${connectError.message}`);
+    // Compensating transition: the tokens are already stored on the
+    // social_accounts row, but a connection stuck in 'pending' would keep
+    // polling agents waiting until cron expiry. Mark it failed so the state
+    // is at least terminal; the account row stays for manual reconciliation.
+    await transitionPendingTo(connection.id, {
+      status: "failed",
+      error_code: "db_update_failed",
+      error_message: connectError.message,
+    });
     return {
       ok: false,
       error: {
@@ -388,24 +355,30 @@ export async function handleOAuthCallback(
     };
   }
 
-  // Step 10 (share link): audit log share_link.use_succeeded
-  if (isShareLinkFlow) {
-    logX402Call({
-      principal: null,
-      action: "share_link.use_succeeded",
-      endpoint: `/api/oauth/callback/${input.platform}`,
-      chargeId: null,
-      resultStatus: "ok",
-    });
+  if (!connectedRows || connectedRows.length === 0) {
+    // A concurrent duplicate callback won the transition; this delivery is
+    // the loser and must not double-fire the webhook.
+    return {
+      ok: false,
+      error: {
+        kind: "state_already_used",
+        message: "This connection link was already used.",
+      },
+    };
   }
 
-  // Step 11: dispatch webhook with enriched payload (initiated_via + share_link_id)
-  dispatchWebhook(connection.principal_id, "connection.connected", {
+  if (shareLinkId !== null) {
+    logShareLinkAudit(input.platform, "share_link.use_succeeded", "ok");
+  }
+
+  // Webhook dispatch is fire-and-forget by design: delivery retries are the
+  // webhook system's job and a slow subscriber must not block the callback.
+  void dispatchWebhook(connection.principal_id, "connection.connected", {
     connection_id: connection.id,
     social_account_id: socialAccount.id,
     platform: input.platform,
     initiated_via: connection.initiated_via,
-    share_link_id: connection.share_link_id,
+    share_link_id: shareLinkId,
   });
 
   // Derive the username for the success page redirect
@@ -415,8 +388,7 @@ export async function handleOAuthCallback(
   return {
     ok: true,
     connectionId: connection.id,
-    redirectUrl,
-    shareLinkId: connection.share_link_id,
+    shareLinkId,
     initiatedVia: connection.initiated_via,
     accountUsername: accountUsername ?? undefined,
   };
@@ -425,6 +397,73 @@ export async function handleOAuthCallback(
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Status-scoped transition out of 'pending'. Scoping to the prior status is
+ * what makes duplicate concurrent callbacks safe: the loser's transition
+ * matches zero rows instead of overwriting the winner's outcome. Errors are
+ * logged but not propagated; every caller is already on a failure path (or
+ * lazily expiring) where the user-facing error matters more than the
+ * bookkeeping write.
+ */
+async function transitionPendingTo(
+  connectionId: string,
+  fields: {
+    status: "expired" | "failed";
+    error_code?: string;
+    error_message?: string;
+  }
+): Promise<void> {
+  const updateFields: {
+    status: "expired" | "failed";
+    updated_at: string;
+    failed_at?: string;
+    error_code?: string;
+    error_message?: string;
+  } = {
+    status: fields.status,
+    updated_at: new Date().toISOString(),
+  };
+  if (fields.status === "failed") {
+    updateFields.failed_at = new Date().toISOString();
+  }
+  if (fields.error_code !== undefined) {
+    updateFields.error_code = fields.error_code;
+  }
+  if (fields.error_message !== undefined) {
+    updateFields.error_message = fields.error_message;
+  }
+
+  const { error } = await adminSupabase
+    .from("social_connections")
+    .update(updateFields)
+    .eq("id", connectionId)
+    .eq("status", "pending");
+
+  if (error) {
+    console.error(
+      `[handleOAuthCallback] Transition to ${fields.status} failed for connection ${connectionId}: ${error.message}`
+    );
+  }
+}
+
+/**
+ * Share-link audit entry. Fire-and-forget per the audit logger's contract;
+ * the action strings are seeded in pricing_actions as audit-only rows.
+ */
+function logShareLinkAudit(
+  platform: Platform,
+  action: "share_link.use_failed" | "share_link.use_succeeded",
+  resultStatus: "ok" | "error"
+): void {
+  void logX402Call({
+    principal: null,
+    action,
+    endpoint: `/api/oauth/callback/${platform}`,
+    chargeId: null,
+    resultStatus,
+  });
+}
 
 interface ExchangeSuccess {
   ok: true;
@@ -515,12 +554,4 @@ async function dispatchTokenExchange(
       };
     }
   }
-}
-
-function extractRedirectUrl(metadata: unknown): string | null {
-  if (metadata && typeof metadata === "object") {
-    const m = metadata as Record<string, unknown>;
-    if (typeof m.finalRedirectUrl === "string") return m.finalRedirectUrl;
-  }
-  return null;
 }

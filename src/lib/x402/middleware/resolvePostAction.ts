@@ -1,12 +1,15 @@
+import "server-only";
+
 import type { MediaType } from "@/lib/types/database.types";
 
 /**
  * Maps a post_type field from the request body to the corresponding
- * pricing_actions key. Used by post-now and schedule routes.
+ * pricing_actions key. Used by the post-now and schedule routes. Prices
+ * live in pricing_actions (read via readActionPrice), never here.
  *
- * "text" → "post.text" ($0.50)
- * "image" → "post.image" ($0.75)
- * "video" → "post.video" ($1.00)
+ * "text"  -> "post.text"
+ * "image" -> "post.image"
+ * "video" -> "post.video"
  */
 export function resolvePostAction(postType: string):
   | { success: true; action: string; mediaType: MediaType }

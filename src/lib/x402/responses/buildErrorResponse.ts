@@ -22,12 +22,6 @@ export function buildRegisterErrorResponse(error: RegisterVerifyError): NextResp
         }
       );
 
-    case "missing_payment_header":
-      return NextResponse.json(
-        { error: "missing_payment_header", message: error.message },
-        { status: 400 }
-      );
-
     case "malformed_payment":
     case "missing_body":
     case "malformed_body":
@@ -79,6 +73,16 @@ export function buildRegisterErrorResponse(error: RegisterVerifyError): NextResp
         { status: 401 }
       );
 
+    case "siwe_uri_mismatch":
+      return NextResponse.json(
+        {
+          error: "siwe_uri_mismatch",
+          expected: error.expected,
+          received: error.received ?? null,
+        },
+        { status: 401 }
+      );
+
     case "siwe_expired":
     case "siwe_not_yet_valid":
     case "siwe_invalid_signature":
@@ -127,16 +131,20 @@ export function buildRegisterErrorResponse(error: RegisterVerifyError): NextResp
       );
 
     case "settle_not_verified":
+    case "db_error":
       return NextResponse.json(
         { error: "internal", message: error.message },
         { status: 500 }
       );
 
-    case "db_insert_failed_refund_initiated":
+    case "db_insert_failed":
+      // refundInitiated is only true when the on-chain refund actually
+      // succeeded; a false value plus a null tx hash tells the caller the
+      // settled payment needs manual reconciliation.
       return NextResponse.json(
         {
           error: "internal",
-          refundInitiated: true,
+          refundInitiated: error.refundInitiated,
           refundTxHash: error.refundTxHash,
         },
         { status: 500 }

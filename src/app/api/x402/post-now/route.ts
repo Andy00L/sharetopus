@@ -5,6 +5,10 @@ import { z } from "zod";
 
 import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
+import {
+  PostBodyBaseSchema,
+  withMediaPathRule,
+} from "@/lib/x402/middleware/postBodySchema";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 
@@ -14,28 +18,16 @@ export const maxDuration = 60;
 /**
  * POST /api/x402/post-now
  *
- * Pays post.text / post.image / post.video for $0.50-$1.00 USDC.
+ * Pays post.text / post.image / post.video (price per pricing_actions).
  * Steps:
- * 1. Parse body (Zod validates required fields).
+ * 1. Parse body (shared posting schema; media path required for image/video).
  * 2. Resolve pricing action from post_type.
  * 3. x402 middleware handles auth, payment, charge, refund-on-fail.
  * 4. On settle, call directPostBatch with createdVia="x402".
- * 5. Return batch result + X-PAYMENT-RESPONSE header.
+ * 5. Return batch result + PAYMENT-RESPONSE header.
  */
 
-const PostNowBodySchema = z.object({
-  social_account_id: z.string().uuid(),
-  platform: z.enum(["linkedin", "tiktok", "pinterest", "instagram"]),
-  post_type: z.enum(["text", "image", "video"]),
-  description: z.string().nullable(),
-  media_storage_path: z.string().min(1).default(""),
-  title: z.string().nullable().optional(),
-  cover_timestamp: z.number().optional(),
-  pinterest_board_id: z.string().optional(),
-  pinterest_board_name: z.string().optional(),
-  pinterest_link: z.string().optional(),
-  idempotency_key: z.string().optional(),
-});
+const PostNowBodySchema = withMediaPathRule(PostBodyBaseSchema);
 
 type PostNowBody = z.infer<typeof PostNowBodySchema>;
 
@@ -79,14 +71,14 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
     return { success: true, action: result.action };
   },
 
-  handler: async ({ body, principal, chargeId, requestId }) => {
+  handler: async ({ body, principal, requestId }) => {
     // Build DirectPostData from the validated body.
     const directPost: DirectPostData = {
       socialAccountId: body.social_account_id,
       platform: body.platform,
       postType: body.post_type,
       description: body.description,
-      mediaStoragePath: body.media_storage_path,
+      mediaStoragePath: body.media_storage_path ?? "",
       title: body.title ?? undefined,
       coverTimestamp: body.cover_timestamp,
       pinterestBoardId: body.pinterest_board_id,

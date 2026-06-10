@@ -16,13 +16,16 @@ import "server-only";
  *   Issued At: <ISO datetime>
  *   Expiration Time: <ISO datetime>
  *
- * Verification: Ed25519 signature check via @solana/keys (re-exported from @solana/kit).
+ * Verification: Ed25519 signature check via @solana/kit (which re-exports
+ * @solana/keys). The Chain ID line is intentionally NOT enforced: SIWS has
+ * no canonical chain-id vocabulary ("mainnet" vs CAIP-2 forms vary by
+ * wallet) and only one Solana network is registered in networks.ts; the
+ * payment network binding happens at verifyPayment instead.
+ *
+ * Called by: handleRegisterSolanaVerify
  */
 
-import {
-  verifySignature,
-  signatureBytes as toSignatureBytes,
-} from "@solana/keys";
+import { verifySignature, signatureBytes as toSignatureBytes } from "@solana/kit";
 import bs58 from "bs58";
 
 // ---------------------------------------------------------------------------
@@ -36,10 +39,10 @@ export interface VerifySolanaSiweAuthInput {
   signature: string;
   /** Expected payer address (base58 Solana public key). */
   expectedAddress: string;
-  /** Expected nonce. */
-  expectedNonce: string;
   /** Expected domain (host only). */
   expectedDomain: string;
+  /** Expected URI: the exact resource being purchased. */
+  expectedUri: string;
 }
 
 export type VerifySolanaSiweAuthResult =
@@ -50,6 +53,7 @@ export interface SolanaSiweMessageParsed {
   address: string;
   domain: string;
   nonce: string;
+  uri: string | undefined;
   issuedAt: Date | undefined;
   expirationTime: Date | undefined;
 }
@@ -58,7 +62,7 @@ export type VerifySolanaSiweAuthError =
   | { kind: "parse_failed"; message: string }
   | { kind: "domain_mismatch"; expected: string; received: string | undefined }
   | { kind: "address_mismatch"; expected: string; received: string | undefined }
-  | { kind: "nonce_mismatch"; expected: string; received: string | undefined }
+  | { kind: "uri_mismatch"; expected: string; received: string | undefined }
   | { kind: "expired"; message: string }
   | { kind: "invalid_signature"; message: string }
   | { kind: "verification_error"; message: string };
@@ -108,13 +112,16 @@ export async function verifySolanaSiweAuth(
     };
   }
 
-  if (parsed.nonce !== input.expectedNonce) {
+  // Nonce single-use enforcement is NOT here: the caller consumes
+  // parsedMessage.nonce via consumeSiweNonce, which proves it was
+  // server-issued, unused, and unexpired.
+  if (!parsed.uri || parsed.uri !== input.expectedUri) {
     return {
       ok: false,
       error: {
-        kind: "nonce_mismatch",
-        expected: input.expectedNonce,
-        received: parsed.nonce,
+        kind: "uri_mismatch",
+        expected: input.expectedUri,
+        received: parsed.uri,
       },
     };
   }
@@ -130,7 +137,7 @@ export async function verifySolanaSiweAuth(
     };
   }
 
-  // -- 3. Ed25519 signature verification via @solana/keys
+  // -- 3. Ed25519 signature verification
   try {
     // Decode the base58 public key to raw bytes, then import as CryptoKey.
     // Copy into a fresh ArrayBuffer to satisfy TypeScript's BufferSource constraint.
@@ -203,6 +210,7 @@ function parseSiwsMessage(message: string): SolanaSiweMessageParsed {
 
   // Extract fields from remaining lines
   let nonce: string | undefined;
+  let uri: string | undefined;
   let issuedAt: Date | undefined;
   let expirationTime: Date | undefined;
 
@@ -210,6 +218,8 @@ function parseSiwsMessage(message: string): SolanaSiweMessageParsed {
     const trimmed = line.trim();
     if (trimmed.startsWith("Nonce: ")) {
       nonce = trimmed.slice(7);
+    } else if (trimmed.startsWith("URI: ")) {
+      uri = trimmed.slice(5);
     } else if (trimmed.startsWith("Issued At: ")) {
       issuedAt = new Date(trimmed.slice(11));
     } else if (trimmed.startsWith("Expiration Time: ")) {
@@ -221,5 +231,5 @@ function parseSiwsMessage(message: string): SolanaSiweMessageParsed {
     throw new Error("Missing Nonce in SIWS message.");
   }
 
-  return { address, domain, nonce, issuedAt, expirationTime };
+  return { address, domain, nonce, uri, issuedAt, expirationTime };
 }

@@ -7,12 +7,23 @@ import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";
+import type { NetworkConfig } from "@/lib/x402/networks";
+import {
+  getBaseUrl,
+  getExpectedDomain,
+  getRecipientAddress,
+  isX402Platform,
+} from "@/lib/x402/config";
+import {
+  readPaymentHeader,
+  paymentResponseHeaders,
+} from "@/lib/x402/http/paymentHttp";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { handleConnectChallenge } from "@/lib/x402/connect/handleConnectChallenge";
 import { handleConnectVerify } from "@/lib/x402/connect/handleConnectVerify";
 import type { ConnectVerifyError } from "@/lib/x402/connect/handleConnectVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
-import type { ConnectNetworkContext, Platform } from "@/lib/x402/connect/types";
+import type { ConnectNetworkContext } from "@/lib/x402/connect/types";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
 export const runtime = "nodejs";
@@ -20,47 +31,49 @@ export const maxDuration = 60;
 
 const ENDPOINT_PATH = "/api/x402/connect";
 
-const VALID_PLATFORMS = new Set<Platform>([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
-
 /**
  * POST /api/x402/connect?platform=linkedin
  *
- * x402 paid OAuth initiation. $0.50 USDC per new connection.
+ * x402 paid OAuth initiation (connect_account pricing action).
  *
  * Flow:
- *   - If no X-PAYMENT header: return 402 challenge
- *   - If X-PAYMENT present: verify payment, settle, create pending
- *     connection, return OAuth URL + token
+ *   - No payment header: return 402 challenge (PAYMENT-REQUIRED header + body)
+ *   - Payment header present: verify payment, settle, create pending
+ *     connection, return OAuth URL + connection token
  *
  * Query params:
  *   ?platform=linkedin|tiktok|pinterest|instagram (required)
- *   ?network=polygon|arbitrum|solana (optional, defaults to base mainnet)
+ *   ?network=polygon|arbitrum|solana (optional; unknown values are 400)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const startMs = performance.now();
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
 
-  // -- Parse platform query param
-  const url = new URL(request.url);
-  const platformParam = url.searchParams.get("platform");
-
-  if (!platformParam || !VALID_PLATFORMS.has(platformParam as Platform)) {
+  // Helper: audit entry for this endpoint with the current latency.
+  const logConnectCall = async (params: {
+    principal: WalletPrincipal | null;
+    chargeId: string | null;
+    resultStatus: "ok" | "402_required" | "sanctioned" | "rate_limited" | "error";
+  }): Promise<void> => {
     await logX402Call({
-      principal: null,
+      principal: params.principal,
       action: "connect_account",
       endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "error",
+      chargeId: params.chargeId,
+      resultStatus: params.resultStatus,
       latencyMs: Math.round(performance.now() - startMs),
       ipHash,
       userAgent,
     });
+  };
+
+  // -- Parse platform query param
+  const url = new URL(request.url);
+  const platformParam = url.searchParams.get("platform");
+
+  if (!platformParam || !isX402Platform(platformParam)) {
+    await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
     return NextResponse.json(
       {
         error: "invalid_platform",
@@ -70,53 +83,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { status: 400 }
     );
   }
+  const platform = platformParam;
 
-  const platform = platformParam as Platform;
-
-  // -- Resolve network
+  // -- Resolve network (unknown values are rejected)
   const networkParam = url.searchParams.get("network");
-  const network = networkParam
-    ? getNetworkConfig(networkParam) ?? getDefaultNetwork()
-    : getDefaultNetwork();
+  let network: NetworkConfig;
+  if (networkParam) {
+    const requestedNetwork = getNetworkConfig(networkParam);
+    if (!requestedNetwork) {
+      await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
+      return NextResponse.json(
+        {
+          error: "unsupported_network",
+          message: `Network "${networkParam}" is not supported.`,
+        },
+        { status: 400 }
+      );
+    }
+    network = requestedNetwork;
+  } else {
+    network = getDefaultNetwork();
+  }
 
   // -- Build network context
-  const recipientAddress = network.isEvm
-    ? process.env.X402_RECIPIENT_EVM
-    : process.env.X402_RECIPIENT_SOLANA;
-
+  const recipientAddress = getRecipientAddress(network);
   if (!recipientAddress) {
-    console.error(`[POST /api/x402/connect] Recipient address env not set for ${network.name}`);
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "error",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
+    console.error(`[POST /api/x402/connect] Recipient address env not set for network "${network.name}".`);
+    await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
     return NextResponse.json(
       { error: "internal", message: "Server misconfiguration." },
       { status: 500 }
     );
   }
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-  const expectedDomain = new URL(baseUrl).host;
-  const resourceUrl = `${baseUrl}${ENDPOINT_PATH}`;
-
   const context: ConnectNetworkContext = {
     network,
     recipientAddress,
-    expectedDomain,
-    resourceUrl,
+    expectedDomain: getExpectedDomain(),
+    resourceUrl: `${getBaseUrl()}${ENDPOINT_PATH}`,
     platform,
   };
 
-  // -- Check for X-PAYMENT header
-  const paymentHeader = request.headers.get("x-payment");
+  // -- Check for the payment header
+  const paymentHeader = readPaymentHeader(request);
 
   if (!paymentHeader) {
     // -- Challenge path
@@ -127,16 +136,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       60
     );
     if (!rateLimitResult.success) {
-      await logX402Call({
-        principal: null,
-        action: "connect_account",
-        endpoint: ENDPOINT_PATH,
-        chargeId: null,
-        resultStatus: "rate_limited",
-        latencyMs: Math.round(performance.now() - startMs),
-        ipHash,
-        userAgent,
-      });
+      await logConnectCall({ principal: null, chargeId: null, resultStatus: "rate_limited" });
       return NextResponse.json(
         {
           error: "rate_limited",
@@ -154,79 +154,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const result = await handleConnectChallenge(context, platform);
     if (!result.ok) {
       console.error(`[POST /api/x402/connect] Challenge build failed: ${result.message}`);
-      await logX402Call({
-        principal: null,
-        action: "connect_account",
-        endpoint: ENDPOINT_PATH,
-        chargeId: null,
-        resultStatus: "error",
-        latencyMs: Math.round(performance.now() - startMs),
-        ipHash,
-        userAgent,
-      });
+      await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
       return NextResponse.json(
         { error: "internal", message: result.message },
         { status: 500 }
       );
     }
 
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "402_required",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
-
+    await logConnectCall({ principal: null, chargeId: null, resultStatus: "402_required" });
     return buildPaymentRequiredResponse(result.challengeBody);
   }
 
   // -- Verify path
-  const result = await handleConnectVerify(
-    request,
-    paymentHeader,
-    context,
-    ipHash
-  );
+  const result = await handleConnectVerify(paymentHeader, context);
 
   if (!result.ok) {
-    const auditStatus = mapErrorToAuditStatus(result.error);
-
-    await logX402Call({
+    await logConnectCall({
       principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
       chargeId: null,
-      resultStatus: auditStatus,
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
+      resultStatus: mapErrorToAuditStatus(result.error),
     });
-
     return buildConnectErrorResponse(result.error);
   }
 
   // -- Success
-  const walletPrincipal: WalletPrincipal | null = null; // Principal is resolved inside handleConnectVerify
-
-  await logX402Call({
-    principal: walletPrincipal,
-    action: "connect_account",
-    endpoint: ENDPOINT_PATH,
-    chargeId: null,
+  await logConnectCall({
+    principal: result.principal,
+    chargeId: result.chargeId,
     resultStatus: "ok",
-    latencyMs: Math.round(performance.now() - startMs),
-    ipHash,
-    userAgent,
   });
 
-  const headers: Record<string, string> = {};
-  if (result.settleResponseHeader) {
-    headers["X-PAYMENT-RESPONSE"] = result.settleResponseHeader;
-  }
+  const headers: Record<string, string> = result.settleResponseHeader
+    ? paymentResponseHeaders(result.settleResponseHeader)
+    : {};
 
   return NextResponse.json(result.payload, { status: 200, headers });
 }
@@ -246,11 +206,7 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
         }
       );
 
-    case "missing_payment_header":
     case "malformed_payment":
-    case "missing_body":
-    case "malformed_body":
-    case "unsupported_platform":
       return NextResponse.json(
         { error: error.kind, message: error.message },
         { status: 400 }
@@ -260,6 +216,12 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
       return NextResponse.json(
         { error: "wallet_not_registered", message: error.message },
         { status: 401 }
+      );
+
+    case "wallet_sanctioned":
+      return NextResponse.json(
+        { error: "sanctioned", message: error.message },
+        { status: 403 }
       );
 
     case "verify_invalid_signature":
@@ -308,17 +270,21 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
       );
 
     case "settle_not_verified":
-    case "oauth_url_build_failed":
+    case "db_error":
+    case "server_misconfiguration":
       return NextResponse.json(
         { error: "internal", message: error.message },
         { status: 500 }
       );
 
-    case "db_insert_failed_refund_initiated":
+    case "db_insert_failed":
+      // refundInitiated is only true when the on-chain refund actually
+      // succeeded; false plus a null tx hash means the settled payment
+      // needs manual reconciliation.
       return NextResponse.json(
         {
           error: "internal",
-          refundInitiated: true,
+          refundInitiated: error.refundInitiated,
           refundTxHash: error.refundTxHash,
         },
         { status: 500 }
@@ -336,6 +302,8 @@ function mapErrorToAuditStatus(
   error: ConnectVerifyError
 ): "rate_limited" | "sanctioned" | "error" {
   if (error.kind === "rate_limited") return "rate_limited";
-  if (error.kind === "verify_kyt_sanctioned") return "sanctioned";
+  if (error.kind === "verify_kyt_sanctioned" || error.kind === "wallet_sanctioned") {
+    return "sanctioned";
+  }
   return "error";
 }

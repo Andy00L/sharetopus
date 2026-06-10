@@ -12,7 +12,7 @@ export default function page() {
       </Link>
 
       <h1 className="text-3xl font-bold mb-2">Sharetopus Privacy Policy</h1>
-      <p className="text-sm text-gray-600 mb-6">Last updated: 05/04/2025</p>
+      <p className="text-sm text-gray-600 mb-6">Last updated: 05/29/2026</p>
 
       <div className="prose max-w-none">
         <p>
@@ -117,6 +117,139 @@ export default function page() {
             http://www.google.com/policies/privacy
           </Link>
           .
+        </p>
+
+        <h2 className="text-2xl font-semibold mt-8 mb-4">TikTok</h2>
+        <p>
+          Sharetopus integrates with the TikTok Content Posting API and TikTok
+          Login Kit so you can connect your TikTok account and publish content
+          to it directly from Sharetopus. When you connect a TikTok account you
+          authorize Sharetopus for a specific set of TikTok permission scopes,
+          and Sharetopus accesses and processes only the data those scopes
+          cover.
+        </p>
+
+        <h3 className="text-xl font-medium mt-6 mb-3">
+          Permission scopes we request
+        </h3>
+        <ul className="list-disc pl-6 mb-4">
+          <li className="mb-2">
+            <strong>user.info.basic and user.info.profile:</strong> to identify
+            the connected TikTok account and display it inside Sharetopus,
+            including the account&apos;s open ID, username, display name, and
+            avatar.
+          </li>
+          <li className="mb-2">
+            <strong>user.info.stats:</strong> to display account metrics such as
+            follower count and following count.
+          </li>
+          <li className="mb-2">
+            <strong>video.publish:</strong> to publish videos and photos you
+            create in Sharetopus directly to your authorized TikTok account
+            using the Direct Post flow.
+          </li>
+        </ul>
+
+        <h3 className="text-xl font-medium mt-6 mb-3">
+          What we collect from TikTok
+        </h3>
+        <ul className="list-disc pl-6 mb-4">
+          <li className="mb-2">
+            Your TikTok open ID, username, display name, and avatar URL.
+          </li>
+          <li className="mb-2">Your follower and following counts.</li>
+          <li className="mb-2">
+            OAuth access tokens and refresh tokens for your connected account.
+          </li>
+          <li className="mb-2">
+            The publish status and post identifier for content you publish
+            through Sharetopus.
+          </li>
+        </ul>
+
+        <h3 className="text-xl font-medium mt-6 mb-3">How we use this data</h3>
+        <ul className="list-disc pl-6 mb-4">
+          <li className="mb-2">
+            To show which TikTok account a post will be sent to before you
+            publish.
+          </li>
+          <li className="mb-2">
+            To render the posting options TikTok requires (privacy level,
+            comment, duet, and stitch settings, and commercial content
+            disclosure), retrieved from TikTok when you compose a post.
+          </li>
+          <li className="mb-2">
+            To publish the content you create with the privacy and interaction
+            settings you select.
+          </li>
+          <li className="mb-2">
+            To report the status and link of a published post.
+          </li>
+        </ul>
+
+        <h3 className="text-xl font-medium mt-6 mb-3">
+          How we store and protect it
+        </h3>
+        <ul className="list-disc pl-6 mb-4">
+          <li className="mb-2">
+            TikTok access and refresh tokens are stored encrypted and used only
+            on Sharetopus servers to call the TikTok API on your behalf. They
+            are never exposed to your browser or to other users.
+          </li>
+          <li className="mb-2">
+            Sharetopus does not sell your TikTok data and does not share your
+            TikTok personal information with third parties, except as required
+            to operate the integration (such as sending your content to TikTok
+            at your request) or as required by law.
+          </li>
+          <li className="mb-2">
+            Sharetopus does not add watermarks, logos, or promotional content to
+            anything published to your TikTok account.
+          </li>
+        </ul>
+
+        <h3 className="text-xl font-medium mt-6 mb-3">
+          Your control and revocation
+        </h3>
+        <ul className="list-disc pl-6 mb-4">
+          <li className="mb-2">
+            You can disconnect your TikTok account from Sharetopus at any time on
+            the Connections page. Disconnecting stops further access and removes
+            the stored tokens for that account.
+          </li>
+          <li className="mb-2">
+            You can revoke Sharetopus&apos;s access from your TikTok account
+            settings, under Security and permissions, Apps and services.
+            Revoking from TikTok invalidates the tokens Sharetopus holds.
+          </li>
+          <li className="mb-2">
+            To request deletion of the TikTok data associated with your
+            Sharetopus account, contact Sharetopus at the address in the Contact
+            section of this policy.
+          </li>
+        </ul>
+
+        <p>
+          Your use of TikTok through Sharetopus is also subject to the TikTok
+          Privacy Policy (
+          <Link
+            href="https://www.tiktok.com/legal/page/global/privacy-policy/en"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:underline"
+          >
+            https://www.tiktok.com/legal/page/global/privacy-policy/en
+          </Link>
+          ) and the TikTok Terms of Service (
+          <Link
+            href="https://www.tiktok.com/legal/page/global/terms-of-service/en"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:underline"
+          >
+            https://www.tiktok.com/legal/page/global/terms-of-service/en
+          </Link>
+          ).
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-4">5. Data sharing</h2>

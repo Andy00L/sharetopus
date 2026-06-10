@@ -1,5 +1,23 @@
 import "server-only";
 
+import { z } from "zod";
+
+/** Outbound provider calls are bounded. */
+const EXCHANGE_TIMEOUT_MS = 15_000;
+
+const PinterestTokenSchema = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().optional(),
+  expires_in: z.number().optional(),
+});
+
+const PinterestProfileSchema = z.object({
+  id: z.string().min(1),
+  business_name: z.string().optional(),
+  profile_image: z.string().optional(),
+  username: z.string().optional(),
+});
+
 export interface PinterestExchangeResult {
   ok: true;
   accessToken: string;
@@ -18,11 +36,15 @@ export type ExchangePinterestForX402Result =
   | { ok: false; error: "exchange_failed" | "profile_fetch_failed"; message: string };
 
 /**
- * Exchange Pinterest OAuth code for access token + profile.
+ * Exchange a Pinterest OAuth code for an access token + profile.
  *
- * Inlines the exchange logic because exchangePinterestCode hardcodes
- * PINTEREST_REDIRECT_URL. This uses X402_PINTEREST_REDIRECT_URI.
- * Pinterest uses Basic Auth (client_id:client_secret) for token exchange.
+ * Separate from exchangePinterestCode (the web flow), which hardcodes
+ * PINTEREST_REDIRECT_URL; this one uses X402_PINTEREST_REDIRECT_URI.
+ * Pinterest uses Basic Auth (client_id:client_secret) for the exchange.
+ * The profile fetch is REQUIRED: the account identifier comes from it, and
+ * an account row with an empty identifier would collide on upsert.
+ *
+ * Called by: handleOAuthCallback
  */
 export async function exchangePinterestForX402(
   code: string
@@ -49,7 +71,7 @@ export async function exchangePinterestForX402(
   params.append("code", code);
   params.append("redirect_uri", redirectUri);
 
-  let tokenData: Record<string, unknown>;
+  let tokenData: z.infer<typeof PinterestTokenSchema>;
   try {
     const response = await fetch(
       "https://api.pinterest.com/v5/oauth/token",
@@ -60,6 +82,7 @@ export async function exchangePinterestForX402(
           Authorization: `Basic ${basicAuth}`,
         },
         body: params.toString(),
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
@@ -73,7 +96,16 @@ export async function exchangePinterestForX402(
       };
     }
 
-    tokenData = JSON.parse(text);
+    const parsed = PinterestTokenSchema.safeParse(JSON.parse(text));
+    if (!parsed.success) {
+      console.error("[exchangePinterestForX402] Token response failed validation.");
+      return {
+        ok: false,
+        error: "exchange_failed",
+        message: "Pinterest token response had an unexpected shape.",
+      };
+    }
+    tokenData = parsed.data;
   } catch (err) {
     console.error("[exchangePinterestForX402] Token exchange error:", err instanceof Error ? err.message : err);
     return {
@@ -83,47 +115,55 @@ export async function exchangePinterestForX402(
     };
   }
 
-  const accessToken = tokenData.access_token as string | undefined;
-  if (!accessToken) {
-    return {
-      ok: false,
-      error: "exchange_failed",
-      message: "Missing access_token in Pinterest response.",
-    };
-  }
-
-  // Fetch profile
-  let profile: Record<string, unknown> = {};
+  // Fetch the user account; its id is the account identifier.
+  let profile: z.infer<typeof PinterestProfileSchema>;
   try {
     const profileResponse = await fetch(
       "https://api.pinterest.com/v5/user_account",
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
-    if (profileResponse.ok) {
-      profile = (await profileResponse.json()) as Record<string, unknown>;
+    if (!profileResponse.ok) {
+      console.error(`[exchangePinterestForX402] Profile fetch failed (${profileResponse.status})`);
+      return {
+        ok: false,
+        error: "profile_fetch_failed",
+        message: "Failed to fetch Pinterest profile.",
+      };
     }
-  } catch {
-    // Profile fetch is best-effort
-  }
 
-  const accountId =
-    (profile.id as string) ??
-    (tokenData.response_type as string) ??
-    "";
+    const parsed = PinterestProfileSchema.safeParse(await profileResponse.json());
+    if (!parsed.success) {
+      console.error("[exchangePinterestForX402] Profile response failed validation (missing id).");
+      return {
+        ok: false,
+        error: "profile_fetch_failed",
+        message: "Pinterest profile response had an unexpected shape.",
+      };
+    }
+    profile = parsed.data;
+  } catch (err) {
+    console.error("[exchangePinterestForX402] Profile fetch error:", err instanceof Error ? err.message : err);
+    return {
+      ok: false,
+      error: "profile_fetch_failed",
+      message: "Pinterest profile fetch request failed.",
+    };
+  }
 
   return {
     ok: true,
-    accessToken,
-    refreshToken: (tokenData.refresh_token as string) ?? null,
-    expiresIn: (tokenData.expires_in as number) ?? 2592000,
-    accountIdentifier: accountId,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token ?? null,
+    expiresIn: tokenData.expires_in ?? 2592000,
+    accountIdentifier: profile.id,
     profile: {
-      name: profile.business_name as string | undefined,
-      avatarUrl: profile.profile_image as string | undefined,
-      username: profile.username as string | undefined,
+      name: profile.business_name,
+      avatarUrl: profile.profile_image,
+      username: profile.username,
     },
   };
 }

@@ -1,23 +1,27 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { FACILITATOR_NAME } from "@/lib/x402/config";
 
 /**
- * Insert a settled x402_charges row in one step (post-settlement).
+ * Insert an x402_charges row with status="pending" BEFORE on-chain
+ * settlement.
  *
- * Mirrors the register/connect pattern: charge is inserted AFTER on-chain
- * settle succeeds, with status="settled" and all settlement metadata
- * populated in a single INSERT. No pending state, no follow-up update.
+ * Ordering rationale: the row (with its UNIQUE nonce) must exist before
+ * settle is called so that (a) a crash between settle and any later write
+ * leaves a pending charge we can reconcile instead of settled money with no
+ * record, and (b) a concurrent replay of the same payment header loses the
+ * nonce-unique insert race here, before any second settle attempt.
  *
- * Steps:
- * 1. Build insert payload with status="settled" and settlement fields.
- * 2. INSERT into x402_charges.
- * 3. Return generated charge ID on success.
- * 4. Map unique constraint violations on nonce/request_id to typed reasons.
+ * Settlement fields (tx_hash, block_number, settled_at, fee) are written by
+ * markChargeSettled in chargeTransitions.ts after the facilitator confirms.
+ *
+ * Called by: x402PaidEndpoint (step 9)
+ * Tables touched: x402_charges (insert)
  *
  * Returns errors as values. Never throws.
  */
-export async function insertX402Charge(params: {
+export async function insertPendingX402Charge(params: {
   principalId: string;
   walletId: string;
   action: string;
@@ -28,14 +32,11 @@ export async function insertX402Charge(params: {
   requestId: string;
   payerAddress: string;
   recipientAddress: string;
-  txHash: string;
-  blockNumber: number | null;
-  facilitatorFeeUsdc: number | null;
 }): Promise<
   | { success: true; chargeId: string }
   | { success: false; message: string; conflictReason?: "nonce_used" | "request_id_used" }
 > {
-  const { data, error } = await adminSupabase
+  const { data: insertedRow, error } = await adminSupabase
     .from("x402_charges")
     .insert({
       principal_id: params.principalId,
@@ -49,12 +50,8 @@ export async function insertX402Charge(params: {
       request_id: params.requestId,
       payer_address: params.payerAddress,
       recipient_address: params.recipientAddress,
-      status: "settled",
-      facilitator: "coinbase_cdp",
-      facilitator_fee_usdc: params.facilitatorFeeUsdc,
-      tx_hash: params.txHash,
-      block_number: params.blockNumber,
-      settled_at: new Date().toISOString(),
+      status: "pending",
+      facilitator: FACILITATOR_NAME,
     })
     .select("id")
     .single();
@@ -79,9 +76,9 @@ export async function insertX402Charge(params: {
         };
       }
     }
-    console.error("[insertX402Charge] Insert failed:", error);
+    console.error("[insertPendingX402Charge] Insert failed:", error);
     return { success: false, message: error.message ?? "Charge insert failed." };
   }
 
-  return { success: true, chargeId: data.id };
+  return { success: true, chargeId: insertedRow.id };
 }

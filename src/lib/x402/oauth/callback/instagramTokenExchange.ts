@@ -1,5 +1,25 @@
 import "server-only";
 
+import { z } from "zod";
+
+/** Outbound provider calls are bounded. */
+const EXCHANGE_TIMEOUT_MS = 15_000;
+
+/**
+ * Instagram returns either { data: [{ access_token, user_id, ... }] } or a
+ * flat object, and user_id arrives as a string or number depending on the
+ * API surface; both are normalized below.
+ */
+const InstagramTokenEntrySchema = z.object({
+  access_token: z.string().min(1),
+  user_id: z.union([z.string().min(1), z.number()]),
+});
+
+const InstagramLongLivedSchema = z.object({
+  access_token: z.string().min(1),
+  expires_in: z.number().optional(),
+});
+
 export interface InstagramExchangeResult {
   ok: true;
   accessToken: string;
@@ -19,13 +39,18 @@ export type ExchangeInstagramForX402Result =
   | { ok: false; error: "exchange_failed" | "profile_fetch_failed"; message: string };
 
 /**
- * Exchange Instagram OAuth code for access token + profile.
+ * Exchange an Instagram OAuth code for an access token + profile.
  *
- * Two-phase exchange (mirrors exchangeInstagramCode):
+ * Two-phase exchange (mirrors exchangeInstagramCode, the web flow):
  *   1. Short-lived token from api.instagram.com/oauth/access_token
  *   2. Long-lived token swap via graph.instagram.com/access_token
+ *      (best-effort; the short-lived token works for ~1 hour)
  *
- * Uses X402_INSTAGRAM_REDIRECT_URI instead of INSTAGRAM_REDIRECT_URL.
+ * Uses X402_INSTAGRAM_REDIRECT_URI instead of INSTAGRAM_REDIRECT_URL. The
+ * profile fetch is best-effort: the account identifier (user_id) already
+ * comes from the token response.
+ *
+ * Called by: handleOAuthCallback
  */
 export async function exchangeInstagramForX402(
   code: string
@@ -51,7 +76,8 @@ export async function exchangeInstagramForX402(
   params.append("redirect_uri", redirectUri);
   params.append("code", code);
 
-  let shortLivedData: Record<string, unknown>;
+  let shortLivedToken: string;
+  let userId: string;
   try {
     const response = await fetch(
       "https://api.instagram.com/oauth/access_token",
@@ -59,6 +85,7 @@ export async function exchangeInstagramForX402(
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: params.toString(),
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
@@ -72,7 +99,21 @@ export async function exchangeInstagramForX402(
       };
     }
 
-    shortLivedData = JSON.parse(text);
+    const rawBody = JSON.parse(text) as Record<string, unknown>;
+    const tokenEntryCandidate = Array.isArray(rawBody.data)
+      ? rawBody.data[0]
+      : rawBody;
+    const parsed = InstagramTokenEntrySchema.safeParse(tokenEntryCandidate);
+    if (!parsed.success) {
+      console.error("[exchangeInstagramForX402] Token response failed validation (missing access_token or user_id).");
+      return {
+        ok: false,
+        error: "exchange_failed",
+        message: "Instagram token response had an unexpected shape.",
+      };
+    }
+    shortLivedToken = parsed.data.access_token;
+    userId = String(parsed.data.user_id);
   } catch (err) {
     console.error("[exchangeInstagramForX402] Token exchange error:", err instanceof Error ? err.message : err);
     return {
@@ -82,23 +123,7 @@ export async function exchangeInstagramForX402(
     };
   }
 
-  // Instagram returns { data: [{ access_token, user_id, permissions }] } or flat object
-  const tokenEntry =
-    (shortLivedData.data as Record<string, unknown>[] | undefined)?.[0] ??
-    shortLivedData;
-
-  const shortLivedToken = tokenEntry.access_token as string | undefined;
-  const userId = tokenEntry.user_id as string | undefined;
-
-  if (!shortLivedToken || !userId) {
-    return {
-      ok: false,
-      error: "exchange_failed",
-      message: "Missing access_token or user_id in Instagram response.",
-    };
-  }
-
-  // Phase 2: Exchange for long-lived token (60 days)
+  // Phase 2: Exchange for long-lived token (60 days). Best-effort.
   let longLivedToken = shortLivedToken;
   let expiresIn = 3600;
 
@@ -109,14 +134,18 @@ export async function exchangeInstagramForX402(
       `&client_secret=${encodeURIComponent(clientSecret)}` +
       `&access_token=${encodeURIComponent(shortLivedToken)}`;
 
-    const llResponse = await fetch(longLivedUrl, { method: "GET" });
+    const llResponse = await fetch(longLivedUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+    });
 
     if (llResponse.ok) {
-      const llText = await llResponse.text();
-      const llData = JSON.parse(llText) as Record<string, unknown>;
-      if (llData.access_token) {
-        longLivedToken = llData.access_token as string;
-        expiresIn = (llData.expires_in as number) ?? 5184000; // 60 days
+      const parsed = InstagramLongLivedSchema.safeParse(
+        JSON.parse(await llResponse.text())
+      );
+      if (parsed.success) {
+        longLivedToken = parsed.data.access_token;
+        expiresIn = parsed.data.expires_in ?? 5184000; // 60 days
       }
     } else {
       console.warn("[exchangeInstagramForX402] Long-lived token swap failed; using short-lived token.");
@@ -125,18 +154,20 @@ export async function exchangeInstagramForX402(
     console.warn("[exchangeInstagramForX402] Long-lived token swap error:", err instanceof Error ? err.message : err);
   }
 
-  // Fetch profile
+  // Fetch profile. Best-effort: display fields only.
   let profile: Record<string, unknown> = {};
   try {
     const profileResponse = await fetch(
-      `https://graph.instagram.com/v21.0/me?fields=user_id,username,name,profile_picture_url&access_token=${encodeURIComponent(longLivedToken)}`
+      `https://graph.instagram.com/v21.0/me?fields=user_id,username,name,profile_picture_url&access_token=${encodeURIComponent(longLivedToken)}`,
+      { signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS) }
     );
 
     if (profileResponse.ok) {
       profile = (await profileResponse.json()) as Record<string, unknown>;
     }
-  } catch {
-    // Profile fetch is best-effort
+  } catch (err) {
+    // Best-effort: the identifier is already known from the token response.
+    console.warn("[exchangeInstagramForX402] Profile fetch failed (continuing without display fields):", err instanceof Error ? err.message : err);
   }
 
   return {
@@ -146,9 +177,9 @@ export async function exchangeInstagramForX402(
     expiresIn,
     accountIdentifier: userId,
     profile: {
-      name: profile.name as string | undefined,
-      username: profile.username as string | undefined,
-      avatarUrl: profile.profile_picture_url as string | undefined,
+      name: typeof profile.name === "string" ? profile.name : undefined,
+      username: typeof profile.username === "string" ? profile.username : undefined,
+      avatarUrl: typeof profile.profile_picture_url === "string" ? profile.profile_picture_url : undefined,
       userId,
     },
   };

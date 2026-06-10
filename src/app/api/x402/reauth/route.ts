@@ -8,6 +8,13 @@ import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
+import { issueConnectionToken } from "@/lib/x402/oauth/connectionToken";
+import {
+  CONNECTION_TOKEN_GRACE_MS,
+  OAUTH_EXPIRY_MINUTES,
+  getOAuthRedirectUri,
+  isX402Platform,
+} from "@/lib/x402/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -15,14 +22,14 @@ export const maxDuration = 30;
 /**
  * POST /api/x402/reauth
  *
- * Pays connect_account for $0.50 USDC. Re-authenticates an expired social connection.
+ * Pays connect_account. Re-authenticates an expired social connection.
  * Steps:
  * 1. Parse body (social_account_id).
  * 2. x402 middleware handles auth, payment, charge.
  * 3. Verify social_account_id belongs to the wallet principal.
- * 4. Verify the connection is expired or failed.
- * 5. Mint a new OAuth URL and insert social_connections row.
- * 6. Return OAuth URL for the agent to redirect the user.
+ * 4. Verify the connection is expired (is_available=false).
+ * 5. Mint a new OAuth URL and insert a social_connections row.
+ * 6. Return the OAuth URL plus a connection token for /oauth/status polling.
  */
 
 const ReauthBodySchema = z.object({
@@ -35,10 +42,9 @@ type ReauthResult = {
   connectionId: string;
   platform: string;
   oauthUrl: string;
+  connectionToken: string;
   expiresAt: string;
 };
-
-const OAUTH_EXPIRY_MINUTES = 15;
 
 export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
   endpointPath: "/api/x402/reauth",
@@ -77,7 +83,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       .select("id, platform, principal_id, is_available")
       .eq("id", body.social_account_id)
       .is("deleted_at", null)
-      .single();
+      .maybeSingle();
 
     if (accountError || !account) {
       return {
@@ -97,7 +103,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    // Verify the account needs re-auth (is_available=false indicates token expired).
+    // Verify the account needs re-auth (is_available=false means the token expired).
     if (account.is_available) {
       return {
         success: false,
@@ -107,14 +113,23 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    // Build OAuth URL for the platform.
-    const platform = account.platform as "linkedin" | "tiktok" | "pinterest" | "instagram";
+    // The DB platform union is wider than the x402 subset (facebook,
+    // youtube, ...); accounts outside the subset have no x402 OAuth flow.
+    const platform = account.platform;
+    if (!isX402Platform(platform)) {
+      return {
+        success: false,
+        errorKind: "unsupported_platform",
+        message: `Platform "${platform}" is not supported for x402 re-authentication.`,
+        refundable: true,
+      };
+    }
+
     const connectionId = randomUUID();
     const oauthState = generateOAuthState();
     const expiresAt = new Date(Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000).toISOString();
 
-    // Get redirect URI from env for this platform.
-    const redirectUri = getRedirectUri(platform);
+    const redirectUri = getOAuthRedirectUri(platform);
     if (!redirectUri) {
       return {
         success: false,
@@ -134,7 +149,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    // Insert social_connections row for tracking OAuth flow.
+    // Insert social_connections row for tracking the OAuth flow.
     const { error: insertError } = await adminSupabase
       .from("social_connections")
       .insert({
@@ -158,29 +173,34 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
+    // Without a token the agent cannot poll /oauth/status for the
+    // connection it just paid for, so a token failure is refundable too.
+    const tokenResult = issueConnectionToken({
+      connectionId,
+      walletAddress: principal.address,
+      chargeId,
+      iat: Date.now(),
+      exp: new Date(expiresAt).getTime() + CONNECTION_TOKEN_GRACE_MS,
+      platform,
+    });
+    if (!tokenResult.ok) {
+      return {
+        success: false,
+        errorKind: "token_issue_failed",
+        message: "Failed to issue the connection token.",
+        refundable: true,
+      };
+    }
+
     return {
       success: true,
       data: {
         connectionId,
         platform,
         oauthUrl: oauthResult.url,
+        connectionToken: tokenResult.token,
         expiresAt,
       },
     };
   },
 });
-
-function getRedirectUri(platform: string): string | undefined {
-  switch (platform) {
-    case "linkedin":
-      return process.env.X402_LINKEDIN_REDIRECT_URI;
-    case "tiktok":
-      return process.env.X402_TIKTOK_REDIRECT_URI;
-    case "pinterest":
-      return process.env.X402_PINTEREST_REDIRECT_URI;
-    case "instagram":
-      return process.env.X402_INSTAGRAM_REDIRECT_URI;
-    default:
-      return undefined;
-  }
-}

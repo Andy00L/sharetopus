@@ -9,17 +9,29 @@ import type { SettleResponse } from "@x402/core/types";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import { adminSupabase } from "@/actions/api/adminSupabase";
 
 import { verifyPayment, settlePayment, refundPayment } from "@/lib/x402/facilitator";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";
+import { getBaseUrl, getRecipientAddress } from "@/lib/x402/config";
+import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+import {
+  readPaymentHeader,
+  buildPaymentRequired,
+} from "@/lib/x402/http/paymentHttp";
+import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { resolveWalletPrincipal } from "@/lib/x402/auth/resolveWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import { applyWalletGate } from "@/lib/x402/sanctions/applyWalletGate";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 
-import { insertX402Charge } from "@/lib/x402/charges/insertX402Charge";
+import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
+import {
+  markChargeSettled,
+  markChargeFailed,
+  markChargeRefunded,
+} from "@/lib/x402/charges/chargeTransitions";
+import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
 import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 
@@ -38,8 +50,9 @@ export type ActionResolver<TBody> = (
   | { success: false; httpStatus: number; errorKind: string; message: string };
 
 /**
- * Business logic called AFTER payment is settled and charge row is inserted.
- * Returns the response body on success, or a typed error for the refund path.
+ * Business logic called AFTER payment is settled and the charge row reached
+ * status="settled". Returns the response body on success, or a typed error
+ * for the refund path.
  */
 export type X402Handler<TBody, TResult> = (params: {
   body: TBody;
@@ -82,24 +95,33 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
 // ---------------------------------------------------------------------------
 
 /**
- * Higher-order function wrapping the common x402 verify/settle/log/refund flow.
+ * Higher-order function wrapping the common x402 verify/settle/log/refund
+ * flow shared by every paid endpoint except register and connect (those two
+ * create rows atomically via Postgres RPCs and live in register/ and
+ * connect/).
  *
  * Steps:
- * 1. Parse body via options.parseBody.
- * 2. Resolve action key + lookup pricing from pricing_actions table.
- * 3. Rate limit per IP.
- * 4. If no X-PAYMENT header: return 402 with pricing info.
- * 5. Resolve network from ?network query param.
- * 6. Verify payment via facilitator (off-chain).
- * 7. Resolve wallet principal from payer address.
- * 8. Apply sanctions gate.
- * 9. Settle payment on-chain.
- * 10. Insert x402_charges with status="settled" (single INSERT, all metadata).
- * 11. If insert fails: refund, insert x402_refunds, return 500.
- * 12. Execute business logic handler.
- * 13. If handler returns refundable failure: refund + x402_refunds + charge→"refunded".
- * 14. If handler returns non-refundable failure: charge→"failed" (non-fatal update).
- * 15. Return success with X-PAYMENT-RESPONSE header.
+ *  1. Parse body via options.parseBody.
+ *  2. Resolve action key.
+ *  3. Rate limit per IP.
+ *  4. Resolve network from ?network (unknown values are rejected, per the
+ *     registry contract in networks.ts) and the recipient address.
+ *  5. Read the currently effective price.
+ *  6. If no payment header: 402 with the v2 PaymentRequired header + body.
+ *  7. Verify payment via facilitator (off-chain, includes KYT).
+ *  8. Resolve wallet principal from the facilitator-recovered payer; apply
+ *     the sanctions gate.
+ *  9. Insert x402_charges with status="pending". This runs BEFORE settle so
+ *     a crash never leaves settled money without a record, and so a replayed
+ *     payment loses the nonce-unique race before any second settle.
+ * 10. Settle payment on-chain; failure marks the charge "failed".
+ * 11. Transition the charge pending -> settled (status-scoped).
+ * 12. Execute the business logic handler.
+ * 13. Refundable handler failure: on-chain refund; only a SUCCESSFUL refund
+ *     is recorded as refunded + x402_refunds, a failed refund marks the
+ *     charge failed with a refund_failed message for reconciliation.
+ * 14. Non-refundable handler failure: charge -> "failed".
+ * 15. Success response with PAYMENT-RESPONSE (and v1 X-PAYMENT-RESPONSE).
  */
 export function x402PaidEndpoint<TBody, TResult>(
   options: X402PaidEndpointOptions<TBody, TResult>,
@@ -162,7 +184,7 @@ export function x402PaidEndpoint<TBody, TResult>(
     }
     const body = bodyResult.data;
 
-    // ── Step 2: Resolve action + lookup pricing ──────────────────────────
+    // ── Step 2: Resolve action ───────────────────────────────────────────
     const actionResult = options.resolveAction(body);
     if (!actionResult.success) {
       return logAndError({
@@ -176,28 +198,6 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
     const actionKey = actionResult.action;
-
-    const { data: pricingRow, error: pricingError } = await adminSupabase
-      .from("pricing_actions")
-      .select("usdc_price")
-      .eq("action", actionKey)
-      .or("effective_until.is.null,effective_until.gt." + new Date().toISOString())
-      .limit(1)
-      .single();
-
-    if (pricingError || !pricingRow) {
-      console.error(`[x402PaidEndpoint] pricing_actions lookup failed for "${actionKey}":`, pricingError);
-      return logAndError({
-        principal: null,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: 500,
-        errorKind: "pricing_not_configured",
-        message: `No active pricing found for action "${actionKey}".`,
-      });
-    }
-    const usdcPrice = pricingRow.usdc_price;
 
     // ── Step 3: Rate limit per IP ────────────────────────────────────────
     const rateLimitResult = await checkRateLimit(
@@ -219,42 +219,31 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
 
-    // ── Step 4: Check X-PAYMENT header ───────────────────────────────────
-    const paymentHeader = req.headers.get("x-payment");
-    if (!paymentHeader) {
-      await logX402Call({
-        principal: null,
-        action: actionKey,
-        endpoint: options.endpointPath,
-        chargeId: null,
-        resultStatus: "402_required",
-        latencyMs: latencyMs(),
-        ipHash,
-        userAgent,
-      });
-      return NextResponse.json(
-        {
-          status: 402,
-          action: actionKey,
-          usdcPrice,
-          message: "Payment required. Include X-PAYMENT header with signed payment.",
-          x402Version: 2,
-        },
-        { status: 402 }
-      );
-    }
-
-    // ── Step 5: Resolve network ──────────────────────────────────────────
+    // ── Step 4: Resolve network + recipient ──────────────────────────────
     const url = new URL(req.url);
     const networkParam = url.searchParams.get("network");
-    const network: NetworkConfig = networkParam
-      ? getNetworkConfig(networkParam) ?? getDefaultNetwork()
-      : getDefaultNetwork();
+    let network: NetworkConfig;
+    if (networkParam) {
+      const requestedNetwork = getNetworkConfig(networkParam);
+      if (!requestedNetwork) {
+        return logAndError({
+          principal: null,
+          action: actionKey,
+          chargeId: null,
+          resultStatus: "error",
+          httpStatus: 400,
+          errorKind: "unsupported_network",
+          message: `Network "${networkParam}" is not supported.`,
+        });
+      }
+      network = requestedNetwork;
+    } else {
+      network = getDefaultNetwork();
+    }
 
-    const recipientAddress = network.isEvm
-      ? process.env.X402_RECIPIENT_EVM
-      : process.env.X402_RECIPIENT_SOLANA;
+    const recipientAddress = getRecipientAddress(network);
     if (!recipientAddress) {
+      console.error(`[x402PaidEndpoint] Recipient address env not set for network "${network.name}".`);
       return logAndError({
         principal: null,
         action: actionKey,
@@ -266,10 +255,51 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-    const resourceUrl = `${baseUrl}${options.endpointPath}`;
+    const resourceUrl = `${getBaseUrl()}${options.endpointPath}`;
 
-    // ── Step 6: Verify payment (off-chain) ───────────────────────────────
+    // ── Step 5: Read the currently effective price ───────────────────────
+    const priceResult = await readActionPrice(actionKey);
+    if (!priceResult.ok) {
+      console.error(`[x402PaidEndpoint] Pricing lookup failed for "${actionKey}": ${priceResult.message}`);
+      // action: null here because the action row may not exist at all, and
+      // x402_access_log.action carries an FK to pricing_actions.
+      return logAndError({
+        principal: null,
+        action: null,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 500,
+        errorKind: "pricing_not_configured",
+        message: priceResult.message,
+      });
+    }
+    const usdcPrice = priceResult.usdcPrice;
+
+    // ── Step 6: Check payment header; 402 with requirements if absent ────
+    const paymentHeader = readPaymentHeader(req);
+    if (!paymentHeader) {
+      await logX402Call({
+        principal: null,
+        action: actionKey,
+        endpoint: options.endpointPath,
+        chargeId: null,
+        resultStatus: "402_required",
+        latencyMs: latencyMs(),
+        ipHash,
+        userAgent,
+      });
+      return buildPaymentRequiredResponse(
+        buildPaymentRequired({
+          resourceUrl,
+          network,
+          amountUsdc: usdcPrice,
+          recipientAddress,
+          error: "PAYMENT-SIGNATURE header is required",
+        })
+      );
+    }
+
+    // ── Step 7: Verify payment (off-chain) ───────────────────────────────
     const verifyResult = await verifyPayment({
       paymentHeader,
       resourceUrl,
@@ -292,7 +322,7 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
 
-    // ── Step 7: Resolve wallet principal ─────────────────────────────────
+    // ── Step 8: Resolve wallet principal + sanctions gate ────────────────
     const walletResult = await resolveWalletPrincipal(verifyResult.payerAddress);
     if (!walletResult.ok) {
       return logAndError({
@@ -307,7 +337,6 @@ export function x402PaidEndpoint<TBody, TResult>(
     }
     const principal = walletResult.principal;
 
-    // ── Step 8: Sanctions gate ───────────────────────────────────────────
     const gateResult = await applyWalletGate(principal.walletId);
     if (!gateResult.allowed) {
       return logAndError({
@@ -321,23 +350,8 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
 
-    // ── Step 9: Settle payment (on-chain) ────────────────────────────────
-    const settleResult = await settlePayment({ paymentHeader, network });
-    if (!settleResult.ok) {
-      const settleError = settleResult.error;
-      return logAndError({
-        principal,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: mapSettleErrorToHttpStatus(settleError.kind),
-        errorKind: settleError.kind,
-        message: settleError.message,
-      });
-    }
-
-    // ── Step 10: Insert charge (status="settled", single INSERT) ─────────
-    const chargeResult = await insertX402Charge({
+    // ── Step 9: Insert pending charge (replay backstop, pre-settle) ──────
+    const chargeResult = await insertPendingX402Charge({
       principalId: principal.principalId,
       walletId: principal.walletId,
       action: actionKey,
@@ -348,51 +362,112 @@ export function x402PaidEndpoint<TBody, TResult>(
       requestId,
       payerAddress: verifyResult.payerAddress,
       recipientAddress,
-      txHash: settleResult.txHash,
-      blockNumber: settleResult.blockNumber,
-      facilitatorFeeUsdc: settleResult.facilitatorFeeUsdc,
     });
 
-    // ── Step 11: If insert fails, refund ─────────────────────────────────
     if (!chargeResult.success) {
-      const refundResult = await refundPayment({
-        originalTxHash: settleResult.txHash,
-        payerAddress: verifyResult.payerAddress,
-        amountUsdc: usdcPrice,
-        network,
-        reason: `Charge insert failed: ${chargeResult.message}`,
-      });
-
-      // Note: cannot insert x402_refunds row because charge_id FK is required
-      // and no charge row exists. The refund is recorded in the audit log and
-      // the on-chain tx_hash is returned in the error response for reconciliation.
-
+      // No settle has happened yet, so a failed insert costs nothing and
+      // needs no refund. A nonce conflict means this exact payment was
+      // already presented: replay.
+      const isReplay = chargeResult.conflictReason === "nonce_used";
       return logAndError({
         principal,
         action: actionKey,
         chargeId: null,
         resultStatus: "error",
-        httpStatus: 500,
-        errorKind: "charge_insert_failed",
+        httpStatus: isReplay ? 409 : 500,
+        errorKind: isReplay ? "replay_detected" : "charge_insert_failed",
         message: chargeResult.message,
-        refundInitiated: true,
-        refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
       });
     }
     const chargeId = chargeResult.chargeId;
 
-    // ── Step 12: Execute business logic handler ──────────────────────────
-    const handlerResult = await options.handler({
-      body,
-      principal,
-      chargeId,
-      requestId,
-    });
+    // ── Step 10: Settle payment (on-chain) ───────────────────────────────
+    const settleResult = await settlePayment({ paymentHeader, network });
+    if (!settleResult.ok) {
+      const settleError = settleResult.error;
+      // Only a definitive facilitator rejection proves no money moved. A
+      // timeout or transport-level failure is outcome-indeterminate: the
+      // settlement may still land on-chain, so the charge stays "pending"
+      // as the reconciliation marker instead of asserting "failed".
+      const settleOutcomeIsDefinitive =
+        settleError.kind === "not_verified" ||
+        settleError.kind === "insufficient_funds";
+      if (settleOutcomeIsDefinitive) {
+        await markChargeFailed({
+          chargeId,
+          fromStatus: "pending",
+          errorMessage: `settle_failed: ${settleError.message}`,
+        });
+      } else {
+        console.error(
+          `[x402PaidEndpoint] CHARGE RECONCILIATION NEEDED: charge ${chargeId} settle outcome indeterminate (${settleError.kind}): ${settleError.message}`
+        );
+      }
+      return logAndError({
+        principal,
+        action: actionKey,
+        chargeId,
+        resultStatus: "error",
+        httpStatus: mapSettleErrorToHttpStatus(settleError.kind),
+        errorKind: settleError.kind,
+        message: settleError.message,
+      });
+    }
 
-    // ── Steps 13-15: Handle result ────────────────────────────────────
+    // ── Step 11: pending -> settled ──────────────────────────────────────
+    const settledTransition = await markChargeSettled({
+      chargeId,
+      txHash: settleResult.txHash,
+      blockNumber: settleResult.blockNumber,
+      facilitatorFeeUsdc: settleResult.facilitatorFeeUsdc,
+      settledAt: settleResult.settledAt,
+    });
+    if (!settledTransition.success) {
+      // Money moved on-chain but the row could not transition. The pending
+      // row plus this log line (with the tx hash) is the reconciliation
+      // trail; auto-refunding against an uncertain DB state risks paying
+      // twice, so this fails closed for manual review instead.
+      console.error(
+        `[x402PaidEndpoint] CHARGE RECONCILIATION NEEDED: charge ${chargeId} settled on-chain (tx ${settleResult.txHash}) but could not transition to settled: ${settledTransition.message}`
+      );
+      return logAndError({
+        principal,
+        action: actionKey,
+        chargeId,
+        resultStatus: "error",
+        httpStatus: 500,
+        errorKind: "charge_update_failed",
+        message: "Payment settled but could not be recorded. Support has been notified; do not retry this payment.",
+      });
+    }
+
+    // ── Step 12: Execute business logic handler ──────────────────────────
+    // Handlers return errors as values, but money has already settled by
+    // this point, so an unexpected throw must not escape the middleware: it
+    // is converted into a refundable failure and goes through step 13.
+    let handlerResult: Awaited<ReturnType<typeof options.handler>>;
+    try {
+      handlerResult = await options.handler({
+        body,
+        principal,
+        chargeId,
+        requestId,
+      });
+    } catch (err) {
+      console.error(`[x402PaidEndpoint] Handler threw for charge ${chargeId}:`, err instanceof Error ? err.message : err);
+      handlerResult = {
+        success: false,
+        errorKind: "internal_error",
+        message: "Unexpected error while executing the paid action.",
+        refundable: true,
+      };
+    }
+
+    // ── Steps 13-14: Handle handler failure ──────────────────────────────
     if (!handlerResult.success) {
       if (handlerResult.refundable) {
-        // Step 13: Refundable failure. Issue on-chain refund.
+        // Step 13: Refundable failure. Issue the on-chain refund first; the
+        // DB only says "refunded" when the refund actually happened.
         const refundResult = await refundPayment({
           originalTxHash: settleResult.txHash,
           payerAddress: verifyResult.payerAddress,
@@ -401,20 +476,31 @@ export function x402PaidEndpoint<TBody, TResult>(
           reason: handlerResult.message,
         });
 
-        // Update charge status to "refunded".
-        await adminSupabase
-          .from("x402_charges")
-          .update({ status: "refunded", error_message: handlerResult.message })
-          .eq("id", chargeId);
-
-        // Insert x402_refunds row.
-        await adminSupabase.from("x402_refunds").insert({
-          charge_id: chargeId,
-          reason: handlerResult.message,
-          refunded_usdc: usdcPrice,
-          refund_tx_hash: refundResult.ok ? refundResult.refundTxHash : null,
-          initiated_by: principal.principalId,
-        });
+        if (refundResult.ok) {
+          const refundedTransition = await markChargeRefunded({
+            chargeId,
+            reason: handlerResult.message,
+            refundedUsdc: usdcPrice,
+            refundTxHash: refundResult.refundTxHash,
+            initiatedBy: principal.principalId,
+          });
+          if (!refundedTransition.success) {
+            // The refund happened on-chain but the row still says settled;
+            // this log line carries the tx hash for reconciliation.
+            console.error(
+              `[x402PaidEndpoint] CHARGE RECONCILIATION NEEDED: charge ${chargeId} refunded on-chain (refund tx ${refundResult.refundTxHash}) but could not be recorded: ${refundedTransition.message}`
+            );
+          }
+        } else {
+          console.error(
+            `[x402PaidEndpoint] REFUND FAILED for charge ${chargeId} (settle tx ${settleResult.txHash}): ${refundResult.error.message}`
+          );
+          await markChargeFailed({
+            chargeId,
+            fromStatus: "settled",
+            errorMessage: `refund_failed: ${handlerResult.message}`,
+          });
+        }
 
         return logAndError({
           principal,
@@ -424,16 +510,17 @@ export function x402PaidEndpoint<TBody, TResult>(
           httpStatus: 500,
           errorKind: handlerResult.errorKind,
           message: handlerResult.message,
-          refundInitiated: true,
+          refundInitiated: refundResult.ok,
           refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
         });
       }
 
-      // Step 14: Non-refundable failure. Non-fatal status update.
-      await adminSupabase
-        .from("x402_charges")
-        .update({ status: "failed", error_message: handlerResult.message })
-        .eq("id", chargeId);
+      // Step 14: Non-refundable failure.
+      await markChargeFailed({
+        chargeId,
+        fromStatus: "settled",
+        errorMessage: handlerResult.message,
+      });
 
       return logAndError({
         principal,
@@ -447,15 +534,12 @@ export function x402PaidEndpoint<TBody, TResult>(
     }
 
     // ── Step 15: Success ─────────────────────────────────────────────────
-    const atomicAmount = String(
-      Math.round(usdcPrice * 10 ** network.usdcDecimals)
-    );
     const settleResponse: SettleResponse = {
       success: true,
       payer: verifyResult.payerAddress,
       transaction: settleResult.txHash,
       network: network.caipNetwork as `${string}:${string}`,
-      amount: atomicAmount,
+      amount: usdcToAtomic(usdcPrice, network.usdcDecimals),
     };
     const paymentResponseHeader = encodePaymentResponseHeader(settleResponse);
 

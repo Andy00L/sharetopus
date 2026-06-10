@@ -1,44 +1,42 @@
 import "server-only";
 
+import type { PaymentRequired } from "@x402/core/types";
 import type { ConnectNetworkContext, Platform } from "./types";
-import type { PaymentRequiredChallengeBody } from "@/lib/x402/register/handleRegisterChallenge";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { isX402Platform } from "@/lib/x402/config";
+import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import { buildPaymentRequired } from "@/lib/x402/http/paymentHttp";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type ConnectChallengeResult =
-  | { ok: true; challengeBody: PaymentRequiredChallengeBody }
+  | { ok: true; challengeBody: PaymentRequired }
   | {
       ok: false;
       error: "pricing_lookup_failed" | "unsupported_platform";
       message: string;
     };
 
-const VALID_PLATFORMS: ReadonlySet<Platform> = new Set([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
-
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the 402 Payment Required response for /connect.
+ * Builds the 402 Payment Required body for /connect.
  *
- * Reads pricing_actions.usdc_price WHERE action='connect_account'.
- * No SIWE nonce in the response (wallet is already registered and
- * identified via X-PAYMENT signature).
+ * Reads the currently effective price for the 'connect_account' action. No
+ * SIWE nonce in the response: the wallet is already registered and is
+ * identified by the payment signature alone.
+ *
+ * Called by: POST /api/x402/connect (challenge path)
+ * Tables touched: pricing_actions (read)
  */
 export async function handleConnectChallenge(
   context: ConnectNetworkContext,
   platform: Platform
 ): Promise<ConnectChallengeResult> {
-  if (!VALID_PLATFORMS.has(platform)) {
+  if (!isX402Platform(platform)) {
     return {
       ok: false,
       error: "unsupported_platform",
@@ -46,50 +44,22 @@ export async function handleConnectChallenge(
     };
   }
 
-  // Live-read the connect price from the DB.
-  const { data: pricingRow, error: pricingError } = await adminSupabase
-    .from("pricing_actions")
-    .select("usdc_price")
-    .eq("action", "connect_account")
-    .maybeSingle();
-
-  if (pricingError || !pricingRow) {
-    console.error(`[handleConnectChallenge] Failed to read connect pricing: ${pricingError?.message ?? "no row found"}`);
+  const priceResult = await readActionPrice("connect_account");
+  if (!priceResult.ok) {
+    console.error(`[handleConnectChallenge] Failed to read connect pricing: ${priceResult.message}`);
     return {
       ok: false,
       error: "pricing_lookup_failed",
-      message:
-        pricingError?.message ??
-        "connect_account pricing action not found in DB.",
+      message: priceResult.message,
     };
   }
 
-  const usdcPrice = pricingRow.usdc_price;
-  const atomicAmount = String(
-    Math.round(usdcPrice * 10 ** context.network.usdcDecimals)
-  );
-
-  const challengeBody: PaymentRequiredChallengeBody = {
-    x402Version: 2,
-    resource: { url: context.resourceUrl },
-    accepts: [
-      {
-        scheme: "exact",
-        network: context.network.caipNetwork,
-        asset: context.network.usdcAddress,
-        amount: atomicAmount,
-        payTo: context.recipientAddress,
-        maxTimeoutSeconds: 300,
-        extra: {},
-      },
-    ],
-    // No SIWE nonce for connect: wallet is already registered.
-    // Use empty strings to satisfy the type; the agent ignores these.
-    extensions: {
-      siweNonce: "",
-      siweExpiresAt: "",
-    },
-  };
+  const challengeBody = buildPaymentRequired({
+    resourceUrl: context.resourceUrl,
+    network: context.network,
+    amountUsdc: priceResult.usdcPrice,
+    recipientAddress: context.recipientAddress,
+  });
 
   return { ok: true, challengeBody };
 }

@@ -1,9 +1,26 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import type { ConnectionTokenPayload } from "./types";
 
 const TOKEN_VERSION = "v1";
+
+/**
+ * Shape check for the decoded payload. The HMAC already proves we issued
+ * the token, so this is defense in depth: it keeps a malformed or legacy
+ * payload (e.g. one missing exp) from slipping past the expiry check, and
+ * keeps verifyConnectionToken true to its never-throws contract when the
+ * JSON decodes to null or a non-object.
+ */
+const ConnectionTokenPayloadSchema = z.object({
+  connectionId: z.string().min(1),
+  walletAddress: z.string().min(1),
+  chargeId: z.string().nullable(),
+  iat: z.number(),
+  exp: z.number(),
+  platform: z.enum(["linkedin", "tiktok", "pinterest", "instagram"]),
+});
 
 export type IssueConnectionTokenResult =
   | { ok: true; token: string }
@@ -19,6 +36,15 @@ export type VerifyConnectionTokenResult =
 
 function getHmacSecret(): string | null {
   return process.env.X402_HMAC_SECRET ?? null;
+}
+
+/**
+ * True when X402_HMAC_SECRET is configured. Flows that charge before
+ * issuing a token call this first so a missing secret fails the request
+ * before any money moves.
+ */
+export function hasConnectionTokenSecret(): boolean {
+  return getHmacSecret() !== null;
 }
 
 function computeHmac(input: string, secret: string): string {
@@ -57,9 +83,10 @@ export function issueConnectionToken(
 }
 
 /**
- * Verifies an HMAC-signed token from /status request.
+ * Verifies an HMAC-signed token from a /status request.
  *
- * Uses timingSafeEqual to prevent timing attacks. Checks expiry (exp > now).
+ * Uses timingSafeEqual to prevent timing attacks, validates the decoded
+ * payload shape, and checks expiry (exp > now).
  *
  * Errors-as-values; never throws.
  */
@@ -104,13 +131,12 @@ export function verifyConnectionToken(
     };
   }
 
-  // Decode payload
-  let payload: ConnectionTokenPayload;
+  // Decode and shape-check the payload
+  let decodedPayload: unknown;
   try {
-    const payloadJson = Buffer.from(encodedPayload, "base64url").toString(
-      "utf-8"
+    decodedPayload = JSON.parse(
+      Buffer.from(encodedPayload, "base64url").toString("utf-8")
     );
-    payload = JSON.parse(payloadJson) as ConnectionTokenPayload;
   } catch {
     return {
       ok: false,
@@ -119,8 +145,17 @@ export function verifyConnectionToken(
     };
   }
 
+  const parsedPayload = ConnectionTokenPayloadSchema.safeParse(decodedPayload);
+  if (!parsedPayload.success) {
+    return {
+      ok: false,
+      error: "malformed",
+      message: "Token payload has an unexpected shape.",
+    };
+  }
+
   // Check expiry
-  if (payload.exp <= Date.now()) {
+  if (parsedPayload.data.exp <= Date.now()) {
     return {
       ok: false,
       error: "expired",
@@ -128,5 +163,5 @@ export function verifyConnectionToken(
     };
   }
 
-  return { ok: true, payload };
+  return { ok: true, payload: parsedPayload.data };
 }

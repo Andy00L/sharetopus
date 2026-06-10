@@ -1,7 +1,41 @@
 import "server-only";
 
+/**
+ * Send a USDC SPL token refund on Solana.
+ *
+ * Builds an SPL Token TransferChecked instruction from the Server Wallet's
+ * associated token account (ATA) to the payer's ATA, compiles it with
+ * @solana/kit, and hands the base64 wire transaction to CDP for signing and
+ * sending (the CDP Server Wallet holds the key).
+ *
+ * Account roles come from the @solana/kit AccountRole enum: READONLY=0,
+ * WRITABLE=1, READONLY_SIGNER=2, WRITABLE_SIGNER=3. Source and destination
+ * ATAs must be WRITABLE non-signers (they are PDAs and cannot sign);
+ * the owner is the only signer and CDP supplies that signature.
+ *
+ * Called by: facilitator.ts refundPayment (Solana branch)
+ * Env: X402_RECIPIENT_SOLANA (refund sender = original payment recipient)
+ */
+
+import {
+  AccountRole,
+  address,
+  appendTransactionMessageInstructions,
+  compileTransaction,
+  createSolanaRpc,
+  createTransactionMessage,
+  getBase64EncodedWireTransaction,
+  getProgramDerivedAddress,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+} from "@solana/kit";
+import type { Address } from "@solana/kit";
+import bs58 from "bs58";
+
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { getCdpClient } from "@/lib/x402/facilitator";
+import { getRecipientAddress } from "@/lib/x402/config";
+import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -18,31 +52,28 @@ export type RefundSolanaResult =
   | { ok: true; refundTxHash: string }
   | {
       ok: false;
-      error: { kind: "build_failed" | "send_failed" | "timeout"; message: string };
+      error: { kind: "build_failed" | "send_failed"; message: string };
     };
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** SPL Token program (constant program id). */
+const SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+/** Associated Token Account program (constant program id). */
+const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
-/**
- * Send a USDC SPL token refund on Solana.
- *
- * Uses CDP's sendTransaction API which handles transaction signing internally.
- * The CDP Server Wallet builds and signs the SPL token transfer.
- *
- * The CDP SDK's solana.sendTransaction signs and sends in one call when the
- * server wallet owns the funds. For SPL token transfers, we build the
- * transaction instruction set and serialize it.
- *
- * Since CDP SDK abstracts the transaction building for Solana server wallets,
- * we use a simplified approach: build a minimal transfer instruction via
- * the Solana programs and let CDP handle signing.
- */
 export async function refundSolana(
   input: RefundSolanaInput
 ): Promise<RefundSolanaResult> {
-  const senderAddress = process.env.X402_RECIPIENT_SOLANA;
+  // The Server Wallet that received the payment is the refund sender.
+  const senderAddress = getRecipientAddress(input.network);
   if (!senderAddress) {
     return {
       ok: false,
@@ -55,92 +86,50 @@ export async function refundSolana(
 
   try {
     const cdp = getCdpClient();
-
-    // CDP Solana network mapping (testnets removed from registry)
-    const cdpNetwork = "solana" as const;
-
-    // For SPL token transfers via CDP, we need to build the transaction
-    // using @solana/kit primitives and send via cdp.solana.sendTransaction.
-    //
-    // The CDP SDK can sign transactions for its managed wallets. We build
-    // the SPL TransferChecked instruction, serialize to base64, and send.
-
-    const {
-      address: solAddress,
-      createTransactionMessage,
-      setTransactionMessageFeePayer,
-      setTransactionMessageLifetimeUsingBlockhash,
-      appendTransactionMessageInstructions,
-      compileTransaction,
-      getBase64EncodedWireTransaction,
-      createNoopSigner,
-      createSolanaRpc,
-    } = await import("@solana/kit");
-
     const rpc = createSolanaRpc(input.network.rpcUrl);
 
-    // Get recent blockhash for transaction lifetime
+    // Get a recent blockhash for the transaction lifetime.
     const { value: latestBlockhash } = await rpc
       .getLatestBlockhash()
       .send();
 
-    const senderAddr = solAddress(senderAddress);
-    const recipientAddr = solAddress(input.payerAddress);
-    const usdcMint = solAddress(input.network.usdcAddress);
+    const senderAddr = address(senderAddress);
+    const recipientAddr = address(input.payerAddress);
+    const usdcMint = address(input.network.usdcAddress);
 
-    // Compute atomic amount (USDC has 6 decimals on Solana)
-    const atomicAmount = BigInt(
-      Math.round(input.amountUsdc * 10 ** input.network.usdcDecimals)
-    );
-
-    // Build the SPL Token TransferChecked instruction manually.
-    // The SPL Token program ID is constant.
-    const SPL_TOKEN_PROGRAM_ID = solAddress(
-      "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-    );
-
-    // Compute Associated Token Addresses (ATAs) for source and destination
-    const ASSOCIATED_TOKEN_PROGRAM_ID = solAddress(
-      "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-    );
-
-    const sourceAta = await findAssociatedTokenAddress(
-      senderAddr,
-      usdcMint,
-      SPL_TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
-    );
-
+    const sourceAta = await findAssociatedTokenAddress(senderAddr, usdcMint);
+    // The payer's ATA exists: the payment that is being refunded was sent
+    // FROM it, and SPL token accounts are not closed by outgoing transfers
+    // in this flow.
     const destinationAta = await findAssociatedTokenAddress(
       recipientAddr,
-      usdcMint,
-      SPL_TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
+      usdcMint
     );
 
-    // Build TransferChecked instruction data
-    // Instruction index 12 = TransferChecked
-    // Layout: [u8 instruction, u64 amount, u8 decimals]
+    const atomicAmount = BigInt(
+      usdcToAtomic(input.amountUsdc, input.network.usdcDecimals)
+    );
+
+    // TransferChecked instruction data layout:
+    // [u8 instruction=12, u64 amount little-endian, u8 decimals]
     const instructionData = new Uint8Array(10);
-    instructionData[0] = 12; // TransferChecked
-    const amountView = new DataView(instructionData.buffer);
-    amountView.setBigUint64(1, atomicAmount, true); // little-endian
+    instructionData[0] = 12;
+    new DataView(instructionData.buffer).setBigUint64(1, atomicAmount, true);
     instructionData[9] = input.network.usdcDecimals;
 
+    // TransferChecked account order: source, mint, destination, authority.
     const transferInstruction = {
-      programAddress: SPL_TOKEN_PROGRAM_ID,
+      programAddress: address(SPL_TOKEN_PROGRAM_ID),
       accounts: [
-        { address: sourceAta, role: 2 }, // source (writable)
-        { address: usdcMint, role: 0 }, // mint (readonly)
-        { address: destinationAta, role: 2 }, // destination (writable)
-        { address: senderAddr, role: 3 }, // authority (signer + writable)
+        { address: sourceAta, role: AccountRole.WRITABLE },
+        { address: usdcMint, role: AccountRole.READONLY },
+        { address: destinationAta, role: AccountRole.WRITABLE },
+        { address: senderAddr, role: AccountRole.READONLY_SIGNER },
       ],
       data: instructionData,
     };
 
-    // Build transaction message
-    const signer = createNoopSigner(senderAddr);
-    const txMsg = appendTransactionMessageInstructions(
+    const txMessage = appendTransactionMessageInstructions(
       [transferInstruction],
       setTransactionMessageLifetimeUsingBlockhash(
         latestBlockhash,
@@ -151,13 +140,13 @@ export async function refundSolana(
       )
     );
 
-    // Compile and encode
-    const compiled = compileTransaction(txMsg);
-    const base64Tx = getBase64EncodedWireTransaction(compiled);
+    const compiledTx = compileTransaction(txMessage);
+    const base64Tx = getBase64EncodedWireTransaction(compiledTx);
 
-    // Sign and send via CDP
+    // Sign and send via CDP. The CDP SDK's Solana network name matches the
+    // WalletChain short name "solana"; the registry has no Solana testnet.
     const result = await cdp.solana.sendTransaction({
-      network: cdpNetwork,
+      network: "solana",
       transaction: base64Tx,
     });
 
@@ -183,60 +172,22 @@ export async function refundSolana(
 // ---------------------------------------------------------------------------
 
 /**
- * Derives the Associated Token Address for a given wallet and mint.
- * Uses the standard PDA derivation: sha256([wallet, tokenProgramId, mint], ataProgramId).
+ * Derives the Associated Token Address for a wallet and mint. Standard PDA
+ * derivation against the ATA program with seeds
+ * [wallet, tokenProgram, mint], where every seed is the 32-byte DECODED
+ * public key (base58 strings are never used as seed bytes directly).
  */
 async function findAssociatedTokenAddress(
-  wallet: ReturnType<typeof import("@solana/kit").address>,
-  mint: ReturnType<typeof import("@solana/kit").address>,
-  tokenProgramId: ReturnType<typeof import("@solana/kit").address>,
-  ataProgramId: ReturnType<typeof import("@solana/kit").address>
-): Promise<ReturnType<typeof import("@solana/kit").address>> {
-  // Use @solana/kit getProgramDerivedAddress if available, otherwise
-  // fall back to manual derivation.
-  const { getProgramDerivedAddress, address: solAddress } = await import(
-    "@solana/kit"
-  );
-
-  const [pda] = await getProgramDerivedAddress({
-    programAddress: ataProgramId,
+  wallet: Address,
+  mint: Address
+): Promise<Address> {
+  const [derivedAddress] = await getProgramDerivedAddress({
+    programAddress: address(ASSOCIATED_TOKEN_PROGRAM_ID),
     seeds: [
-      // Wallet address as bytes
-      new TextEncoder().encode(String(wallet)).length === 32
-        ? new TextEncoder().encode(String(wallet))
-        : bs58Decode(String(wallet)),
-      // Token program ID as bytes
-      bs58Decode(String(tokenProgramId)),
-      // Mint address as bytes
-      bs58Decode(String(mint)),
+      bs58.decode(String(wallet)),
+      bs58.decode(SPL_TOKEN_PROGRAM_ID),
+      bs58.decode(String(mint)),
     ],
   });
-
-  return pda;
-}
-
-function bs58Decode(str: string): Uint8Array {
-  // Use a simple base58 decode without importing bs58 at module level
-  // since the dynamic import approach is used for @solana/kit.
-  const ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-  const bytes: number[] = [];
-  for (const char of str) {
-    let carry = ALPHABET.indexOf(char);
-    if (carry < 0) throw new Error(`Invalid base58 character: ${char}`);
-    for (let j = 0; j < bytes.length; j++) {
-      carry += bytes[j] * 58;
-      bytes[j] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  // Leading zeros
-  for (const char of str) {
-    if (char !== "1") break;
-    bytes.push(0);
-  }
-  return new Uint8Array(bytes.reverse());
+  return derivedAddress;
 }

@@ -10,20 +10,27 @@ export type ResolveWalletPrincipalResult =
 /**
  * Look up a wallet by address. Returns the WalletPrincipal tagged union.
  *
- * Address matching is case-insensitive (EVM addresses are canonicalized
- * to lowercase before lookup).
+ * Matching is exact equality, never ILIKE: pattern matching on an
+ * attacker-supplied address would let % and _ act as SQL wildcards. EVM
+ * addresses (0x-prefixed, case-insensitive by spec) are stored lowercase at
+ * registration, so the lookup lowercases those; Solana base58 addresses are
+ * case-sensitive and compared verbatim.
  *
- * Called by Phase 4.2+ endpoints (connect, post). NOT called by Phase 4.1
- * register (the wallet does not exist at register time).
+ * Called by: x402PaidEndpoint, handleConnectVerify.
+ * Tables touched: wallets (read)
  */
 export async function resolveWalletPrincipal(
   address: string
 ): Promise<ResolveWalletPrincipalResult> {
+  const normalizedAddress = address.startsWith("0x")
+    ? address.toLowerCase()
+    : address;
+
   try {
-    const { data, error } = await adminSupabase
+    const { data: wallet, error } = await adminSupabase
       .from("wallets")
       .select("id, address, chain, sanctions_status")
-      .ilike("address", address.toLowerCase())
+      .eq("address", normalizedAddress)
       .maybeSingle();
 
     if (error) {
@@ -35,7 +42,7 @@ export async function resolveWalletPrincipal(
       };
     }
 
-    if (!data) {
+    if (!wallet) {
       return {
         ok: false,
         reason: "not_found",
@@ -47,11 +54,11 @@ export async function resolveWalletPrincipal(
       ok: true,
       principal: {
         kind: "wallet",
-        principalId: data.id,
-        walletId: data.id,
-        address: data.address,
-        chain: data.chain,
-        sanctionsStatus: data.sanctions_status,
+        principalId: wallet.id,
+        walletId: wallet.id,
+        address: wallet.address,
+        chain: wallet.chain,
+        sanctionsStatus: wallet.sanctions_status,
       },
     };
   } catch (err) {

@@ -16,8 +16,11 @@ const MAX_ITERATIONS = 5;
  * 03:00 (stripe webhook cleanup), 04:00 (stale OAuth clients),
  * and 05:00 (SIWE nonces).
  *
- * Batched: up to 1000 rows per iteration, max 5 iterations per run.
- * If more rows remain after 5 iterations, the next daily run catches them.
+ * Batched: each delete is ordered by id and bounded to 1000 rows per
+ * iteration, up to 5 iterations per run. The explicit order is what lets
+ * PostgREST honor the per-iteration limit (see the .order call below). If
+ * rows remain after 5 iterations, the run logs that the per-run cap was hit
+ * and the next daily run clears the rest.
  *
  * Retries: 0 (next daily run handles transient failures).
  */
@@ -35,6 +38,7 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
       ).toISOString();
 
       let totalDeleted = 0;
+      let capReached = false;
 
       for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
         const { count, error } = await adminSupabase
@@ -42,6 +46,11 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
           .delete({ count: "exact" })
           .in("status", ["pending", "failed", "expired"])
           .lt("created_at", cutoff)
+          // PostgREST honors a limited delete only when an explicit order on a
+          // unique column is present; without it the .limit is ignored and
+          // every matching row is deleted in a single statement. Order by the
+          // PK so each iteration removes at most BATCH_SIZE rows.
+          .order("id", { ascending: true })
           .limit(BATCH_SIZE);
 
         if (error) {
@@ -57,9 +66,23 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
         const deletedInBatch = count ?? 0;
         totalDeleted += deletedInBatch;
 
-        // If we deleted fewer than BATCH_SIZE, there are no more rows to process
+        // A short batch (fewer than BATCH_SIZE rows) means every remaining
+        // stale row was deleted this iteration, so stop early.
         if (deletedInBatch < BATCH_SIZE) {
           break;
+        }
+
+        // A full batch on the last allowed iteration means we hit the per-run
+        // cap (MAX_ITERATIONS * BATCH_SIZE) and stale rows likely remain. Log
+        // it so the under-deletion is visible in the Inngest run; the next
+        // daily run clears the rest.
+        if (iteration === MAX_ITERATIONS - 1) {
+          capReached = true;
+          console.log(
+            `[cleanupSocialConnectionsCron] Hit per-run cap of ${
+              MAX_ITERATIONS * BATCH_SIZE
+            } rows; stale rows likely remain and will be cleared on the next daily run`,
+          );
         }
       }
 
@@ -67,7 +90,7 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
         `[cleanupSocialConnectionsCron] Deleted ${totalDeleted} stale connections older than ${cutoff}`,
       );
 
-      return { deleted: totalDeleted, cutoff };
+      return { deleted: totalDeleted, cutoff, capReached };
     });
   },
 );

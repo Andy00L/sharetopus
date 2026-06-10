@@ -1,12 +1,12 @@
 import "server-only";
 
 /**
- * Wallet principal type and exhaustive-check helper for x402 namespace.
+ * Wallet principal type for the x402 namespace.
  *
  * Separate from McpPrincipal (src/lib/mcp/auth/types.ts) because x402 has no
  * plan tier, no scopes, no API key. Wallets pay per-call via x402_charges.
  *
- * Called by: resolveWalletPrincipal (Phase 4.1), applyWalletGate, logX402Call
+ * Called by: resolveWalletPrincipal, applyWalletGate, logX402Call, routes
  * Tables touched: none (type definitions only)
  */
 
@@ -38,21 +38,4 @@ export interface WalletPrincipal {
 
   /** Latest sanctions screening result. Updated on every charge. */
   sanctionsStatus: SanctionsStatus;
-}
-
-/**
- * Exhaustive type-narrowing helper. Place at the bottom of any switch on
- * principal.kind to force TS to error if a new variant is added without
- * being handled.
- *
- * If you ever introduce a second principal kind in the x402 namespace (e.g.,
- * delegate wallets, shared wallets), TS will fail to compile every switch
- * until the new kind is added.
- *
- * Mirror of src/lib/mcp/auth/types.ts assertExhaustiveKind.
- */
-export function assertExhaustiveWalletKind(value: never): never {
-  throw new Error(
-    `[assertExhaustiveWalletKind] Unhandled WalletPrincipal variant: ${JSON.stringify(value)}`
-  );
 }

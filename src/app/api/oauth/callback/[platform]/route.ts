@@ -4,20 +4,15 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { escapeHtml } from "@/lib/api/oauth/escapeHtml";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { handleOAuthCallback } from "@/lib/x402/oauth/callback/handleOAuthCallback";
-import type { Platform } from "@/lib/x402/connect/types";
+import type { OAuthCallbackResult } from "@/lib/x402/oauth/callback/handleOAuthCallback";
+import { isX402Platform, getAppUrl } from "@/lib/x402/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
-
-const VALID_PLATFORMS = new Set<Platform>([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
 
 /**
  * GET /api/oauth/callback/linkedin?code=...&state=...
@@ -27,6 +22,10 @@ const VALID_PLATFORMS = new Set<Platform>([
  * Shared OAuth callback for x402-originated and REST-originated
  * connections. No Clerk session required. State param validation
  * via social_connections row lookup is the only auth.
+ *
+ * Rate limit: 60/min per IP (x402_oauth_callback scope). The endpoint is
+ * unauthenticated and triggers DB lookups plus outbound provider calls, so
+ * it must not be free to hammer.
  */
 export async function GET(
   request: NextRequest,
@@ -40,7 +39,7 @@ export async function GET(
   const platformParam = params.platform;
 
   // Validate platform
-  if (!VALID_PLATFORMS.has(platformParam as Platform)) {
+  if (!isX402Platform(platformParam)) {
     return new NextResponse(
       buildHtmlPage(
         "Invalid Platform",
@@ -50,7 +49,30 @@ export async function GET(
     );
   }
 
-  const platform = platformParam as Platform;
+  const platform = platformParam;
+
+  // Rate limit before any DB or provider work.
+  const rateLimitResult = await checkRateLimit(
+    "x402_oauth_callback",
+    null,
+    60,
+    60
+  );
+  if (!rateLimitResult.success) {
+    return new NextResponse(
+      buildHtmlPage(
+        "Too Many Requests",
+        "Too many callback attempts. Please try again shortly."
+      ),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "text/html",
+          "Retry-After": String(rateLimitResult.resetIn ?? 60),
+        },
+      }
+    );
+  }
 
   // Parse query params
   const url = new URL(request.url);
@@ -69,6 +91,19 @@ export async function GET(
     );
   }
 
+  // A hit with neither a code nor a provider error is not a real callback;
+  // rejecting it here keeps a stray request from burning the pending
+  // connection with a doomed token exchange.
+  if (!code && !errorCode) {
+    return new NextResponse(
+      buildHtmlPage(
+        "Missing Code",
+        "OAuth code parameter is missing."
+      ),
+      { status: 400, headers: { "Content-Type": "text/html" } }
+    );
+  }
+
   // Process callback via shared handler (looks up social_connections by state)
   const result = await handleOAuthCallback({
     platform,
@@ -78,10 +113,7 @@ export async function GET(
     errorDescription,
   });
 
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.NEXT_PUBLIC_BASE_URL ??
-    "https://sharetopus.com";
+  const appUrl = getAppUrl();
 
   if (!result.ok) {
     const errorMessage =
@@ -103,13 +135,16 @@ export async function GET(
     // Share-link flows redirect to the share error page instead of inline HTML
     if (result.error.kind.startsWith("share_link_") || result.error.kind === "owner_account_limit_reached") {
       return NextResponse.redirect(
-        `${baseUrl}/share/${platform}/error?reason=${encodeURIComponent(result.error.kind)}`,
+        `${appUrl}/share/${platform}/error?reason=${encodeURIComponent(result.error.kind)}`,
       );
     }
 
     return new NextResponse(
       buildHtmlPage("Connection Failed", errorMessage),
-      { status: 200, headers: { "Content-Type": "text/html" } }
+      {
+        status: mapCallbackErrorToHttpStatus(result.error.kind),
+        headers: { "Content-Type": "text/html" },
+      }
     );
   }
 
@@ -130,13 +165,8 @@ export async function GET(
       ? encodeURIComponent(result.accountUsername)
       : "";
     return NextResponse.redirect(
-      `${baseUrl}/share/${platform}/success${maskedAccount ? `?account=${maskedAccount}` : ""}`,
+      `${appUrl}/share/${platform}/success${maskedAccount ? `?account=${maskedAccount}` : ""}`,
     );
-  }
-
-  // If a redirect URL was provided, redirect there
-  if (result.redirectUrl) {
-    return NextResponse.redirect(result.redirectUrl);
   }
 
   return new NextResponse(
@@ -146,6 +176,41 @@ export async function GET(
     ),
     { status: 200, headers: { "Content-Type": "text/html" } }
   );
+}
+
+// ---------------------------------------------------------------------------
+// Error status mapping
+// ---------------------------------------------------------------------------
+
+type CallbackErrorKind = Extract<
+  OAuthCallbackResult,
+  { ok: false }
+>["error"]["kind"];
+
+/**
+ * Failure pages carry non-2xx statuses so agents and monitoring can tell a
+ * failed callback from a successful one without parsing HTML.
+ */
+function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
+  switch (kind) {
+    case "state_not_found":
+    case "state_expired":
+    case "state_already_used":
+    case "provider_error":
+      return 400;
+    case "token_exchange_failed":
+      return 502;
+    case "db_update_failed":
+      return 500;
+    // Share-link kinds redirect before reaching here; this keeps the switch
+    // total if that ever changes.
+    case "share_link_not_found":
+    case "share_link_revoked":
+    case "share_link_expired":
+    case "share_link_max_uses_reached":
+    case "owner_account_limit_reached":
+      return 400;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,4 +242,3 @@ function buildHtmlPage(title: string, message: string): string {
   </body>
 </html>`;
 }
-

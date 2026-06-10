@@ -12,20 +12,28 @@ export type ConsumeSiweNonceResult =
 
 /**
  * Marks a SIWE nonce as used. The UPDATE uses a WHERE clause that only
- * matches if used_at IS NULL AND expires_at > now(). If 0 rows are updated,
- * a follow-up SELECT distinguishes not_found vs already_used vs expired.
+ * matches if used_at IS NULL AND expires_at > now(); the affected-row count
+ * decides success, so two concurrent consumers can never both win. If 0
+ * rows are updated, a follow-up SELECT distinguishes not_found vs
+ * already_used vs expired.
  *
- * Called by handleRegisterVerify after SIWE signature verification succeeds.
+ * consumingWallet records which wallet burned the nonce (siwe_nonces.wallet
+ * is null at issuance because the challenge is anonymous); it is audit
+ * context, not an authorization input.
+ *
+ * Called by: handleRegisterVerify, handleRegisterSolanaVerify after SIWE
+ * signature verification succeeds.
  */
 export async function consumeSiweNonce(
-  nonce: string
+  nonce: string,
+  consumingWallet: string | null
 ): Promise<ConsumeSiweNonceResult> {
   const now = new Date().toISOString();
 
   // Atomic single-use: UPDATE only if unused and unexpired.
-  const { data, error } = await adminSupabase
+  const { data: consumedRows, error } = await adminSupabase
     .from("siwe_nonces")
-    .update({ used_at: now })
+    .update({ used_at: now, wallet: consumingWallet })
     .eq("nonce", nonce)
     .is("used_at", null)
     .gt("expires_at", now)
@@ -36,7 +44,7 @@ export async function consumeSiweNonce(
     return { ok: false, reason: "db_error", message: error.message };
   }
 
-  if (data && data.length > 0) {
+  if (consumedRows && consumedRows.length > 0) {
     return { ok: true };
   }
 

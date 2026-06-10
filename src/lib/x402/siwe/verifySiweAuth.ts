@@ -15,17 +15,21 @@ export interface VerifySiweAuthInput {
   /** Hex signature, from request body. */
   signature: `0x${string}`;
 
-  /** Expected payer address (from X-PAYMENT header payload.authorization.from). */
+  /** Expected payer address (from the payment payload authorization.from). */
   expectedAddress: `0x${string}`;
 
-  /** Network the X-PAYMENT was sent on. SIWE message.chainId must match. */
+  /** Network the payment was sent on. SIWE message.chainId must match. */
   network: NetworkConfig;
 
-  /** Expected nonce (one we issued in the 402 challenge). */
-  expectedNonce: string;
-
-  /** Expected SIWE message.domain (from NEXT_PUBLIC_BASE_URL env, host only). */
+  /** Expected SIWE message.domain (public site host, from config.ts). */
   expectedDomain: string;
+
+  /**
+   * Expected SIWE message.uri: the exact resource being purchased. Binds the
+   * signed message to this endpoint so a SIWE message signed for any other
+   * purpose on the same domain cannot authorize a registration.
+   */
+  expectedUri: string;
 }
 
 export type VerifySiweAuthResult =
@@ -41,7 +45,7 @@ export type VerifySiweAuthError =
       received: string | undefined;
     }
   | { kind: "chain_mismatch"; expected: number; received: number | undefined }
-  | { kind: "nonce_mismatch"; expected: string; received: string | undefined }
+  | { kind: "uri_mismatch"; expected: string; received: string | undefined }
   | { kind: "expired"; message: string }
   | { kind: "not_yet_valid"; message: string }
   | { kind: "invalid_signature"; message: string }
@@ -84,14 +88,18 @@ function getOrCreatePublicClient(
  * Verifies a SIWE message + signature against expected fields.
  *
  * Two-step:
- *   1. Manual field checks (domain, address, chainId, nonce, time) for
- *      specific error variants.
+ *   1. Manual field checks (domain, address, chainId, uri, time) for
+ *      specific error variants. Nonce single-use enforcement is NOT here:
+ *      the caller extracts the message nonce and consumeSiweNonce proves it
+ *      was server-issued, unused, and unexpired.
  *   2. verifySiweMessage: cryptographic signature verification via viem.
  *
- * For EOA signatures, verifySiweMessage runs locally (no RPC call).
- * A viem publicClient is still required by the API; created per network
- * using NetworkConfig.rpcUrl and cached at module scope.
+ * For EOA signatures, verifySiweMessage runs locally (no RPC call). Smart
+ * contract wallets (EIP-1271/ERC-6492) verify through the network's public
+ * RPC from networks.ts; a viem publicClient is created per network and
+ * cached at module scope.
  *
+ * Called by: handleRegisterVerify
  * Never throws; all errors returned as typed variants.
  */
 export async function verifySiweAuth(
@@ -166,13 +174,13 @@ export async function verifySiweAuth(
     };
   }
 
-  if (!parsed.nonce || parsed.nonce !== input.expectedNonce) {
+  if (!parsed.uri || parsed.uri !== input.expectedUri) {
     return {
       ok: false,
       error: {
-        kind: "nonce_mismatch",
-        expected: input.expectedNonce,
-        received: parsed.nonce,
+        kind: "uri_mismatch",
+        expected: input.expectedUri,
+        received: parsed.uri,
       },
     };
   }
@@ -232,14 +240,15 @@ export async function verifySiweAuth(
     };
   }
 
-  // All checks passed.
+  // All checks passed. parsed.nonce is non-empty here because the caller
+  // already extracted it for consumeSiweNonce before invoking this function.
   return {
     ok: true,
     parsedMessage: {
       address: parsed.address as `0x${string}`,
       domain: parsed.domain,
       chainId: parsed.chainId,
-      nonce: parsed.nonce,
+      nonce: parsed.nonce ?? "",
       issuedAt: parsed.issuedAt,
       expirationTime: parsed.expirationTime,
     },

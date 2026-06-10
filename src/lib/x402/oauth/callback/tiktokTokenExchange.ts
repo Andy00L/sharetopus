@@ -1,5 +1,17 @@
 import "server-only";
 
+import { z } from "zod";
+
+/** Outbound provider calls are bounded. */
+const EXCHANGE_TIMEOUT_MS = 15_000;
+
+const TikTokTokenSchema = z.object({
+  access_token: z.string().min(1),
+  open_id: z.string().min(1),
+  refresh_token: z.string().optional(),
+  expires_in: z.number().optional(),
+});
+
 export interface TikTokExchangeResult {
   ok: true;
   accessToken: string;
@@ -18,10 +30,14 @@ export type ExchangeTikTokForX402Result =
   | { ok: false; error: "exchange_failed" | "profile_fetch_failed"; message: string };
 
 /**
- * Exchange TikTok OAuth code for access token + profile.
+ * Exchange a TikTok OAuth code for an access token + profile.
  *
- * Inlines the exchange logic because exchangeTikTokCode hardcodes
- * TIKTOK_REDIRECT_URL. This uses X402_TIKTOK_REDIRECT_URI.
+ * Separate from exchangeTikTokCode (the web flow), which hardcodes
+ * TIKTOK_REDIRECT_URL; this one uses X402_TIKTOK_REDIRECT_URI. The profile
+ * fetch is best-effort: the account identifier (open_id) already comes from
+ * the token response, so a profile failure only loses display fields.
+ *
+ * Called by: handleOAuthCallback
  */
 export async function exchangeTikTokForX402(
   code: string
@@ -54,7 +70,7 @@ export async function exchangeTikTokForX402(
   params.append("grant_type", "authorization_code");
   params.append("redirect_uri", redirectUri);
 
-  let tokenData: Record<string, unknown>;
+  let tokenData: z.infer<typeof TikTokTokenSchema>;
   try {
     const response = await fetch(
       "https://open.tiktokapis.com/v2/oauth/token/",
@@ -62,6 +78,7 @@ export async function exchangeTikTokForX402(
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: params.toString(),
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
@@ -75,7 +92,16 @@ export async function exchangeTikTokForX402(
       };
     }
 
-    tokenData = JSON.parse(text);
+    const parsed = TikTokTokenSchema.safeParse(JSON.parse(text));
+    if (!parsed.success) {
+      console.error("[exchangeTikTokForX402] Token response failed validation (missing access_token or open_id).");
+      return {
+        ok: false,
+        error: "exchange_failed",
+        message: "TikTok token response had an unexpected shape.",
+      };
+    }
+    tokenData = parsed.data;
   } catch (err) {
     console.error("[exchangeTikTokForX402] Token exchange error:", err instanceof Error ? err.message : err);
     return {
@@ -85,46 +111,38 @@ export async function exchangeTikTokForX402(
     };
   }
 
-  const accessToken = tokenData.access_token as string | undefined;
-  const openId = tokenData.open_id as string | undefined;
-
-  if (!accessToken || !openId) {
-    return {
-      ok: false,
-      error: "exchange_failed",
-      message: "Missing access_token or open_id in TikTok response.",
-    };
-  }
-
-  // Fetch basic profile
+  // Fetch basic profile. Best-effort: display fields only.
   let profile: Record<string, unknown> = {};
   try {
     const profileResponse = await fetch(
       "https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url",
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
     if (profileResponse.ok) {
       const profileBody = (await profileResponse.json()) as Record<string, unknown>;
-      const userData = (profileBody.data as Record<string, unknown>)?.user as Record<string, unknown> | undefined;
+      const userData = (profileBody.data as Record<string, unknown> | undefined)
+        ?.user as Record<string, unknown> | undefined;
       if (userData) profile = userData;
     }
-  } catch {
-    // Profile fetch is best-effort for TikTok
+  } catch (err) {
+    // Best-effort: the identifier is already known from the token response.
+    console.warn("[exchangeTikTokForX402] Profile fetch failed (continuing without display fields):", err instanceof Error ? err.message : err);
   }
 
   return {
     ok: true,
-    accessToken,
-    refreshToken: (tokenData.refresh_token as string) ?? null,
-    expiresIn: (tokenData.expires_in as number) ?? 86400,
-    accountIdentifier: openId,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token ?? null,
+    expiresIn: tokenData.expires_in ?? 86400,
+    accountIdentifier: tokenData.open_id,
     profile: {
-      name: profile.display_name as string | undefined,
-      avatarUrl: profile.avatar_url as string | undefined,
-      openId,
+      name: typeof profile.display_name === "string" ? profile.display_name : undefined,
+      avatarUrl: typeof profile.avatar_url === "string" ? profile.avatar_url : undefined,
+      openId: tokenData.open_id,
     },
   };
 }

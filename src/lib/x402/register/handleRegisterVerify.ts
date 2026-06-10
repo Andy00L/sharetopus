@@ -3,20 +3,32 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { parseSiweMessage } from "viem/siwe";
-import { decodePaymentSignatureHeader } from "@x402/core/http";
-import { encodePaymentResponseHeader } from "@x402/core/http";
-import type { PaymentPayload } from "@x402/core/types";
+import {
+  decodePaymentSignatureHeader,
+  encodePaymentResponseHeader,
+} from "@x402/core/http";
 import type { SettleResponse } from "@x402/core/types";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { WalletChain, SanctionsStatus } from "@/lib/types/database.types";
 import {
   verifyPayment,
   settlePayment,
   refundPayment,
 } from "@/lib/x402/facilitator";
-import type { VerifyPaymentError } from "@/lib/x402/facilitator";
-import type { SettlePaymentError } from "@/lib/x402/facilitator";
+import { FACILITATOR_NAME } from "@/lib/x402/config";
+import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import {
+  mapVerifyPaymentError,
+  mapSettlePaymentError,
+} from "@/lib/x402/payment/errorMaps";
+import type {
+  MappedVerifyError,
+  MappedSettleError,
+} from "@/lib/x402/payment/errorMaps";
+import { extractPayerAddress } from "@/lib/x402/payment/paymentPayload";
 import { verifySiweAuth } from "@/lib/x402/siwe/verifySiweAuth";
 import type { VerifySiweAuthError } from "@/lib/x402/siwe/verifySiweAuth";
 import { consumeSiweNonce } from "@/lib/x402/siwe/consumeSiweNonce";
@@ -38,13 +50,16 @@ export type RegisterVerifyResult =
     }
   | { ok: false; error: RegisterVerifyError };
 
-/** Every error variant the verify flow can produce. */
+/**
+ * Every error variant the register verify flows (EVM and Solana) can
+ * produce. The verify and settle members come from the shared facilitator
+ * error mapping in payment/errorMaps.ts.
+ */
 export type RegisterVerifyError =
   | { kind: "rate_limited"; retryAfterSeconds: number }
-  | { kind: "missing_payment_header"; message: string }
-  | { kind: "malformed_payment"; message: string }
   | { kind: "missing_body"; message: string }
   | { kind: "malformed_body"; message: string }
+  | { kind: "db_error"; message: string }
   | { kind: "siwe_parse_failed"; message: string }
   | {
       kind: "siwe_domain_mismatch";
@@ -62,60 +77,57 @@ export type RegisterVerifyError =
       received: number | undefined;
     }
   | {
+      kind: "siwe_uri_mismatch";
+      expected: string;
+      received: string | undefined;
+    }
+  | {
       kind: "siwe_nonce_invalid";
       reason: "not_found" | "already_used" | "expired";
     }
   | { kind: "siwe_expired"; message: string }
   | { kind: "siwe_not_yet_valid"; message: string }
   | { kind: "siwe_invalid_signature"; message: string }
-  | { kind: "verify_amount_mismatch"; message: string }
-  | { kind: "verify_network_mismatch"; message: string }
-  | { kind: "verify_recipient_mismatch"; message: string }
-  | { kind: "verify_replay_detected"; message: string }
-  | { kind: "verify_invalid_signature"; message: string }
-  | { kind: "verify_kyt_sanctioned"; message: string }
-  | { kind: "verify_facilitator_error"; message: string }
-  | { kind: "settle_insufficient_funds"; message: string }
-  | { kind: "settle_facilitator_error"; message: string }
-  | { kind: "settle_timeout"; message: string }
-  | { kind: "settle_not_verified"; message: string }
+  | MappedVerifyError
+  | MappedSettleError
   | {
-      kind: "db_insert_failed_refund_initiated";
+      kind: "db_insert_failed";
       message: string;
+      refundInitiated: boolean;
       refundTxHash: string | null;
     };
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const DEFAULT_FACILITATOR_URL =
-  "https://api.cdp.coinbase.com/platform/v2/x402";
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 /**
- * Full register verify flow. Called when X-PAYMENT header is present.
+ * Full EVM register verify flow. Called when a payment header is present.
  *
  * Flow:
  *   1. Rate limit check (x402_register_verify, 5/min per IP)
- *   2. Decode X-PAYMENT header via @x402/core
- *   3. Parse and validate request body (SIWE message + signature)
- *   4. Extract nonce from SIWE message, verify SIWE fields + signature
- *   5. Consume SIWE nonce (atomic single-use marker)
- *   6. Check if wallet already exists (idempotent retry)
- *   7. verifyPayment (facilitator + KYT)
- *   8. settlePayment (on-chain USDC transfer)
- *   9. insertRegisterAtomic (Postgres RPC)
- *  10. If DB insert fails post-settle: refundPayment, return error
+ *   2. Parse request body (SIWE message + signature) and extract the payer
+ *      address claimed in the SIWE message's payment payload
+ *   3. Extract nonce from the SIWE message, verify SIWE fields + signature
+ *      (domain, address, chainId, uri, time)
+ *   4. Consume the SIWE nonce (atomic single-use marker; this is what proves
+ *      the nonce was server-issued)
+ *   5. Check if the wallet already exists (idempotent retry, no charge)
+ *   6. verifyPayment (facilitator + KYT)
+ *   7. settlePayment (on-chain USDC transfer)
+ *   8. insertRegisterAtomic (register_wallet_atomic RPC)
+ *   9. If the DB insert fails post-settle: refundPayment, report whether the
+ *      refund actually succeeded
+ *
+ * Residual risk (accepted at the June 2026 checkpoint, Phase 4.4 item): the
+ * atomic RPC inserts everything after settle, so a process crash between
+ * steps 7 and 8 leaves a settled payment with no DB row. The refund path
+ * below only covers insert FAILURES, not crashes.
  */
 export async function handleRegisterVerify(
   request: NextRequest,
   paymentHeader: string,
-  context: RegisterNetworkContext,
-  ipHash: string | null
+  context: RegisterNetworkContext
 ): Promise<RegisterVerifyResult> {
   // ── 1. Rate limit ───────────────────────────────────────────────────
   const rateLimitResult = await checkRateLimit(
@@ -134,35 +146,17 @@ export async function handleRegisterVerify(
     };
   }
 
-  // ── 2. Decode X-PAYMENT header ─────────────────────────────────────
-  let paymentPayload: PaymentPayload;
-  try {
-    paymentPayload = decodePaymentSignatureHeader(paymentHeader);
-  } catch (err) {
-    console.error("[handleRegisterVerify] Failed to decode X-PAYMENT:", err instanceof Error ? err.message : err);
-    return {
-      ok: false,
-      error: {
-        kind: "malformed_payment",
-        message: "X-PAYMENT header is not valid base64-encoded JSON.",
-      },
-    };
+  // ── 2. Extract payer address from payment payload ──────────────────
+  // The address is the unverified claim inside the header; the SIWE
+  // signature check below binds it to a key the caller actually controls,
+  // and verifyPayment later confirms it against the facilitator.
+  const decodeResult = decodePaymentHeader(paymentHeader);
+  if (!decodeResult.ok) {
+    return { ok: false, error: decodeResult.error };
   }
+  const payerAddress = decodeResult.payerAddress;
 
-  // ── 3. Extract payer address from payment payload ──────────────────
-  const payerAddress = extractPayerAddress(paymentPayload);
-  if (!payerAddress) {
-    return {
-      ok: false,
-      error: {
-        kind: "malformed_payment",
-        message:
-          "X-PAYMENT payload missing authorization.from (payer address).",
-      },
-    };
-  }
-
-  // ── 4. Parse request body ──────────────────────────────────────────
+  // ── 3. Parse request body ──────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -201,7 +195,7 @@ export async function handleRegisterVerify(
     };
   }
 
-  // ── 5. Extract nonce from SIWE message ─────────────────────────────
+  // ── 4. Extract nonce from SIWE message ─────────────────────────────
   let siweNonce: string;
   try {
     const parsed = parseSiweMessage(siweMessage);
@@ -227,22 +221,25 @@ export async function handleRegisterVerify(
     };
   }
 
-  // ── 6. Verify SIWE message + signature ─────────────────────────────
+  // ── 5. Verify SIWE message + signature ─────────────────────────────
   const siweResult = await verifySiweAuth({
     message: siweMessage,
     signature: siweSignature as `0x${string}`,
     expectedAddress: payerAddress as `0x${string}`,
     network: context.network,
-    expectedNonce: siweNonce,
     expectedDomain: context.expectedDomain,
+    expectedUri: context.resourceUrl,
   });
 
   if (!siweResult.ok) {
     return { ok: false, error: mapSiweError(siweResult.error) };
   }
 
-  // ── 7. Consume SIWE nonce ──────────────────────────────────────────
-  const nonceResult = await consumeSiweNonce(siweNonce);
+  // ── 6. Consume SIWE nonce ──────────────────────────────────────────
+  // This proves the nonce was server-issued, unused, and unexpired, and
+  // burns it atomically. Recording the consuming wallet gives the audit
+  // trail a subject.
+  const nonceResult = await consumeSiweNonce(siweNonce, payerAddress);
   if (!nonceResult.ok) {
     if (nonceResult.reason === "db_error") {
       // DB error during nonce consumption is a server-side issue.
@@ -258,12 +255,23 @@ export async function handleRegisterVerify(
     };
   }
 
-  // ── 8. Check existing wallet (idempotent retry) ────────────────────
-  // If the wallet already exists, return 200 OK without settling.
-  // The agent's X-PAYMENT authorization is NOT claimed; it expires or
-  // can be reused for the next operation (connect, post). This prevents
-  // double-charging on idempotent retries.
-  const existingWallet = await lookupExistingWallet(payerAddress);
+  // ── 7. Check existing wallet (idempotent retry) ────────────────────
+  // If the wallet already exists, return 200 OK without settling. The
+  // agent's payment authorization is NOT claimed; it expires or can be
+  // reused for the next operation. This prevents double-charging on
+  // idempotent retries. Fail closed on a lookup error: charging a wallet
+  // that may already be registered forces a charge-then-refund round trip.
+  const existingLookup = await lookupExistingWallet(payerAddress);
+  if (!existingLookup.ok) {
+    return {
+      ok: false,
+      error: {
+        kind: "db_error",
+        message: "Failed to check existing wallet registration.",
+      },
+    };
+  }
+  const existingWallet = existingLookup.wallet;
   if (existingWallet) {
     console.log(`[handleRegisterVerify] Wallet already registered: ${existingWallet.id} (${payerAddress})`);
     return {
@@ -281,9 +289,9 @@ export async function handleRegisterVerify(
     };
   }
 
-  // ── 9. Read pricing ────────────────────────────────────────────────
-  const registerPrice = await readRegisterPrice();
-  if (registerPrice === null) {
+  // ── 8. Read pricing ────────────────────────────────────────────────
+  const priceResult = await readActionPrice("register");
+  if (!priceResult.ok) {
     return {
       ok: false,
       error: {
@@ -292,8 +300,9 @@ export async function handleRegisterVerify(
       },
     };
   }
+  const registerPrice = priceResult.usdcPrice;
 
-  // ── 10. Verify payment (facilitator + KYT) ─────────────────────────
+  // ── 9. Verify payment (facilitator + KYT) ──────────────────────────
   const verifyResult = await verifyPayment({
     paymentHeader,
     resourceUrl: context.resourceUrl,
@@ -303,36 +312,35 @@ export async function handleRegisterVerify(
   });
 
   if (!verifyResult.ok) {
-    return { ok: false, error: mapVerifyError(verifyResult.error) };
+    return { ok: false, error: mapVerifyPaymentError(verifyResult.error) };
   }
 
-  // ── 11. Settle payment (on-chain USDC transfer) ────────────────────
+  // ── 10. Settle payment (on-chain USDC transfer) ────────────────────
   const settleResult = await settlePayment({
     paymentHeader,
     network: context.network,
   });
 
   if (!settleResult.ok) {
-    return { ok: false, error: mapSettleError(settleResult.error) };
+    return { ok: false, error: mapSettlePaymentError(settleResult.error) };
   }
 
-  // ── 12. Build X-PAYMENT-RESPONSE header ────────────────────────────
-  const atomicAmount = String(
-    Math.round(registerPrice * 10 ** context.network.usdcDecimals)
-  );
+  // ── 11. Build the settlement response header ───────────────────────
   const settleResponse: SettleResponse = {
     success: true,
     payer: verifyResult.payerAddress,
     transaction: settleResult.txHash,
     network: context.network.caipNetwork as `${string}:${string}`,
-    amount: atomicAmount,
+    amount: usdcToAtomic(registerPrice, context.network.usdcDecimals),
   };
   const settleResponseHeader = encodePaymentResponseHeader(settleResponse);
 
-  // ── 13. Generate principalId ───────────────────────────────────────
+  // ── 12. Generate principalId ───────────────────────────────────────
   const principalId = `wallet_${randomBytes(16).toString("hex")}`;
 
-  // ── 14. Atomic DB insert ───────────────────────────────────────────
+  // ── 13. Atomic DB insert ───────────────────────────────────────────
+  // network/asset/facilitator store DB short names ("base", "USDC",
+  // "coinbase_cdp"); CAIP-2 lives only at the SDK boundary (networks.ts).
   const insertResult = await insertRegisterAtomic({
     principalId,
     address: verifyResult.payerAddress.toLowerCase(),
@@ -343,12 +351,11 @@ export async function handleRegisterVerify(
     chargeBlockNumber: settleResult.blockNumber,
     chargeAmountUsdc: verifyResult.chargeAmountUsdc,
     chargeFacilitatorFeeUsdc: settleResult.facilitatorFeeUsdc,
-    chargeNetwork: context.network.caipNetwork,
-    chargeAsset: context.network.usdcAddress,
+    chargeNetwork: context.network.name,
+    chargeAsset: "USDC",
     chargePayerAddress: verifyResult.payerAddress,
     chargeRecipientAddress: context.recipientAddress,
-    chargeFacilitator:
-      process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL,
+    chargeFacilitator: FACILITATOR_NAME,
     chargeSettledAt: settleResult.settledAt,
     sanctionsSource: "cdp_kyt",
   });
@@ -357,7 +364,6 @@ export async function handleRegisterVerify(
     // DB insert failed post-settle: MUST refund.
     console.error(`[handleRegisterVerify] DB insert failed after settle (txHash=${settleResult.txHash}). Initiating refund. Error: ${insertResult.error.message}`);
 
-    let refundTxHash: string | null = null;
     const refundResult = await refundPayment({
       originalTxHash: settleResult.txHash,
       payerAddress: verifyResult.payerAddress,
@@ -367,25 +373,27 @@ export async function handleRegisterVerify(
     });
 
     if (refundResult.ok) {
-      refundTxHash = refundResult.refundTxHash;
-      console.log(`[handleRegisterVerify] Refund succeeded: ${refundTxHash}`);
+      console.log(`[handleRegisterVerify] Refund succeeded: ${refundResult.refundTxHash}`);
     } else {
-      console.error(`[handleRegisterVerify] Refund also failed: ${refundResult.error.message}`);
+      // Settled money with no charge row and no refund: the tx hash in this
+      // log line is the only reconciliation trail. Phase 4.4 owns tooling.
+      console.error(`[handleRegisterVerify] REFUND FAILED after settle (txHash=${settleResult.txHash}): ${refundResult.error.message}`);
     }
 
     return {
       ok: false,
       error: {
-        kind: "db_insert_failed_refund_initiated",
+        kind: "db_insert_failed",
         message:
           insertResult.error.message ??
           "DB insert failed after settlement.",
-        refundTxHash,
+        refundInitiated: refundResult.ok,
+        refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
       },
     };
   }
 
-  // ── 15. Success ────────────────────────────────────────────────────
+  // ── 14. Success ────────────────────────────────────────────────────
   return {
     ok: true,
     payload: {
@@ -405,49 +413,72 @@ export async function handleRegisterVerify(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Extracts the payer address from an EVM exact-scheme payment payload. */
-function extractPayerAddress(payload: PaymentPayload): string | null {
-  const inner = payload.payload;
-  if (inner && typeof inner === "object") {
-    const auth = (inner as Record<string, unknown>).authorization;
-    if (auth && typeof auth === "object") {
-      const from = (auth as Record<string, unknown>).from;
-      if (typeof from === "string") return from;
-    }
+/** Decodes the payment header far enough to get the claimed payer address. */
+function decodePaymentHeader(
+  paymentHeader: string
+):
+  | { ok: true; payerAddress: string }
+  | { ok: false; error: RegisterVerifyError } {
+  let payerAddress: string | null = null;
+  try {
+    payerAddress = extractPayerAddress(
+      decodePaymentSignatureHeader(paymentHeader)
+    );
+  } catch (err) {
+    console.error("[handleRegisterVerify] Failed to decode payment header:", err instanceof Error ? err.message : err);
+    return {
+      ok: false,
+      error: {
+        kind: "malformed_payment",
+        message: "Payment header is not valid base64-encoded JSON.",
+      },
+    };
   }
-  return null;
+
+  if (!payerAddress) {
+    return {
+      ok: false,
+      error: {
+        kind: "malformed_payment",
+        message: "Payment payload is missing the payer address.",
+      },
+    };
+  }
+
+  return { ok: true, payerAddress };
 }
 
-/** Look up an existing wallet by address (case-insensitive). */
-async function lookupExistingWallet(address: string) {
-  const { data, error } = await adminSupabase
+/**
+ * Look up an existing wallet by address. EVM addresses are stored lowercase
+ * at registration, so the lookup lowercases and uses exact equality; ILIKE
+ * is never used here because % and _ in a crafted address would act as SQL
+ * wildcards. A read error is reported, not swallowed, so the caller can
+ * refuse to charge a possibly-registered wallet.
+ */
+async function lookupExistingWallet(address: string): Promise<
+  | {
+      ok: true;
+      wallet: {
+        id: string;
+        address: string;
+        chain: WalletChain;
+        sanctions_status: SanctionsStatus;
+      } | null;
+    }
+  | { ok: false }
+> {
+  const { data: wallet, error } = await adminSupabase
     .from("wallets")
     .select("id, address, chain, sanctions_status")
-    .ilike("address", address.toLowerCase())
+    .eq("address", address.toLowerCase())
     .maybeSingle();
 
   if (error) {
-    console.warn(`[handleRegisterVerify] DB error checking existing wallet: ${error.message}`);
-    return null;
+    console.error(`[handleRegisterVerify] DB error checking existing wallet: ${error.message}`);
+    return { ok: false };
   }
 
-  return data;
-}
-
-/** Read the register action's USDC price from pricing_actions. */
-async function readRegisterPrice(): Promise<number | null> {
-  const { data, error } = await adminSupabase
-    .from("pricing_actions")
-    .select("usdc_price")
-    .eq("action", "register")
-    .maybeSingle();
-
-  if (error || !data) {
-    console.error(`[handleRegisterVerify] Failed to read register price: ${error?.message ?? "no row"}`);
-    return null;
-  }
-
-  return data.usdc_price;
+  return { ok: true, wallet };
 }
 
 /** Maps a verifySiweAuth error to a RegisterVerifyError. */
@@ -473,8 +504,12 @@ function mapSiweError(error: VerifySiweAuthError): RegisterVerifyError {
         expected: error.expected,
         received: error.received,
       };
-    case "nonce_mismatch":
-      return { kind: "siwe_nonce_invalid", reason: "not_found" };
+    case "uri_mismatch":
+      return {
+        kind: "siwe_uri_mismatch",
+        expected: error.expected,
+        received: error.received,
+      };
     case "expired":
       return { kind: "siwe_expired", message: error.message };
     case "not_yet_valid":
@@ -483,65 +518,5 @@ function mapSiweError(error: VerifySiweAuthError): RegisterVerifyError {
       return { kind: "siwe_invalid_signature", message: error.message };
     case "verification_error":
       return { kind: "siwe_invalid_signature", message: error.message };
-  }
-}
-
-/** Maps a verifyPayment error to a RegisterVerifyError. */
-function mapVerifyError(error: VerifyPaymentError): RegisterVerifyError {
-  switch (error.kind) {
-    case "malformed_header":
-      return { kind: "malformed_payment", message: error.message };
-    case "invalid_signature":
-      return { kind: "verify_invalid_signature", message: error.message };
-    case "amount_mismatch":
-      return {
-        kind: "verify_amount_mismatch",
-        message: `Expected ${error.expected} USDC, received ${error.received} USDC.`,
-      };
-    case "network_mismatch":
-      return {
-        kind: "verify_network_mismatch",
-        message: `Expected network ${error.expected}, received ${error.received}.`,
-      };
-    case "recipient_mismatch":
-      return {
-        kind: "verify_recipient_mismatch",
-        message: `Expected recipient ${error.expected}, received ${error.received}.`,
-      };
-    case "replay_detected":
-      return {
-        kind: "verify_replay_detected",
-        message: `Payment nonce ${error.nonce} has already been used.`,
-      };
-    case "kyt_sanctioned":
-      return {
-        kind: "verify_kyt_sanctioned",
-        message: `Payer ${error.payerAddress} is flagged by sanctions screening.`,
-      };
-    case "facilitator_error":
-      return {
-        kind: "verify_facilitator_error",
-        message: error.message,
-      };
-  }
-}
-
-/** Maps a settlePayment error to a RegisterVerifyError. */
-function mapSettleError(error: SettlePaymentError): RegisterVerifyError {
-  switch (error.kind) {
-    case "not_verified":
-      return { kind: "settle_not_verified", message: error.message };
-    case "insufficient_funds":
-      return {
-        kind: "settle_insufficient_funds",
-        message: error.message,
-      };
-    case "facilitator_error":
-      return {
-        kind: "settle_facilitator_error",
-        message: error.message,
-      };
-    case "timeout":
-      return { kind: "settle_timeout", message: error.message };
   }
 }

@@ -3,15 +3,6 @@ import "server-only";
 import type { WalletChain, SanctionsStatus } from "@/lib/types/database.types";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/** Body of POST /api/x402/register when X-PAYMENT is present. */
-export interface RegisterVerifyBody {
-  /** Raw SIWE message (EIP-4361 format). */
-  siweMessage: string;
-
-  /** Hex signature of the SIWE message. */
-  siweSignature: `0x${string}`;
-}
-
 /** Result of a successful register call. */
 export interface RegisterSuccessPayload {
   /** Generated principalId: wallet_<32 hex chars>. */

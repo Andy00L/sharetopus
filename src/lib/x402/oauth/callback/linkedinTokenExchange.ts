@@ -1,5 +1,23 @@
 import "server-only";
 
+import { z } from "zod";
+
+/** Outbound provider calls are bounded; LinkedIn occasionally stalls. */
+const EXCHANGE_TIMEOUT_MS = 15_000;
+
+const LinkedInTokenSchema = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().optional(),
+  expires_in: z.number().optional(),
+});
+
+const LinkedInProfileSchema = z.object({
+  sub: z.string().min(1),
+  name: z.string().optional(),
+  email: z.string().optional(),
+  picture: z.string().optional(),
+});
+
 export interface LinkedInExchangeResult {
   ok: true;
   accessToken: string;
@@ -19,11 +37,14 @@ export type ExchangeLinkedInForX402Result =
   | { ok: false; error: "exchange_failed" | "profile_fetch_failed"; message: string };
 
 /**
- * Exchange LinkedIn OAuth code for access token + profile.
+ * Exchange a LinkedIn OAuth code for an access token + profile.
  *
- * Inlines the exchange logic from exchangeLinkedInCode because that function
- * hardcodes LINKEDIN_REDIRECT_URL (the Clerk callback). This uses
- * X402_LINKEDIN_REDIRECT_URI instead.
+ * Separate from exchangeLinkedInCode (the web flow) because that function
+ * hardcodes LINKEDIN_REDIRECT_URL (the Clerk callback); this one uses
+ * X402_LINKEDIN_REDIRECT_URI. The profile fetch is REQUIRED: the account
+ * identifier (OpenID sub) comes from it.
+ *
+ * Called by: handleOAuthCallback
  */
 export async function exchangeLinkedInForX402(
   code: string
@@ -49,7 +70,7 @@ export async function exchangeLinkedInForX402(
   params.append("client_id", clientId);
   params.append("client_secret", clientSecret);
 
-  let tokenData: Record<string, unknown>;
+  let tokenData: z.infer<typeof LinkedInTokenSchema>;
   try {
     const response = await fetch(
       "https://www.linkedin.com/oauth/v2/accessToken",
@@ -57,6 +78,7 @@ export async function exchangeLinkedInForX402(
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: params.toString(),
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
@@ -70,7 +92,16 @@ export async function exchangeLinkedInForX402(
       };
     }
 
-    tokenData = JSON.parse(text);
+    const parsed = LinkedInTokenSchema.safeParse(JSON.parse(text));
+    if (!parsed.success) {
+      console.error("[exchangeLinkedInForX402] Token response failed validation.");
+      return {
+        ok: false,
+        error: "exchange_failed",
+        message: "LinkedIn token response had an unexpected shape.",
+      };
+    }
+    tokenData = parsed.data;
   } catch (err) {
     console.error("[exchangeLinkedInForX402] Token exchange error:", err instanceof Error ? err.message : err);
     return {
@@ -80,22 +111,14 @@ export async function exchangeLinkedInForX402(
     };
   }
 
-  const accessToken = tokenData.access_token as string | undefined;
-  if (!accessToken) {
-    return {
-      ok: false,
-      error: "exchange_failed",
-      message: "Missing access_token in LinkedIn response.",
-    };
-  }
-
-  // Fetch profile via /v2/userinfo (OpenID Connect)
-  let profile: Record<string, unknown>;
+  // Fetch profile via /v2/userinfo (OpenID Connect); sub is the identifier.
+  let profile: z.infer<typeof LinkedInProfileSchema>;
   try {
     const profileResponse = await fetch(
       "https://api.linkedin.com/v2/userinfo",
       {
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
       }
     );
 
@@ -108,7 +131,16 @@ export async function exchangeLinkedInForX402(
       };
     }
 
-    profile = (await profileResponse.json()) as Record<string, unknown>;
+    const parsed = LinkedInProfileSchema.safeParse(await profileResponse.json());
+    if (!parsed.success) {
+      console.error("[exchangeLinkedInForX402] Profile response failed validation (missing sub).");
+      return {
+        ok: false,
+        error: "profile_fetch_failed",
+        message: "LinkedIn profile response had an unexpected shape.",
+      };
+    }
+    profile = parsed.data;
   } catch (err) {
     console.error("[exchangeLinkedInForX402] Profile fetch error:", err instanceof Error ? err.message : err);
     return {
@@ -120,15 +152,15 @@ export async function exchangeLinkedInForX402(
 
   return {
     ok: true,
-    accessToken,
-    refreshToken: (tokenData.refresh_token as string) ?? null,
-    expiresIn: (tokenData.expires_in as number) ?? 3600,
-    accountIdentifier: (profile.sub as string) ?? "",
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token ?? null,
+    expiresIn: tokenData.expires_in ?? 3600,
+    accountIdentifier: profile.sub,
     profile: {
-      name: profile.name as string | undefined,
-      email: profile.email as string | undefined,
-      avatarUrl: profile.picture as string | undefined,
-      sub: profile.sub as string | undefined,
+      name: profile.name,
+      email: profile.email,
+      avatarUrl: profile.picture,
+      sub: profile.sub,
     },
   };
 }

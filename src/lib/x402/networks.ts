@@ -9,10 +9,9 @@ import "server-only";
  * Called by: facilitator.ts, route handlers (Phase 4.1+)
  * Tables touched: none (pure configuration)
  *
- * USDC contract addresses verified against @x402/evm v2.11.0 source
- * (node_modules/@x402/evm/dist/cjs/exact/server/index.js).
- * Coinbase doc URL (docs.cdp.coinbase.com/x402/networks-and-tokens/usdc-addresses)
- * returned 404 at build time; addresses confirmed via the SDK package instead.
+ * USDC contract addresses were verified against the @x402/evm v2.11.0
+ * source at build time (the package itself is no longer a dependency; the
+ * facilitator does scheme verification server-side).
  */
 
 import type { WalletChain } from "@/lib/types/database.types";
@@ -58,6 +57,15 @@ export interface NetworkConfig {
    * different decimals, override here.
    */
   usdcDecimals: number;
+
+  /**
+   * EIP-712 domain of the USDC contract, carried in PaymentRequirements.extra
+   * so exact-scheme EVM clients can sign EIP-3009 authorizations (the
+   * official @x402/evm client refuses to sign without name/version). Null for
+   * non-EVM networks. Values verified against @x402/evm v2.14.0
+   * DEFAULT_STABLECOINS.
+   */
+  usdcEip712: { name: string; version: string } | null;
 }
 
 /**
@@ -65,8 +73,8 @@ export interface NetworkConfig {
  *
  * Testnet entries (base-sepolia, solana-devnet) intentionally excluded.
  * WalletChain still includes those values at the DB schema level; blocking
- * is app-layer only. Agents requesting a testnet network via getNetworkConfig()
- * will receive null, causing the middleware to reject with unsupported_network.
+ * is app-layer only. Route handlers reject any ?network value that
+ * getNetworkConfig() does not resolve with a 400 unsupported_network.
  */
 export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
   Object.freeze({
@@ -80,6 +88,7 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       isTestnet: false,
       isEvm: true,
       usdcDecimals: 6,
+      usdcEip712: { name: "USD Coin", version: "2" },
     },
     polygon: {
       name: "polygon",
@@ -91,6 +100,7 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       isTestnet: false,
       isEvm: true,
       usdcDecimals: 6,
+      usdcEip712: { name: "USD Coin", version: "2" },
     },
     arbitrum: {
       name: "arbitrum",
@@ -102,6 +112,7 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       isTestnet: false,
       isEvm: true,
       usdcDecimals: 6,
+      usdcEip712: { name: "USD Coin", version: "2" },
     },
     solana: {
       name: "solana",
@@ -113,6 +124,7 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       isTestnet: false,
       isEvm: false,
       usdcDecimals: 6,
+      usdcEip712: null,
     },
   });
 
@@ -150,9 +162,4 @@ export function getDefaultNetwork(): NetworkConfig {
   }
   // baseConfig is asserted non-null at module load above.
   return baseConfig;
-}
-
-/** Type guard: true if the given network is EVM-based. */
-export function isEvmNetwork(network: NetworkConfig): boolean {
-  return network.isEvm;
 }

@@ -2,18 +2,28 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 import type { NextRequest } from "next/server";
-import { decodePaymentSignatureHeader } from "@x402/core/http";
-import { encodePaymentResponseHeader } from "@x402/core/http";
-import type { PaymentPayload, SettleResponse } from "@x402/core/types";
+import {
+  decodePaymentSignatureHeader,
+  encodePaymentResponseHeader,
+} from "@x402/core/http";
+import type { SettleResponse } from "@x402/core/types";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { WalletChain, SanctionsStatus } from "@/lib/types/database.types";
 import {
   verifyPayment,
   settlePayment,
   refundPayment,
 } from "@/lib/x402/facilitator";
-import type { VerifyPaymentError, SettlePaymentError } from "@/lib/x402/facilitator";
+import { FACILITATOR_NAME } from "@/lib/x402/config";
+import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import {
+  mapVerifyPaymentError,
+  mapSettlePaymentError,
+} from "@/lib/x402/payment/errorMaps";
+import { extractPayerAddress } from "@/lib/x402/payment/paymentPayload";
 import { verifySolanaSiweAuth } from "@/lib/x402/solana/verifySolanaSiweAuth";
 import type { VerifySolanaSiweAuthError } from "@/lib/x402/solana/verifySolanaSiweAuth";
 import { consumeSiweNonce } from "@/lib/x402/siwe/consumeSiweNonce";
@@ -34,32 +44,28 @@ export type RegisterSolanaVerifyResult =
   | { ok: false; error: RegisterVerifyError };
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const DEFAULT_FACILITATOR_URL =
-  "https://api.cdp.coinbase.com/platform/v2/x402";
-
-// ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 /**
  * Full Solana register verify flow. Mirrors handleRegisterVerify but uses:
  * - verifySolanaSiweAuth instead of verifySiweAuth (Ed25519 vs secp256k1)
- * - X402_RECIPIENT_SOLANA env instead of X402_RECIPIENT_EVM
- * - Solana network in facilitator calls
+ * - Base58 addresses, which are case-sensitive: lookups use exact equality
+ *   and the stored address keeps its original casing
  *
  * Body: { siweMessage: string, siweSignature: string }
  * (siweSignature is base58-encoded Ed25519 for Solana, not hex)
+ *
+ * Residual risk (accepted at the June 2026 checkpoint, Phase 4.4 item): the
+ * atomic RPC inserts everything after settle, so a process crash between
+ * settle and insert leaves a settled payment with no DB row.
  */
 export async function handleRegisterSolanaVerify(
   request: NextRequest,
   paymentHeader: string,
-  context: RegisterNetworkContext,
-  ipHash: string | null
+  context: RegisterNetworkContext
 ): Promise<RegisterSolanaVerifyResult> {
-  // -- 1. Rate limit
+  // -- 1. Rate limit (shared scope with the EVM register path)
   const rateLimitResult = await checkRateLimit(
     "x402_register_verify",
     null,
@@ -76,34 +82,35 @@ export async function handleRegisterSolanaVerify(
     };
   }
 
-  // -- 2. Decode X-PAYMENT header
-  let paymentPayload: PaymentPayload;
+  // -- 2. Extract payer address from the payment payload (unverified claim;
+  //       the SIWS signature check below binds it to the holder of the key)
+  let payerAddress: string | null = null;
   try {
-    paymentPayload = decodePaymentSignatureHeader(paymentHeader);
+    payerAddress = extractPayerAddress(
+      decodePaymentSignatureHeader(paymentHeader)
+    );
   } catch (err) {
-    console.error("[handleRegisterSolanaVerify] Failed to decode X-PAYMENT:", err instanceof Error ? err.message : err);
+    console.error("[handleRegisterSolanaVerify] Failed to decode payment header:", err instanceof Error ? err.message : err);
     return {
       ok: false,
       error: {
         kind: "malformed_payment",
-        message: "X-PAYMENT header is not valid base64-encoded JSON.",
+        message: "Payment header is not valid base64-encoded JSON.",
       },
     };
   }
 
-  // -- 3. Extract payer address (Solana: may be in a different payload location)
-  const payerAddress = extractSolanaPayerAddress(paymentPayload);
   if (!payerAddress) {
     return {
       ok: false,
       error: {
         kind: "malformed_payment",
-        message: "X-PAYMENT payload missing payer address.",
+        message: "Payment payload is missing the payer address.",
       },
     };
   }
 
-  // -- 4. Parse request body
+  // -- 3. Parse request body
   let body: Record<string, unknown>;
   try {
     body = (await request.json()) as Record<string, unknown>;
@@ -142,49 +149,28 @@ export async function handleRegisterSolanaVerify(
     };
   }
 
-  // -- 5. Extract nonce from SIWS message (parse manually)
-  let siweNonce: string;
-  try {
-    const nonceMatch = siweMessage.match(/Nonce: (.+)/);
-    if (!nonceMatch || !nonceMatch[1]) {
-      return {
-        ok: false,
-        error: {
-          kind: "siwe_parse_failed",
-          message: "SIWS message is missing the Nonce field.",
-        },
-      };
-    }
-    siweNonce = nonceMatch[1].trim();
-  } catch (err) {
-    return {
-      ok: false,
-      error: {
-        kind: "siwe_parse_failed",
-        message: err instanceof Error
-          ? err.message
-          : "Failed to parse SIWS message for nonce extraction.",
-      },
-    };
-  }
-
-  // -- 6. Verify SIWS message + signature (Ed25519)
+  // -- 4. Verify SIWS message + signature (Ed25519)
   const siweResult = await verifySolanaSiweAuth({
     message: siweMessage,
     signature: siweSignature,
     expectedAddress: payerAddress,
-    expectedNonce: siweNonce,
     expectedDomain: context.expectedDomain,
+    expectedUri: context.resourceUrl,
   });
 
   if (!siweResult.ok) {
     return { ok: false, error: mapSiwsError(siweResult.error) };
   }
 
-  // -- 7. Consume SIWE nonce (shared table with EVM)
-  const nonceResult = await consumeSiweNonce(siweNonce);
+  // -- 5. Consume the SIWS nonce (shared siwe_nonces table with EVM).
+  //       This proves the nonce was server-issued, unused, and unexpired.
+  const nonceResult = await consumeSiweNonce(
+    siweResult.parsedMessage.nonce,
+    payerAddress
+  );
   if (!nonceResult.ok) {
     if (nonceResult.reason === "db_error") {
+      // Fail-closed: treat a consumption DB error as an invalid nonce.
       return {
         ok: false,
         error: { kind: "siwe_nonce_invalid", reason: "not_found" },
@@ -196,8 +182,20 @@ export async function handleRegisterSolanaVerify(
     };
   }
 
-  // -- 8. Check existing wallet (idempotent retry)
-  const existingWallet = await lookupExistingWallet(payerAddress);
+  // -- 6. Check existing wallet (idempotent retry; no charge). Fail closed
+  //       on a lookup error: charging a wallet that may already be
+  //       registered forces a charge-then-refund round trip.
+  const existingLookup = await lookupExistingWallet(payerAddress);
+  if (!existingLookup.ok) {
+    return {
+      ok: false,
+      error: {
+        kind: "db_error",
+        message: "Failed to check existing wallet registration.",
+      },
+    };
+  }
+  const existingWallet = existingLookup.wallet;
   if (existingWallet) {
     console.log(`[handleRegisterSolanaVerify] Wallet already registered: ${existingWallet.id} (${payerAddress})`);
     return {
@@ -215,9 +213,9 @@ export async function handleRegisterSolanaVerify(
     };
   }
 
-  // -- 9. Read pricing
-  const registerPrice = await readRegisterPrice();
-  if (registerPrice === null) {
+  // -- 7. Read pricing
+  const priceResult = await readActionPrice("register");
+  if (!priceResult.ok) {
     return {
       ok: false,
       error: {
@@ -226,8 +224,9 @@ export async function handleRegisterSolanaVerify(
       },
     };
   }
+  const registerPrice = priceResult.usdcPrice;
 
-  // -- 10. Verify payment
+  // -- 8. Verify payment
   const verifyResult = await verifyPayment({
     paymentHeader,
     resourceUrl: context.resourceUrl,
@@ -237,36 +236,34 @@ export async function handleRegisterSolanaVerify(
   });
 
   if (!verifyResult.ok) {
-    return { ok: false, error: mapVerifyError(verifyResult.error) };
+    return { ok: false, error: mapVerifyPaymentError(verifyResult.error) };
   }
 
-  // -- 11. Settle payment
+  // -- 9. Settle payment
   const settleResult = await settlePayment({
     paymentHeader,
     network: context.network,
   });
 
   if (!settleResult.ok) {
-    return { ok: false, error: mapSettleError(settleResult.error) };
+    return { ok: false, error: mapSettlePaymentError(settleResult.error) };
   }
 
-  // -- 12. Build X-PAYMENT-RESPONSE header
-  const atomicAmount = String(
-    Math.round(registerPrice * 10 ** context.network.usdcDecimals)
-  );
+  // -- 10. Build the settlement response header
   const settleResponse: SettleResponse = {
     success: true,
     payer: verifyResult.payerAddress,
     transaction: settleResult.txHash,
     network: context.network.caipNetwork as `${string}:${string}`,
-    amount: atomicAmount,
+    amount: usdcToAtomic(registerPrice, context.network.usdcDecimals),
   };
   const settleResponseHeader = encodePaymentResponseHeader(settleResponse);
 
-  // -- 13. Generate principalId
+  // -- 11. Generate principalId
   const principalId = `wallet_${randomBytes(16).toString("hex")}`;
 
-  // -- 14. Atomic DB insert
+  // -- 12. Atomic DB insert. Base58 addresses keep their original casing
+  //        (case-sensitive); network/asset/facilitator store DB short names.
   const insertResult = await insertRegisterAtomic({
     principalId,
     address: payerAddress,
@@ -277,12 +274,11 @@ export async function handleRegisterSolanaVerify(
     chargeBlockNumber: settleResult.blockNumber,
     chargeAmountUsdc: verifyResult.chargeAmountUsdc,
     chargeFacilitatorFeeUsdc: settleResult.facilitatorFeeUsdc,
-    chargeNetwork: context.network.caipNetwork,
-    chargeAsset: context.network.usdcAddress,
+    chargeNetwork: context.network.name,
+    chargeAsset: "USDC",
     chargePayerAddress: verifyResult.payerAddress,
     chargeRecipientAddress: context.recipientAddress,
-    chargeFacilitator:
-      process.env.X402_FACILITATOR_URL || DEFAULT_FACILITATOR_URL,
+    chargeFacilitator: FACILITATOR_NAME,
     chargeSettledAt: settleResult.settledAt,
     sanctionsSource: "cdp_kyt",
   });
@@ -290,7 +286,6 @@ export async function handleRegisterSolanaVerify(
   if (!insertResult.ok) {
     console.error(`[handleRegisterSolanaVerify] DB insert failed after settle (txHash=${settleResult.txHash}). Initiating refund. Error: ${insertResult.error.message}`);
 
-    let refundTxHash: string | null = null;
     const refundResult = await refundPayment({
       originalTxHash: settleResult.txHash,
       payerAddress: verifyResult.payerAddress,
@@ -300,23 +295,25 @@ export async function handleRegisterSolanaVerify(
     });
 
     if (refundResult.ok) {
-      refundTxHash = refundResult.refundTxHash;
-      console.log(`[handleRegisterSolanaVerify] Refund succeeded: ${refundTxHash}`);
+      console.log(`[handleRegisterSolanaVerify] Refund succeeded: ${refundResult.refundTxHash}`);
     } else {
-      console.error(`[handleRegisterSolanaVerify] Refund also failed: ${refundResult.error.message}`);
+      // Settled money with no charge row and no refund: the tx hash in this
+      // log line is the only reconciliation trail. Phase 4.4 owns tooling.
+      console.error(`[handleRegisterSolanaVerify] REFUND FAILED after settle (txHash=${settleResult.txHash}): ${refundResult.error.message}`);
     }
 
     return {
       ok: false,
       error: {
-        kind: "db_insert_failed_refund_initiated",
+        kind: "db_insert_failed",
         message: insertResult.error.message ?? "DB insert failed after settlement.",
-        refundTxHash,
+        refundInitiated: refundResult.ok,
+        refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
       },
     };
   }
 
-  // -- 15. Success
+  // -- 13. Success
   return {
     ok: true,
     payload: {
@@ -336,54 +333,39 @@ export async function handleRegisterSolanaVerify(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function extractSolanaPayerAddress(
-  payload: PaymentPayload
-): string | null {
-  const inner = payload.payload;
-  if (inner && typeof inner === "object") {
-    // Try EVM-style authorization.from first
-    const auth = (inner as Record<string, unknown>).authorization;
-    if (auth && typeof auth === "object") {
-      const from = (auth as Record<string, unknown>).from;
-      if (typeof from === "string") return from;
+/**
+ * Look up an existing wallet by exact address. Base58 is case-sensitive, so
+ * no case folding here (unlike the EVM path, which stores lowercase). A
+ * read error is reported, not swallowed, so the caller can refuse to charge
+ * a possibly-registered wallet.
+ */
+async function lookupExistingWallet(address: string): Promise<
+  | {
+      ok: true;
+      wallet: {
+        id: string;
+        address: string;
+        chain: WalletChain;
+        sanctions_status: SanctionsStatus;
+      } | null;
     }
-    // Solana may store payer differently
-    const payer = (inner as Record<string, unknown>).payer;
-    if (typeof payer === "string") return payer;
-  }
-  return null;
-}
-
-async function lookupExistingWallet(address: string) {
-  const { data, error } = await adminSupabase
+  | { ok: false }
+> {
+  const { data: wallet, error } = await adminSupabase
     .from("wallets")
     .select("id, address, chain, sanctions_status")
     .eq("address", address)
     .maybeSingle();
 
   if (error) {
-    console.warn(`[handleRegisterSolanaVerify] DB error checking existing wallet: ${error.message}`);
-    return null;
+    console.error(`[handleRegisterSolanaVerify] DB error checking existing wallet: ${error.message}`);
+    return { ok: false };
   }
 
-  return data;
+  return { ok: true, wallet };
 }
 
-async function readRegisterPrice(): Promise<number | null> {
-  const { data, error } = await adminSupabase
-    .from("pricing_actions")
-    .select("usdc_price")
-    .eq("action", "register")
-    .maybeSingle();
-
-  if (error || !data) {
-    console.error(`[handleRegisterSolanaVerify] Failed to read register price: ${error?.message ?? "no row"}`);
-    return null;
-  }
-
-  return data.usdc_price;
-}
-
+/** Maps a verifySolanaSiweAuth error to a RegisterVerifyError. */
 function mapSiwsError(
   error: VerifySolanaSiweAuthError
 ): RegisterVerifyError {
@@ -402,64 +384,17 @@ function mapSiwsError(
         expected: error.expected,
         received: error.received,
       };
-    case "nonce_mismatch":
-      return { kind: "siwe_nonce_invalid", reason: "not_found" };
+    case "uri_mismatch":
+      return {
+        kind: "siwe_uri_mismatch",
+        expected: error.expected,
+        received: error.received,
+      };
     case "expired":
       return { kind: "siwe_expired", message: error.message };
     case "invalid_signature":
       return { kind: "siwe_invalid_signature", message: error.message };
     case "verification_error":
       return { kind: "siwe_invalid_signature", message: error.message };
-  }
-}
-
-function mapVerifyError(error: VerifyPaymentError): RegisterVerifyError {
-  switch (error.kind) {
-    case "malformed_header":
-      return { kind: "malformed_payment", message: error.message };
-    case "invalid_signature":
-      return { kind: "verify_invalid_signature", message: error.message };
-    case "amount_mismatch":
-      return {
-        kind: "verify_amount_mismatch",
-        message: `Expected ${error.expected} USDC, received ${error.received} USDC.`,
-      };
-    case "network_mismatch":
-      return {
-        kind: "verify_network_mismatch",
-        message: `Expected network ${error.expected}, received ${error.received}.`,
-      };
-    case "recipient_mismatch":
-      return {
-        kind: "verify_recipient_mismatch",
-        message: `Expected recipient ${error.expected}, received ${error.received}.`,
-      };
-    case "replay_detected":
-      return {
-        kind: "verify_replay_detected",
-        message: `Payment nonce ${error.nonce} has already been used.`,
-      };
-    case "kyt_sanctioned":
-      return {
-        kind: "verify_kyt_sanctioned",
-        message: `Payer ${error.payerAddress} is flagged by sanctions screening.`,
-      };
-    case "facilitator_error":
-      return { kind: "verify_facilitator_error", message: error.message };
-  }
-}
-
-function mapSettleError(
-  error: SettlePaymentError
-): RegisterVerifyError {
-  switch (error.kind) {
-    case "not_verified":
-      return { kind: "settle_not_verified", message: error.message };
-    case "insufficient_funds":
-      return { kind: "settle_insufficient_funds", message: error.message };
-    case "facilitator_error":
-      return { kind: "settle_facilitator_error", message: error.message };
-    case "timeout":
-      return { kind: "settle_timeout", message: error.message };
   }
 }

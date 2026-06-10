@@ -1,6 +1,7 @@
 import "server-only";
 
 import { verifyConnectionToken } from "@/lib/x402/oauth/connectionToken";
+import { MAX_POLLS_PER_CONNECTION } from "@/lib/x402/config";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,8 @@ export type StatusQueryResult =
         | { kind: "missing_token"; message: string }
         | { kind: "invalid_token"; message: string }
         | { kind: "token_expired"; message: string }
+        | { kind: "server_misconfigured"; message: string }
+        | { kind: "poll_limit_exceeded"; message: string }
         | { kind: "connection_not_found"; message: string }
         | { kind: "db_error"; message: string };
     };
@@ -45,8 +48,16 @@ export interface StatusPayload {
  * Flow:
  *   1. Verify HMAC connectionToken via verifyConnectionToken
  *   2. SELECT social_connections WHERE id = payload.connectionId
- *   3. Increment poll_count, set last_polled_at, last_polled_ip_hash
- *   4. Return status payload
+ *   3. Enforce the per-connection poll cap (MAX_POLLS_PER_CONNECTION)
+ *   4. Increment poll_count, set last_polled_at / last_polled_ip_hash
+ *   5. Lazily mark a pending-but-expired connection as expired
+ *   6. Return the status payload
+ *
+ * The connection is addressed only via the unguessable HMAC token, never an
+ * enumerable id, so a poll cannot read other users' connections.
+ *
+ * Called by: GET /api/x402/oauth/status
+ * Tables touched: social_connections (read + update)
  */
 export async function handleStatusQuery(
   input: StatusQueryInput,
@@ -65,6 +76,14 @@ export async function handleStatusQuery(
   // -- 1. Verify HMAC token
   const tokenResult = verifyConnectionToken(input.connectionToken);
   if (!tokenResult.ok) {
+    // A missing HMAC secret is OUR misconfiguration, not the caller's bad
+    // token; surfacing it as 401 would send agents into a re-auth loop.
+    if (tokenResult.error === "missing_secret") {
+      return {
+        ok: false,
+        error: { kind: "server_misconfigured", message: "Status polling is not configured on the server." },
+      };
+    }
     const errorKind =
       tokenResult.error === "expired" ? "token_expired" : "invalid_token";
     return {
@@ -102,9 +121,23 @@ export async function handleStatusQuery(
     };
   }
 
-  // -- 3. Increment poll_count + update last_polled fields
+  // -- 3. Poll cap. Token expiry already bounds the polling window; this
+  //       bounds total volume per connection on top of the per-IP limit.
+  if (connection.poll_count >= MAX_POLLS_PER_CONNECTION) {
+    return {
+      ok: false,
+      error: {
+        kind: "poll_limit_exceeded",
+        message: `Poll limit reached for this connection (${MAX_POLLS_PER_CONNECTION}).`,
+      },
+    };
+  }
+
+  // -- 4. Increment poll_count + update last_polled fields. The increment is
+  //       read-then-write: concurrent polls may lose an increment, which is
+  //       acceptable for telemetry and only ever under-counts toward the cap.
   const newPollCount = connection.poll_count + 1;
-  await adminSupabase
+  const { error: pollUpdateError } = await adminSupabase
     .from("social_connections")
     .update({
       poll_count: newPollCount,
@@ -113,22 +146,31 @@ export async function handleStatusQuery(
       updated_at: new Date().toISOString(),
     })
     .eq("id", connectionId);
+  if (pollUpdateError) {
+    // Best-effort telemetry write; the poll itself still succeeds.
+    console.error(`[handleStatusQuery] poll_count update failed for ${connectionId}: ${pollUpdateError.message}`);
+  }
 
-  // Check if connection has expired but status not yet updated
+  // -- 5. Lazily mark a pending-but-expired connection as expired
   let status = connection.status;
   if (
     status === "pending" &&
     new Date(connection.expires_at) < new Date()
   ) {
     status = "expired";
-    await adminSupabase
+    const { error: expireError } = await adminSupabase
       .from("social_connections")
       .update({ status: "expired", updated_at: new Date().toISOString() })
       .eq("id", connectionId)
       .eq("status", "pending");
+    if (expireError) {
+      // Best-effort: the response already reports expired; the row catches
+      // up on the next poll or via the cleanup cron.
+      console.error(`[handleStatusQuery] expired transition failed for ${connectionId}: ${expireError.message}`);
+    }
   }
 
-  // -- 4. Return payload
+  // -- 6. Return payload
   return {
     ok: true,
     payload: {

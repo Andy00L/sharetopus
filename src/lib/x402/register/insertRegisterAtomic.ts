@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { WalletChain } from "@/lib/types/database.types";
+import { callPostgrestRpc } from "@/lib/x402/rpc/callPostgrestRpc";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,159 +50,115 @@ export type InsertRegisterAtomicResult =
 // ---------------------------------------------------------------------------
 
 /**
- * Calls register_wallet_atomic RPC via PostgREST. The function INSERTs 5
- * rows atomically: principals, wallets, sanctions_screenings, x402_charges,
- * wallet_credits.
+ * Calls the register_wallet_atomic Postgres RPC, which INSERTs 5 rows in one
+ * transaction: principals, wallets, sanctions_screenings, x402_charges,
+ * wallet_credits. Goes through callPostgrestRpc because the function is not
+ * in database.types.ts (hand-maintained; Drew updates it separately).
  *
- * Uses a direct fetch to PostgREST because the generated database.types.ts
- * does not yet include register_wallet_atomic (Drew runs the SQL migration
- * post-build). This avoids modifying database.types.ts.
- *
+ * Called by: handleRegisterVerify, handleRegisterSolanaVerify (post-settle)
  * Never throws; all errors returned as typed variants.
  */
 export async function insertRegisterAtomic(
   input: InsertRegisterAtomicInput
 ): Promise<InsertRegisterAtomicResult> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE;
+  const rpcResult = await callPostgrestRpc("register_wallet_atomic", {
+    p_principal_id: input.principalId,
+    p_address: input.address,
+    p_chain: input.chain,
+    p_charge_nonce: input.chargeNonce,
+    p_charge_request_id: input.chargeRequestId,
+    p_charge_tx_hash: input.chargeTxHash,
+    p_charge_block_number: input.chargeBlockNumber,
+    p_charge_amount_usdc: input.chargeAmountUsdc,
+    p_charge_facilitator_fee_usdc: input.chargeFacilitatorFeeUsdc,
+    p_charge_network: input.chargeNetwork,
+    p_charge_asset: input.chargeAsset,
+    p_charge_payer_address: input.chargePayerAddress,
+    p_charge_recipient_address: input.chargeRecipientAddress,
+    p_charge_facilitator: input.chargeFacilitator,
+    p_charge_settled_at: input.chargeSettledAt,
+    p_sanctions_source: input.sanctionsSource,
+  });
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    console.error("[insertRegisterAtomic] Missing Supabase env vars.");
-    return {
-      ok: false,
-      error: { kind: "rpc_error", message: "Database not configured." },
-    };
+  if (!rpcResult.ok) {
+    return mapRpcError(rpcResult.error);
   }
 
-  try {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/rpc/register_wallet_atomic`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-        },
-        body: JSON.stringify({
-          p_principal_id: input.principalId,
-          p_address: input.address,
-          p_chain: input.chain,
-          p_charge_nonce: input.chargeNonce,
-          p_charge_request_id: input.chargeRequestId,
-          p_charge_tx_hash: input.chargeTxHash,
-          p_charge_block_number: input.chargeBlockNumber,
-          p_charge_amount_usdc: input.chargeAmountUsdc,
-          p_charge_facilitator_fee_usdc: input.chargeFacilitatorFeeUsdc,
-          p_charge_network: input.chargeNetwork,
-          p_charge_asset: input.chargeAsset,
-          p_charge_payer_address: input.chargePayerAddress,
-          p_charge_recipient_address: input.chargeRecipientAddress,
-          p_charge_facilitator: input.chargeFacilitator,
-          p_charge_settled_at: input.chargeSettledAt,
-          p_sanctions_source: input.sanctionsSource,
-        }),
-      }
-    );
+  const row = rpcResult.row as {
+    principal_id?: unknown;
+    wallet_id?: unknown;
+    charge_id?: unknown;
+  } | null;
 
-    if (!response.ok) {
-      const text = await response.text();
-      return parsePostgrestError(text);
-    }
-
-    const result = (await response.json()) as {
-      principal_id: string;
-      wallet_id: string;
-      charge_id: string;
-    };
-
-    if (
-      !result ||
-      typeof result.principal_id !== "string" ||
-      typeof result.charge_id !== "string"
-    ) {
-      return {
-        ok: false,
-        error: {
-          kind: "rpc_error",
-          message: "RPC returned unexpected data shape.",
-        },
-      };
-    }
-
-    return {
-      ok: true,
-      principalId: result.principal_id,
-      walletId: result.wallet_id,
-      chargeId: result.charge_id,
-    };
-  } catch (err) {
-    console.error("[insertRegisterAtomic] Unexpected error:", err instanceof Error ? err.message : err);
+  if (
+    !row ||
+    typeof row.principal_id !== "string" ||
+    typeof row.wallet_id !== "string" ||
+    typeof row.charge_id !== "string"
+  ) {
     return {
       ok: false,
       error: {
         kind: "rpc_error",
-        message: err instanceof Error
-          ? err.message
-          : "Unexpected error calling register_wallet_atomic.",
+        message: "RPC returned unexpected data shape.",
       },
     };
   }
+
+  return {
+    ok: true,
+    principalId: row.principal_id,
+    walletId: row.wallet_id,
+    chargeId: row.charge_id,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Error parsing
+// Error mapping
 // ---------------------------------------------------------------------------
 
-function parsePostgrestError(text: string): InsertRegisterAtomicResult {
-  let body: { code?: string; details?: string; message?: string };
-  try {
-    body = JSON.parse(text);
-  } catch {
-    body = { message: text };
-  }
-
-  const code = body.code;
-  const details = body.details ?? "";
-  const message = body.message ?? "RPC failed.";
-
+function mapRpcError(error: {
+  code: string | null;
+  details: string;
+  message: string;
+}): InsertRegisterAtomicResult {
   // 23505 = unique_violation
-  if (code === "23505") {
-    if (details.includes("address")) {
+  if (error.code === "23505") {
+    if (error.details.includes("address")) {
       return {
         ok: false,
-        error: { kind: "unique_violation", column: "address", message },
+        error: { kind: "unique_violation", column: "address", message: error.message },
       };
     }
-    if (details.includes("nonce")) {
+    if (error.details.includes("nonce")) {
       return {
         ok: false,
-        error: { kind: "unique_violation", column: "nonce", message },
+        error: { kind: "unique_violation", column: "nonce", message: error.message },
       };
     }
-    if (details.includes("request_id")) {
+    if (error.details.includes("request_id")) {
       return {
         ok: false,
-        error: { kind: "unique_violation", column: "request_id", message },
+        error: { kind: "unique_violation", column: "request_id", message: error.message },
       };
     }
     return {
       ok: false,
-      error: { kind: "unique_violation", column: "unknown", message },
+      error: { kind: "unique_violation", column: "unknown", message: error.message },
     };
   }
 
   // Trigger error from enforce_principal_kind
   if (
-    message.includes("enforce_principal_kind") ||
-    message.includes("principal_kind")
+    error.message.includes("enforce_principal_kind") ||
+    error.message.includes("principal_kind")
   ) {
     return {
       ok: false,
-      error: { kind: "principal_kind_mismatch", message },
+      error: { kind: "principal_kind_mismatch", message: error.message },
     };
   }
 
-  console.error(`[insertRegisterAtomic] RPC failed (code=${code}): ${message}`);
-  return { ok: false, error: { kind: "rpc_error", message } };
+  console.error(`[insertRegisterAtomic] RPC failed (code=${error.code}): ${error.message}`);
+  return { ok: false, error: { kind: "rpc_error", message: error.message } };
 }

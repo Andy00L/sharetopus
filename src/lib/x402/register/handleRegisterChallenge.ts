@@ -1,83 +1,50 @@
 import "server-only";
 
+import type { PaymentRequired } from "@x402/core/types";
 import type { RegisterNetworkContext } from "./types";
 import { createSiweNonce } from "@/lib/x402/siwe/createSiweNonce";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import { buildPaymentRequired } from "@/lib/x402/http/paymentHttp";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type RegisterChallengeResult =
-  | { ok: true; challengeBody: PaymentRequiredChallengeBody }
+  | { ok: true; challengeBody: PaymentRequired }
   | {
       ok: false;
       error: "nonce_creation_failed" | "pricing_lookup_failed";
       message: string;
     };
 
-/**
- * x402 protocol 402 response body with bundled SIWE nonce.
- *
- * siweNonce and siweExpiresAt live inside `extensions` per x402 v2 spec.
- * They allow the agent to construct a SIWE message in a single round-trip.
- */
-export interface PaymentRequiredChallengeBody {
-  x402Version: 2;
-  resource: { url: string };
-  accepts: Array<{
-    scheme: "exact";
-    network: string;
-    asset: string;
-    amount: string;
-    payTo: string;
-    maxTimeoutSeconds: 300;
-    extra: Record<string, unknown>;
-  }>;
-  extensions: {
-    siweNonce: string;
-    siweExpiresAt: string;
-  };
-  error?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the 402 Payment Required response.
+ * Builds the 402 Payment Required body for /register.
  *
- * Reads pricing_actions for the 'register' action to get the current USDC
- * price (verified at $1.00 by verify-pricing-actions.ts but live-read
- * for drift safety).
+ * Reads the currently effective price for the 'register' action and bundles
+ * a fresh SIWE nonce (siwe_nonces row, 5-min expiry) inside the v2
+ * `extensions` field so the agent can construct its SIWE message in a
+ * single round-trip.
  *
- * Creates a fresh SIWE nonce stored in siwe_nonces with 5-min expiry.
+ * Called by: POST /api/x402/register (challenge path)
+ * Tables touched: pricing_actions (read), siwe_nonces (insert)
  */
 export async function handleRegisterChallenge(
   context: RegisterNetworkContext
 ): Promise<RegisterChallengeResult> {
-  // Live-read the register price from the DB.
-  const { data: pricingRow, error: pricingError } = await adminSupabase
-    .from("pricing_actions")
-    .select("usdc_price")
-    .eq("action", "register")
-    .maybeSingle();
-
-  if (pricingError || !pricingRow) {
-    console.error(`[handleRegisterChallenge] Failed to read register pricing: ${pricingError?.message ?? "no row found"}`);
+  const priceResult = await readActionPrice("register");
+  if (!priceResult.ok) {
+    console.error(`[handleRegisterChallenge] Failed to read register pricing: ${priceResult.message}`);
     return {
       ok: false,
       error: "pricing_lookup_failed",
-      message:
-        pricingError?.message ?? "Register pricing action not found in DB.",
+      message: priceResult.message,
     };
   }
-
-  const usdcPrice = pricingRow.usdc_price;
-  const atomicAmount = String(
-    Math.round(usdcPrice * 10 ** context.network.usdcDecimals)
-  );
 
   // Generate a fresh SIWE nonce with 5-minute expiry.
   const nonceResult = await createSiweNonce();
@@ -89,25 +56,16 @@ export async function handleRegisterChallenge(
     };
   }
 
-  const challengeBody: PaymentRequiredChallengeBody = {
-    x402Version: 2,
-    resource: { url: context.resourceUrl },
-    accepts: [
-      {
-        scheme: "exact",
-        network: context.network.caipNetwork,
-        asset: context.network.usdcAddress,
-        amount: atomicAmount,
-        payTo: context.recipientAddress,
-        maxTimeoutSeconds: 300,
-        extra: {},
-      },
-    ],
+  const challengeBody = buildPaymentRequired({
+    resourceUrl: context.resourceUrl,
+    network: context.network,
+    amountUsdc: priceResult.usdcPrice,
+    recipientAddress: context.recipientAddress,
     extensions: {
       siweNonce: nonceResult.nonce,
       siweExpiresAt: nonceResult.expiresAt,
     },
-  };
+  });
 
   return { ok: true, challengeBody };
 }
