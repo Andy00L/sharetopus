@@ -12,7 +12,6 @@ import type { PricingRecurrence } from "@/lib/types/database.types";
  *
  * sourceRef: resolveAction call sites in src/app/api/x402/<route>/route.ts,
  *            src/lib/x402/middleware/resolvePostAction.ts,
- *            src/lib/x402/register/handleRegisterChallenge.ts,
  *            src/lib/x402/connect/handleConnectChallenge.ts
  */
 const PUBLIC_X402_ACTIONS = [
@@ -25,7 +24,6 @@ const PUBLIC_X402_ACTIONS = [
   "post.image",
   "post.text",
   "post.video",
-  "register",
   "reschedule",
   "upload_url",
 ] as const;

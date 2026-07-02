@@ -66,8 +66,7 @@ export function extractPayerAddress(payload: PaymentPayload): string | null {
  * client, June 2026). Static account keys are base58 strings already.
  *
  * This is the same trust level as the EVM authorization.from read: an
- * unverified claim that the SIWS signature check and the facilitator verify
- * bind afterwards.
+ * unverified claim that the facilitator verify binds afterwards.
  */
 function extractSvmPayerAddress(transactionBase64: string): string | null {
   if (transactionBase64.length > MAX_SVM_TRANSACTION_BASE64_CHARS) {

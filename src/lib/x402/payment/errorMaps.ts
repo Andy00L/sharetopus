@@ -2,13 +2,12 @@ import "server-only";
 
 /**
  * Shared mapping from the facilitator wrapper's typed errors to the flow
- * error vocabulary used by the register and connect verify handlers. Both
- * RegisterVerifyError and ConnectVerifyError embed these unions, so the
- * mapping exists exactly once and a new facilitator error kind fails to
- * compile here instead of silently diverging between flows.
+ * error vocabulary used by the connect verify handler. ConnectVerifyError
+ * embeds these unions, so the mapping exists exactly once and a new
+ * facilitator error kind fails to compile here instead of silently
+ * diverging.
  *
- * Called by: handleRegisterVerify, handleRegisterSolanaVerify,
- *            handleConnectVerify
+ * Called by: handleConnectVerify
  * Tables touched: none
  */
 

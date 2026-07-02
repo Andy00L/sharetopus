@@ -20,9 +20,8 @@ import {
   buildPaymentRequired,
 } from "@/lib/x402/http/paymentHttp";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
-import { resolveWalletPrincipal } from "@/lib/x402/auth/resolveWalletPrincipal";
+import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
-import { applyWalletGate } from "@/lib/x402/sanctions/applyWalletGate";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
@@ -96,9 +95,8 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
 
 /**
  * Higher-order function wrapping the common x402 verify/settle/log/refund
- * flow shared by every paid endpoint except register and connect (those two
- * create rows atomically via Postgres RPCs and live in register/ and
- * connect/).
+ * flow shared by every paid endpoint except connect (it creates its rows
+ * atomically via a Postgres RPC and lives in connect/).
  *
  * Steps:
  *  1. Parse body via options.parseBody.
@@ -109,8 +107,10 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
  *  5. Read the currently effective price.
  *  6. If no payment header: 402 with the v2 PaymentRequired header + body.
  *  7. Verify payment via facilitator (off-chain, includes KYT).
- *  8. Resolve wallet principal from the facilitator-recovered payer; apply
- *     the sanctions gate.
+ *  8. Resolve or onboard the wallet principal from the facilitator-recovered
+ *     payer. A wallet's first verified payment IS its onboarding (verify
+ *     already screened the payer); sanctioned wallets are rejected here,
+ *     before any charge row or settlement.
  *  9. Insert x402_charges with status="pending". This runs BEFORE settle so
  *     a crash never leaves settled money without a record, and so a replayed
  *     payment loses the nonce-unique race before any second settle.
@@ -335,33 +335,39 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     }
 
-    // ── Step 8: Resolve wallet principal + sanctions gate ────────────────
-    const walletResult = await resolveWalletPrincipal(verifyResult.payerAddress);
+    // ── Step 8: Resolve or onboard the wallet principal ──────────────────
+    // verifyPayment above already screened this payer (facilitator KYT), so
+    // a first-time wallet is onboarded here, strictly before the pending
+    // charge insert and settlement. Sanctioned wallets are rejected with no
+    // USDC moved.
+    const walletResult = await resolveOrOnboardWalletPrincipal({
+      payerAddress: verifyResult.payerAddress,
+      network,
+    });
     if (!walletResult.ok) {
+      if (walletResult.reason === "sanctioned") {
+        // The denied wallet's identity is known; attribute the audit row.
+        return logAndError({
+          principal: walletResult.principal,
+          action: actionKey,
+          chargeId: null,
+          resultStatus: "sanctioned",
+          httpStatus: 403,
+          errorKind: "sanctioned",
+          message: walletResult.message,
+        });
+      }
       return logAndError({
         principal: null,
         action: actionKey,
         chargeId: null,
         resultStatus: "error",
-        httpStatus: 402,
-        errorKind: "wallet_not_registered",
-        message: "Wallet not registered. Call POST /api/x402/register first.",
+        httpStatus: 500,
+        errorKind: "wallet_resolution_failed",
+        message: walletResult.message,
       });
     }
     const principal = walletResult.principal;
-
-    const gateResult = await applyWalletGate(principal.walletId);
-    if (!gateResult.allowed) {
-      return logAndError({
-        principal,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "sanctioned",
-        httpStatus: 403,
-        errorKind: "sanctioned",
-        message: `Wallet access denied: ${gateResult.reason}.`,
-      });
-    }
 
     // ── Step 9: Insert pending charge (replay backstop, pre-settle) ──────
     const chargeResult = await insertPendingX402Charge({

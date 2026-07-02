@@ -1,15 +1,15 @@
 import "server-only";
 
 /**
- * Direct PostgREST RPC caller for the x402 atomic insert functions
- * (register_wallet_atomic, connect_wallet_atomic). Those functions exist in
- * the live schema but not in database.types.ts (the file is hand-maintained
- * and updated separately by Drew), so the typed adminSupabase client cannot
- * call them. This wrapper centralizes the raw fetch, service-role auth
- * headers, timeout, and PostgREST error parsing that insertRegisterAtomic
- * and insertConnectAtomic previously duplicated.
+ * Direct PostgREST RPC caller for the x402 atomic functions
+ * (onboard_wallet_atomic, connect_wallet_atomic). The typed adminSupabase
+ * client could not historically call these (database.types.ts is
+ * hand-maintained and lagged the live schema), so this wrapper centralizes
+ * the raw fetch, service-role auth headers, timeout, and PostgREST error
+ * parsing.
  *
- * Called by: register/insertRegisterAtomic.ts, connect/insertConnectAtomic.ts
+ * Called by: auth/resolveOrOnboardWalletPrincipal.ts,
+ *            connect/insertConnectAtomic.ts
  * Env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE
  */
 

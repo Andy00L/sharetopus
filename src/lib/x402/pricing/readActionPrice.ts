@@ -9,9 +9,7 @@ import "server-only";
  * purposes. Every x402 pricing lookup goes through this one function so the
  * temporal-window rules cannot drift between flows.
  *
- * Called by: x402PaidEndpoint, handleRegisterChallenge, handleRegisterVerify,
- *            handleRegisterSolanaVerify, handleConnectChallenge,
- *            handleConnectVerify
+ * Called by: x402PaidEndpoint, handleConnectChallenge, handleConnectVerify
  * Tables touched: pricing_actions (read)
  */
 
