@@ -12,9 +12,8 @@ const MAX_ITERATIONS = 5;
  * NEVER touches status='connected' or status='revoked' rows.
  * Connected rows are the real audit trail for active OAuth grants.
  *
- * Runs at 02:00 UTC to avoid overlap with existing cron jobs at
- * 03:00 (stripe webhook cleanup), 04:00 (stale OAuth clients),
- * and 05:00 (SIWE nonces).
+ * Runs at 02:00 UTC to avoid overlap with the existing cron jobs at
+ * 03:00 (stripe webhook cleanup) and 04:00 (stale OAuth clients).
  *
  * Batched: each delete is ordered by id and bounded to 1000 rows per
  * iteration, up to 5 iterations per run. The explicit order is what lets

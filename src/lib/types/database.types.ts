@@ -1098,32 +1098,6 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
-      siwe_nonces: {
-        Row: {
-          nonce: string;
-          wallet: string | null;
-          expires_at: string;
-          used_at: string | null;
-          created_at: string;
-        };
-        Insert: {
-          nonce: string;
-          wallet?: string | null;
-          expires_at: string;
-          used_at?: string | null;
-          created_at?: string;
-        };
-        Update: {
-          nonce?: string;
-          wallet?: string | null;
-          expires_at?: string;
-          used_at?: string | null;
-          created_at?: string;
-        };
-        Relationships: [];
-      };
-
-      // ────────────────────────────────────────────────────────────────
       share_links: {
         Row: {
           id: string;
@@ -2170,6 +2144,15 @@ export type Database = {
         };
         Returns: number;
       };
+      onboard_wallet_atomic: {
+        Args: {
+          p_principal_id: string;
+          p_address: string;
+          p_chain: string;
+          p_sanctions_source: string;
+        };
+        Returns: Json;
+      };
     };
     Enums: {
       [_ in never]: never;
@@ -2336,7 +2319,6 @@ export type ApiKey = Tables<"api_keys">;
 export type McpOauthClient = Tables<"mcp_oauth_clients">;
 export type McpSession = Tables<"mcp_sessions">;
 export type SanctionsScreening = Tables<"sanctions_screenings">;
-export type SiweNonce = Tables<"siwe_nonces">;
 export type ShareLink = Tables<"share_links">;
 export type SocialAccount = Tables<"social_accounts">;
 export type SocialConnection = Tables<"social_connections">;

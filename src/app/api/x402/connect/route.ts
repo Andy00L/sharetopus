@@ -10,7 +10,6 @@ import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import {
   getBaseUrl,
-  getExpectedDomain,
   getRecipientAddress,
   isX402Platform,
 } from "@/lib/x402/config";
@@ -119,7 +118,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const context: ConnectNetworkContext = {
     network,
     recipientAddress,
-    expectedDomain: getExpectedDomain(),
     resourceUrl: `${getBaseUrl()}${ENDPOINT_PATH}`,
     platform,
   };
@@ -151,7 +149,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const result = await handleConnectChallenge(context, platform);
+    const result = await handleConnectChallenge(context);
     if (!result.ok) {
       console.error(`[POST /api/x402/connect] Challenge build failed: ${result.message}`);
       await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
@@ -218,12 +216,6 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
       return NextResponse.json(
         { error: error.kind, message: error.message },
         { status: 400 }
-      );
-
-    case "wallet_not_registered":
-      return NextResponse.json(
-        { error: "wallet_not_registered", message: error.message },
-        { status: 401 }
       );
 
     case "wallet_sanctioned":

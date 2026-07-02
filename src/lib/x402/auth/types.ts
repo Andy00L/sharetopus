@@ -6,19 +6,19 @@ import "server-only";
  * Separate from McpPrincipal (src/lib/mcp/auth/types.ts) because x402 has no
  * plan tier, no scopes, no API key. Wallets pay per-call via x402_charges.
  *
- * Called by: resolveWalletPrincipal, applyWalletGate, logX402Call, routes
+ * Called by: resolveOrOnboardWalletPrincipal, logX402Call, routes
  * Tables touched: none (type definitions only)
  */
 
 import type { WalletChain, SanctionsStatus } from "@/lib/types/database.types";
 
 /**
- * Identity for an x402 wallet caller. Created during register, attached to
- * every subsequent request by resolveWalletPrincipal (Phase 4.1).
+ * Identity for an x402 wallet caller. Created on the wallet's first verified
+ * payment and attached to every request by resolveOrOnboardWalletPrincipal.
  *
  * Unlike McpPrincipal, wallets have no plan tier, no scopes, no API key id.
- * Pricing is per-call via x402_charges. Authorization is per-call via
- * applyWalletGate (sanctions check).
+ * Pricing is per-call via x402_charges. Authorization is per-call via the
+ * sanctions disposition inside resolveOrOnboardWalletPrincipal.
  */
 export interface WalletPrincipal {
   /** Discriminator. Always "wallet" for this type. */
@@ -33,9 +33,9 @@ export interface WalletPrincipal {
   /** Lowercase wallet address (EVM) or Solana pubkey (base58). */
   address: string;
 
-  /** Network family this wallet registered on. */
+  /** Network family this wallet was onboarded on. */
   chain: WalletChain;
 
-  /** Latest sanctions screening result. Updated on every charge. */
+  /** Latest sanctions screening result from the wallets row. */
   sanctionsStatus: SanctionsStatus;
 }
