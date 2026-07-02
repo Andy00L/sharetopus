@@ -47,6 +47,7 @@ export function classifyDirectPostFailure(
   if (m.includes("no content found")) return "invalid_input";
   if (m.includes("no board selected")) return "invalid_input";
   if (m.includes("no linkedin identifier")) return "invalid_input";
+  if (m.includes("no facebook page id")) return "invalid_input";
   if (m.includes("invalid token") || m.includes("expired"))
     return "auth_expired";
   if (m.includes("too many") || m.includes("rate limit"))
@@ -54,6 +55,20 @@ export function classifyDirectPostFailure(
   if (m.includes("timeout") || m.includes("etimedout")) return "transient";
   if (m.includes("network") || m.includes("econnreset")) return "transient";
   if (m.includes("history")) return "invalid_input";
+
+  // The youtube/x/facebook postTo helpers embed the HTTP status as
+  // "... failed (429)"; classify by that suffix.
+  if (m.includes("(401)") || m.includes("(403)")) return "auth_expired";
+  if (m.includes("(429)")) return "rate_limited";
+  if (
+    m.includes("(500)") ||
+    m.includes("(502)") ||
+    m.includes("(503)") ||
+    m.includes("(504)")
+  ) {
+    return "transient";
+  }
+
   if (m.length === 0) return "unknown";
   return "unknown";
 }

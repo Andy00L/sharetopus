@@ -6,6 +6,7 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
@@ -18,7 +19,7 @@ const postSchema = z.object({
       "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
     ),
   platform: z
-    .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+    .enum(POSTING_PLATFORMS)
     .describe(
       "Target social media platform. Must match the platform of the provided social_account_id.",
     ),
@@ -30,7 +31,7 @@ const postSchema = z.object({
   post_type: z
     .enum(["text", "image", "video"])
     .describe(
-      "Type of post. Text posts only supported on LinkedIn. Pinterest/TikTok/Instagram require image or video.",
+      "Type of post. Text posts are supported on LinkedIn, X, and Facebook. Pinterest/TikTok/Instagram require image or video. YouTube requires video.",
     ),
   title: z
     .string()

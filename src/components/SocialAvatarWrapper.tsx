@@ -3,7 +3,6 @@
 
 import AvatarWithFallback from "./AvatarWithFallback";
 import PinterestSVGIcon, {
-  BlueskySVGIcon,
   FacebookSVGIcon,
   InstagramSVGIcon,
   LinkedinSVGIcon,
@@ -12,16 +11,17 @@ import PinterestSVGIcon, {
   TwitterVGIcon,
   YoutubeSVGIcon,
 } from "./icons/allPlatformsIcons";
+
+/** Keys are DB platform values (database.types.ts Platform alias). */
 type SocialPlatform =
   | "linkedin"
   | "pinterest"
   | "tiktok"
   | "instagram"
-  | "twitter"
+  | "x"
   | "youtube"
   | "facebook"
-  | "threads"
-  | "bluesky";
+  | "threads";
 interface SocialAvatarWrapperProps {
   /** Image URL for the avatar */
   readonly src?: string | null;
@@ -41,11 +41,10 @@ const PLATFORM_ICONS = {
   pinterest: PinterestSVGIcon,
   tiktok: TiktokSVGIcon,
   instagram: InstagramSVGIcon,
-  twitter: TwitterVGIcon,
+  x: TwitterVGIcon,
   youtube: YoutubeSVGIcon,
   facebook: FacebookSVGIcon,
   threads: ThreadsSVGIcon,
-  bluesky: BlueskySVGIcon,
 };
 export default function SocialAvatarWrapper({
   src,

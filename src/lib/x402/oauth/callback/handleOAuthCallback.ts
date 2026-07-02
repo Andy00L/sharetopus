@@ -10,6 +10,9 @@ import { exchangeLinkedInForX402 } from "./linkedinTokenExchange";
 import { exchangeTikTokForX402 } from "./tiktokTokenExchange";
 import { exchangePinterestForX402 } from "./pinterestTokenExchange";
 import { exchangeInstagramForX402 } from "./instagramTokenExchange";
+import { exchangeYouTubeForX402 } from "./youtubeTokenExchange";
+import { exchangeXForX402 } from "./xTokenExchange";
+import { exchangeFacebookForX402 } from "./facebookTokenExchange";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 // ---------------------------------------------------------------------------
@@ -77,11 +80,12 @@ export type OAuthCallbackResult =
 export async function handleOAuthCallback(
   input: OAuthCallbackInput
 ): Promise<OAuthCallbackResult> {
-  // -- 1. Look up connection by oauth_state
+  // -- 1. Look up connection by oauth_state. oauth_code_verifier carries
+  //       the PKCE verifier for platforms that mandate it (X).
   const { data: connection, error: lookupError } = await adminSupabase
     .from("social_connections")
     .select(
-      "id, principal_id, platform, status, expires_at, share_link_id, initiated_via"
+      "id, principal_id, platform, status, expires_at, share_link_id, initiated_via, oauth_code_verifier"
     )
     .eq("oauth_state", input.state)
     .maybeSingle();
@@ -215,7 +219,11 @@ export async function handleOAuthCallback(
   }
 
   // -- 4. Exchange code for token
-  const exchangeResult = await dispatchTokenExchange(input.platform, input.code);
+  const exchangeResult = await dispatchTokenExchange(
+    input.platform,
+    input.code,
+    connection.oauth_code_verifier,
+  );
   if (!exchangeResult.ok) {
     await transitionPendingTo(connection.id, {
       status: "failed",
@@ -278,10 +286,12 @@ export async function handleOAuthCallback(
     }
   }
 
-  // -- 6. UPSERT social_accounts row
-  const tokenExpiresAt = new Date(
-    Date.now() + exchangeResult.expiresIn * 1000
-  ).toISOString();
+  // -- 6. UPSERT social_accounts row. A null expiresIn means the token
+  //       never expires (Facebook Page tokens); the row stores null.
+  const tokenExpiresAt =
+    exchangeResult.expiresIn === null
+      ? null
+      : new Date(Date.now() + exchangeResult.expiresIn * 1000).toISOString();
 
   const { data: socialAccount, error: upsertError } = await adminSupabase
     .from("social_accounts")
@@ -469,7 +479,8 @@ interface ExchangeSuccess {
   ok: true;
   accessToken: string;
   refreshToken: string | null;
-  expiresIn: number;
+  /** Seconds until expiry; null means the token never expires (Facebook). */
+  expiresIn: number | null;
   accountIdentifier: string;
   profile: {
     name?: string;
@@ -486,7 +497,8 @@ type ExchangeFailure = {
 
 async function dispatchTokenExchange(
   platform: Platform,
-  code: string
+  code: string,
+  codeVerifier: string | null
 ): Promise<ExchangeSuccess | ExchangeFailure> {
   switch (platform) {
     case "linkedin": {
@@ -539,6 +551,54 @@ async function dispatchTokenExchange(
     }
     case "instagram": {
       const result = await exchangeInstagramForX402(code);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresIn,
+        accountIdentifier: result.accountIdentifier,
+        profile: {
+          name: result.profile.name,
+          username: result.profile.username,
+          avatarUrl: result.profile.avatarUrl,
+        },
+      };
+    }
+    case "youtube": {
+      const result = await exchangeYouTubeForX402(code);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresIn,
+        accountIdentifier: result.accountIdentifier,
+        profile: {
+          name: result.profile.name,
+          username: result.profile.username,
+          avatarUrl: result.profile.avatarUrl,
+        },
+      };
+    }
+    case "x": {
+      const result = await exchangeXForX402(code, codeVerifier);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: result.expiresIn,
+        accountIdentifier: result.accountIdentifier,
+        profile: {
+          name: result.profile.name,
+          username: result.profile.username,
+          avatarUrl: result.profile.avatarUrl,
+        },
+      };
+    }
+    case "facebook": {
+      const result = await exchangeFacebookForX402(code);
       if (!result.ok) return result;
       return {
         ok: true,

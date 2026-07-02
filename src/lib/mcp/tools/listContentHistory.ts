@@ -4,6 +4,7 @@ import { getContentHistory } from "@/actions/server/contentHistoryActions/getCon
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { Platform } from "@/lib/types/database.types";
 import { withMcpTool } from "../withMcpTool";
 
@@ -30,7 +31,7 @@ export function registerListContentHistory(server: McpServer): void {
         "View your posted content history. Optional filter by platform.",
       inputSchema: {
         platform: z
-          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .enum(POSTING_PLATFORMS)
           .optional()
           .describe("Filter by platform"),
         limit: z

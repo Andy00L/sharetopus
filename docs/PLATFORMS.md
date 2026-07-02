@@ -1,6 +1,8 @@
 # Platforms
 
-How Sharetopus posts content to LinkedIn, TikTok, Pinterest, and Instagram. All four platforms share a generic adapter pattern but differ in token behavior, media upload mechanics, and post lifecycle.
+How Sharetopus posts content to LinkedIn, TikTok, Pinterest, Instagram, YouTube, X (Twitter), and Facebook. All platforms share a generic adapter pattern but differ in token behavior, media upload mechanics, and post lifecycle.
+
+The platform capability registry (which platform accepts which media type) lives in `src/lib/platforms/capabilities.ts` and feeds the create form, the account selector, the REST/MCP/x402 schemas, and the Inngest compatibility check.
 
 [Back to README](../README.md)
 
@@ -12,6 +14,9 @@ How Sharetopus posts content to LinkedIn, TikTok, Pinterest, and Instagram. All 
 - [TikTok](#tiktok)
 - [Pinterest](#pinterest)
 - [Instagram](#instagram)
+- [YouTube](#youtube)
+- [X (Twitter)](#x-twitter)
+- [Facebook](#facebook)
 - [Future Platforms](#future-platforms)
 - [Adding a New Platform](#adding-a-new-platform)
 - [Source Files Referenced](#source-files-referenced)
@@ -71,6 +76,9 @@ Also in `_shared/`: `buildStreamingMultipartFormDataBody.ts`, which streams 64KB
 | TikTok | no | yes | yes | yes | yes | Standard + dev/prod credential split |
 | Pinterest | no | yes | yes | yes | yes | Basic Auth token exchange |
 | Instagram | no | yes | reel | yes | yes | Long-lived token upgrade |
+| YouTube | no | no | yes | yes | yes | Google OAuth, offline access for refresh tokens |
+| X (Twitter) | yes | yes | yes | yes | yes | OAuth 2.0 with mandatory PKCE, rotating refresh tokens |
+| Facebook | yes | yes | yes | yes | yes | Long-lived user token, then non-expiring Page tokens |
 
 ---
 
@@ -302,46 +310,154 @@ sequenceDiagram
 ### Key Details
 
 - Long-lived token upgrade happens automatically during OAuth exchange. If the upgrade fails, the short-lived token is stored as a fallback.
-- No refresh tokens exist. When the 60-day token expires, the user must re-authorize through the web UI.
+- No refresh tokens exist, but the long-lived ACCESS token itself is refreshed before expiry via `/refresh_access_token` (`refreshInstagramToken.ts`, wired into `ensureValidToken`). An already-expired token still requires re-authorization.
 - Alt text is supported for images. Derived from the description (first 1000 characters).
 - `post_type: "video"` is always published as a Reel (`media_type: REELS`).
 - Media must be publicly accessible (Instagram fetches from the URL). Supabase signed URLs satisfy this requirement.
-- Connect button is currently commented out in the connections page UI, but the backend OAuth and posting routes are functional.
-- 4 source files total in the instagram directory.
+- 5 source files total in the instagram directory.
+
+---
+
+## YouTube
+
+**API:** YouTube Data API v3
+**Scopes:** `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly`
+**Token refresh:** Yes, Google refresh_token grant (`access_type=offline&prompt=consent` forces a refresh token on every connect)
+**Account identifier:** channel id (from `channels.list?mine=true`)
+**Media types:** Video only
+**Env vars:** `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URL`, `X402_YOUTUBE_REDIRECT_URI`
+
+### Posting Flow
+
+Resumable upload in two steps, streaming the file bytes from Supabase Storage:
+
+1. `POST /upload/youtube/v3/videos?uploadType=resumable&part=snippet,status` with the metadata JSON (title, description, privacyStatus); the session URL returns in the `Location` header.
+2. `PUT` the video bytes to the session URL; the response carries the video id. Post URL: `https://www.youtube.com/watch?v={id}`.
+
+### Key Details
+
+- A title is mandatory; the adapter falls back to the first 100 characters of the caption, then "Untitled video".
+- `post_options.privacyStatus` (`public` | `unlisted` | `private`, default `public`) maps to `status.privacyStatus`.
+- A Google account without a YouTube channel fails the connect flow with a clear message.
+- Unverified Google Cloud projects upload as private-locked until the app passes verification; expect that during development.
+
+---
+
+## X (Twitter)
+
+**API:** X API v2
+**Scopes:** `tweet.read`, `tweet.write`, `users.read`, `media.write`, `offline.access`
+**Token refresh:** Yes, and X ROTATES the refresh token on every refresh; the new value is persisted each time
+**PKCE:** Mandatory. The web flow keeps the verifier in an HTTP-only cookie; the x402/REST flow stores it in `social_connections.oauth_code_verifier`
+**Account identifier:** numeric user id (from `GET /2/users/me`)
+**Media types:** Text, Image, Video
+**Env vars:** `X_CLIENT_ID`, `X_CLIENT_SECRET`, `X_REDIRECT_URL`, `X402_X_REDIRECT_URI`
+
+### Posting Flow
+
+- Text: `POST /2/tweets` with `{ text }`.
+- Media: v2 chunked upload (the dedicated endpoints that replaced command-style upload in May 2025), then the tweet references the media id:
+  1. `POST /2/media/upload/initialize` (JSON: media_type, total_bytes, media_category `tweet_image` or `tweet_video`)
+  2. `POST /2/media/upload/{id}/append` (multipart, 4 MB segments)
+  3. `POST /2/media/upload/{id}/finalize`
+  4. `GET /2/media/upload?command=STATUS` polling while X transcodes video
+  5. `POST /2/tweets` with `{ text, media: { media_ids: [id] } }`
+
+### Key Details
+
+- Confidential-client token calls use HTTP Basic auth (`client_id:client_secret`).
+- Caption cap is 280 characters (enforced by `CAPTION_LIMITS.x` in the batch cores).
+- Media upload endpoints have very low rate limits on the Free API tier (17 initialize/finalize per 24h); plan tier accordingly.
+
+---
+
+## Facebook
+
+**API:** Graph API v23.0 (Pages)
+**Scopes:** `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`
+**Token:** code -> short-lived user token -> long-lived user token (`fb_exchange_token`) -> PAGE tokens via `GET /me/accounts`. Page tokens minted from a long-lived user token do not expire, so `token_expires_at` is stored null and no refresh path exists.
+**Account identifier:** Page id; the stored access token is the PAGE token (the user token is never stored)
+**Media types:** Text, Image, Video
+**Env vars:** `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`, `FACEBOOK_REDIRECT_URL`, `X402_FACEBOOK_REDIRECT_URI`
+
+### Posting Flow
+
+- Text: `POST /{pageId}/feed` with `{ message }`.
+- Image: `POST /{pageId}/photos` with `{ url, caption }` (Facebook pulls the file from the signed URL).
+- Video: `POST /{pageId}/videos` with `{ file_url, description }` (Facebook pulls the file).
+
+### Key Details
+
+- The web connect flow stores ONE `social_accounts` row PER managed Page. The x402/REST callback contract is one account per connection, so it stores the FIRST Page and logs how many were skipped; connect the rest through the web flow.
+- Post URL: `https://www.facebook.com/{post_id}`.
 
 ---
 
 ## Future Platforms
 
-These platforms exist in the `social_accounts.platform` enum in database type definitions but have no backend integration code:
+These platforms are not yet postable:
 
-- **Threads**
-- **YouTube**
-- **X (Twitter)**
-- **Facebook**
+- **Threads**: in the `social_accounts.platform` DB union, no integration code.
+- **Google Business Profile**: NOT in the DB union yet. Blocked on a schema change only Drew can apply; see below.
 
-No OAuth flows, posting helpers, or schedule functions exist for any of these. Bluesky is not in the database type definitions.
+Bluesky is not in the database type definitions.
+
+### Enabling Google Business Profile
+
+`src/lib/types/database.types.ts` is hand-maintained and read-only for agents, and the `platform` CHECK constraints in Postgres mirror it. Both must change before any `google_business` code can compile or run. Steps, in order:
+
+1. Run this SQL against Supabase (adjust constraint names if they differ; check with `\d social_accounts`):
+
+```sql
+ALTER TABLE social_accounts
+  DROP CONSTRAINT social_accounts_platform_check;
+ALTER TABLE social_accounts
+  ADD CONSTRAINT social_accounts_platform_check CHECK (platform IN (
+    'linkedin', 'tiktok', 'pinterest', 'instagram',
+    'facebook', 'threads', 'youtube', 'x', 'google_business'
+  ));
+
+ALTER TABLE social_connections
+  DROP CONSTRAINT social_connections_platform_check;
+ALTER TABLE social_connections
+  ADD CONSTRAINT social_connections_platform_check CHECK (platform IN (
+    'linkedin', 'tiktok', 'pinterest', 'instagram',
+    'facebook', 'threads', 'youtube', 'x', 'google_business'
+  ));
+
+INSERT INTO platform_quotas (platform, daily_cap, burst_cap_60s, notes)
+VALUES ('google_business', 50, 5, 'Google Business Profile localPosts')
+ON CONFLICT (platform) DO NOTHING;
+```
+
+2. Hand-edit `src/lib/types/database.types.ts`: append `| "google_business"` to the platform union in six places (social_accounts Row/Insert/Update, social_connections Row/Insert/Update) and to the `Platform` alias near line 2258.
+
+3. After both are applied, extend the code exactly like the youtube/x/facebook additions in this change (same checklist below). Google Business specifics: OAuth is standard Google (`https://www.googleapis.com/auth/business.manage` scope, same token endpoint as YouTube), the account identifier is `accounts/{accountId}/locations/{locationId}`, and publishing goes through `POST https://mybusiness.googleapis.com/v4/{parent}/localPosts` with `summary` text and an optional `media` array of publicly reachable URLs.
 
 ---
 
 ## Adding a New Platform
 
-Checklist for implementing a new platform integration:
+Checklist for implementing a new platform, matching how youtube/x/facebook were added:
 
-1. Add the platform to the `social_accounts.platform` enum in database types.
-2. Create `src/lib/api/{platform}/` with subdirectories:
-   - `data/`: `exchangeCode.ts`, `getProfile.ts`, `refreshToken.ts`
-   - `post/`: `postTo{Platform}.ts`, `directPostFor{Platform}Accounts.ts`
-3. Implement a `DirectPostPlatformAdapter` (supply `call` and `toHistoryFields` at minimum).
-4. Add OAuth routes:
+1. Confirm the platform value exists in the DB `platform` CHECK constraints and in `src/lib/types/database.types.ts` (hand-edited by Drew).
+2. Register capabilities: add the key to `POSTING_PLATFORMS`, `PLATFORM_LABELS`, and the media-support map in `src/lib/platforms/capabilities.ts`, plus a `CAPTION_LIMITS` entry.
+3. Create `src/lib/api/{platform}/`:
+   - `data/`: `exchange{Platform}Code.ts`, `get{Platform}Profile.ts`, `refresh{Platform}Token.ts` (when the platform has one)
+   - `post/`: `postTo{Platform}.ts`, `directPostFor{Platform}Accounts.ts` (a `DirectPostPlatformAdapter`)
+4. Wire the token lifecycle: a case in `refreshTokenForPlatform` inside `src/lib/api/ensureValidToken.ts`.
+5. Web OAuth routes via the shared helpers (`initiateWebOAuth`, `completeWebOAuthConnect`):
    - `/api/social/{platform}/initiate`
    - `/api/social/{platform}/connect`
-5. Add post routes:
-   - `/api/social/{platform}/post`
-   - `/api/social/{platform}/process`
-6. Add UI:
-   - Connect button in the connections page
-   - Platform icon and color in shared components
+6. x402/REST OAuth:
+   - a builder case in `src/lib/x402/connect/buildOAuthUrl.ts`
+   - `src/lib/x402/oauth/callback/{platform}TokenExchange.ts` plus a dispatch case in `handleOAuthCallback.ts`
+   - a redirect URI case in `getOAuthRedirectUri` (`src/lib/x402/config.ts`) and the `X402_{PLATFORM}_REDIRECT_URI` env var
+7. Inngest workers: dispatch cases in `processSinglePostHelpers.callPlatformDirectPost` and `processDirectPostHelpers.callDirectPostFromEvent`.
+8. UI: a section in the connections page using `ConnectPlatformButton`, and an icon in `allPlatformsIcons.tsx` / `SocialAvatarWrapper`.
+9. Docs: x402 reference strings in `docs/x402/data/endpoints.ts`, this file, and `.env.example`.
+
+The zod platform enums (MCP tools, REST schemas, x402 body schema) derive from `POSTING_PLATFORMS`, so step 2 updates them automatically.
 
 ---
 
@@ -389,6 +505,34 @@ Checklist for implementing a new platform integration:
 - `post/directPostForInstagramAccounts.ts`
 - `data/exchangeInstagramCode.ts`
 - `data/getInstagramProfile.ts`
+- `data/refreshInstagramToken.ts`
+
+**YouTube** (`src/lib/api/youtube/`):
+- `post/postToYouTube.ts`
+- `post/directPostForYouTubeAccounts.ts`
+- `data/exchangeYouTubeCode.ts`
+- `data/getYouTubeProfile.ts`
+- `data/refreshYouTubeToken.ts`
+
+**X** (`src/lib/api/x/`):
+- `post/postToX.ts`
+- `post/directPostForXAccounts.ts`
+- `data/exchangeXCode.ts`
+- `data/getXProfile.ts`
+- `data/refreshXToken.ts`
+
+**Facebook** (`src/lib/api/facebook/`):
+- `post/postToFacebook.ts`
+- `post/directPostForFacebookAccounts.ts`
+- `data/exchangeFacebookCode.ts`
+- `data/getFacebookPages.ts`
+
+**Shared web OAuth** (`src/lib/api/oauth/web/`):
+- `initiateWebOAuth.ts`
+- `completeWebOAuthConnect.ts`
+
+**Capability registry:**
+- `src/lib/platforms/capabilities.ts`
 
 ---
 

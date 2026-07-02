@@ -27,6 +27,44 @@ export type PinterestProfile = {
   business_name: string | null;
 };
 
+// ----- YouTube -----
+
+/** Channel fields read from channels.list (part=snippet,statistics). */
+export type YouTubeProfile = {
+  /** Channel id; the social_accounts.account_identifier for YouTube. */
+  channelId: string;
+  title: string;
+  customUrl: string | null;
+  description: string | null;
+  avatarUrl: string | null;
+  subscriberCount: number | null;
+};
+
+// ----- X (Twitter) -----
+
+/** User fields read from GET /2/users/me. */
+export type XProfile = {
+  /** Numeric user id as a string; the social_accounts.account_identifier for X. */
+  id: string;
+  username: string;
+  name: string;
+  avatarUrl: string | null;
+  isVerified: boolean;
+};
+
+// ----- Facebook -----
+
+/** One managed Page from GET /me/accounts, with its Page access token. */
+export type FacebookPage = {
+  /** Page id; the social_accounts.account_identifier for Facebook. */
+  pageId: string;
+  name: string;
+  /** Page access token used for all publishing calls on this Page. */
+  pageAccessToken: string;
+  category: string | null;
+  avatarUrl: string | null;
+};
+
 // ----- TikTok -----
 
 /**

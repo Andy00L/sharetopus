@@ -91,6 +91,11 @@ export interface LinkedinOptions {
   visibility: string;
 }
 
+export interface YouTubeOptions {
+  /** videos.insert status.privacyStatus. sourceRef: postToYouTube.ts */
+  privacyStatus?: "public" | "unlisted" | "private";
+}
+
 export interface PlatformOptions {
   caption?: string;
   scheduledAt?: Date;
@@ -98,6 +103,7 @@ export interface PlatformOptions {
   pinterest?: PinterestOptions;
   facebook?: { privacyLevel: string };
   linkedin?: LinkedinOptions;
+  youtube?: YouTubeOptions;
 }
 
 // ─────────────────────────────────────────────────────────────────────

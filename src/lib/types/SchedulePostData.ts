@@ -30,6 +30,9 @@ export interface SchedulePostData {
     // LinkedIn-specific options
     visibility?: string;
     memberUrn?: string;
+
+    // YouTube-specific options
+    privacyStatus?: "public" | "unlisted" | "private";
     // Add other platform options here as needed
   } | null;
   idempotency_key?: string;

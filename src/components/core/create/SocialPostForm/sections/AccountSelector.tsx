@@ -2,6 +2,7 @@
 
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { Input } from "@/components/ui/input";
+import { platformSupportsMediaType } from "@/lib/platforms/capabilities";
 import { SocialAccount } from "@/lib/types/dbTypes";
 import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { useState } from "react";
@@ -23,12 +24,9 @@ export default function AccountSelector({
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredAccounts = accounts.filter((account) => {
-    if (
-      postType === "text" &&
-      (account.platform === "pinterest" ||
-        account.platform === "tiktok" ||
-        account.platform === "instagram")
-    ) {
+    // Hide accounts whose platform cannot publish this post type (e.g.
+    // Pinterest for text posts, YouTube for image posts).
+    if (!platformSupportsMediaType(account.platform, postType)) {
       return false;
     }
 

@@ -1,10 +1,13 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
 import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
+import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
+import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
 import { MediaType, Platform } from "@/lib/types/database.types";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
@@ -195,6 +198,46 @@ export async function callDirectPostFromEvent(
           postType: igPostType,
           fileName: file_name,
           batchId: batch_id,
+          createdVia,
+        });
+        break;
+      }
+      case "youtube": {
+        result = await directPostForYouTubeAccounts({
+          account,
+          mediaPath: media_path,
+          mediaType: media_type,
+          platformOptions: platform_options,
+          accountContent: account_content,
+          userId: data.principal_id,
+          batchId: batch_id,
+          postType: post_type,
+          createdVia,
+        });
+        break;
+      }
+      case "x": {
+        result = await directPostForXAccounts({
+          account,
+          mediaPath: media_path,
+          mediaType: media_type,
+          accountContent: account_content,
+          userId: data.principal_id,
+          batchId: batch_id,
+          postType: post_type,
+          createdVia,
+        });
+        break;
+      }
+      case "facebook": {
+        result = await directPostForFacebookAccounts({
+          account,
+          mediaPath: media_path,
+          accountContent: account_content,
+          userId: data.principal_id,
+          mediaUrl: media_url ?? "",
+          batchId: batch_id,
+          postType: post_type,
           createdVia,
         });
         break;

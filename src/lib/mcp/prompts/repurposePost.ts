@@ -1,5 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
+
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 /**
  * Prompt: repurpose an existing post for other platforms.
  *
@@ -22,10 +24,10 @@ export function registerRepurposePost(server: McpServer): void {
           "ID of the post to repurpose (from scheduled_posts or content_history)",
         ),
       target_platforms: z
-        .array(z.enum(["linkedin", "tiktok", "pinterest", "instagram"]))
+        .array(z.enum(POSTING_PLATFORMS))
         .min(1)
         .describe(
-          "Target platforms to repurpose for. Each entry must be one of linkedin / tiktok / pinterest / instagram.",
+          `Target platforms to repurpose for. Each entry must be one of ${POSTING_PLATFORMS.join(" / ")}.`,
         ),
     },
     async ({ post_id, target_platforms }) => ({

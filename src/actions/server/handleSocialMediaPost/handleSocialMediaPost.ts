@@ -6,6 +6,12 @@ import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
+import {
+  POSTING_PLATFORMS,
+  isPostingPlatform,
+  platformSupportsMediaType,
+  type PostingPlatform,
+} from "@/lib/platforms/capabilities";
 import { MediaType } from "@/lib/types/database.types";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -37,11 +43,7 @@ export type ContentInfo = {
   isCustomized: boolean;
 };
 
-export type PlatformCounts = {
-  pinterest: number;
-  linkedin: number;
-  tiktok: number;
-  instagram: number;
+export type PlatformCounts = Record<PostingPlatform, number> & {
   total: number;
 };
 
@@ -62,25 +64,101 @@ type PostResult = {
   event_ids?: string[];
 };
 
-const ZERO_COUNTS: PlatformCounts = {
-  pinterest: 0,
-  linkedin: 0,
-  tiktok: 0,
-  instagram: 0,
-  total: 0,
+function buildZeroCounts(): PlatformCounts {
+  const counts = { total: 0 } as PlatformCounts;
+  for (const platform of POSTING_PLATFORMS) {
+    counts[platform] = 0;
+  }
+  return counts;
+}
+
+// ────────────────────────────────────────────────────────────
+// Per-platform form adapters
+// ────────────────────────────────────────────────────────────
+
+type ScheduleOptionsBuilderArgs = {
+  account: SocialAccount;
+  content: ContentInfo;
+  platformOptions: PlatformOptions;
+  selectedBoard: BoardInfo | undefined;
 };
+
+type PlatformFormAdapter = {
+  /** Whether scheduled_posts.post_title should carry the form title. */
+  keepsTitle: boolean;
+  /** post_options payload the worker reads back (flat, per platform). */
+  buildScheduleOptions: (
+    args: ScheduleOptionsBuilderArgs,
+  ) => SchedulePostData["postOptions"];
+};
+
+/**
+ * The only per-platform knowledge the web form path needs. Everything
+ * else (validation, quota, dispatch) is platform-agnostic in the batch
+ * cores and the Inngest workers.
+ */
+const PLATFORM_FORM_ADAPTERS: Record<PostingPlatform, PlatformFormAdapter> = {
+  pinterest: {
+    keepsTitle: true,
+    buildScheduleOptions: ({ content, platformOptions, selectedBoard }) => ({
+      privacyLevel: platformOptions.pinterest?.privacyLevel ?? "PUBLIC",
+      board: selectedBoard?.boardID ?? "",
+      boardName: selectedBoard?.boardName ?? "",
+      link: content.link,
+    }),
+  },
+  linkedin: {
+    keepsTitle: false,
+    buildScheduleOptions: ({ account, content, platformOptions }) => ({
+      memberUrn: `urn:li:person:${account.account_identifier}`,
+      link: content.link || undefined,
+      visibility: platformOptions.linkedin?.visibility ?? "PUBLIC",
+    }),
+  },
+  tiktok: {
+    keepsTitle: false,
+    buildScheduleOptions: ({ platformOptions }) =>
+      platformOptions.tiktok ?? null,
+  },
+  instagram: {
+    keepsTitle: false,
+    buildScheduleOptions: () => null,
+  },
+  youtube: {
+    keepsTitle: true,
+    buildScheduleOptions: ({ platformOptions }) => ({
+      privacyStatus: platformOptions.youtube?.privacyStatus ?? "public",
+    }),
+  },
+  x: {
+    keepsTitle: false,
+    buildScheduleOptions: () => null,
+  },
+  facebook: {
+    keepsTitle: false,
+    buildScheduleOptions: () => null,
+  },
+};
+
+// ────────────────────────────────────────────────────────────
+// Entry point
+// ────────────────────────────────────────────────────────────
 
 /**
  * Orchestrates direct and scheduled posting across all platforms.
  *
  * Direct path (isScheduled=false): dispatches Inngest `post.now` events,
- * one per account × platform pair. processDirectPost worker handles
+ * one per account x platform pair. processDirectPost worker handles
  * each, then writes content_history and cleans up media.
  *
  * Scheduled path (isScheduled=true): builds a SchedulePostData[] array
  * and calls schedulePostBatch (shared core for web/MCP/x402). One bulk
  * upsert into scheduled_posts. The processSinglePost worker fires later
  * when scheduled_at is reached.
+ *
+ * Accounts arrive as one mixed array (the caller no longer pre-groups by
+ * platform); grouping and per-platform behavior live in
+ * PLATFORM_FORM_ADAPTERS above.
  *
  * Tables touched:
  *   - scheduled_posts (insert, scheduled path)
@@ -93,10 +171,7 @@ const ZERO_COUNTS: PlatformCounts = {
  *   - Inner (schedulePostBatch): 10 calls per 60s per user, scheduled only.
  */
 export async function handleSocialMediaPost(config: {
-  pinterestAccounts: SocialAccount[];
-  linkedinAccounts: SocialAccount[];
-  tiktokAccounts: SocialAccount[];
-  instagramAccounts: SocialAccount[];
+  accounts: SocialAccount[];
   mediaPath: string;
   coverTimestamp: number;
   fileName?: string;
@@ -113,22 +188,14 @@ export async function handleSocialMediaPost(config: {
   cronSecret?: string;
 }): Promise<PostResult> {
   const {
-    pinterestAccounts,
-    linkedinAccounts,
-    tiktokAccounts,
-    instagramAccounts,
+    accounts,
     mediaPath,
-    coverTimestamp,
     fileName,
     boards,
-    platformOptions,
     accountContent,
     isScheduled,
-    scheduledDate,
-    scheduledTime,
     postType,
     userId,
-    batchId,
     cleanupFiles = true,
     cronSecret,
   } = config;
@@ -136,17 +203,11 @@ export async function handleSocialMediaPost(config: {
   const requestId = generateRequestId();
 
   // Step 1: account count guard
-  const totalAccounts =
-    pinterestAccounts.length +
-    linkedinAccounts.length +
-    instagramAccounts.length +
-    tiktokAccounts.length;
-
-  if (totalAccounts === 0) {
+  if (accounts.length === 0) {
     console.error("[handleSocialMediaPost] No accounts provided");
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message:
         "No accounts selected for posting. Please select at least one account.",
       errors: [],
@@ -154,7 +215,7 @@ export async function handleSocialMediaPost(config: {
   }
 
   console.log(
-    `[handleSocialMediaPost] Starting ${isScheduled ? "scheduled" : "direct"} post for ${totalAccounts} accounts`,
+    `[handleSocialMediaPost] Starting ${isScheduled ? "scheduled" : "direct"} post for ${accounts.length} accounts`,
   );
 
   // Step 2: auth
@@ -169,7 +230,7 @@ export async function handleSocialMediaPost(config: {
     console.error(`[handleSocialMediaPost] Auth failed for user: ${userId}`);
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message: errorMessage,
       errors: [],
     };
@@ -187,34 +248,59 @@ export async function handleSocialMediaPost(config: {
     console.warn(`[handleSocialMediaPost] Rate limit exceeded for ${userId}`);
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message: "Too many requests. Please try again later.",
       resetIn: rateCheck.resetIn,
       errors: [],
     };
   }
 
-  // Step 4: media presence validation
-  const requiresMedia =
-    (postType === "image" || postType === "video") &&
-    (pinterestAccounts.length > 0 ||
-      (tiktokAccounts.length > 0 && postType === "video"));
+  // Step 4: group accounts by platform; unknown platforms are reported,
+  // never silently dropped.
+  const accountsByPlatform = new Map<PostingPlatform, SocialAccount[]>();
+  const unsupportedErrors: AccountError[] = [];
+  for (const account of accounts) {
+    if (!isPostingPlatform(account.platform)) {
+      unsupportedErrors.push({
+        accountId: account.id,
+        platform: account.platform,
+        displayName:
+          account.display_name ?? account.username ?? account.id,
+        error: `Posting to ${account.platform} is not supported`,
+      });
+      continue;
+    }
+    const group = accountsByPlatform.get(account.platform) ?? [];
+    group.push(account);
+    accountsByPlatform.set(account.platform, group);
+  }
+  if (unsupportedErrors.length > 0) {
+    console.error(
+      `[handleSocialMediaPost] ${unsupportedErrors.length} accounts on unsupported platforms`,
+    );
+    return {
+      success: false,
+      counts: buildZeroCounts(),
+      message: "Some selected accounts are on unsupported platforms.",
+      errors: unsupportedErrors,
+    };
+  }
 
-  if (!mediaPath && requiresMedia) {
+  // Step 5: media presence validation. Every platform that accepts the
+  // media post type needs the file; the batch cores enforce it again.
+  if ((postType === "image" || postType === "video") && !mediaPath) {
     console.error(
       `[handleSocialMediaPost] Media required for ${postType} posts`,
     );
     return {
       success: false,
-      counts: ZERO_COUNTS,
-      message: `${postType} posts require media files for Pinterest${
-        postType === "video" ? " and TikTok" : ""
-      }`,
+      counts: buildZeroCounts(),
+      message: `${postType} posts require a media file`,
       errors: [],
     };
   }
 
-  // Step 5: mime type derivation (used by direct path only)
+  // Step 6: mime type derivation (used by direct path only)
   let mediaType = "";
   if (mediaPath && fileName) {
     const mimeResult = getMimeTypeFromFileName(fileName);
@@ -234,7 +320,7 @@ export async function handleSocialMediaPost(config: {
       }
       return {
         success: false,
-        counts: ZERO_COUNTS,
+        counts: buildZeroCounts(),
         message: mimeResult.message || "Failed to process media file.",
         errors: [],
       };
@@ -242,19 +328,19 @@ export async function handleSocialMediaPost(config: {
     mediaType = mimeResult.mimeType;
   }
 
-  // Step 6: content validation (Pinterest board, LinkedIn identifier, etc.)
-  const missingContentAccounts: AccountError[] = [
-    ...validateAccountContent(
-      pinterestAccounts,
-      accountContent,
-      "pinterest",
-      boards,
-      postType,
-    ),
-    ...validateAccountContent(linkedinAccounts, accountContent, "linkedin"),
-    ...validateAccountContent(tiktokAccounts, accountContent, "tiktok"),
-    ...validateAccountContent(instagramAccounts, accountContent, "instagram"),
-  ];
+  // Step 7: content validation (Pinterest board, LinkedIn identifier, etc.)
+  const missingContentAccounts: AccountError[] = [];
+  for (const [platform, platformAccounts] of accountsByPlatform) {
+    missingContentAccounts.push(
+      ...validateAccountContent(
+        platformAccounts,
+        accountContent,
+        platform,
+        boards,
+        postType,
+      ),
+    );
+  }
 
   if (missingContentAccounts.length > 0) {
     console.error(
@@ -262,77 +348,122 @@ export async function handleSocialMediaPost(config: {
     );
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message:
         "Some accounts have invalid configuration. Please check your settings.",
       errors: missingContentAccounts,
     };
   }
 
-  // Step 7: branch on direct vs scheduled
+  // Step 8: branch on direct vs scheduled
   if (!isScheduled) {
     return directPostFromForm({
-      pinterestAccounts,
-      linkedinAccounts,
-      tiktokAccounts,
-      instagramAccounts,
+      accountsByPlatform,
       mediaPath,
-      coverTimestamp,
+      coverTimestamp: config.coverTimestamp,
       boards,
-      platformOptions,
+      platformOptions: config.platformOptions,
       accountContent,
       postType,
       userId: userId!,
-      batchId,
+      batchId: config.batchId,
       requestId,
     });
   }
 
-  // Scheduled path: 1× bulk upsert via shared core.
   return scheduleAllPosts({
-    pinterestAccounts,
-    linkedinAccounts,
-    tiktokAccounts,
-    instagramAccounts,
+    accountsByPlatform,
     mediaPath,
-    coverTimestamp,
+    coverTimestamp: config.coverTimestamp,
     boards,
-    platformOptions,
+    platformOptions: config.platformOptions,
     accountContent,
-    scheduledDate: scheduledDate ?? "",
-    scheduledTime: scheduledTime ?? "",
+    scheduledDate: config.scheduledDate ?? "",
+    scheduledTime: config.scheduledTime ?? "",
     postType,
     userId: userId!,
-    batchId,
+    batchId: config.batchId,
     requestId,
   });
 }
 
 // ────────────────────────────────────────────────────────────
-// Scheduled-post bulk dispatch (NEW: replaces 4× internal fetch)
+// Shared helpers for both paths
+// ────────────────────────────────────────────────────────────
+
+function findContentForAccount(
+  accountContent: ContentInfo[],
+  accountId: string,
+): ContentInfo | undefined {
+  return accountContent.find((content) => content.accountId === accountId);
+}
+
+function findSelectedBoard(
+  boards: BoardInfo[] | undefined,
+  accountId: string,
+): BoardInfo | undefined {
+  return boards?.find(
+    (board) => board.accountId === accountId && board.isSelected,
+  );
+}
+
+function buildAccountsLookup(
+  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>,
+): Map<string, SocialAccount> {
+  const lookup = new Map<string, SocialAccount>();
+  for (const platformAccounts of accountsByPlatform.values()) {
+    for (const account of platformAccounts) {
+      lookup.set(account.id, account);
+    }
+  }
+  return lookup;
+}
+
+function countAcceptedByPlatform(
+  posts: { socialAccountId: string; platform: PostingPlatform }[],
+  rejectedAccountIds: Set<string>,
+): PlatformCounts {
+  const counts = buildZeroCounts();
+  for (const post of posts) {
+    if (rejectedAccountIds.has(post.socialAccountId)) continue;
+    counts[post.platform]++;
+    counts.total++;
+  }
+  return counts;
+}
+
+function mapRejectionsToAccountErrors(
+  rejections: { socialAccountId: string; reason: string }[],
+  accountsLookup: Map<string, SocialAccount>,
+): AccountError[] {
+  return rejections.map((rejection) => {
+    const account = accountsLookup.get(rejection.socialAccountId);
+    return {
+      accountId: rejection.socialAccountId,
+      platform: account?.platform ?? "unknown",
+      displayName:
+        account?.display_name ??
+        account?.username ??
+        account?.id ??
+        rejection.socialAccountId,
+      error: rejection.reason,
+    };
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// Scheduled-post bulk dispatch
 // ────────────────────────────────────────────────────────────
 
 /**
- * Builds a SchedulePostData[] from the 4 platform account arrays and
- * delegates to schedulePostBatch for a single bulk upsert into
- * scheduled_posts. Translates the core result back to the legacy
- * PostResult shape consumed by SocialPostForm.
- *
- * Per-platform postOptions shape (FLAT, matches worker's read pattern in
- * callPlatformDirectPost / callDirectPostFromEvent):
- *   Pinterest: { privacyLevel, board_id, boardName, link }
- *   LinkedIn:  { memberUrn, link, visibility }
- *   TikTok:    spread of platformOptions.tiktok
- *   Instagram: null
- *
- * Skips Pinterest/Instagram for text posts (legacy behavior). TikTok
- * text is built and rejected later by the worker's compatibility check.
+ * Builds a SchedulePostData[] from the platform groups and delegates to
+ * schedulePostBatch for a single bulk upsert into scheduled_posts.
+ * Platform/post-type combos the platform cannot publish (e.g. text on
+ * Pinterest, image on YouTube) are skipped at build time; the account
+ * selector already prevents selecting them.
  */
 async function scheduleAllPosts(args: {
-  pinterestAccounts: SocialAccount[];
-  linkedinAccounts: SocialAccount[];
-  tiktokAccounts: SocialAccount[];
-  instagramAccounts: SocialAccount[];
+  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -349,107 +480,34 @@ async function scheduleAllPosts(args: {
     `${args.scheduledDate}T${args.scheduledTime}`,
   ).toISOString();
 
-  // Build accounts lookup once for displayName resolution on errors.
-  const accountsLookup = new Map<string, SocialAccount>();
-  for (const account of [
-    ...args.pinterestAccounts,
-    ...args.linkedinAccounts,
-    ...args.tiktokAccounts,
-    ...args.instagramAccounts,
-  ]) {
-    accountsLookup.set(account.id, account);
-  }
+  const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
+  const posts: (SchedulePostData & { platform: PostingPlatform })[] = [];
 
-  const findContent = (accountId: string): ContentInfo | undefined =>
-    args.accountContent.find((c) => c.accountId === accountId);
+  for (const [platform, platformAccounts] of args.accountsByPlatform) {
+    if (!platformSupportsMediaType(platform, args.postType)) continue;
+    const adapter = PLATFORM_FORM_ADAPTERS[platform];
 
-  const posts: SchedulePostData[] = [];
-
-  // Pinterest (skipped for text, matches legacy)
-  if (args.postType !== "text") {
-    for (const account of args.pinterestAccounts) {
-      const content = findContent(account.id);
+    for (const account of platformAccounts) {
+      const content = findContentForAccount(args.accountContent, account.id);
       if (!content) continue;
-      const selectedBoard = args.boards?.find(
-        (b) => b.accountId === account.id && b.isSelected,
-      );
+      const selectedBoard = findSelectedBoard(args.boards, account.id);
+
       posts.push({
         socialAccountId: account.id,
-        platform: "pinterest",
+        platform,
         scheduledAt: scheduledAtIso,
-        title: content.title,
+        title: adapter.keepsTitle ? content.title : "",
         description: content.description,
         postType: args.postType,
         mediaStoragePath: args.mediaPath,
         coverTimestamp: args.coverTimestamp,
         batch_id: args.batchId,
-        postOptions: {
-          privacyLevel:
-            args.platformOptions.pinterest?.privacyLevel ?? "PUBLIC",
-          board: selectedBoard?.boardID ?? "",
-          boardName: selectedBoard?.boardName ?? "",
-          link: content.link,
-        },
-      });
-    }
-  }
-
-  // LinkedIn (always built; LinkedIn supports text)
-  for (const account of args.linkedinAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    posts.push({
-      socialAccountId: account.id,
-      platform: "linkedin",
-      scheduledAt: scheduledAtIso,
-      title: "",
-      description: content.description,
-      postType: args.postType,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      batch_id: args.batchId,
-      postOptions: {
-        memberUrn: `urn:li:person:${account.account_identifier}`,
-        link: content.link || undefined,
-        visibility: args.platformOptions.linkedin?.visibility ?? "PUBLIC",
-      },
-    });
-  }
-
-  // TikTok (built for all postType, worker rejects text)
-  for (const account of args.tiktokAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    posts.push({
-      socialAccountId: account.id,
-      platform: "tiktok",
-      scheduledAt: scheduledAtIso,
-      title: "",
-      description: content.description,
-      postType: args.postType,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      batch_id: args.batchId,
-      postOptions: args.platformOptions.tiktok ?? null,
-    });
-  }
-
-  // Instagram (skipped for text, matches legacy)
-  if (args.postType !== "text") {
-    for (const account of args.instagramAccounts) {
-      const content = findContent(account.id);
-      if (!content) continue;
-      posts.push({
-        socialAccountId: account.id,
-        platform: "instagram",
-        scheduledAt: scheduledAtIso,
-        title: "",
-        description: content.description,
-        postType: args.postType,
-        mediaStoragePath: args.mediaPath,
-        coverTimestamp: args.coverTimestamp,
-        batch_id: args.batchId,
-        postOptions: null,
+        postOptions: adapter.buildScheduleOptions({
+          account,
+          content,
+          platformOptions: args.platformOptions,
+          selectedBoard,
+        }),
       });
     }
   }
@@ -457,54 +515,33 @@ async function scheduleAllPosts(args: {
   if (posts.length === 0) {
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message:
         "No posts to schedule after filtering. Check post type vs platform compatibility.",
       errors: [],
     };
   }
 
-  // Step: bulk upsert via shared core
-  const scheduleResult = await schedulePostBatch(posts, args.userId, "web", args.requestId);
-
-  // Translate core result -> legacy PostResult shape
-  const rejectedAccountIds = new Set(
-    scheduleResult.details.rejected.map((r) => r.socialAccountId),
+  const scheduleResult = await schedulePostBatch(
+    posts,
+    args.userId,
+    "web",
+    args.requestId,
   );
 
-  const counts: PlatformCounts = { ...ZERO_COUNTS };
-  if (scheduleResult.success) {
-    for (const post of posts) {
-      if (rejectedAccountIds.has(post.socialAccountId)) continue;
-      const platformKey = post.platform as keyof PlatformCounts;
-      if (
-        platformKey === "pinterest" ||
-        platformKey === "linkedin" ||
-        platformKey === "tiktok" ||
-        platformKey === "instagram"
-      ) {
-        counts[platformKey]++;
-      }
-    }
-    counts.total =
-      counts.pinterest + counts.linkedin + counts.tiktok + counts.instagram;
-  }
+  const rejectedAccountIds = new Set(
+    scheduleResult.details.rejected.map(
+      (rejection) => rejection.socialAccountId,
+    ),
+  );
 
-  const errors: AccountError[] = scheduleResult.details.rejected.map(
-    (rejection) => {
-      const account = accountsLookup.get(rejection.socialAccountId);
-      const displayName =
-        account?.display_name ??
-        account?.username ??
-        account?.id ??
-        rejection.socialAccountId;
-      return {
-        accountId: rejection.socialAccountId,
-        platform: account?.platform ?? "unknown",
-        displayName,
-        error: rejection.reason,
-      };
-    },
+  const counts = scheduleResult.success
+    ? countAcceptedByPlatform(posts, rejectedAccountIds)
+    : buildZeroCounts();
+
+  const errors = mapRejectionsToAccountErrors(
+    scheduleResult.details.rejected,
+    accountsLookup,
   );
 
   const message =
@@ -523,14 +560,11 @@ async function scheduleAllPosts(args: {
 }
 
 // ────────────────────────────────────────────────────────────
-// Direct-post Inngest event dispatch (UNCHANGED from before)
+// Direct-post Inngest event dispatch
 // ────────────────────────────────────────────────────────────
 
 async function directPostFromForm(args: {
-  pinterestAccounts: SocialAccount[];
-  linkedinAccounts: SocialAccount[];
-  tiktokAccounts: SocialAccount[];
-  instagramAccounts: SocialAccount[];
+  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -541,119 +575,62 @@ async function directPostFromForm(args: {
   batchId: string;
   requestId: string;
 }): Promise<PostResult> {
-  const findContent = (accountId: string) =>
-    args.accountContent.find((c) => c.accountId === accountId);
+  const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
+  const posts: (DirectPostData & { platform: PostingPlatform })[] = [];
 
-  const posts: DirectPostData[] = [];
+  for (const [platform, platformAccounts] of args.accountsByPlatform) {
+    if (!platformSupportsMediaType(platform, args.postType)) continue;
 
-  for (const account of args.linkedinAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    posts.push({
-      socialAccountId: account.id,
-      platform: "linkedin",
-      postType: args.postType,
-      title: content.title,
-      description: content.description,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      platformOptions: args.platformOptions,
-    });
-  }
+    for (const account of platformAccounts) {
+      const content = findContentForAccount(args.accountContent, account.id);
+      if (!content) continue;
+      const selectedBoard = findSelectedBoard(args.boards, account.id);
 
-  for (const account of args.pinterestAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    const selectedBoard = args.boards?.find(
-      (b) => b.accountId === account.id && b.isSelected,
-    );
-    posts.push({
-      socialAccountId: account.id,
-      platform: "pinterest",
-      postType: args.postType,
-      title: content.title,
-      description: content.description,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      platformOptions: args.platformOptions,
-      pinterestBoardId: selectedBoard?.boardID,
-      pinterestBoardName: selectedBoard?.boardName,
-      pinterestLink: content.link || undefined,
-    });
-  }
-
-  for (const account of args.tiktokAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    posts.push({
-      socialAccountId: account.id,
-      platform: "tiktok",
-      postType: args.postType,
-      title: content.title,
-      description: content.description,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      platformOptions: args.platformOptions,
-    });
-  }
-
-  for (const account of args.instagramAccounts) {
-    const content = findContent(account.id);
-    if (!content) continue;
-    posts.push({
-      socialAccountId: account.id,
-      platform: "instagram",
-      postType: args.postType,
-      title: content.title,
-      description: content.description,
-      mediaStoragePath: args.mediaPath,
-      coverTimestamp: args.coverTimestamp,
-      platformOptions: args.platformOptions,
-    });
+      posts.push({
+        socialAccountId: account.id,
+        platform,
+        postType: args.postType,
+        title: content.title,
+        description: content.description,
+        mediaStoragePath: args.mediaPath,
+        coverTimestamp: args.coverTimestamp,
+        platformOptions: args.platformOptions,
+        ...(platform === "pinterest"
+          ? {
+              pinterestBoardId: selectedBoard?.boardID,
+              pinterestBoardName: selectedBoard?.boardName,
+              pinterestLink: content.link || undefined,
+            }
+          : {}),
+      });
+    }
   }
 
   if (posts.length === 0) {
     return {
       success: false,
-      counts: ZERO_COUNTS,
+      counts: buildZeroCounts(),
       message: "No posts to dispatch.",
       errors: [],
     };
   }
 
-  const result = await directPostBatch(posts, args.userId, "web", args.batchId, args.requestId);
-
-  const counts: PlatformCounts = { ...ZERO_COUNTS };
-  const rejectedIds = new Set(
-    result.details.rejected.map((r) => r.socialAccountId),
+  const result = await directPostBatch(
+    posts,
+    args.userId,
+    "web",
+    args.batchId,
+    args.requestId,
   );
-  for (const post of posts) {
-    if (rejectedIds.has(post.socialAccountId)) continue;
-    counts[post.platform as keyof PlatformCounts]++;
-  }
-  counts.total =
-    counts.pinterest + counts.linkedin + counts.tiktok + counts.instagram;
 
-  const accountsLookup = new Map<string, SocialAccount>();
-  for (const acc of [
-    ...args.pinterestAccounts,
-    ...args.linkedinAccounts,
-    ...args.tiktokAccounts,
-    ...args.instagramAccounts,
-  ]) {
-    accountsLookup.set(acc.id, acc);
-  }
-
-  const errors: AccountError[] = result.details.rejected.map((r) => {
-    const acc = accountsLookup.get(r.socialAccountId);
-    return {
-      accountId: r.socialAccountId,
-      platform: acc?.platform ?? "unknown",
-      displayName:
-        acc?.display_name ?? acc?.username ?? acc?.id ?? r.socialAccountId,
-      error: r.reason,
-    };
-  });
+  const rejectedIds = new Set(
+    result.details.rejected.map((rejection) => rejection.socialAccountId),
+  );
+  const counts = countAcceptedByPlatform(posts, rejectedIds);
+  const errors = mapRejectionsToAccountErrors(
+    result.details.rejected,
+    accountsLookup,
+  );
 
   return {
     success: result.success && counts.total > 0,

@@ -108,6 +108,8 @@ export const POST = withRestEndpoint({
         initiated_via: "api",
         platform,
         oauth_state: oauthState,
+        // Non-null only for PKCE platforms (X); the shared callback reads it.
+        oauth_code_verifier: oauthResult.codeVerifier,
         redirect_uri: redirectUri,
         status: "pending",
         expires_at: expiresAt,

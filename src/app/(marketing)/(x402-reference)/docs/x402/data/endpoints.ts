@@ -157,16 +157,8 @@ export const DOCS_SECTIONS: DocsSection[] = [
       "src/lib/x402/middleware/x402PaidEndpoint.ts, src/lib/x402/http/paymentHttp.ts, src/lib/x402/payment/paymentPayload.ts",
     flowSteps: [
       {
-        title: "Register your wallet once.",
-        body: "POST /api/x402/register with no payment header returns 402 with payment requirements plus a SIWE nonce in extensions. Sign the SIWE message and the payment, then retry. Details under Wallet registration.",
-      },
-      {
-        title: "Call a paid endpoint with no payment.",
-        body: "Send the request as if the API were free. Pick a network with ?network= (default: base).",
-      },
-      {
-        title: "Read the 402.",
-        body: "The JSON body and the PAYMENT-REQUIRED response header carry the same object. accepts lists exactly one way to pay: scheme exact on your chosen network, amount in atomic USDC units (6 decimals), recipient in payTo.",
+        title: "Call a paid endpoint with no payment and read the 402.",
+        body: "Send the request as if the API were free. Pick a network with ?network= (default: base). The JSON body and the PAYMENT-REQUIRED response header carry the same object. accepts lists exactly one way to pay: scheme exact on your chosen network, amount in atomic USDC units (6 decimals), recipient in payTo.",
       },
       {
         title: "Sign the payment.",
@@ -178,7 +170,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "The server verifies, settles, then executes.",
-        body: "Verification runs off-chain at the Coinbase CDP facilitator and includes sanctions screening. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, the charge is refunded on-chain and the error body carries refundInitiated and refundTxHash. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
+        body: "Verification runs off-chain at the Coinbase CDP facilitator and includes sanctions screening. A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, the charge is refunded on-chain and the error body carries refundInitiated and refundTxHash. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
       },
       {
         title: "For social accounts: finish OAuth.",
@@ -196,184 +188,9 @@ export const DOCS_SECTIONS: DocsSection[] = [
         tone: "blue",
         text: "Each signed payment is single use. Presenting the same payment twice returns 409 replay. Sign a fresh payment for every call.",
       },
-    ],
-  },
-
-  // ── Wallet registration ─────────────────────────────────────────────────
-  {
-    id: "register",
-    navLabel: "Register wallet",
-    title: "Wallet registration",
-    summary:
-      "One-time onboarding, itself paid (the register action). The same POST route serves the challenge (no payment header) and the verify (payment header present).",
-    sourceRef:
-      "src/app/api/x402/register/route.ts, src/lib/x402/register/handleRegisterChallenge.ts, handleRegisterVerify.ts, handleRegisterSolanaVerify.ts, src/lib/x402/siwe/*",
-    operations: [
       {
-        id: "register-challenge",
-        method: "POST",
-        path: "/api/x402/register",
-        title: "Request a registration challenge",
-        description:
-          "Call with no PAYMENT-SIGNATURE header. Returns 402 with the payment requirements for the register action plus a fresh SIWE nonce in extensions. The nonce is single use and expires 300 seconds after issuance.",
-        sourceRef:
-          "src/lib/x402/register/handleRegisterChallenge.ts, src/lib/x402/siwe/createSiweNonce.ts",
-        paramTables: [
-          {
-            heading: "Query Parameters",
-            rows: [
-              {
-                name: "network",
-                type: "string",
-                required: false,
-                description:
-                  "Payment network: base, polygon, arbitrum, or solana. Default base. Unknown values return 400 unsupported_network.",
-              },
-            ],
-          },
-        ],
-        codeSamples: [
-          {
-            label: "Example Request",
-            code: `curl -X POST "https://sharetopus.com/api/x402/register?network=base"`,
-          },
-          {
-            label: "Response · 402",
-            code: `{
-  "x402Version": 2,
-  "resource": { "url": "https://sharetopus.com/api/x402/register" },
-  "accepts": [
-    {
-      "scheme": "exact",
-      "network": "eip155:8453",
-      "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      "amount": "1000000",
-      "payTo": "0xSHARETOPUS_RECEIVING_ADDRESS",
-      "maxTimeoutSeconds": 300,
-      "extra": { "name": "USD Coin", "version": "2" }
-    }
-  ],
-  "extensions": {
-    "siweNonce": "kPaXM3GZbXVtMW3sJq2r9",
-    "siweExpiresAt": "2026-06-09T12:05:00.000Z"
-  }
-}`,
-          },
-        ],
-      },
-      {
-        id: "register-verify",
-        method: "POST",
-        path: "/api/x402/register",
-        title: "Verify and register",
-        description:
-          "Retry the same route with the signed payment in PAYMENT-SIGNATURE and the signed sign-in message in the body. EVM wallets sign an EIP-4361 (SIWE) message; smart wallets verify via EIP-1271/ERC-6492 through the network RPC. Solana wallets sign the SIWS message text with Ed25519. The verify path follows the network family of ?network. A wallet flagged by sanctions screening is rejected with 403 sanctioned.",
-        sourceRef:
-          "src/lib/x402/register/handleRegisterVerify.ts, src/lib/x402/solana/verifySolanaSiweAuth.ts, src/lib/x402/siwe/verifySiweAuth.ts, consumeSiweNonce.ts",
-        paramTables: [
-          {
-            heading: "Request Body",
-            rows: [
-              {
-                name: "siweMessage",
-                type: "string",
-                required: true,
-                description:
-                  "The signed message text. Must carry the nonce from the challenge, the domain sharetopus.com, and a URI exactly equal to https://sharetopus.com/api/x402/register. EVM messages must also carry the chain id of the payment network.",
-              },
-              {
-                name: "siweSignature",
-                type: "string",
-                required: true,
-                description:
-                  "EVM: hex signature, 0x-prefixed. Solana: base58 Ed25519 signature.",
-              },
-            ],
-          },
-          {
-            heading: "Response Fields",
-            rows: [
-              {
-                name: "principalId",
-                type: "string",
-                required: true,
-                description: "Wallet principal id, format wallet_<32 hex chars>.",
-              },
-              {
-                name: "walletId",
-                type: "string",
-                required: true,
-                description: "Same value as principalId.",
-              },
-              {
-                name: "address",
-                type: "string",
-                required: true,
-                description:
-                  "Registered wallet address. EVM addresses are stored lowercase; Solana addresses keep their casing.",
-              },
-              {
-                name: "chain",
-                type: "string",
-                required: true,
-                description: "base, polygon, arbitrum, or solana.",
-              },
-              {
-                name: "sanctionsStatus",
-                type: "string",
-                required: true,
-                description: "clean for fresh registrations.",
-              },
-              {
-                name: "isNew",
-                type: "boolean",
-                required: true,
-                description: "false when the wallet was already registered.",
-              },
-              {
-                name: "chargeId",
-                type: "string | null",
-                required: true,
-                description:
-                  "Charge id for this registration. Null when isNew is false.",
-              },
-            ],
-          },
-        ],
-        callouts: [
-          {
-            tone: "amber",
-            text: "Keep your wallet key offline. The API never needs the key, only signatures: one sign-in signature to prove wallet ownership at registration and one payment signature per paid call.",
-          },
-          {
-            tone: "blue",
-            text: "Re-registering an existing wallet returns 200 with isNew false and charges nothing. The unclaimed payment authorization simply expires.",
-          },
-        ],
-        codeSamples: [
-          {
-            label: "Example Request",
-            code: `curl -X POST "https://sharetopus.com/api/x402/register?network=base" \\
-  -H "Content-Type: application/json" \\
-  -H "PAYMENT-SIGNATURE: <signed-payment-payload>" \\
-  -d '{
-    "siweMessage": "<EIP-4361 message: domain sharetopus.com, uri https://sharetopus.com/api/x402/register, chain id of your network, nonce from the challenge>",
-    "siweSignature": "0x57c2b1..."
-  }'`,
-          },
-          {
-            label: "Response · 200",
-            code: `{
-  "principalId": "wallet_2f6a1c0e9b8d4a7f5c3e1d2b4a6c8e0f",
-  "walletId": "wallet_2f6a1c0e9b8d4a7f5c3e1d2b4a6c8e0f",
-  "address": "0x9af31c5e...",
-  "chain": "base",
-  "sanctionsStatus": "clean",
-  "isNew": true,
-  "chargeId": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa"
-}`,
-          },
-        ],
+        tone: "amber",
+        text: "Keep your wallet key offline. The API never needs the key, only one payment signature per paid call.",
       },
     ],
   },
@@ -384,7 +201,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Connect account",
     title: "Connect a social account",
     summary:
-      "Paid OAuth initiation for linkedin, tiktok, pinterest, and instagram. No request body: the wallet is identified by the payment signature alone.",
+      "Paid OAuth initiation for linkedin, tiktok, pinterest, instagram, youtube, x, and facebook. No request body: the wallet is identified by the payment signature alone.",
     sourceRef:
       "src/app/api/x402/connect/route.ts, src/lib/x402/connect/handleConnectChallenge.ts, handleConnectVerify.ts, src/lib/x402/config.ts",
     operations: [
@@ -394,7 +211,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/connect",
         title: "Request connect requirements",
         description:
-          "Call with ?platform and no PAYMENT-SIGNATURE header. Returns 402 quoting the connect_account price. No SIWE nonce here; the wallet is already registered.",
+          "Call with ?platform and no PAYMENT-SIGNATURE header. Returns 402 quoting the connect_account price. The wallet is identified by the payment signature alone; no request body is needed.",
         sourceRef: "src/lib/x402/connect/handleConnectChallenge.ts",
         paramTables: [
           {
@@ -405,7 +222,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "string",
                 required: true,
                 description:
-                  "One of linkedin, tiktok, pinterest, instagram. Anything else returns 400 invalid_platform.",
+                  "One of linkedin, tiktok, pinterest, instagram, youtube, x, facebook. Anything else returns 400 invalid_platform.",
               },
               {
                 name: "network",
@@ -448,7 +265,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/connect",
         title: "Pay and get the OAuth URL",
         description:
-          "Retry with the payment attached. On success the wallet is charged connect_account and the response carries the OAuth URL to open in a browser plus a connection token for status polling. The pending connection stays claimable for 15 minutes. An unregistered paying wallet gets 401 wallet_not_registered on this route.",
+          "Retry with the payment attached. On success the wallet is charged connect_account and the response carries the OAuth URL to open in a browser plus a connection token for status polling. The pending connection stays claimable for 15 minutes. A first-time paying wallet is onboarded automatically during verification.",
         sourceRef: "src/lib/x402/connect/handleConnectVerify.ts",
         paramTables: [
           {
@@ -777,7 +594,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "string",
                 required: true,
                 description:
-                  "linkedin, tiktok, pinterest, or instagram. Must match the account.",
+                  "linkedin, tiktok, pinterest, instagram, youtube, x, or facebook. Must match the account.",
               },
               {
                 name: "post_type",
@@ -1728,7 +1545,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
     summary:
       "Status codes and error codes the surface actually produces. The code is the error field in the response body.",
     sourceRef:
-      "src/lib/x402/responses/buildErrorResponse.ts, src/lib/x402/middleware/x402PaidEndpoint.ts (status mappers), route handlers",
+      "src/lib/x402/middleware/x402PaidEndpoint.ts (status mappers), src/app/api/x402/connect/route.ts (buildConnectErrorResponse), route handlers",
     table: {
       columns: ["Status", "Code", "Meaning"],
       rows: [
@@ -1749,23 +1566,13 @@ export const DOCS_SECTIONS: DocsSection[] = [
         ],
         [
           "400",
-          "malformed_payment, invalid_payment_signature",
-          "PAYMENT-SIGNATURE is not valid base64 JSON, or its signature failed verification.",
-        ],
-        [
-          "400",
-          "missing_body, malformed_body, siwe_parse_failed",
-          "Register verify body is missing, malformed, or unparsable.",
+          "malformed_header, invalid_signature, malformed_payment, invalid_payment_signature",
+          "PAYMENT-SIGNATURE is not valid base64 JSON, or its signature failed verification. Most endpoints use the first pair of codes; connect uses the second.",
         ],
         [
           "401",
           "missing_authorization, invalid_token, token_expired",
           "Status polling without a valid Bearer connection token.",
-        ],
-        [
-          "401",
-          "siwe_domain_mismatch, siwe_address_mismatch, siwe_chain_mismatch, siwe_uri_mismatch, siwe_nonce_invalid, siwe_expired, siwe_not_yet_valid, siwe_invalid_signature",
-          "A sign-in field or signature check failed during register. Mismatch bodies carry expected and received.",
         ],
         [
           "402",
@@ -1774,8 +1581,8 @@ export const DOCS_SECTIONS: DocsSection[] = [
         ],
         [
           "402",
-          "verify_amount_mismatch, verify_network_mismatch, verify_recipient_mismatch",
-          "The signed payment does not match the required amount, network, or recipient.",
+          "amount_mismatch, network_mismatch, recipient_mismatch",
+          "The signed payment does not match the required amount, network, or recipient. connect prefixes these codes with verify_.",
         ],
         [
           "402",
@@ -1783,14 +1590,9 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "Settlement failed: payer balance too low.",
         ],
         [
-          "402",
-          "wallet_not_registered",
-          "Paying wallet is not registered. Register first. The connect route returns 401 with the same code.",
-        ],
-        [
           "403",
-          "sanctioned",
-          "Wallet or payer flagged by sanctions screening.",
+          "sanctioned, kyt_sanctioned",
+          "Wallet or payer flagged by sanctions screening. kyt_sanctioned comes from the facilitator's screen at verify time; connect reports both cases as sanctioned.",
         ],
         [
           "404",
@@ -1809,28 +1611,28 @@ export const DOCS_SECTIONS: DocsSection[] = [
         ],
         [
           "500",
-          "internal, pricing_not_configured, charge_insert_failed, charge_update_failed",
+          "internal, internal_error, server_misconfiguration, pricing_not_configured, wallet_resolution_failed, charge_insert_failed, charge_update_failed, not_verified",
           "Server-side failure. When the body carries refundInitiated, a settled payment was refunded on-chain.",
         ],
         [
           "500",
-          "execution_failed, quota_exceeded, account_not_found, ownership_mismatch, reauth_not_needed",
+          "execution_failed, query_failed, quota_exceeded, upload_url_mint_failed, account_not_found, ownership_mismatch, reauth_not_needed, unsupported_platform, redirect_uri_not_configured, oauth_url_build_failed, db_insert_failed, token_issue_failed",
           "The paid action failed after settlement. The charge is refunded on-chain when possible (refundInitiated true).",
         ],
         [
           "502",
-          "facilitator_unavailable",
-          "Payment facilitator unreachable or returned an error.",
+          "facilitator_error, facilitator_unavailable",
+          "Payment facilitator unreachable or returned an error. connect uses the facilitator_unavailable name.",
         ],
         [
           "504",
-          "settlement_timeout",
-          "Settlement timed out and the outcome may be indeterminate. Do not re-present the same payment; contact support if the charge settled.",
+          "timeout, settlement_timeout",
+          "Settlement timed out and the outcome may be indeterminate. Do not re-present the same payment; contact support if the charge settled. connect uses the settlement_timeout name.",
         ],
       ],
     },
     tableNote:
-      "Endpoints wrapped by the shared middleware return { success: false, error, message, chargeId } plus refund fields when applicable. register, connect, and status return { error, ... } without the success field.",
+      "Endpoints wrapped by the shared middleware return { success: false, error, message, chargeId } plus refund fields when applicable. connect and status return { error, ... } without the success field.",
     codeSamples: [
       {
         label: "Error Response Format",
@@ -1842,10 +1644,10 @@ export const DOCS_SECTIONS: DocsSection[] = [
 }`,
       },
       {
-        label: "Error Format · register / connect / status",
+        label: "Error Format · connect / status",
         code: `{
-  "error": "siwe_nonce_invalid",
-  "reason": "already_used"
+  "error": "sanctioned",
+  "message": "This wallet has been flagged by sanctions screening and cannot transact."
 }`,
       },
     ],
@@ -1863,8 +1665,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     table: {
       columns: ["Scope", "Endpoint", "Limit", "Window"],
       rows: [
-        ["x402_register_challenge", "POST /register (challenge)", "10", "60 s"],
-        ["x402_register_verify", "POST /register (verify)", "5", "60 s"],
         ["x402_connect_challenge", "POST /connect (challenge)", "10", "60 s"],
         ["x402_connect_verify", "POST /connect (verify)", "5", "60 s"],
         ["x402_oauth_status_poll", "GET /oauth/status", "120", "60 s"],

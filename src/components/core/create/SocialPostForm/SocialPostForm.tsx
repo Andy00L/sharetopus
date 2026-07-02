@@ -93,17 +93,14 @@ export default function SocialPostForm({
   const pinterestHook = usePinterestBoards(userId);
 
   // Derived data
-  const selectedPinterestAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "pinterest",
+  const allSelectedAccounts = accounts.filter(
+    (account) => selectedAccounts[account.id] === true,
   );
-  const selectedLinkedinAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "linkedin",
+  const selectedPinterestAccounts = allSelectedAccounts.filter(
+    (account) => account.platform === "pinterest",
   );
-  const selectedTikTokAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "tiktok",
-  );
-  const selectedInstagramAccounts = accounts.filter(
-    (acc) => selectedAccounts[acc.id] === true && acc.platform === "instagram",
+  const selectedTikTokAccounts = allSelectedAccounts.filter(
+    (account) => account.platform === "tiktok",
   );
 
   const tikTokCreatorHook = useTikTokCreatorInfo(
@@ -298,10 +295,7 @@ export default function SocialPostForm({
       }
 
       const result = await handleSocialMediaPost({
-        pinterestAccounts: selectedPinterestAccounts,
-        linkedinAccounts: selectedLinkedinAccounts,
-        tiktokAccounts: selectedTikTokAccounts,
-        instagramAccounts: selectedInstagramAccounts,
+        accounts: allSelectedAccounts,
         mediaPath: mediaStoragePath,
         coverTimestamp,
         fileName: selectedFile?.name,

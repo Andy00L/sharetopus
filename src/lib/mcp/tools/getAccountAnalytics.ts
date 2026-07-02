@@ -5,6 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
 import { withMcpTool } from "../withMcpTool";
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { Platform } from "@/lib/types/database.types";
 
 type GetAccountAnalyticsArgs = {
@@ -35,7 +36,7 @@ export function registerGetAccountAnalytics(server: McpServer): void {
         "Fetch performance metrics (views, likes, comments, shares) for your content. Data may be up to 24h old.",
       inputSchema: {
         platform: z
-          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .enum(POSTING_PLATFORMS)
           .optional()
           .describe("Filter by platform"),
         content_id: z

@@ -5,6 +5,7 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { MediaType, Platform } from "@/lib/types/database.types";
 import { withMcpTool } from "../withMcpTool";
 
@@ -44,7 +45,7 @@ export function registerPostNow(server: McpServer): void {
           .uuid()
           .describe("ID of the social account to post to"),
         platform: z
-          .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+          .enum(POSTING_PLATFORMS)
           .describe("Target platform"),
         post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
         title: z

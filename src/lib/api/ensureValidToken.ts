@@ -1,24 +1,35 @@
 // lib/api/auth/ensureValidToken.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { Platform } from "@/lib/types/database.types";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
+import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
 import refreshLinkedInToken from "./linkedin/data/refreshLinkedinToken";
 import refreshPinterestToken from "./pinterest/data/refreshPinterestToken";
 import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
+import refreshXToken from "./x/data/refreshXToken";
+import refreshYouTubeToken from "./youtube/data/refreshYouTubeToken";
 
 /**
- * Vérifie et rafraîchit si nécessaire un token pour n'importe quelle plateforme
- * @param account Le compte social
- * @returns Un access_token valide ou null en cas d'échec
+ * Returns a valid access token for any platform, refreshing it first when
+ * it is expired or about to expire.
+ *
+ * Refresh strategy per platform:
+ *   - tiktok / pinterest / linkedin / youtube / x: standard refresh_token
+ *     grant (x additionally ROTATES the refresh token on every call).
+ *   - instagram: no refresh_token exists; the long-lived ACCESS token is
+ *     exchanged for a fresh one via /refresh_access_token.
+ *   - facebook: Page tokens minted from a long-lived user token do not
+ *     expire (token_expires_at is stored null, so this path is only reached
+ *     if the token was revoked); the user must reconnect.
  */
 export async function ensureValidToken(account: SocialAccount): Promise<{
   success: boolean;
   token?: string;
   error?: string;
 }> {
-  // Vérifier si nous avons un token d'accès
   if (!account.access_token) {
     console.error(
-      `[ensureValidToken] Pas de token d'accès pour ${account.platform}`
+      `[ensureValidToken] No access token for ${account.platform}`,
     );
     return {
       success: false,
@@ -26,10 +37,8 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
     };
   }
 
-  // Vérifier si le token est expiré ou sur le point d'expirer
   const isExpired = isTokenExpired(account.token_expires_at);
 
-  // Si le token est valide, on le retourne directement
   if (!isExpired) {
     return {
       success: true,
@@ -38,71 +47,27 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
   }
 
   console.log(
-    `[ensureValidToken ${account.platform}] Token expiré ou proche de l'expiration, rafraîchissement...`
+    `[ensureValidToken ${account.platform}] Token expired or close to expiry, refreshing...`,
   );
 
-  // Vérifier si nous avons un refresh token
-  if (!account.refresh_token) {
-    console.error(
-      `[ensureValidToken. ${account.platform}] Pas de refresh token disponible`
-    );
-    return {
-      success: false,
-      error: `Your ${account.platform} account has expired and cannot be automatically renewed. Please reconnect your account.`,
-    };
-  }
-
   try {
-    // Appeler la fonction de rafraîchissement appropriée selon la plateforme
-    let newTokens: TokenExchangeResponse | null = null;
-
-    // TODO(future): Instagram tokens (long-lived) last 60 days and need refresh
-    // before expiry. The original refreshInstagramToken implementation was deleted
-    // in FIX 18 because it was dead code with no caller and no tests. When Instagram
-    // goes to production, write a tested refresh path against Instagram Graph API
-    // /refresh_access_token endpoint and add `case "instagram"` to the switch.
-    switch (account.platform) {
-      case "tiktok":
-        newTokens = await refreshTikTokToken(account.refresh_token);
-        break;
-      case "pinterest":
-        newTokens = await refreshPinterestToken(account.refresh_token);
-        break;
-      case "linkedin":
-        newTokens = await refreshLinkedInToken(account.refresh_token);
-        break;
-      default:
-        console.error(
-          `[ensureValidToken] Plateforme non supportée: ${account.platform}`
-        );
-        return {
-          success: false,
-          error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
-        };
+    const refreshResult = await refreshTokenForPlatform(account);
+    if (!refreshResult.success) {
+      return { success: false, error: refreshResult.error };
     }
+    const newTokens = refreshResult.tokens;
 
-    if (!newTokens) {
-      console.error(
-        `[ensureValidToken ${account.platform}] Échec du rafraîchissement`
-      );
-      return {
-        success: false,
-        error: `Unable to refresh your ${account.platform} connection. Please try reconnecting your account.`,
-      };
-    }
-
-    // Mettre à jour les tokens dans la base de données
     const updateSuccess = await updateTokenInDatabase(
       account.id,
       account.platform,
-      newTokens
+      newTokens,
     );
 
     if (!updateSuccess) {
       console.error(
-        `[ensureValidToken ${account.platform}] Échec de la mise à jour en base de données`
+        `[ensureValidToken ${account.platform}] DB update failed after refresh`,
       );
-      // On peut retourner le nouveau token même si la mise à jour a échoué
+      // The refreshed token is still valid even if persisting it failed.
       return {
         success: true,
         token: newTokens.access_token,
@@ -110,7 +75,7 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
     }
 
     console.log(
-      `[ensureValidToken ${account.platform}] Token rafraîchi avec succès`
+      `[ensureValidToken ${account.platform}] Token refreshed successfully`,
     );
     return {
       success: true,
@@ -118,8 +83,8 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
     };
   } catch (error) {
     console.error(
-      `[${account.platform}] Erreur lors du rafraîchissement:`,
-      error
+      `[ensureValidToken ${account.platform}] Refresh error:`,
+      error,
     );
     return {
       success: false,
@@ -129,80 +94,143 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
 }
 
 /**
- * Vérifie si un token est expiré ou expire dans les 5 minutes
- * @param expiresAt Date d'expiration du token au format ISO string
- * @returns true si expiré ou proche de l'expiration, false sinon
+ * Platform dispatch for the refresh call. Encapsulates which credential
+ * each platform refreshes with (refresh_token vs long-lived access token)
+ * and which platforms cannot refresh at all.
+ */
+async function refreshTokenForPlatform(
+  account: SocialAccount,
+): Promise<
+  | { success: true; tokens: TokenExchangeResponse }
+  | { success: false; error: string }
+> {
+  const reconnectError = `Your ${account.platform} account has expired and cannot be automatically renewed. Please reconnect your account.`;
+
+  let newTokens: TokenExchangeResponse | null = null;
+
+  switch (account.platform) {
+    case "tiktok":
+      if (!account.refresh_token) return { success: false, error: reconnectError };
+      newTokens = await refreshTikTokToken(account.refresh_token);
+      break;
+    case "pinterest":
+      if (!account.refresh_token) return { success: false, error: reconnectError };
+      newTokens = await refreshPinterestToken(account.refresh_token);
+      break;
+    case "linkedin":
+      if (!account.refresh_token) return { success: false, error: reconnectError };
+      newTokens = await refreshLinkedInToken(account.refresh_token);
+      break;
+    case "youtube":
+      if (!account.refresh_token) return { success: false, error: reconnectError };
+      newTokens = await refreshYouTubeToken(account.refresh_token);
+      break;
+    case "x":
+      if (!account.refresh_token) return { success: false, error: reconnectError };
+      newTokens = await refreshXToken(account.refresh_token);
+      break;
+    case "instagram":
+      // Instagram Login refreshes the long-lived access token itself; the
+      // access_token null-check already ran in ensureValidToken.
+      newTokens = await refreshInstagramToken(account.access_token ?? "");
+      break;
+    case "facebook":
+      // Facebook Page tokens do not expire; reaching this branch means the
+      // token was revoked on the platform side.
+      return { success: false, error: reconnectError };
+    default:
+      console.error(
+        `[ensureValidToken] Unsupported platform: ${account.platform}`,
+      );
+      return {
+        success: false,
+        error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
+      };
+  }
+
+  if (!newTokens) {
+    console.error(`[ensureValidToken ${account.platform}] Refresh failed`);
+    return {
+      success: false,
+      error: `Unable to refresh your ${account.platform} connection. Please try reconnecting your account.`,
+    };
+  }
+
+  return { success: true, tokens: newTokens };
+}
+
+/**
+ * Whether a token is expired or expires within the next 5 minutes.
+ * A null expiry means the token never expires (Facebook Page tokens).
  */
 function isTokenExpired(expiresAt: string | null): boolean {
   if (!expiresAt) {
-    console.log("[isTokenExpired] No expiry date found - treating as expired");
+    console.log(
+      "[isTokenExpired] No expiry date found - treating as non-expiring",
+    );
     return false;
   }
   try {
     const now = new Date();
     const expiry = new Date(expiresAt);
 
-    // Ajouter une marge de 5 minutes pour éviter les problèmes à la limite
-    const bufferTime = 5 * 60 * 1000; // 5 minutes en millisecondes
+    // 5 minute buffer in milliseconds, to avoid using a token that dies
+    // mid-upload.
+    const bufferTime = 5 * 60 * 1000;
     const isExpired = now.getTime() + bufferTime >= expiry.getTime();
     console.log(
-      `[isTokenExpired] Token expires at: ${expiry.toISOString()}, Current time: ${now.toISOString()}, Expired: ${isExpired}`
+      `[isTokenExpired] Token expires at: ${expiry.toISOString()}, Current time: ${now.toISOString()}, Expired: ${isExpired}`,
     );
 
     return isExpired;
   } catch (error) {
     console.error("[isTokenExpired] Error parsing expiry date:", error);
-    return false; // Treat parsing errors as expired for safety
+    return false;
   }
 }
 
 /**
- * Met à jour les informations de token pour un compte social
- * @param accountId ID du compte social dans la base de données
- * @param platform Type de plateforme (tiktok, pinterest, etc.)
- * @param tokenData Données du nouveau token
- * @returns Succès ou échec de la mise à jour
+ * Persists refreshed tokens for a social account.
  */
 async function updateTokenInDatabase(
   accountId: string,
-  platform: string,
-  tokenData: TokenExchangeResponse
+  platform: Platform,
+  tokenData: TokenExchangeResponse,
 ): Promise<boolean> {
   try {
     console.log(
-      `[ensureValidToken ${platform}] Mise à jour des tokens pour le compte ${accountId}`
+      `[updateTokenInDatabase ${platform}] Updating tokens for account ${accountId}`,
     );
 
-    // Calculer la date d'expiration du token
     const now = new Date();
     const expiresAt = new Date(now.getTime() + tokenData.expires_in * 1000);
 
-    // Mettre à jour les tokens et la date d'expiration dans la base de données
     const { error } = await adminSupabase
       .from("social_accounts")
       .update({
         access_token: tokenData.access_token,
-        refresh_token: tokenData.refresh_token || null, // Certains refreshs ne retournent pas un nouveau refresh_token
+        // Some refreshes do not return a new refresh_token; X rotates it.
+        refresh_token: tokenData.refresh_token || null,
         token_expires_at: expiresAt.toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq("id", accountId)
-      .eq("platform", platform as "linkedin" | "tiktok" | "pinterest" | "instagram");
+      .eq("platform", platform);
 
     if (error) {
       console.error(
-        `[ensureValidToken ${platform}] Erreur de mise à jour:`,
-        error
+        `[updateTokenInDatabase ${platform}] Update error:`,
+        error,
       );
       return false;
     }
 
     console.log(
-      `[ensureValidToken ${platform}] Tokens mis à jour avec succès pour ${accountId}`
+      `[updateTokenInDatabase ${platform}] Tokens updated for ${accountId}`,
     );
     return true;
   } catch (error) {
-    console.error(`[ensureValidToken ${platform}] Erreur:`, error);
+    console.error(`[updateTokenInDatabase ${platform}] Error:`, error);
     return false;
   }
 }

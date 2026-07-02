@@ -1,6 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+
 /**
  * Prompt: plan a week of content for a specific platform.
  *
@@ -13,7 +15,7 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
     "Plan a full week of content for a specific social platform around a chosen theme",
     {
       platform: z
-        .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+        .enum(POSTING_PLATFORMS)
         .describe("Which platform to plan for"),
       theme: z.string().describe("The content theme or topic for the week"),
     },

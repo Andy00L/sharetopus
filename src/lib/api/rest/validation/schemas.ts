@@ -1,16 +1,16 @@
 import { z } from "zod";
 
+import {
+  POSTING_PLATFORMS,
+  platformSupportsMediaType,
+} from "@/lib/platforms/capabilities";
+
 /**
- * Supported social platforms for REST API. Subset of the full Platform
- * union in database.types.ts; only platforms with active posting
- * support are exposed.
+ * Supported social platforms for REST API. Sourced from the shared
+ * capability registry (src/lib/platforms/capabilities.ts); only platforms
+ * with a posting implementation are exposed.
  */
-export const SocialPlatformEnum = z.enum([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
+export const SocialPlatformEnum = z.enum(POSTING_PLATFORMS);
 
 export const PostTypeEnum = z.enum(["text", "image", "video"]);
 
@@ -49,12 +49,13 @@ export const PostCreateInputSchema = z
         message: "pinterest_board_id is required when platform is pinterest",
       });
     }
-    // Text posts: LinkedIn only.
-    if (data.post_type === "text" && data.platform !== "linkedin") {
+    // Media-type support per platform comes from the shared capability map
+    // (rejects text on pinterest/tiktok/instagram, image/text on youtube).
+    if (!platformSupportsMediaType(data.platform, data.post_type)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["post_type"],
-        message: "text posts are only supported on linkedin",
+        message: `${data.post_type} posts are not supported on ${data.platform}`,
       });
     }
     // Image / video posts require media_storage_path.

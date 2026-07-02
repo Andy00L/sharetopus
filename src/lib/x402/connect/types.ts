@@ -1,13 +1,15 @@
 import "server-only";
 
+import type { PostingPlatform } from "@/lib/platforms/capabilities";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
 /**
- * Platforms reachable through the x402 connect/reauth/callback flows. A
- * subset of the 8-platform DB union in database.types.ts; the canonical set
+ * Platforms reachable through the x402 connect/reauth/callback flows.
+ * Every posting platform has an x402 OAuth flow, so this aliases the
+ * shared registry (src/lib/platforms/capabilities.ts); the runtime set
  * lives in X402_PLATFORMS in config.ts.
  */
-export type Platform = "linkedin" | "tiktok" | "pinterest" | "instagram";
+export type Platform = PostingPlatform;
 
 /** Result of a successful /connect call. */
 export interface ConnectSuccessPayload {
@@ -28,7 +30,6 @@ export interface ConnectSuccessPayload {
 export interface ConnectNetworkContext {
   network: NetworkConfig;
   recipientAddress: string;
-  expectedDomain: string;
   resourceUrl: string;
   platform: Platform;
 }

@@ -1,6 +1,11 @@
 import "server-only";
 
+import { createHash, randomBytes } from "node:crypto";
+
 import type { Platform } from "./types";
+
+/** 48 random bytes base64url-encode to 64 chars, inside the RFC 7636 43-128 range. */
+const PKCE_VERIFIER_RANDOM_BYTES = 48;
 
 export interface BuildOAuthUrlInput {
   platform: Platform;
@@ -9,7 +14,17 @@ export interface BuildOAuthUrlInput {
 }
 
 export type BuildOAuthUrlResult =
-  | { ok: true; url: string }
+  | {
+      ok: true;
+      url: string;
+      /**
+       * PKCE code_verifier for platforms that mandate PKCE (X). Callers
+       * that create the social_connections row must persist it in
+       * oauth_code_verifier so handleOAuthCallback can complete the
+       * exchange. Null for non-PKCE platforms.
+       */
+      codeVerifier: string | null;
+    }
   | {
       ok: false;
       error: "missing_client_id" | "unsupported_platform";
@@ -20,7 +35,7 @@ export type BuildOAuthUrlResult =
  * Builds the OAuth authorization URL for the given platform.
  *
  * Reads client ID from per-platform env vars. Scopes and auth URLs mirror
- * the existing initiate routes exactly.
+ * the web initiate routes exactly.
  */
 export function buildOAuthUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
   switch (input.platform) {
@@ -32,6 +47,12 @@ export function buildOAuthUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
       return buildPinterestUrl(input);
     case "instagram":
       return buildInstagramUrl(input);
+    case "youtube":
+      return buildYouTubeUrl(input);
+    case "x":
+      return buildXUrl(input);
+    case "facebook":
+      return buildFacebookUrl(input);
     default: {
       const _exhaustive: never = input.platform;
       void _exhaustive;
@@ -67,7 +88,7 @@ function buildLinkedInUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     `&prompt=consent_and_login` +
     `&auth_type=reauthenticate`;
 
-  return { ok: true, url };
+  return { ok: true, url, codeVerifier: null };
 }
 
 function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
@@ -99,7 +120,7 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     `&auth_type=reauthenticate` +
     `&timestamp=${Date.now()}`;
 
-  return { ok: true, url };
+  return { ok: true, url, codeVerifier: null };
 }
 
 function buildPinterestUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
@@ -133,7 +154,7 @@ function buildPinterestUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     `&prompt=login` +
     `&auth_type=reauthenticate`;
 
-  return { ok: true, url };
+  return { ok: true, url, codeVerifier: null };
 }
 
 function buildInstagramUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
@@ -162,5 +183,106 @@ function buildInstagramUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     `&enable_fb_login=0` +
     `&force_authentication=1`;
 
-  return { ok: true, url };
+  return { ok: true, url, codeVerifier: null };
+}
+
+function buildYouTubeUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
+  const clientId = process.env.YOUTUBE_CLIENT_ID;
+  if (!clientId) {
+    console.error("[buildOAuthUrl] YOUTUBE_CLIENT_ID env var not set.");
+    return {
+      ok: false,
+      error: "missing_client_id",
+      message: "YOUTUBE_CLIENT_ID is not configured.",
+    };
+  }
+
+  // Mirrors /api/social/youtube/initiate: upload publishes, readonly reads
+  // the channel; offline+consent forces a refresh_token on every connect.
+  const scopes = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+  ].join(" ");
+
+  const url =
+    `https://accounts.google.com/o/oauth2/v2/auth` +
+    `?client_id=${clientId}` +
+    `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${input.state}` +
+    `&access_type=offline` +
+    `&prompt=consent`;
+
+  return { ok: true, url, codeVerifier: null };
+}
+
+function buildXUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
+  const clientId = process.env.X_CLIENT_ID;
+  if (!clientId) {
+    console.error("[buildOAuthUrl] X_CLIENT_ID env var not set.");
+    return {
+      ok: false,
+      error: "missing_client_id",
+      message: "X_CLIENT_ID is not configured.",
+    };
+  }
+
+  // X mandates PKCE; the verifier is returned so callers can persist it in
+  // social_connections.oauth_code_verifier for the callback exchange.
+  const codeVerifier =
+    randomBytes(PKCE_VERIFIER_RANDOM_BYTES).toString("base64url");
+  const codeChallenge = createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+
+  // Mirrors /api/social/x/initiate.
+  const scopes = [
+    "tweet.read",
+    "tweet.write",
+    "users.read",
+    "media.write",
+    "offline.access",
+  ].join(" ");
+
+  const url =
+    `https://x.com/i/oauth2/authorize` +
+    `?response_type=code` +
+    `&client_id=${clientId}` +
+    `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${input.state}` +
+    `&code_challenge=${codeChallenge}` +
+    `&code_challenge_method=S256`;
+
+  return { ok: true, url, codeVerifier };
+}
+
+function buildFacebookUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
+  const clientId = process.env.FACEBOOK_CLIENT_ID;
+  if (!clientId) {
+    console.error("[buildOAuthUrl] FACEBOOK_CLIENT_ID env var not set.");
+    return {
+      ok: false,
+      error: "missing_client_id",
+      message: "FACEBOOK_CLIENT_ID is not configured.",
+    };
+  }
+
+  // Mirrors /api/social/facebook/initiate.
+  const scopes = [
+    "pages_show_list",
+    "pages_manage_posts",
+    "pages_read_engagement",
+  ].join(",");
+
+  const url =
+    `https://www.facebook.com/v23.0/dialog/oauth` +
+    `?client_id=${clientId}` +
+    `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
+    `&response_type=code` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${input.state}`;
+
+  return { ok: true, url, codeVerifier: null };
 }

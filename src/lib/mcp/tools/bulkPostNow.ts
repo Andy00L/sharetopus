@@ -5,6 +5,7 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod/v3";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
@@ -12,7 +13,7 @@ const MAX_POSTS_PER_CALL = 30;
 const postNowItemSchema = z.object({
   social_account_id: z.string().uuid().describe("UUID of the social account"),
   platform: z
-    .enum(["linkedin", "tiktok", "pinterest", "instagram"])
+    .enum(POSTING_PLATFORMS)
     .describe("Target platform"),
   post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
   title: z.string().optional().describe("Post title (used by some platforms)"),

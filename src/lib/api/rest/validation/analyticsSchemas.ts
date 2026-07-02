@@ -1,11 +1,8 @@
 import { z } from "zod";
 
-const AnalyticsPlatformEnum = z.enum([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+
+const AnalyticsPlatformEnum = z.enum(POSTING_PLATFORMS);
 
 /**
  * Query schema for GET /v1/analytics.

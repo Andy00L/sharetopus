@@ -1,10 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import {
-  decodePaymentSignatureHeader,
-  encodePaymentResponseHeader,
-} from "@x402/core/http";
+import { encodePaymentResponseHeader } from "@x402/core/http";
 import type { SettleResponse } from "@x402/core/types";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
@@ -30,10 +27,8 @@ import type {
   MappedVerifyError,
   MappedSettleError,
 } from "@/lib/x402/payment/errorMaps";
-import { extractPayerAddress } from "@/lib/x402/payment/paymentPayload";
-import { resolveWalletPrincipal } from "@/lib/x402/auth/resolveWalletPrincipal";
+import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
-import { applyWalletGate } from "@/lib/x402/sanctions/applyWalletGate";
 import {
   hasConnectionTokenSecret,
   issueConnectionToken,
@@ -66,7 +61,6 @@ export type ConnectVerifyResult =
  */
 export type ConnectVerifyError =
   | { kind: "rate_limited"; retryAfterSeconds: number }
-  | { kind: "wallet_not_registered"; message: string }
   | { kind: "wallet_sanctioned"; message: string }
   | { kind: "db_error"; message: string }
   | { kind: "server_misconfiguration"; message: string }
@@ -90,15 +84,21 @@ export type ConnectVerifyError =
  *   1. Rate limit check (x402_connect_verify, 5/min per IP)
  *   2. Fail fast on missing server config (HMAC secret, redirect URI) so
  *      nothing can fail AFTER the wallet has been charged
- *   3. Decode payment header, extract payer address, resolve wallet
- *   4. Sanctions gate (applyWalletGate); also covers the free reconnect path
- *   5. Reconnect check: a healthy existing connection costs nothing
- *   6. Read connect pricing, verifyPayment (facilitator + KYT), settlePayment
- *   7. Generate connectionId / oauth_state, build the OAuth URL
- *   8. insertConnectAtomic (connect_wallet_atomic RPC)
- *   9. If the DB insert fails post-settle: refundPayment, report whether the
- *      refund actually succeeded
- *  10. Issue the HMAC connection token for /oauth/status polling
+ *   3. Read connect pricing (verifyPayment needs the expected amount)
+ *   4. verifyPayment (facilitator + KYT): proves the payer controls the
+ *      paying key and screens it for sanctions, all off-chain
+ *   5. Resolve or onboard the wallet from the facilitator-recovered payer;
+ *      a first-time paying wallet is onboarded here, sanctioned wallets are
+ *      rejected, and nothing has settled yet
+ *   6. Reconnect check: a healthy existing connection costs nothing (the
+ *      verified payment is never settled; its authorization expires unclaimed)
+ *   7. Generate connectionId / oauth_state, build the OAuth URL (env-only,
+ *      pure; still BEFORE settle so misconfiguration cannot trigger a charge)
+ *   8. settlePayment (on-chain USDC transfer)
+ *   9. Build the settlement response header
+ *  10. insertConnectAtomic (connect_wallet_atomic RPC); if the insert fails
+ *      post-settle: refundPayment, report whether the refund succeeded
+ *  11. Issue the HMAC connection token for /oauth/status polling
  *
  * Residual risk (accepted at the June 2026 checkpoint, Phase 4.4 item): the
  * atomic RPC inserts after settle, so a process crash between settle and
@@ -149,61 +149,65 @@ export async function handleConnectVerify(
     };
   }
 
-  // -- 3. Decode payment header, extract payer, resolve wallet
-  let payerAddress: string | null = null;
-  try {
-    payerAddress = extractPayerAddress(
-      decodePaymentSignatureHeader(paymentHeader)
-    );
-  } catch (err) {
-    console.error("[handleConnectVerify] Failed to decode payment header:", err instanceof Error ? err.message : err);
+  // -- 3. Read connect pricing (verifyPayment needs the expected amount)
+  const priceResult = await readActionPrice("connect_account");
+  if (priceResult.ok === false) {
     return {
       ok: false,
       error: {
-        kind: "malformed_payment",
-        message: "Payment header is not valid base64-encoded JSON.",
+        kind: "db_error",
+        message: "Unable to read connect pricing from database.",
       },
     };
   }
+  const connectPrice = priceResult.usdcPrice;
 
-  if (!payerAddress) {
-    return {
-      ok: false,
-      error: {
-        kind: "malformed_payment",
-        message: "Payment payload is missing the payer address.",
-      },
-    };
+  // -- 4. Verify payment (facilitator + KYT). Off-chain: proves the caller
+  //       controls the paying key and screens it for sanctions. No USDC
+  //       moves until settle, so everything below remains free to reject.
+  const verifyResult = await verifyPayment({
+    paymentHeader,
+    resourceUrl: context.resourceUrl,
+    amountUsdc: connectPrice,
+    recipientAddress: context.recipientAddress,
+    network: context.network,
+  });
+
+  if (!verifyResult.ok) {
+    return { ok: false, error: mapVerifyPaymentError(verifyResult.error) };
   }
 
-  const walletResult = await resolveWalletPrincipal(payerAddress);
+  // -- 5. Resolve or onboard the wallet from the facilitator-recovered
+  //       payer (never the unverified claim inside the header). A first
+  //       payment onboards the wallet; sanctioned wallets are rejected
+  //       before the reconnect check so a wallet flagged after onboarding
+  //       cannot keep using even the free path.
+  const walletResult = await resolveOrOnboardWalletPrincipal({
+    payerAddress: verifyResult.payerAddress,
+    network: context.network,
+  });
   if (!walletResult.ok) {
+    if (walletResult.reason === "sanctioned") {
+      return {
+        ok: false,
+        error: {
+          kind: "wallet_sanctioned",
+          message: walletResult.message,
+        },
+      };
+    }
     return {
       ok: false,
-      error: {
-        kind: "wallet_not_registered",
-        message: walletResult.message,
-      },
+      error: { kind: "db_error", message: walletResult.message },
     };
   }
   const wallet = walletResult.principal;
 
-  // -- 4. Sanctions gate. Runs before the reconnect check so a wallet
-  //       flagged after registration cannot keep using even the free path.
-  const gateResult = await applyWalletGate(wallet.walletId);
-  if (!gateResult.allowed) {
-    return {
-      ok: false,
-      error: {
-        kind: "wallet_sanctioned",
-        message: `Wallet access denied: ${gateResult.reason}.`,
-      },
-    };
-  }
-
-  // -- 5. Reconnect check: healthy connection = no charge. Ordered and
+  // -- 6. Reconnect check: healthy connection = no charge. Ordered and
   //       limited so a wallet with several healthy accounts on the platform
-  //       deterministically reuses the freshest one.
+  //       deterministically reuses the freshest one. A null expiry means a
+  //       non-expiring token (Facebook Page tokens) and counts as healthy;
+  //       DESC ordering puts nulls first, so those win deterministically.
   const nowIso = new Date().toISOString();
   const { data: existingAccounts, error: existingError } = await adminSupabase
     .from("social_accounts")
@@ -211,7 +215,7 @@ export async function handleConnectVerify(
     .eq("principal_id", wallet.principalId)
     .eq("platform", context.platform)
     .is("deleted_at", null)
-    .gt("token_expires_at", nowIso)
+    .or(`token_expires_at.gt.${nowIso},token_expires_at.is.null`)
     .order("token_expires_at", { ascending: false })
     .limit(1);
 
@@ -229,8 +233,16 @@ export async function handleConnectVerify(
   }
 
   const existingAccount = existingAccounts?.[0];
-  if (existingAccount && existingAccount.token_expires_at) {
+  if (existingAccount) {
+    // The verified payment is never settled on this path; its authorization
+    // simply expires unclaimed, so the reconnect stays free.
     console.log(`[handleConnectVerify] Wallet ${wallet.principalId} already has a healthy ${context.platform} connection. Returning idempotent.`);
+
+    // Non-expiring tokens (null expiry) get a synthetic expiry of now plus
+    // the grace period for the polling token and the payload field.
+    const effectiveExpiryMs = existingAccount.token_expires_at
+      ? new Date(existingAccount.token_expires_at).getTime()
+      : Date.now();
 
     // Accounts created before connection tracking have no social_connections
     // row, so there is nothing for /oauth/status to poll: no token then.
@@ -241,9 +253,7 @@ export async function handleConnectVerify(
         walletAddress: wallet.address,
         chargeId: null,
         iat: Date.now(),
-        exp:
-          new Date(existingAccount.token_expires_at).getTime() +
-          CONNECTION_TOKEN_GRACE_MS,
+        exp: effectiveExpiryMs + CONNECTION_TOKEN_GRACE_MS,
         platform: context.platform,
       });
       reconnectToken = tokenResult.ok ? tokenResult.token : null;
@@ -256,7 +266,9 @@ export async function handleConnectVerify(
         platform: context.platform,
         oauthUrl: null,
         connectionToken: reconnectToken,
-        expiresAt: existingAccount.token_expires_at,
+        expiresAt:
+          existingAccount.token_expires_at ??
+          new Date(effectiveExpiryMs + CONNECTION_TOKEN_GRACE_MS).toISOString(),
         isReconnect: true,
       },
       settleResponseHeader: null,
@@ -265,43 +277,10 @@ export async function handleConnectVerify(
     };
   }
 
-  // -- 6a. Read connect pricing
-  const priceResult = await readActionPrice("connect_account");
-  if (priceResult.ok === false) {
-    return {
-      ok: false,
-      error: {
-        kind: "db_error",
-        message: "Unable to read connect pricing from database.",
-      },
-    };
-  }
-  const connectPrice = priceResult.usdcPrice;
-
-  // -- 6b. Verify payment (facilitator + KYT)
-  const verifyResult = await verifyPayment({
-    paymentHeader,
-    resourceUrl: context.resourceUrl,
-    amountUsdc: connectPrice,
-    recipientAddress: context.recipientAddress,
-    network: context.network,
-  });
-
-  if (!verifyResult.ok) {
-    return { ok: false, error: mapVerifyPaymentError(verifyResult.error) };
-  }
-
-  // -- 6c. Settle payment
-  const settleResult = await settlePayment({
-    paymentHeader,
-    network: context.network,
-  });
-
-  if (!settleResult.ok) {
-    return { ok: false, error: mapSettlePaymentError(settleResult.error) };
-  }
-
-  // -- 7. Generate connection details + build OAuth URL
+  // -- 7. Generate connection details + build OAuth URL. buildOAuthUrl
+  //       depends only on env vars and pure inputs, so it runs BEFORE
+  //       settle: a missing platform client id rejects here with nothing
+  //       charged instead of forcing a charge-then-refund round trip.
   const connectionId = randomUUID();
   const oauthState = generateOAuthState();
   const expiresAt = new Date(
@@ -315,28 +294,27 @@ export async function handleConnectVerify(
   });
 
   if (!oauthResult.ok) {
-    // Money already settled; this failure must go through the refundable
-    // db_insert_failed shape so the caller learns whether they were repaid.
-    console.error(`[handleConnectVerify] OAuth URL build failed after settle: ${oauthResult.message}`);
-    const refundResult = await refundPayment({
-      originalTxHash: settleResult.txHash,
-      payerAddress: verifyResult.payerAddress,
-      amountUsdc: verifyResult.chargeAmountUsdc,
-      network: context.network,
-      reason: "oauth_url_build_failed_post_settle",
-    });
+    console.error(`[handleConnectVerify] OAuth URL build failed before settle; refusing to charge: ${oauthResult.message}`);
     return {
       ok: false,
       error: {
-        kind: "db_insert_failed",
+        kind: "server_misconfiguration",
         message: oauthResult.message,
-        refundInitiated: refundResult.ok,
-        refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
       },
     };
   }
 
-  // -- 8. Build the settlement response header
+  // -- 8. Settle payment (on-chain USDC transfer)
+  const settleResult = await settlePayment({
+    paymentHeader,
+    network: context.network,
+  });
+
+  if (!settleResult.ok) {
+    return { ok: false, error: mapSettlePaymentError(settleResult.error) };
+  }
+
+  // -- 9. Build the settlement response header
   const settleResponse: SettleResponse = {
     success: true,
     payer: verifyResult.payerAddress,
@@ -346,7 +324,7 @@ export async function handleConnectVerify(
   };
   const settleResponseHeader = encodePaymentResponseHeader(settleResponse);
 
-  // -- 9. Atomic DB insert. network/asset/facilitator store DB short names
+  // -- 10. Atomic DB insert. network/asset/facilitator store DB short names
   //       ("base", "USDC", "coinbase_cdp"); CAIP-2 lives only at the SDK
   //       boundary (networks.ts).
   const insertResult = await insertConnectAtomic({
@@ -403,7 +381,49 @@ export async function handleConnectVerify(
     };
   }
 
-  // -- 10. Issue the HMAC connection token. The secret was checked before
+  // -- 10b. Persist the PKCE verifier for platforms that mandate it (X).
+  //        The RPC signature predates PKCE, so this is a follow-up UPDATE.
+  //        The OAuth URL has not been returned yet, so no callback can race
+  //        this write. Without the verifier the paid connection can never
+  //        complete its exchange, so a failed write follows the same
+  //        refund path as a failed insert.
+  if (oauthResult.codeVerifier) {
+    const { error: verifierError } = await adminSupabase
+      .from("social_connections")
+      .update({
+        oauth_code_verifier: oauthResult.codeVerifier,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", connectionId);
+
+    if (verifierError) {
+      console.error(`[handleConnectVerify] PKCE verifier persist failed after settle (txHash=${settleResult.txHash}). Initiating refund. Error: ${verifierError.message}`);
+
+      const refundResult = await refundPayment({
+        originalTxHash: settleResult.txHash,
+        payerAddress: verifyResult.payerAddress,
+        amountUsdc: verifyResult.chargeAmountUsdc,
+        network: context.network,
+        reason: "pkce_verifier_persist_failed_post_settle_connect",
+      });
+
+      if (!refundResult.ok) {
+        console.error(`[handleConnectVerify] REFUND FAILED after settle (txHash=${settleResult.txHash}): ${refundResult.error.message}`);
+      }
+
+      return {
+        ok: false,
+        error: {
+          kind: "db_insert_failed",
+          message: "Failed to store the PKCE verifier for the connection.",
+          refundInitiated: refundResult.ok,
+          refundTxHash: refundResult.ok ? refundResult.refundTxHash : null,
+        },
+      };
+    }
+  }
+
+  // -- 11. Issue the HMAC connection token. The secret was checked before
   //        any charge, so this cannot fail here; the branch satisfies the
   //        result type.
   const tokenResult = issueConnectionToken({

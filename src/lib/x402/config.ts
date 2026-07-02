@@ -8,11 +8,12 @@ import "server-only";
  * once, here. Flow handlers and routes import these helpers instead of
  * touching process.env directly.
  *
- * Called by: facilitator.ts, x402PaidEndpoint, register/connect/reauth flows,
+ * Called by: facilitator.ts, x402PaidEndpoint, connect/reauth flows,
  *            route handlers under src/app/api/x402/
  * Tables touched: none (pure configuration)
  */
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import type { Platform } from "@/lib/x402/connect/types";
 
@@ -45,13 +46,10 @@ export const CONNECTION_TOKEN_GRACE_MS = 60 * 60 * 1000;
  */
 export const MAX_POLLS_PER_CONNECTION = 720;
 
-/** Platforms purchasable through x402 connect/reauth. */
-export const X402_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
+/** Platforms purchasable through x402 connect/reauth (shared registry). */
+export const X402_PLATFORMS: ReadonlySet<Platform> = new Set<Platform>(
+  POSTING_PLATFORMS,
+);
 
 /** Type guard for query/body platform values against the x402 subset. */
 export function isX402Platform(value: string): value is Platform {
@@ -66,7 +64,7 @@ export function getRecipientAddress(network: NetworkConfig): string | null {
   return recipientAddress ?? null;
 }
 
-/** Public site origin used for resource URLs and SIWE domains. */
+/** Public site origin used for resource URLs. */
 export function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
 }
@@ -74,11 +72,6 @@ export function getBaseUrl(): string {
 /** Browser-facing app origin for redirects from the OAuth callback pages. */
 export function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? getBaseUrl();
-}
-
-/** SIWE expected domain: the bare host of the public site origin. */
-export function getExpectedDomain(): string {
-  return new URL(getBaseUrl()).host;
 }
 
 /** Per-platform OAuth redirect URI for the x402 callback flow. Null when unset. */
@@ -92,5 +85,11 @@ export function getOAuthRedirectUri(platform: Platform): string | null {
       return process.env.X402_PINTEREST_REDIRECT_URI ?? null;
     case "instagram":
       return process.env.X402_INSTAGRAM_REDIRECT_URI ?? null;
+    case "youtube":
+      return process.env.X402_YOUTUBE_REDIRECT_URI ?? null;
+    case "x":
+      return process.env.X402_X_REDIRECT_URI ?? null;
+    case "facebook":
+      return process.env.X402_FACEBOOK_REDIRECT_URI ?? null;
   }
 }

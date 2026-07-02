@@ -1,16 +1,22 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import ConnectInstagramButton from "@/components/core/accounts/connectAccountsButton/ConnectInstagramButton";
 import ConnectLinkedInButton from "@/components/core/accounts/connectAccountsButton/ConnectLinkedInButton";
 import ConnectPinterestButton from "@/components/core/accounts/connectAccountsButton/ConnectPinterestButton";
+import ConnectPlatformButton from "@/components/core/accounts/connectAccountsButton/ConnectPlatformButton";
 import ConnectTikTokButton from "@/components/core/accounts/connectAccountsButton/ConnectTikTokButton";
 import { CreateShareLinkDialog } from "@/components/connections/CreateShareLinkDialog";
 import { ShareLinkList } from "@/components/connections/ShareLinkList";
 import NoAccountsMessage from "@/components/core/accounts/NoAccountsMessage";
 import ConnectedAccountsBadge from "@/components/core/accounts/pageUi/ConnectedAccountsBadge";
 import PinterestSVGIcon, {
+  FacebookSVGIcon,
+  InstagramSVGIcon,
   LinkedinSVGIcon,
   TiktokSVGIcon,
+  TwitterVGIcon,
+  YoutubeSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
 import RateLimitError from "@/components/RateLimitError";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
@@ -50,13 +56,14 @@ const AccountsPageWithData = async () => {
   const linkedinAccounts = accounts.filter(
     (acc) => acc.platform === "linkedin",
   );
-  {
-    /* 
   const instagramAccounts = accounts.filter(
-    (acc) => acc.platform === "instagram"
+    (acc) => acc.platform === "instagram",
   );
-  */
-  }
+  const youtubeAccounts = accounts.filter((acc) => acc.platform === "youtube");
+  const xAccounts = accounts.filter((acc) => acc.platform === "x");
+  const facebookAccounts = accounts.filter(
+    (acc) => acc.platform === "facebook",
+  );
 
   return (
     <SidebarContent className="px-4 py-6 ">
@@ -124,8 +131,7 @@ const AccountsPageWithData = async () => {
         </div>
 
         {/* Instagram */}
-        {/*
-        <div className="space-y-3">
+        <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center gap-6">
             <div className="scale-250">
               <InstagramSVGIcon />
@@ -146,7 +152,6 @@ const AccountsPageWithData = async () => {
             />
           </div>
         </div>
-        */}
 
         {/* Pinterest */}
         <div className="space-y-3 pt-4 border-t">
@@ -187,6 +192,72 @@ const AccountsPageWithData = async () => {
           <div className="flex flex-wrap gap-2">
             <ConnectedAccountsBadge
               accounts={linkedinAccounts}
+              userId={userId}
+            />
+          </div>
+        </div>
+
+        {/* YouTube */}
+        <div className="space-y-3 pt-4 border-t">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <YoutubeSVGIcon />
+            </div>
+
+            <h2 className="text-xl font-semibold">YouTube</h2>
+            <ConnectPlatformButton
+              platform="youtube"
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccountsBadge
+              accounts={youtubeAccounts}
+              userId={userId}
+            />
+          </div>
+        </div>
+
+        {/* X (Twitter) */}
+        <div className="space-y-3 pt-4 border-t">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <TwitterVGIcon />
+            </div>
+
+            <h2 className="text-xl font-semibold">X (Twitter)</h2>
+            <ConnectPlatformButton
+              platform="x"
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccountsBadge accounts={xAccounts} userId={userId} />
+          </div>
+        </div>
+
+        {/* Facebook */}
+        <div className="space-y-3 pt-4 border-t">
+          <div className="flex items-center gap-6">
+            <div className="scale-250">
+              <FacebookSVGIcon />
+            </div>
+
+            <h2 className="text-xl font-semibold">Facebook</h2>
+            <ConnectPlatformButton
+              platform="facebook"
+              canConnect={canAddMoreAccounts}
+              currentCount={limitsCheck.currentCount}
+              maxAllowed={limitsCheck.maxAllowed}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <ConnectedAccountsBadge
+              accounts={facebookAccounts}
               userId={userId}
             />
           </div>

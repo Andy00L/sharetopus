@@ -2,11 +2,15 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
+import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
 import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
 import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
 import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
+import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
+import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
+import { PLATFORM_LABELS, platformSupportsMediaType } from "@/lib/platforms/capabilities";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
@@ -159,8 +163,11 @@ export type SignedUrlsResult =
 
 /**
  * Mirrors handleSocialMediaPost URL-minting logic:
- *   - Pinterest/LinkedIn/Instagram: getServerSignedViewUrl (admin Supabase direct)
+ *   - Pinterest/LinkedIn/Instagram/Facebook: getServerSignedViewUrl (the
+ *     platform pulls the media from the URL, or the adapter streams it)
  *   - TikTok: buildTikTokMediaUrl (proxy or supabase_direct per env)
+ *   - YouTube/X: no URL minted; their adapters fetch the file bytes from
+ *     storage and upload them directly
  * For text posts (no media_storage_path) both are null.
  */
 export async function buildPlatformSignedUrls(
@@ -171,6 +178,15 @@ export async function buildPlatformSignedUrls(
     return {
       success: true,
       message: "no media",
+      mediaUrl: null,
+      tiktokMediaUrl: null,
+    };
+  }
+
+  if (platform === "youtube" || platform === "x") {
+    return {
+      success: true,
+      message: "buffer-upload platform, no url minted",
       mediaUrl: null,
       tiktokMediaUrl: null,
     };
@@ -220,39 +236,25 @@ export type CompatibilityResult = {
 };
 
 /**
- * Per-platform post-type rules from the existing process* code:
- *   - pinterest: image | video. Text rejected.
- *   - instagram: image | video. Text rejected.
- *   - tiktok: image | video. Text rejected.
- *   - linkedin: text | image | video. All accepted.
+ * Per-platform post-type rules, read from the shared capability map in
+ * src/lib/platforms/capabilities.ts (single source of truth also used by
+ * the create form, the REST schema, and the account selector).
  * If incompatible, the worker records it as invalid_input (terminal).
  */
 export function checkPlatformCompatibility(
   platform: Platform,
   mediaType: ScheduledPost["media_type"],
 ): CompatibilityResult {
-  if (platform === "pinterest" && mediaType === "text") {
+  if (!platformSupportsMediaType(platform, mediaType)) {
+    const platformLabel =
+      platform in PLATFORM_LABELS
+        ? PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS]
+        : platform;
     return {
       success: true,
       message: "incompatible",
       compatible: false,
-      reason: "Pinterest does not support text-only posts",
-    };
-  }
-  if (platform === "instagram" && mediaType === "text") {
-    return {
-      success: true,
-      message: "incompatible",
-      compatible: false,
-      reason: "Instagram does not support text-only posts",
-    };
-  }
-  if (platform === "tiktok" && mediaType === "text") {
-    return {
-      success: true,
-      message: "incompatible",
-      compatible: false,
-      reason: "TikTok does not support text-only posts",
+      reason: `${platformLabel} does not support ${mediaType} posts`,
     };
   }
   return {
@@ -280,6 +282,8 @@ type PostOptions = {
   yourBrand?: boolean;
   brandedContent?: boolean;
   isAigc?: boolean;
+  /** YouTube videos.insert status.privacyStatus (dbTypes YouTubeOptions). */
+  privacyStatus?: "public" | "unlisted" | "private";
 };
 
 /**
@@ -329,6 +333,9 @@ export async function callPlatformDirectPost(args: {
       yourBrand: options.yourBrand,
       brandedContent: options.brandedContent,
       isAigc: options.isAigc,
+    },
+    youtube: {
+      privacyStatus: options.privacyStatus ?? "public",
     },
   };
 
@@ -423,6 +430,49 @@ export async function callPlatformDirectPost(args: {
           postType: igPostType,
           fileName,
           batchId,
+          scheduledPostId: post.id,
+          createdVia,
+        });
+        break;
+      }
+      case "youtube": {
+        result = await directPostForYouTubeAccounts({
+          account,
+          mediaPath: post.media_storage_path,
+          mediaType,
+          platformOptions,
+          accountContent,
+          userId: post.principal_id,
+          batchId,
+          postType: post.media_type,
+          scheduledPostId: post.id,
+          createdVia,
+        });
+        break;
+      }
+      case "x": {
+        result = await directPostForXAccounts({
+          account,
+          mediaPath: post.media_storage_path,
+          mediaType,
+          accountContent,
+          userId: post.principal_id,
+          batchId,
+          postType: post.media_type,
+          scheduledPostId: post.id,
+          createdVia,
+        });
+        break;
+      }
+      case "facebook": {
+        result = await directPostForFacebookAccounts({
+          account,
+          mediaPath: post.media_storage_path,
+          accountContent,
+          userId: post.principal_id,
+          mediaUrl: mediaUrl ?? "",
+          batchId,
+          postType: post.media_type,
           scheduledPostId: post.id,
           createdVia,
         });

@@ -1,15 +1,13 @@
 import { z } from "zod";
 
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+
 /**
- * Supported platforms for OAuth initiation via REST.
- * Same 4 platforms that have active posting support.
+ * Supported platforms for OAuth initiation via REST. Every posting
+ * platform (shared registry in src/lib/platforms/capabilities.ts) has an
+ * OAuth flow behind /api/oauth/callback/[platform].
  */
-const OAuthPlatformEnum = z.enum([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-]);
+const OAuthPlatformEnum = z.enum(POSTING_PLATFORMS);
 
 /**
  * All platforms stored in social_accounts (superset of posting platforms).

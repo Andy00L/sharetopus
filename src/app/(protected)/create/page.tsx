@@ -3,13 +3,17 @@ import PinterestSVGIcon, {
   FacebookSVGIcon,
   InstagramSVGIcon,
   LinkedinSVGIcon,
-  ThreadsSVGIcon,
   TiktokSVGIcon,
   TwitterVGIcon,
+  YoutubeSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import { Card } from "@/components/ui/card";
 import { SidebarContent } from "@/components/ui/sidebar";
+import {
+  listPlatformsSupportingMediaType,
+  type PostingPlatform,
+} from "@/lib/platforms/capabilities";
 import { auth } from "@clerk/nextjs/server";
 import { FileText, Image, Video } from "lucide-react";
 import Link from "next/link";
@@ -18,37 +22,38 @@ import React from "react";
 export default async function CreatePostPage() {
   const { userId } = await auth();
 
-  // Define the post types with their supported platforms
+  // Post types with their supported platforms, read from the shared
+  // capability registry (src/lib/platforms/capabilities.ts).
   const postTypes = [
     {
       title: "Text Post",
       icon: FileText,
       href: "/create/text",
-      platforms: ["linkedin"],
+      platforms: listPlatformsSupportingMediaType("text"),
     },
     {
       title: "Image Post",
       icon: Image,
       href: "/create/image",
-      platforms: ["linkedin", "pinterest", "tiktok", "instagram"],
+      platforms: listPlatformsSupportingMediaType("image"),
     },
     {
       title: "Video Post",
       icon: Video,
       href: "/create/video",
-      platforms: ["linkedin", "pinterest", "tiktok", "instagram"],
+      platforms: listPlatformsSupportingMediaType("video"),
     },
   ];
 
-  // Map platform names to their icon components
-  const platformIcons = {
-    facebook: FacebookSVGIcon,
-    twitter: TwitterVGIcon,
+  // Map platform keys (DB values) to their icon components
+  const platformIcons: Record<PostingPlatform, () => React.JSX.Element> = {
     linkedin: LinkedinSVGIcon,
-    threads: ThreadsSVGIcon,
-    instagram: InstagramSVGIcon,
-    pinterest: PinterestSVGIcon,
     tiktok: TiktokSVGIcon,
+    pinterest: PinterestSVGIcon,
+    instagram: InstagramSVGIcon,
+    youtube: YoutubeSVGIcon,
+    x: TwitterVGIcon,
+    facebook: FacebookSVGIcon,
   };
 
   return (
@@ -81,18 +86,14 @@ export default async function CreatePostPage() {
               {/* Platform icons section */}
               <div className="mt-auto w-full">
                 <div className="flex flex-wrap items-center justify-center gap-3">
-                  {type.platforms.map((platform) =>
-                    platformIcons[platform as keyof typeof platformIcons] ? (
-                      <span
-                        key={platform}
-                        className="text-muted-foreground transition-colors [&>svg]:!w-4 [&>svg]:!h-4 duration-200 group-hover:text-primary/80 flex-shrink-0"
-                      >
-                        {React.createElement(
-                          platformIcons[platform as keyof typeof platformIcons],
-                        )}
-                      </span>
-                    ) : null,
-                  )}
+                  {type.platforms.map((platform) => (
+                    <span
+                      key={platform}
+                      className="text-muted-foreground transition-colors [&>svg]:!w-4 [&>svg]:!h-4 duration-200 group-hover:text-primary/80 flex-shrink-0"
+                    >
+                      {React.createElement(platformIcons[platform])}
+                    </span>
+                  ))}
                 </div>
               </div>
             </Card>

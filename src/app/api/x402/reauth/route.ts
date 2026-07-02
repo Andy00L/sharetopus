@@ -149,7 +149,8 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    // Insert social_connections row for tracking the OAuth flow.
+    // Insert social_connections row for tracking the OAuth flow. The PKCE
+    // verifier is non-null only for platforms that mandate PKCE (X).
     const { error: insertError } = await adminSupabase
       .from("social_connections")
       .insert({
@@ -159,6 +160,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         initiated_x402_charge_id: chargeId,
         platform,
         oauth_state: oauthState,
+        oauth_code_verifier: oauthResult.codeVerifier,
         redirect_uri: redirectUri,
         status: "pending",
         expires_at: expiresAt,
