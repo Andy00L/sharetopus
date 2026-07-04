@@ -1,4 +1,4 @@
-import type { EndpointOperation } from "../data/endpoints";
+import type { EndpointOperation } from "@/lib/docs/apiReferenceTypes";
 import { MethodBadge } from "./MethodBadge";
 import { ParamTable } from "./ParamTable";
 import { CodeCard } from "./CodeCard";
@@ -14,22 +14,24 @@ export function EndpointBlock({ op }: { op: EndpointOperation }) {
   return (
     <div
       id={op.id}
-      className="scroll-mt-24 py-10 border-b border-[#E5E7EB] last:border-b-0"
+      className="scroll-mt-24 border-b border-border py-10 last:border-b-0"
     >
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 gap-8 xl:grid-cols-2">
         <div>
-          <div className="flex items-center gap-2.5 mb-2">
+          <div className="mb-2 flex items-center gap-2.5">
             <MethodBadge method={op.method} />
-            <h3 className="text-xl font-bold text-[#111827]">{op.title}</h3>
+            <h3 className="text-xl font-bold tracking-tight text-foreground">
+              {op.title}
+            </h3>
           </div>
-          <div className="flex items-center gap-1.5 mb-3 font-mono text-sm text-[#6B7280]">
+          <div className="mb-3 flex items-center gap-1.5 font-mono text-sm text-muted-foreground">
             <span>{op.path}</span>
             <CopyButton
               text={op.path}
-              className="text-[#9CA3AF] hover:text-[#111827] transition-colors"
+              className="text-muted-foreground hover:text-foreground"
             />
           </div>
-          <p className="text-[#374151] text-[15px] mb-5 leading-relaxed">
+          <p className="mb-5 text-[15px] leading-relaxed text-[var(--ink-2)]">
             {op.description}
           </p>
           <div>
@@ -53,7 +55,12 @@ export function EndpointBlock({ op }: { op: EndpointOperation }) {
         </div>
         <div className="space-y-4">
           {op.codeSamples.map((sample) => (
-            <CodeCard key={sample.label} label={sample.label} code={sample.code} />
+            <CodeCard
+              key={sample.label}
+              label={sample.label}
+              code={sample.code}
+              featured={sample.featured}
+            />
           ))}
         </div>
       </div>

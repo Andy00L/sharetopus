@@ -3,12 +3,14 @@ import "server-only";
 import {
   DOCS_SECTIONS,
   OVERVIEW,
-  type CalloutData,
-  type DocsSection,
-  type EndpointOperation,
-  type ParamTableData,
-} from "@/app/(marketing)/(x402-reference)/docs/x402/data/endpoints";
-import { fetchX402Pricing } from "@/app/(marketing)/(x402-reference)/docs/x402/data/pricing";
+} from "@/app/(marketing)/(api-reference)/docs/x402/data/endpoints";
+import { fetchX402Pricing } from "@/app/(marketing)/(api-reference)/docs/x402/data/pricing";
+import type {
+  CalloutData,
+  DocsSection,
+  EndpointOperation,
+  ParamTableData,
+} from "./apiReferenceTypes";
 import {
   SITE_ORIGIN,
   renderFencedCode,

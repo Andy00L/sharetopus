@@ -25,10 +25,10 @@ export function CopyButton({
     try {
       await navigator.clipboard.writeText(text);
       setState("copied");
-    } catch (err) {
+    } catch (copyError) {
       console.error(
         "[CopyButton] Clipboard write failed:",
-        err instanceof Error ? err.message : err
+        copyError instanceof Error ? copyError.message : copyError
       );
       setState("error");
     }
@@ -40,12 +40,15 @@ export function CopyButton({
       type="button"
       aria-label="Copy"
       onClick={handleCopy}
-      className={cn("inline-flex items-center justify-center p-1", className)}
+      className={cn(
+        "inline-flex items-center justify-center rounded p-1 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--orange)]",
+        className
+      )}
     >
       {state === "copied" ? (
-        <Check className="h-3.5 w-3.5 text-emerald-500" />
+        <Check className="h-3.5 w-3.5 text-[var(--orange)]" />
       ) : state === "error" ? (
-        <X className="h-3.5 w-3.5 text-red-500" />
+        <X className="h-3.5 w-3.5 text-destructive" />
       ) : (
         <Copy className="h-3.5 w-3.5" />
       )}

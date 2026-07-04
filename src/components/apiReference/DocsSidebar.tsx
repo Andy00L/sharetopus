@@ -2,11 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-
-export interface SidebarItem {
-  id: string;
-  label: string;
-}
+import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 
 /**
  * Scroll-driven sidebar nav. An IntersectionObserver watches every section
@@ -14,6 +10,10 @@ export interface SidebarItem {
  * sticky offset, sections use scroll-mt-24) and cuts the bottom 55% off so
  * the section sitting under the header wins, not the one entering from the
  * bottom. No scroll libraries, no layout shift: only colors change.
+ *
+ * Active state per docs/UI_DESIGN_SYSTEM.md: a 2px orange rail + ink text
+ * on the layered cream. Orange text alone fails 4.5:1 on the cream field,
+ * so the accent carries the rail, not the label.
  */
 export function DocsSidebar({ items }: { items: SidebarItem[] }) {
   const [activeId, setActiveId] = useState<string>(items[0]?.id ?? "");
@@ -56,10 +56,10 @@ export function DocsSidebar({ items }: { items: SidebarItem[] }) {
           key={item.id}
           href={`#${item.id}`}
           className={cn(
-            "block px-3 py-1.5 text-sm rounded-md transition-colors",
+            "block border-l-2 py-1.5 pl-3 pr-2 text-sm transition-colors",
             activeId === item.id
-              ? "bg-[#FF4A20]/10 text-[#FF4A20] font-medium"
-              : "text-[#6B7280] hover:text-[#111827] hover:bg-[#F3F4F6]"
+              ? "border-[var(--orange)] bg-[var(--cream-2)]/60 font-semibold text-foreground"
+              : "border-transparent text-muted-foreground hover:border-[var(--line)] hover:text-foreground"
           )}
         >
           {item.label}

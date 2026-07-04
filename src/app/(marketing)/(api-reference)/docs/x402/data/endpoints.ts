@@ -9,68 +9,7 @@
  * response always carries the current price from pricing_actions.
  */
 
-export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
-
-export interface ParamRow {
-  name: string;
-  type: string;
-  required: boolean;
-  description: string;
-}
-
-export interface ParamTableData {
-  heading: string;
-  rows: ParamRow[];
-}
-
-export interface CodeSample {
-  label: string;
-  code: string;
-}
-
-export interface CalloutData {
-  tone: "amber" | "blue";
-  text: string;
-}
-
-export interface EndpointOperation {
-  /** Anchor id for deep links. Omitted when the section id already covers it. */
-  id?: string;
-  method: HttpMethod;
-  path: string;
-  title: string;
-  description: string;
-  paramTables: ParamTableData[];
-  codeSamples: CodeSample[];
-  callouts?: CalloutData[];
-  sourceRef: string;
-}
-
-export interface FlowStep {
-  title: string;
-  body: string;
-}
-
-export interface SectionTable {
-  columns: string[];
-  rows: string[][];
-}
-
-export interface DocsSection {
-  id: string;
-  navLabel: string;
-  title: string;
-  summary: string;
-  callouts?: CalloutData[];
-  flowSteps?: FlowStep[];
-  flowCodeSamples?: CodeSample[];
-  statusFlow?: { steps: string[]; terminal: string[] };
-  table?: SectionTable;
-  tableNote?: string;
-  operations?: EndpointOperation[];
-  codeSamples?: CodeSample[];
-  sourceRef: string;
-}
+import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 
 // ---------------------------------------------------------------------------
 // Overview
@@ -178,7 +117,9 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
     ],
     flowCodeSamples: [
-      { label: "Response · 402", code: POST_NOW_402 },
+      // featured: this page's single signature stamp card
+      // (placement rule in docs/UI_DESIGN_SYSTEM.md).
+      { label: "Response · 402", code: POST_NOW_402, featured: true },
       { label: "Quickstart · cURL", code: QUICKSTART_CURL },
       { label: "Response · 200 · Envelope", code: ENVELOPE_200 },
       { label: "Settlement Headers", code: SETTLE_HEADERS },

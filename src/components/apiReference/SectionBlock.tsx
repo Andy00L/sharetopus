@@ -1,4 +1,4 @@
-import type { DocsSection } from "../data/endpoints";
+import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 import { Callout } from "./Callout";
 import { CodeCard } from "./CodeCard";
 import { EndpointBlock } from "./EndpointBlock";
@@ -21,26 +21,26 @@ export function SectionBlock({
   return (
     <section
       id={section.id}
-      className="scroll-mt-24 pt-8 pb-10 border-b border-[#E5E7EB] last:border-b-0"
+      className="scroll-mt-24 border-b border-border pb-10 pt-8 last:border-b-0"
     >
-      <h2 className="text-2xl font-bold text-[#111827] mb-2">
+      <h2 className="mb-2 text-2xl font-bold tracking-tight text-foreground">
         {section.title}
       </h2>
-      <p className="text-[#6B7280] text-[15px] mb-8">{section.summary}</p>
+      <p className="mb-8 text-[15px] text-[var(--ink-2)]">{section.summary}</p>
 
       {section.flowSteps && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-2">
           <ol className="space-y-5">
-            {section.flowSteps.map((step, index) => (
+            {section.flowSteps.map((step, stepIndex) => (
               <li key={step.title} className="flex gap-3">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-[#111827] text-white text-xs font-bold flex items-center justify-center mt-0.5">
-                  {index + 1}
+                <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-foreground font-mono text-xs font-bold text-[var(--cream)]">
+                  {stepIndex + 1}
                 </span>
                 <div>
-                  <span className="font-semibold text-[#111827] text-sm">
+                  <span className="text-sm font-semibold text-foreground">
                     {step.title}
                   </span>
-                  <p className="text-[#374151] text-sm leading-relaxed mt-1">
+                  <p className="mt-1 text-sm leading-relaxed text-[var(--ink-2)]">
                     {step.body}
                   </p>
                 </div>
@@ -53,6 +53,7 @@ export function SectionBlock({
                 key={sample.label}
                 label={sample.label}
                 code={sample.code}
+                featured={sample.featured}
               />
             ))}
           </div>
@@ -70,22 +71,25 @@ export function SectionBlock({
 
       {section.table && <SectionTableView table={section.table} />}
       {section.tableNote && (
-        <p className="text-[#6B7280] text-xs mt-3">{section.tableNote}</p>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {section.tableNote}
+        </p>
       )}
 
       {children}
 
       {section.operations?.map((op) => (
-        <EndpointBlock key={`${op.path}-${op.title}`} op={op} />
+        <EndpointBlock key={`${op.method}-${op.path}-${op.title}`} op={op} />
       ))}
 
       {section.codeSamples && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-6">
+        <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
           {section.codeSamples.map((sample) => (
             <CodeCard
               key={sample.label}
               label={sample.label}
               code={sample.code}
+              featured={sample.featured}
             />
           ))}
         </div>

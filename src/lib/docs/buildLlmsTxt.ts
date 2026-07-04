@@ -33,7 +33,9 @@ export function buildLlmsTxt(): string {
     "## Optional",
     "",
     `- [Interactive REST explorer](${SITE_ORIGIN}/docs/api): human-facing viewer over the same OpenAPI spec`,
+    `- [REST reference, HTML](${SITE_ORIGIN}/docs/rest): human-facing version of the REST reference`,
     `- [x402 reference, HTML](${SITE_ORIGIN}/docs/x402): human-facing version of the x402 doc`,
+    `- [MCP reference, HTML](${SITE_ORIGIN}/docs/mcp): human-facing version of the MCP guide`,
   ];
   return `${lines.join("\n")}\n`;
 }

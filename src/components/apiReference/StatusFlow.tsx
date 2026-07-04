@@ -3,7 +3,7 @@ import { ChevronRight } from "lucide-react";
 
 /**
  * Connection status pills: the happy path chained with chevrons, then the
- * terminal alternatives as red pills on a second row.
+ * terminal alternatives as destructive-tinted pills on a second row.
  */
 export function StatusFlow({
   steps,
@@ -15,23 +15,27 @@ export function StatusFlow({
   return (
     <div className="space-y-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        {steps.map((step, index) => (
+        {steps.map((step, stepIndex) => (
           <Fragment key={step}>
-            {index > 0 && <ChevronRight className="h-4 w-4 text-[#9CA3AF]" />}
-            <span className="bg-[#F3F4F6] px-2.5 py-1 rounded font-mono text-[#374151]">
+            {stepIndex > 0 && (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className="rounded-md bg-[var(--cream-2)] px-2.5 py-1 font-mono text-foreground">
               {step}
             </span>
           </Fragment>
         ))}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[#6B7280] text-xs">terminal alternatives:</span>
-        {terminal.map((step) => (
+        <span className="text-xs text-muted-foreground">
+          terminal alternatives:
+        </span>
+        {terminal.map((terminalState) => (
           <span
-            key={step}
-            className="bg-red-50 text-red-600 px-2.5 py-1 rounded font-mono"
+            key={terminalState}
+            className="rounded-md bg-destructive/10 px-2.5 py-1 font-mono text-destructive"
           >
-            {step}
+            {terminalState}
           </span>
         ))}
       </div>
