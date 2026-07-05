@@ -57,6 +57,13 @@ const nextConfig: NextConfig = {
   },
 };
 
-const withMDX = createMDX({ extension: /\.mdx?$/ });
+const withMDX = createMDX({
+  extension: /\.mdx?$/,
+  options: {
+    // String form keeps the config serializable for Turbopack.
+    // remark-gfm parses the pipe tables in src/content/docs/*.mdx.
+    remarkPlugins: [["remark-gfm"]],
+  },
+});
 
 export default withMDX(nextConfig);

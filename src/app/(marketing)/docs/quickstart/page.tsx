@@ -1,5 +1,6 @@
 import Content from "@/content/docs/quickstart.mdx";
 import type { Metadata } from "next";
+import { GuideArticle } from "@/components/apiReference/GuideArticle";
 
 export const metadata: Metadata = {
   title: "Quickstart - Sharetopus Docs",
@@ -8,8 +9,8 @@ export const metadata: Metadata = {
 
 export default function QuickstartPage() {
   return (
-    <article className="prose prose-slate dark:prose-invert max-w-3xl mx-auto py-12 px-6">
+    <GuideArticle eyebrow="Guide" slug="quickstart">
       <Content />
-    </article>
+    </GuideArticle>
   );
 }
