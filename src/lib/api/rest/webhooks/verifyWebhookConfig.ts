@@ -1,4 +1,4 @@
-import { isPrivateOrReservedIp } from "@/lib/mcp/_shared/safeUserFetch";
+import { isPrivateOrReservedIp } from "@/lib/net/ipBlocklist";
 import { lookup } from "node:dns/promises";
 
 const MAX_URL_LENGTH = 2048;
@@ -14,14 +14,20 @@ export type VerifyWebhookUrlResult =
  * Validates a webhook subscription URL.
  *
  * Rules:
- *   1. Must be HTTPS (DB constraint also enforces this)
+ *   1. Must be HTTPS
  *   2. Max 2048 chars
  *   3. Must not resolve to private/reserved IP ranges (SSRF guard)
  *   4. Must not be localhost
  *
- * Reuses isPrivateOrReservedIp from safeUserFetch (single source of
- * truth for IP blocking). DNS lookup resolves the hostname to check
- * the actual IP, same approach as safeUserFetch.
+ * This is a create/update-time advisory check. The authoritative SSRF
+ * guard runs at every delivery in deliverSignedWebhook, which re-resolves
+ * and PINS the connection to the validated IP (rebinding defense). The
+ * DNS failure here stays non-blocking on purpose: a host that does not
+ * resolve from this environment but resolves at delivery is still safe,
+ * because the delivery path validates and pins the resolved IP.
+ *
+ * Reuses isPrivateOrReservedIp from @/lib/net/ipBlocklist (single source
+ * of truth for IP blocking).
  */
 export async function verifyWebhookUrl(
   url: string,

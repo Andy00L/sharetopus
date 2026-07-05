@@ -4,6 +4,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { WebhookTestInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
+import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 
@@ -78,15 +79,10 @@ export const POST = withRestEndpoint({
       subscriptionRow.secret,
     );
 
-    // Step 5: deliver synchronously.
+    // Step 5: deliver synchronously (SSRF-guarded, IP-pinned at delivery).
     const startedAt = Date.now();
-    let statusCode: number | null = null;
-    let responseBody: string | null = null;
-    let errorMessage: string | null = null;
-
-    try {
-      const deliveryResponse = await fetch(subscriptionRow.url, {
-        method: "POST",
+    const { statusCode, responseBody, errorMessage } =
+      await deliverSignedWebhook(subscriptionRow.url, {
         headers: {
           "Content-Type": "application/json",
           "X-Sharetopus-Event": eventType,
@@ -95,16 +91,8 @@ export const POST = withRestEndpoint({
           "User-Agent": "Sharetopus-Webhook/1.0",
         },
         body: bodyString,
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+        timeoutMs: DELIVERY_TIMEOUT_MS,
       });
-      statusCode = deliveryResponse.status;
-      responseBody = (await deliveryResponse.text()).slice(0, 4096);
-    } catch (deliveryError) {
-      errorMessage =
-        deliveryError instanceof Error
-          ? deliveryError.message
-          : "unknown network error";
-    }
 
     const latencyMs = Date.now() - startedAt;
     const wasSuccess =

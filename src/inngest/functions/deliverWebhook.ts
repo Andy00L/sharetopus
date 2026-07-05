@@ -1,5 +1,6 @@
 import { inngest } from "../client";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 import type { Json } from "@/lib/types/database.types";
 
@@ -68,15 +69,10 @@ export const deliverWebhook = inngest.createFunction(
       subscriptionRow.secret,
     );
 
-    // Step 3: POST to subscriber URL.
+    // Step 3: POST to subscriber URL (SSRF-guarded, IP-pinned at delivery).
     const startedAt = Date.now();
-    let statusCode: number | null = null;
-    let responseBody: string | null = null;
-    let errorMessage: string | null = null;
-
-    try {
-      const deliveryResponse = await fetch(subscriptionRow.url, {
-        method: "POST",
+    const { statusCode, responseBody, errorMessage } =
+      await deliverSignedWebhook(subscriptionRow.url, {
         headers: {
           "Content-Type": "application/json",
           "X-Sharetopus-Event": event_type,
@@ -85,16 +81,8 @@ export const deliverWebhook = inngest.createFunction(
           "User-Agent": "Sharetopus-Webhook/1.0",
         },
         body: bodyString,
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+        timeoutMs: DELIVERY_TIMEOUT_MS,
       });
-      statusCode = deliveryResponse.status;
-      responseBody = (await deliveryResponse.text()).slice(0, 4096);
-    } catch (deliveryError) {
-      errorMessage =
-        deliveryError instanceof Error
-          ? deliveryError.message
-          : "unknown network error";
-    }
 
     const latencyMs = Date.now() - startedAt;
     const wasSuccess =
