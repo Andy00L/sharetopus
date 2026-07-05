@@ -29,10 +29,14 @@ const AllPlatformEnum = z.enum([
  *
  * Starts an OAuth flow and returns the authorization URL. The caller
  * must direct the user to visit the URL in their browser.
+ *
+ * There is intentionally no client-supplied redirect URL: the callback
+ * URI is fixed per platform (/api/oauth/callback/[platform]). Accepting a
+ * client redirect target is an open-redirect / auth-code-exfiltration
+ * risk, so it is not exposed.
  */
 export const ConnectionInitiateInputSchema = z.object({
   platform: OAuthPlatformEnum,
-  redirect_url: z.string().url().optional(),
 });
 
 export type ConnectionInitiateInput = z.infer<

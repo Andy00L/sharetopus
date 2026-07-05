@@ -49,12 +49,11 @@ export const POST = withRestEndpoint({
     const validatedInput = bodyParseResult.data;
     const platform = validatedInput.platform as Platform;
 
-    // Step 2: build the OAuth redirect URI for the shared callback.
+    // Step 2: build the OAuth redirect URI for the shared callback. Fixed
+    // per platform; never taken from client input (open-redirect defense).
     const baseUrl =
       process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-    const redirectUri =
-      validatedInput.redirect_url ??
-      `${baseUrl}/api/oauth/callback/${platform}`;
+    const redirectUri = `${baseUrl}/api/oauth/callback/${platform}`;
 
     // Step 3: generate OAuth state and build the authorization URL.
     const oauthState = generateOAuthState();
