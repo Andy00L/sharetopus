@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -60,7 +62,9 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         filename: z
           .string()
           .optional()
-          .describe("Override filename (defaults to URL basename)"),
+          .describe(
+            "Optional label, retained for compatibility. The stored object name is always a random id; this value is not used to build the storage path.",
+          ),
       },
       annotations: {
         title: "Attach Media From URL",
@@ -159,22 +163,15 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           };
         }
 
-        // Determine filename.
-        let parsedUrl: URL;
-        try {
-          parsedUrl = new URL(args.url);
-        } catch {
-          parsedUrl = new URL("https://unknown/media");
-        }
-        const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
+        // Build the storage key from a random UUID and a whitelisted
+        // extension derived from the verified content type. The user
+        // filename and URL basename are never interpolated into the object
+        // key: that prevents path-traversal / tenant-prefix escape and
+        // mirrors generateServerSignedUploadUrl.
         const ext = fetchResult.contentType.startsWith("video/")
-          ? ".mp4"
-          : ".jpg";
-        const resolvedFilename =
-          args.filename ??
-          (urlBasename.includes(".") ? urlBasename : `${urlBasename}${ext}`);
-
-        const storagePath = `${ctx.principal.principalId}/${Date.now()}_${resolvedFilename}`;
+          ? "mp4"
+          : "jpg";
+        const storagePath = `${ctx.principal.principalId}/${randomUUID()}.${ext}`;
 
         try {
           const { error: uploadError } = await adminSupabase.storage

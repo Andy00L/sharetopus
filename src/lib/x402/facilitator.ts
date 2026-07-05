@@ -170,18 +170,24 @@ export async function verifyPayment(
   }
 
   const payloadPayTo = paymentPayload.accepted?.payTo;
-  if (
-    payloadPayTo &&
-    payloadPayTo.toLowerCase() !== requirements.payTo.toLowerCase()
-  ) {
-    return {
-      ok: false,
-      error: {
-        kind: "recipient_mismatch",
-        expected: requirements.payTo,
-        received: payloadPayTo,
-      },
-    };
+  if (payloadPayTo) {
+    // EVM addresses are case-insensitive (EIP-55 checksum casing); Solana
+    // base58 is case-sensitive (Abc and abc are different keys), so only
+    // fold case for EVM networks.
+    const isEvmNetwork = requirements.network.startsWith("eip155:");
+    const payToMatches = isEvmNetwork
+      ? payloadPayTo.toLowerCase() === requirements.payTo.toLowerCase()
+      : payloadPayTo === requirements.payTo;
+    if (!payToMatches) {
+      return {
+        ok: false,
+        error: {
+          kind: "recipient_mismatch",
+          expected: requirements.payTo,
+          received: payloadPayTo,
+        },
+      };
+    }
   }
 
   // 4. Call the facilitator

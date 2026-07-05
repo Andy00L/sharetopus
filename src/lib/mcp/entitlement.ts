@@ -204,6 +204,13 @@ async function checkAndIncrementQuota(
 
   const quotaResult = await incrementQuota(principal.principalId, action, cap);
   if (!quotaResult.allowed) {
+    if (quotaResult.unavailable) {
+      return {
+        mode: "deny",
+        reason: "infra_error",
+        detail: `Quota verification is temporarily unavailable for "${action}". Please retry in a moment.`,
+      };
+    }
     return {
       mode: "deny",
       reason: "monthly_quota",
@@ -234,16 +241,19 @@ async function checkAndIncrementQuota(
  * must be a valid YYYY-MM-DD string. currentQuotaPeriod() always
  * returns the first of the current month in UTC.
  *
- * Failure mode: on RPC error we FAIL OPEN and let the call proceed.
- * Blocking paying users because of a transient DB hiccup is worse
- * than letting a single request slip past the cap. The error is
- * surfaced in logs for forensic review.
+ * Failure mode: on RPC error we FAIL CLOSED (`unavailable: true`). The
+ * quota RPC is the only atomic enforcement point for the paid, cost-bearing
+ * monthly caps, so a DB hiccup must not silently disable every cap. The
+ * caller surfaces a distinct "temporarily unavailable, retry" deny (reason
+ * `infra_error`), not a misleading "quota exceeded", and the error is logged
+ * for forensic review. This matches the fail-closed posture of the
+ * subscription gate.
  */
 async function incrementQuota(
   principalId: string,
   action: McpToolName,
   cap: number,
-): Promise<{ allowed: boolean; currentCount: number }> {
+): Promise<{ allowed: boolean; currentCount: number; unavailable?: boolean }> {
   const period = currentQuotaPeriod();
 
   const { data, error } = await adminSupabase.rpc("atomic_increment_quota", {
@@ -258,7 +268,7 @@ async function incrementQuota(
       `[entitlement] atomic_increment_quota RPC failed for ${action}:`,
       error.message,
     );
-    return { allowed: true, currentCount: 0 };
+    return { allowed: false, currentCount: 0, unavailable: true };
   }
 
   if (data === null) {

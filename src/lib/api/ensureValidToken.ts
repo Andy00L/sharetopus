@@ -61,6 +61,7 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
       account.id,
       account.platform,
       newTokens,
+      account.refresh_token ?? null,
     );
 
     if (!updateSuccess) {
@@ -191,11 +192,18 @@ function isTokenExpired(expiresAt: string | null): boolean {
 
 /**
  * Persists refreshed tokens for a social account.
+ *
+ * `currentRefreshToken` is the token already stored for this account. When
+ * a refresh response omits a new refresh token (or returns an empty one),
+ * the existing token is kept rather than nulled: only X rotates the refresh
+ * token on every call, and losing a still-valid token would break future
+ * auto-refresh and force a manual reconnect.
  */
 async function updateTokenInDatabase(
   accountId: string,
   platform: Platform,
   tokenData: TokenExchangeResponse,
+  currentRefreshToken: string | null,
 ): Promise<boolean> {
   try {
     console.log(
@@ -209,8 +217,9 @@ async function updateTokenInDatabase(
       .from("social_accounts")
       .update({
         access_token: tokenData.access_token,
-        // Some refreshes do not return a new refresh_token; X rotates it.
-        refresh_token: tokenData.refresh_token || null,
+        // Keep the existing refresh token when the response omits or blanks
+        // it; X rotates it and returns a fresh one, which takes precedence.
+        refresh_token: tokenData.refresh_token || currentRefreshToken,
         token_expires_at: expiresAt.toISOString(),
         updated_at: new Date().toISOString(),
       })
