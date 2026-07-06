@@ -19,9 +19,11 @@ Both paths resolve to an `McpPrincipal` that is passed to every tool handler.
 ## Entitlement model
 
 Every tool call checks the user's Stripe subscription plan and monthly usage
-quotas before doing any work. Read tools are available on any active plan.
-Write tools require Starter+. Advanced tools (bulk schedule, analytics) need
-Creator+. AI draft generation needs Pro.
+quotas before doing any work. All 18 tools require the Creator plan or higher
+(`ACTION_PLAN_GATE` in `entitlement.ts`). Free and Starter users have zero MCP
+access; the auth layer's `applySubscriptionGate` already rejects them before
+the entitlement gate runs. Tools that touch external APIs or media carry
+monthly caps on the Creator tier (`MONTHLY_CAPS`); Pro removes those caps.
 
 ## File layout
 
