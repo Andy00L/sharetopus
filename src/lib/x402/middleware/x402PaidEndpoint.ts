@@ -25,6 +25,7 @@ import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
+import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 import {
   markChargeSettled,
   markChargeFailed,
@@ -421,6 +422,12 @@ export function x402PaidEndpoint<TBody, TResult>(
         console.error(
           `[x402PaidEndpoint] CHARGE RECONCILIATION NEEDED: charge ${chargeId} settle outcome indeterminate (${settleError.kind}): ${settleError.message}`
         );
+        await recordX402Reconciliation({
+          kind: "settle_indeterminate",
+          chargeId,
+          network: network.name,
+          payerAddress: verifyResult.payerAddress,
+        });
       }
       return logAndError({
         principal,
@@ -449,6 +456,13 @@ export function x402PaidEndpoint<TBody, TResult>(
       console.error(
         `[x402PaidEndpoint] CHARGE RECONCILIATION NEEDED: charge ${chargeId} settled on-chain (tx ${settleResult.txHash}) but could not transition to settled: ${settledTransition.message}`
       );
+      await recordX402Reconciliation({
+        kind: "settle_unrecorded",
+        chargeId,
+        txHash: settleResult.txHash,
+        network: network.name,
+        payerAddress: verifyResult.payerAddress,
+      });
       return logAndError({
         principal,
         action: actionKey,
@@ -514,6 +528,13 @@ export function x402PaidEndpoint<TBody, TResult>(
           console.error(
             `[x402PaidEndpoint] REFUND FAILED for charge ${chargeId} (settle tx ${settleResult.txHash}): ${refundResult.error.message}`
           );
+          await recordX402Reconciliation({
+            kind: "refund_failed",
+            chargeId,
+            txHash: settleResult.txHash,
+            network: network.name,
+            payerAddress: verifyResult.payerAddress,
+          });
           await markChargeFailed({
             chargeId,
             fromStatus: "settled",

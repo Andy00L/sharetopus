@@ -18,6 +18,7 @@ import {
   getOAuthRedirectUri,
 } from "@/lib/x402/config";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import {
   mapVerifyPaymentError,
@@ -364,9 +365,15 @@ export async function handleConnectVerify(
     if (refundResult.ok) {
       console.log(`[handleConnectVerify] Refund succeeded: ${refundResult.refundTxHash}`);
     } else {
-      // Settled money with no charge row and no refund: the tx hash in this
-      // log line is the only reconciliation trail. Phase 4.4 owns tooling.
+      // Settled money with no charge row and no refund: write a durable
+      // reconciliation row (the console line alone is ephemeral on Vercel).
       console.error(`[handleConnectVerify] REFUND FAILED after settle (txHash=${settleResult.txHash}): ${refundResult.error.message}`);
+      await recordX402Reconciliation({
+        kind: "refund_failed",
+        txHash: settleResult.txHash,
+        payerAddress: verifyResult.payerAddress,
+        network: context.network.name,
+      });
     }
 
     return {

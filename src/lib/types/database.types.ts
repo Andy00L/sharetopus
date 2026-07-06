@@ -2071,6 +2071,40 @@ export type Database = {
         ];
       };
 
+      x402_reconciliation: {
+        Row: {
+          id: string;
+          charge_id: string | null;
+          tx_hash: string | null;
+          kind: string;
+          payer_address: string | null;
+          amount_atomic: string | null;
+          network: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          charge_id?: string | null;
+          tx_hash?: string | null;
+          kind: string;
+          payer_address?: string | null;
+          amount_atomic?: string | null;
+          network?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          charge_id?: string | null;
+          tx_hash?: string | null;
+          kind?: string;
+          payer_address?: string | null;
+          amount_atomic?: string | null;
+          network?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+
       // ────────────────────────────────────────────────────────────────
       x402_refunds: {
         Row: {
