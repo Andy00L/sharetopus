@@ -114,6 +114,23 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       usdcDecimals: 6,
       usdcEip712: { name: "USD Coin", version: "2" },
     },
+    // Celo settles through the Celo facilitator (config.ts), not CDP.
+    // usdcAddress from docs.celo.org/build-on-celo/build-with-ai/x402;
+    // usdcEip712 and decimals read from the contract on Forno (eth_call
+    // name()/version()/decimals(), 2026-07-16): name "USDC" (not Base's
+    // "USD Coin"), version "2", decimals 6.
+    celo: {
+      name: "celo",
+      chainId: 42220,
+      caipNetwork: "eip155:42220",
+      displayName: "Celo",
+      rpcUrl: "https://forno.celo.org",
+      usdcAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+      isTestnet: false,
+      isEvm: true,
+      usdcDecimals: 6,
+      usdcEip712: { name: "USDC", version: "2" },
+    },
     solana: {
       name: "solana",
       chainId: null,

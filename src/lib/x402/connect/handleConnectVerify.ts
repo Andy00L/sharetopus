@@ -13,8 +13,8 @@ import {
 } from "@/lib/x402/facilitator";
 import {
   CONNECTION_TOKEN_GRACE_MS,
-  FACILITATOR_NAME,
   OAUTH_EXPIRY_MINUTES,
+  getFacilitatorName,
   getOAuthRedirectUri,
 } from "@/lib/x402/config";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
@@ -326,8 +326,8 @@ export async function handleConnectVerify(
   const settleResponseHeader = encodePaymentResponseHeader(settleResponse);
 
   // -- 10. Atomic DB insert. network/asset/facilitator store DB short names
-  //       ("base", "USDC", "coinbase_cdp"); CAIP-2 lives only at the SDK
-  //       boundary (networks.ts).
+  //       ("base", "USDC", "coinbase_cdp" / "celo"); CAIP-2 lives only at
+  //       the SDK boundary (networks.ts).
   const insertResult = await insertConnectAtomic({
     principalId: wallet.principalId,
     walletId: wallet.walletId,
@@ -346,7 +346,7 @@ export async function handleConnectVerify(
     chargeAsset: "USDC",
     chargePayerAddress: verifyResult.payerAddress,
     chargeRecipientAddress: context.recipientAddress,
-    chargeFacilitator: FACILITATOR_NAME,
+    chargeFacilitator: getFacilitatorName(context.network.name),
     chargeSettledAt: settleResult.settledAt,
   });
 

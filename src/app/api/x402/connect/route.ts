@@ -42,7 +42,8 @@ const ENDPOINT_PATH = "/api/x402/connect";
  *
  * Query params:
  *   ?platform=linkedin|tiktok|pinterest|instagram (required)
- *   ?network=polygon|arbitrum|solana (optional; unknown values are 400)
+ *   ?network=polygon|arbitrum|celo|solana (optional; default base; unknown
+ *   values are 400)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const startMs = performance.now();

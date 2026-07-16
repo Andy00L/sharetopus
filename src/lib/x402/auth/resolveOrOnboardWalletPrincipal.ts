@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { SanctionsStatus, WalletChain } from "@/lib/types/database.types";
+import { getFacilitatorName } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { callPostgrestRpc } from "@/lib/x402/rpc/callPostgrestRpc";
 import type { WalletPrincipal } from "./types";
@@ -24,11 +25,26 @@ export type ResolveOrOnboardWalletPrincipalResult =
   | { ok: false; reason: "db_error"; message: string };
 
 /**
- * Sanctions source recorded for wallets cleared by the facilitator's KYT
- * check during payment verification.
+ * Sanctions source recorded for wallets cleared by the CDP facilitator's
+ * KYT check during payment verification (base/polygon/arbitrum/solana).
  * sourceRef: the deleted register flow (src/lib/x402/register/, June 2026)
  */
 const SANCTIONS_SOURCE_CDP_KYT = "cdp_kyt";
+
+/**
+ * Source recorded when the clearing verify ran at the Celo facilitator
+ * instead of CDP. Named after the facilitator so the screening trail stays
+ * honest per network: whether x402.celo.org runs KYT is that facilitator's
+ * behavior, and the row must not claim a CDP screen that never happened.
+ */
+const SANCTIONS_SOURCE_CELO_FACILITATOR = "celo_facilitator";
+
+/** Screening source for the facilitator that verified this payment. */
+function sanctionsSourceForNetwork(network: NetworkConfig): string {
+  return getFacilitatorName(network.name) === "celo"
+    ? SANCTIONS_SOURCE_CELO_FACILITATOR
+    : SANCTIONS_SOURCE_CDP_KYT;
+}
 
 // ---------------------------------------------------------------------------
 // Implementation
@@ -39,10 +55,11 @@ const SANCTIONS_SOURCE_CDP_KYT = "cdp_kyt";
  *
  * MUST be called with the facilitator-recovered payer address (the address
  * money actually moves from), never the unverified claim inside the payment
- * header, and only AFTER verifyPayment succeeded: the facilitator runs KYT
- * (sanctions screening) as part of verify, so a payer that reaches this
- * function was screened on this very call. That screen is what makes
- * creating a fresh wallets row with sanctions_status "clean" sound.
+ * header, and only AFTER verifyPayment succeeded: the facilitator screens
+ * the payer as part of verify (KYT on the CDP facilitator), so a payer that
+ * reaches this function passed that facilitator's verify on this very call.
+ * The recorded sanctions source names which facilitator cleared it, so the
+ * screening trail stays honest per network.
  *
  * Sequence:
  *   1. Normalize the address (EVM lowercased, Solana base58 verbatim) and
@@ -89,7 +106,7 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     p_principal_id: principalId,
     p_address: normalizedAddress,
     p_chain: params.network.name,
-    p_sanctions_source: SANCTIONS_SOURCE_CDP_KYT,
+    p_sanctions_source: sanctionsSourceForNetwork(params.network),
   });
 
   if (!rpcResult.ok) {

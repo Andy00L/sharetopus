@@ -1,7 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { FACILITATOR_NAME } from "@/lib/x402/config";
+import { getFacilitatorName } from "@/lib/x402/config";
 
 /**
  * Insert an x402_charges row with status="pending" BEFORE on-chain
@@ -51,7 +51,7 @@ export async function insertPendingX402Charge(params: {
       payer_address: params.payerAddress,
       recipient_address: params.recipientAddress,
       status: "pending",
-      facilitator: FACILITATOR_NAME,
+      facilitator: getFacilitatorName(params.network),
     })
     .select("id")
     .single();

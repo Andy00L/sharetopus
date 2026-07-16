@@ -1,30 +1,35 @@
 import "server-only";
 
 /**
- * Thin wrapper around the Coinbase CDP facilitator for the x402 payment
- * protocol. Three operations: verify a payment header, settle a verified
- * payment, and refund a settled payment. Each returns an errors-as-values
- * result.
+ * Thin wrapper around the x402 facilitators (Coinbase CDP for base,
+ * polygon, arbitrum, and solana; the Celo facilitator for celo). Three
+ * operations: verify a payment header, settle a verified payment, and
+ * refund a settled payment. Each returns an errors-as-values result.
  *
  * Called by: x402PaidEndpoint, register/connect verify flows
  * Tables touched: none (the facilitator is external; DB writes happen in the
  * flow handlers)
  * Env: CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET (CDP SDK),
- *      X402_RECIPIENT_EVM (EVM refund sender); facilitator URL via config.ts
+ *      X402_RECIPIENT_EVM (CDP EVM refund sender); Celo facilitator auth and
+ *      refund keys live in facilitatorClient.ts and celo/refundCelo.ts;
+ *      facilitator URLs via config.ts
  *
  * SDK notes (verified against @x402/core v2.14.0):
  *   - Network is CAIP format ("eip155:8453") in the SDK, not WalletChain
  *     ("base"). NetworkConfig.caipNetwork bridges the two (networks.ts).
  *   - VerifyResponse is { isValid, invalidReason?, invalidMessage?, payer? };
- *     this wrapper maps invalidReason strings to typed error kinds.
+ *     this wrapper maps invalidReason strings to typed error kinds. The Celo
+ *     facilitator returns the same wire shape (probed live 2026-07-16, with
+ *     an extra invalidReasonDetails field this wrapper does not read).
  *   - SettleResponse is { success, transaction, network, errorReason?, ... }.
  *     It carries no blockNumber or facilitator fee; those fields are null in
  *     the wrapper result.
- *   - The CDP hosted facilitator requires CDP API-key JWTs on verify/settle;
- *     the singleton client wiring lives in facilitatorClient.ts (shared with
- *     solana/feePayer.ts).
- *   - Refunds go through the CDP SDK directly (merchant -> agent); the
- *     facilitator only handles agent -> merchant.
+ *   - Facilitator auth (CDP JWTs, Celo X-API-Key) is wired per network in
+ *     facilitatorClient.ts (shared with solana/feePayer.ts).
+ *   - Refunds never go through a facilitator (it only handles
+ *     agent -> merchant): CDP SDK for base/polygon/arbitrum, the
+ *     solana/refundSolana module for solana, the celo/refundCelo module
+ *     for celo.
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
@@ -113,8 +118,10 @@ export type VerifyPaymentError =
 
 /**
  * Verifies a payment header against the facilitator. Does NOT settle yet.
- * The facilitator runs KYT (sanctions screening) as part of verify;
- * sanctioned payers are rejected here, before any DB write.
+ * The CDP facilitator runs KYT (sanctions screening) as part of verify;
+ * sanctioned payers are rejected here, before any DB write. The Celo
+ * facilitator's screening is its own behavior; wallet onboarding records
+ * which facilitator cleared the payment (auth/resolveOrOnboardWalletPrincipal).
  *
  * On success the result carries the payer address recovered by the
  * facilitator (not the unverified claim inside the payload) and a replay
@@ -190,9 +197,9 @@ export async function verifyPayment(
     }
   }
 
-  // 4. Call the facilitator
+  // 4. Call the facilitator for this network
   try {
-    const facilitator = getFacilitatorClient();
+    const facilitator = getFacilitatorClient(input.network);
     const response = await facilitator.verify(paymentPayload, requirements);
 
     if (response.isValid) {
@@ -316,7 +323,7 @@ export async function settlePayment(
   }
 
   try {
-    const facilitator = getFacilitatorClient();
+    const facilitator = getFacilitatorClient(input.network);
     const response = await facilitator.settle(
       paymentPayload,
       acceptedRequirements
@@ -382,9 +389,10 @@ export type RefundPaymentError =
  * Used when the platform-side action fails after settlement. Caller must
  * hold a status-scoped charge transition so refunds are not double-issued.
  *
- * Refunds go through the CDP SDK directly (cdp.evm.sendTransaction for EVM,
- * the solana/refundSolana module for Solana), NOT through the facilitator.
- * The facilitator only handles agent->merchant; this is merchant->agent.
+ * Refunds never go through a facilitator (it only handles agent->merchant;
+ * this is merchant->agent). Dispatch: celo/refundCelo for celo (the CDP SDK
+ * cannot send on Celo), cdp.evm.sendTransaction for the CDP EVM networks,
+ * solana/refundSolana for solana.
  */
 export async function refundPayment(
   input: RefundPaymentInput
@@ -400,10 +408,12 @@ export async function refundPayment(
   }
 
   try {
-    const cdp = getCdpClient();
+    if (input.network.name === "celo") {
+      return await refundCeloViaModule(input);
+    }
 
     if (input.network.isEvm) {
-      return await refundEvm(cdp, input);
+      return await refundEvm(input);
     }
 
     return await refundSolanaViaModule(input);
@@ -426,8 +436,10 @@ export async function refundPayment(
 /**
  * Encodes an ERC-20 transfer(address,uint256) calldata as a hex string.
  * No external ABI library needed; the encoding is deterministic.
+ * Exported for reuse by celo/refundCelo.ts (that module is loaded via
+ * dynamic import below, so the cycle never materializes at init time).
  */
-function encodeErc20TransferCalldata(
+export function encodeErc20TransferCalldata(
   toAddress: string,
   amountAtomic: bigint
 ): `0x${string}` {
@@ -439,7 +451,6 @@ function encodeErc20TransferCalldata(
 }
 
 async function refundEvm(
-  cdp: CdpClient,
   input: RefundPaymentInput
 ): Promise<RefundPaymentResult> {
   // The Server Wallet that received the payment is the refund sender.
@@ -454,13 +465,18 @@ async function refundEvm(
     };
   }
 
+  // Resolved here, not in refundPayment: celo refunds must not require the
+  // CDP env vars this getter throws on.
+  const cdp = getCdpClient();
+
   const atomicAmount = BigInt(
     usdcToAtomic(input.amountUsdc, input.network.usdcDecimals)
   );
   const calldata = encodeErc20TransferCalldata(input.payerAddress, atomicAmount);
 
   // CDP sendTransaction for EVM. The CDP SDK speaks the same short network
-  // names as WalletChain for base, polygon, and arbitrum.
+  // names as WalletChain for base, polygon, and arbitrum; celo never reaches
+  // this function (dispatched to celo/refundCelo.ts in refundPayment).
   const result = await cdp.evm.sendTransaction({
     address: senderAddress as `0x${string}`,
     transaction: {
@@ -474,6 +490,37 @@ async function refundEvm(
   return {
     ok: true,
     refundTxHash: result.transactionHash,
+    refundedAt: new Date().toISOString(),
+  };
+}
+
+async function refundCeloViaModule(
+  input: RefundPaymentInput
+): Promise<RefundPaymentResult> {
+  // Delegate to the dedicated Celo refund module (locally signed via the
+  // operator-held key; the CDP SDK cannot send on Celo).
+  const { refundCelo } = await import("@/lib/x402/celo/refundCelo");
+
+  const result = await refundCelo({
+    payerAddress: input.payerAddress,
+    amountUsdc: input.amountUsdc,
+    network: input.network,
+    reason: input.reason,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: {
+        kind: "facilitator_error",
+        message: result.error.message,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    refundTxHash: result.refundTxHash,
     refundedAt: new Date().toISOString(),
   };
 }

@@ -48,3 +48,6 @@ next-env.d.ts
 .claude/
 change/
 /scripts/x402-smoke/
+
+# agent scratch (probes, scoped tsconfigs); never committed
+.scratch/

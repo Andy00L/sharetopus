@@ -18,12 +18,12 @@ import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 export const OVERVIEW = {
   title: "x402 API Reference",
   subtitle:
-    "Pay per action in USDC. No account and no API key: a wallet signature authorizes each request and settlement happens on-chain through the Coinbase CDP facilitator.",
+    "Pay per action in USDC. No account and no API key: a wallet signature authorizes each request and settlement happens on-chain through the network's x402 facilitator.",
   baseUrl: "https://sharetopus.com/api/x402",
   // sourceRef: src/lib/x402/networks.ts (mainnet-only registry)
-  networks: ["base", "polygon", "arbitrum", "solana"],
+  networks: ["base", "polygon", "arbitrum", "celo", "solana"],
   callout:
-    "All four networks are mainnet. Every paid call settles real USDC. There is no test mode on this surface; start with the cheapest actions (see Pricing) while integrating.",
+    "All five networks are mainnet. Every paid call settles real USDC. There is no test mode on this surface; start with the cheapest actions (see Pricing) while integrating.",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "Sign the payment.",
-        body: "EVM networks: sign an EIP-3009 authorization under the USDC EIP-712 domain carried in extra (name USD Coin, version 2). Solana: extra carries the facilitator-provided feePayer, and the exact scheme builds a partially signed transaction with it. Client libraries such as @x402/evm and @x402/svm build this payload from the accepts entry.",
+        body: "EVM networks: sign an EIP-3009 authorization under the USDC EIP-712 domain carried in extra (name USD Coin on base, polygon, and arbitrum; name USDC on celo; version 2 everywhere). Solana: extra carries the facilitator-provided feePayer, and the exact scheme builds a partially signed transaction with it. Client libraries such as @x402/evm and @x402/svm build this payload from the accepts entry.",
       },
       {
         title: "Retry with PAYMENT-SIGNATURE.",
@@ -109,7 +109,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "The server verifies, settles, then executes.",
-        body: "Verification runs off-chain at the Coinbase CDP facilitator and includes sanctions screening. A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, the charge is refunded on-chain and the error body carries refundInitiated and refundTxHash. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
+        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP; x402.celo.org for celo) and includes the facilitator's sanctions screening. A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, the charge is refunded on-chain and the error body carries refundInitiated and refundTxHash. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
       },
       {
         title: "For social accounts: finish OAuth.",
@@ -170,7 +170,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "string",
                 required: false,
                 description:
-                  "base, polygon, arbitrum, or solana. Default base.",
+                  "base, polygon, arbitrum, celo, or solana. Default base.",
               },
             ],
           },
@@ -1432,7 +1432,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Networks",
     title: "Networks and assets",
     summary:
-      "Four mainnet networks. The API accepts and returns short names; CAIP-2 ids appear inside 402 accepts entries and the PAYMENT-RESPONSE header.",
+      "Five mainnet networks. The API accepts and returns short names; CAIP-2 ids appear inside 402 accepts entries and the PAYMENT-RESPONSE header.",
     sourceRef: "src/lib/x402/networks.ts, src/lib/x402/config.ts",
     table: {
       columns: ["Network", "CAIP-2 id", "USDC contract", "Decimals"],
@@ -1456,6 +1456,12 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "6",
         ],
         [
+          "celo",
+          "eip155:42220",
+          "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+          "6",
+        ],
+        [
           "solana",
           "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
           "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
@@ -1464,7 +1470,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       ],
     },
     tableNote:
-      "Settlement runs through the Coinbase CDP facilitator. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base.",
+      "Settlement runs through the Coinbase CDP facilitator on base, polygon, arbitrum, and solana, and through the Celo facilitator (x402.celo.org) on celo. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base.",
   },
 
   // ── Pricing ─────────────────────────────────────────────────────────────
@@ -1498,7 +1504,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "400",
           "unsupported_network",
-          "?network is not base, polygon, arbitrum, or solana.",
+          "?network is not base, polygon, arbitrum, celo, or solana.",
         ],
         [
           "400",

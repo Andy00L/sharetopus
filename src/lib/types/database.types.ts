@@ -2284,7 +2284,8 @@ export type WalletChain =
   | "polygon"
   | "arbitrum"
   | "solana"
-  | "solana-devnet";
+  | "solana-devnet"
+  | "celo";
 export type SanctionsStatus = "unchecked" | "clean" | "sanctioned";
 export type SanctionsResult = "clean" | "sanctioned" | "error";
 export type TrustLevel = "unverified" | "verified" | "blocked";
