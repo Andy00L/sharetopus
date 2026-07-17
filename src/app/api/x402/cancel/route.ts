@@ -35,6 +35,7 @@ export const POST = x402PaidEndpoint<CancelBody, CancelResult>({
   endpointPath: "/api/x402/cancel",
   rateLimitScope: "x402:cancel",
   rateLimitPerMinute: 30,
+  defaultAction: "cancel",
 
   parseBody: async (req: NextRequest) => {
     try {

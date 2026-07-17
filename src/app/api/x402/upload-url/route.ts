@@ -3,7 +3,10 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
+import {
+  x402PaidEndpoint,
+  x402ChallengeGet,
+} from "@/lib/x402/middleware/x402PaidEndpoint";
 import { enforceWalletStorageQuota } from "@/lib/x402/storage/enforceWalletStorageQuota";
 import { generateServerSignedUploadUrl } from "@/actions/server/data/generateServerSignedUploadUrl";
 
@@ -35,10 +38,20 @@ type UploadUrlResult = {
   path: string;
 };
 
+// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
+// the 402 challenge).
+export const GET = x402ChallengeGet({
+  endpointPath: "/api/x402/upload-url",
+  action: "upload_url",
+  rateLimitScope: "x402:upload-url",
+  rateLimitPerMinute: 20,
+});
+
 export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
   endpointPath: "/api/x402/upload-url",
   rateLimitScope: "x402:upload-url",
   rateLimitPerMinute: 20,
+  defaultAction: "upload_url",
 
   parseBody: async (req: NextRequest) => {
     try {

@@ -50,6 +50,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
   endpointPath: "/api/x402/reauth",
   rateLimitScope: "x402:reauth",
   rateLimitPerMinute: 10,
+  defaultAction: "connect_account",
 
   parseBody: async (req: NextRequest) => {
     try {

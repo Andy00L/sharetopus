@@ -1,6 +1,5 @@
 import "server-only";
 
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 
@@ -72,6 +71,17 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
   resolveAction: ActionResolver<TBody>;
 
   /**
+   * pricing_actions key used to price the 402 challenge when an UNPAID
+   * request carries a body that does not parse or resolve. A2MCP
+   * marketplace validators (OKX) probe registered endpoints with empty
+   * bodies and expect the standard 402 challenge, not a 400; the x402
+   * ordering is payment-first. Paid requests keep strict validation: an
+   * invalid body with a payment header is still a 400 before any
+   * verify/settle, so nobody is charged for a request that cannot run.
+   */
+  defaultAction: string;
+
+  /**
    * Parse and validate the request body (POST: JSON, GET: query params).
    * Returns typed body on success or an error tuple on validation failure.
    */
@@ -100,8 +110,12 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
  * atomically via a Postgres RPC and lives in connect/).
  *
  * Steps:
- *  1. Parse body via options.parseBody.
- *  2. Resolve action key.
+ *  1. Read the payment header (payment-first: unpaid requests are answered
+ *     with a 402 challenge even when their body is invalid; see
+ *     options.defaultAction).
+ *  2. Parse body and resolve the action key. Invalid body or action with a
+ *     payment header present: 400 before any verify/settle. Without one:
+ *     fall back to defaultAction for challenge pricing.
  *  3. Rate limit per IP.
  *  4. Resolve network from ?network (unknown values are rejected, per the
  *     registry contract in networks.ts) and the recipient address.
@@ -170,9 +184,36 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
     };
 
-    // ── Step 1: Parse body ───────────────────────────────────────────────
+    // ── Step 1: Read the payment header ──────────────────────────────────
+    // Read before body validation: x402 is payment-first, so an unpaid
+    // request must get the 402 challenge even when its body is invalid or
+    // empty (marketplace validators probe exactly that way).
+    const paymentHeader = readPaymentHeader(req);
+
+    // ── Step 2: Parse body and resolve action ────────────────────────────
+    // Paid requests keep strict validation (400 before any verify/settle).
+    // Unpaid requests fall back to options.defaultAction for challenge
+    // pricing; the null parsedBody never survives past the 402 return.
+    let parsedBody: { data: TBody } | null = null;
+    let actionKey: string = options.defaultAction;
     const bodyResult = await options.parseBody(req);
-    if (!bodyResult.success) {
+    if (bodyResult.success) {
+      const actionResult = options.resolveAction(bodyResult.data);
+      if (actionResult.success) {
+        parsedBody = { data: bodyResult.data };
+        actionKey = actionResult.action;
+      } else if (paymentHeader) {
+        return logAndError({
+          principal: null,
+          action: null,
+          chargeId: null,
+          resultStatus: "error",
+          httpStatus: actionResult.httpStatus,
+          errorKind: actionResult.errorKind,
+          message: actionResult.message,
+        });
+      }
+    } else if (paymentHeader) {
       return logAndError({
         principal: null,
         action: null,
@@ -183,22 +224,6 @@ export function x402PaidEndpoint<TBody, TResult>(
         message: bodyResult.message,
       });
     }
-    const body = bodyResult.data;
-
-    // ── Step 2: Resolve action ───────────────────────────────────────────
-    const actionResult = options.resolveAction(body);
-    if (!actionResult.success) {
-      return logAndError({
-        principal: null,
-        action: null,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: actionResult.httpStatus,
-        errorKind: actionResult.errorKind,
-        message: actionResult.message,
-      });
-    }
-    const actionKey = actionResult.action;
 
     // ── Step 3: Rate limit per IP ────────────────────────────────────────
     const rateLimitResult = await checkRateLimit(
@@ -276,8 +301,7 @@ export function x402PaidEndpoint<TBody, TResult>(
     }
     const usdcPrice = priceResult.usdcPrice;
 
-    // ── Step 6: Check payment header; 402 with requirements if absent ────
-    const paymentHeader = readPaymentHeader(req);
+    // ── Step 6: No payment header: 402 with requirements ─────────────────
     if (!paymentHeader) {
       // A Solana 402 without extra.feePayer is unpayable by spec-compliant
       // clients, so a fee-payer outage returns 502 instead of an empty 402.
@@ -312,6 +336,23 @@ export function x402PaidEndpoint<TBody, TResult>(
       });
       return buildPaymentRequiredResponse(paymentRequiredResult.paymentRequired);
     }
+
+    // A null parsedBody only exists on the unpaid path, which returned the
+    // 402 above; this guard is a fail-closed invariant check, not control
+    // flow. Distinct message so it is findable if the invariant ever breaks.
+    if (parsedBody === null) {
+      console.error("[x402PaidEndpoint] Invariant violation: paid path reached without a parsed body.");
+      return logAndError({
+        principal: null,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 500,
+        errorKind: "internal_error",
+        message: "Internal request-state error. No payment was taken.",
+      });
+    }
+    const body = parsedBody.data;
 
     // ── Step 7: Verify payment (off-chain) ───────────────────────────────
     const verifyResult = await verifyPayment({
@@ -602,6 +643,145 @@ export function x402PaidEndpoint<TBody, TResult>(
       chargeId,
       paymentResponseHeader,
     });
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HOF: x402ChallengeGet
+// ---------------------------------------------------------------------------
+
+export interface X402ChallengeGetOptions {
+  /** Endpoint path for logging and resource URL (e.g. "/api/x402/post-now"). */
+  endpointPath: string;
+
+  /** pricing_actions key used to price the challenge (the endpoint's representative action). */
+  action: string;
+
+  /** Rate limit scope identifier (shared with the POST handler is fine). */
+  rateLimitScope: string;
+
+  /** Max requests per minute per IP. */
+  rateLimitPerMinute: number;
+}
+
+/**
+ * Challenge-only GET handler for paid POST endpoints.
+ *
+ * A2MCP marketplace validators (OKX) probe registered endpoints with a bare
+ * GET (curl -i) and require the standard x402 402 challenge
+ * (PAYMENT-REQUIRED header, x402Version body). This handler always answers
+ * 402 priced at options.action and never executes the paid action, even if
+ * a payment header is sent: execution semantics live on POST only.
+ *
+ * Next.js derives HEAD from GET automatically, so curl -I probes are
+ * covered by the same handler.
+ */
+export function x402ChallengeGet(
+  options: X402ChallengeGetOptions,
+): (req: NextRequest) => Promise<Response> {
+  return async (req: NextRequest): Promise<Response> => {
+    const startMs = performance.now();
+    const ipHash = await extractIpHash();
+    const userAgent = await extractUserAgent();
+    const latencyMs = () => Math.round(performance.now() - startMs);
+
+    const logChallengeCall = async (
+      resultStatus: "402_required" | "rate_limited" | "error",
+      action: string | null,
+    ): Promise<void> => {
+      await logX402Call({
+        principal: null,
+        action,
+        endpoint: options.endpointPath,
+        chargeId: null,
+        resultStatus,
+        latencyMs: latencyMs(),
+        ipHash,
+        userAgent,
+      });
+    };
+
+    const rateLimitResult = await checkRateLimit(
+      options.rateLimitScope,
+      null,
+      options.rateLimitPerMinute,
+      60
+    );
+    if (!rateLimitResult.success) {
+      await logChallengeCall("rate_limited", options.action);
+      return buildGenericErrorResponse({
+        httpStatus: 429,
+        errorKind: "rate_limited",
+        message: rateLimitResult.message ?? "Rate limit exceeded.",
+        retryAfterSeconds: rateLimitResult.resetIn ?? 60,
+        chargeId: null,
+      });
+    }
+
+    const url = new URL(req.url);
+    const networkParam = url.searchParams.get("network");
+    let network: NetworkConfig;
+    if (networkParam) {
+      const requestedNetwork = getNetworkConfig(networkParam);
+      if (!requestedNetwork) {
+        await logChallengeCall("error", options.action);
+        return buildGenericErrorResponse({
+          httpStatus: 400,
+          errorKind: "unsupported_network",
+          message: `Network "${networkParam}" is not supported.`,
+          chargeId: null,
+        });
+      }
+      network = requestedNetwork;
+    } else {
+      network = getDefaultNetwork();
+    }
+
+    const recipientAddress = getRecipientAddress(network);
+    if (!recipientAddress) {
+      console.error(`[x402ChallengeGet] Recipient address env not set for network "${network.name}".`);
+      await logChallengeCall("error", options.action);
+      return buildGenericErrorResponse({
+        httpStatus: 500,
+        errorKind: "server_misconfiguration",
+        message: "Recipient address not configured for this network.",
+        chargeId: null,
+      });
+    }
+
+    const priceResult = await readActionPrice(options.action);
+    if (!priceResult.ok) {
+      console.error(`[x402ChallengeGet] Pricing lookup failed for "${options.action}": ${priceResult.message}`);
+      // action: null because x402_access_log.action carries an FK to
+      // pricing_actions and the row may not exist.
+      await logChallengeCall("error", null);
+      return buildGenericErrorResponse({
+        httpStatus: 500,
+        errorKind: "pricing_not_configured",
+        message: priceResult.message,
+        chargeId: null,
+      });
+    }
+
+    const paymentRequiredResult = await buildPaymentRequired({
+      resourceUrl: `${getBaseUrl()}${options.endpointPath}`,
+      network,
+      amountUsdc: priceResult.usdcPrice,
+      recipientAddress,
+      error: "PAYMENT-SIGNATURE header is required",
+    });
+    if (!paymentRequiredResult.ok) {
+      await logChallengeCall("error", options.action);
+      return buildGenericErrorResponse({
+        httpStatus: 502,
+        errorKind: "facilitator_error",
+        message: paymentRequiredResult.message,
+        chargeId: null,
+      });
+    }
+
+    await logChallengeCall("402_required", options.action);
+    return buildPaymentRequiredResponse(paymentRequiredResult.paymentRequired);
   };
 }
 

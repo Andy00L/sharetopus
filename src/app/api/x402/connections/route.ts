@@ -39,6 +39,7 @@ export const GET = x402PaidEndpoint<ConnectionsParams, ConnectionsResult>({
   endpointPath: "/api/x402/connections",
   rateLimitScope: "x402:connections",
   rateLimitPerMinute: 60,
+  defaultAction: "list_connections",
 
   parseBody: async (req: NextRequest) => {
     const url = new URL(req.url);

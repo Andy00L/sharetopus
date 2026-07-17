@@ -48,6 +48,7 @@ export const GET = x402PaidEndpoint<ScheduledPostsParams, ScheduledPostsResult>(
   endpointPath: "/api/x402/scheduled-posts",
   rateLimitScope: "x402:scheduled-posts",
   rateLimitPerMinute: 60,
+  defaultAction: "list_posts",
 
   parseBody: async (req: NextRequest) => {
     const url = new URL(req.url);

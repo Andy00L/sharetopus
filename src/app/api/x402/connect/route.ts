@@ -12,6 +12,7 @@ import {
   getBaseUrl,
   getRecipientAddress,
   isX402Platform,
+  X402_PLATFORMS,
 } from "@/lib/x402/config";
 import {
   readPaymentHeader,
@@ -22,7 +23,7 @@ import { handleConnectChallenge } from "@/lib/x402/connect/handleConnectChalleng
 import { handleConnectVerify } from "@/lib/x402/connect/handleConnectVerify";
 import type { ConnectVerifyError } from "@/lib/x402/connect/handleConnectVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
-import type { ConnectNetworkContext } from "@/lib/x402/connect/types";
+import type { ConnectNetworkContext, Platform } from "@/lib/x402/connect/types";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
 export const runtime = "nodejs";
@@ -31,17 +32,28 @@ export const maxDuration = 60;
 const ENDPOINT_PATH = "/api/x402/connect";
 
 /**
+ * Platform used to price the 402 challenge when an unpaid request omits
+ * ?platform. connect_account has a single platform-independent price, so
+ * any member of X402_PLATFORMS yields the same challenge; paid requests
+ * still require an explicit valid ?platform.
+ */
+const CHALLENGE_FALLBACK_PLATFORM = "linkedin" as const;
+
+/**
  * POST /api/x402/connect?platform=linkedin
  *
  * x402 paid OAuth initiation (connect_account pricing action).
  *
- * Flow:
- *   - No payment header: return 402 challenge (PAYMENT-REQUIRED header + body)
- *   - Payment header present: verify payment, settle, create pending
- *     connection, return OAuth URL + connection token
+ * Flow (payment-first):
+ *   - No payment header: return 402 challenge (PAYMENT-REQUIRED header +
+ *     body). ?platform is optional here so A2MCP validation probes with a
+ *     bare URL still get the standard challenge.
+ *   - Payment header present: require valid ?platform, verify payment,
+ *     settle, create pending connection, return OAuth URL + connection
+ *     token
  *
  * Query params:
- *   ?platform=linkedin|tiktok|pinterest|instagram (required)
+ *   ?platform (required on paid requests; any X402_PLATFORMS member)
  *   ?network=polygon|arbitrum|celo|solana (optional; default base; unknown
  *   values are 400)
  */
@@ -68,22 +80,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   };
 
-  // -- Parse platform query param
+  // -- Check for the payment header first (payment-first ordering): an
+  // unpaid request gets the 402 challenge even without a valid ?platform.
+  const paymentHeader = readPaymentHeader(request);
+
+  // -- Parse platform query param (required only when a payment is presented)
   const url = new URL(request.url);
   const platformParam = url.searchParams.get("platform");
+  const requestedPlatform =
+    platformParam !== null && isX402Platform(platformParam)
+      ? platformParam
+      : null;
 
-  if (!platformParam || !isX402Platform(platformParam)) {
+  if (requestedPlatform === null && paymentHeader) {
     await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
     return NextResponse.json(
       {
         error: "invalid_platform",
-        message:
-          "Query param ?platform is required. Supported: linkedin, tiktok, pinterest, instagram.",
+        message: `Query param ?platform is required. Supported: ${[...X402_PLATFORMS].join(", ")}.`,
       },
       { status: 400 }
     );
   }
-  const platform = platformParam;
+  const platform = requestedPlatform ?? CHALLENGE_FALLBACK_PLATFORM;
+
+  // -- Challenge path (no payment header)
+  if (!paymentHeader) {
+    return respondUnpaidConnectChallenge(request, platform, (resultStatus) =>
+      logConnectCall({ principal: null, chargeId: null, resultStatus })
+    );
+  }
 
   // -- Resolve network (unknown values are rejected)
   const networkParam = url.searchParams.get("network");
@@ -123,55 +149,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     platform,
   };
 
-  // -- Check for the payment header
-  const paymentHeader = readPaymentHeader(request);
-
-  if (!paymentHeader) {
-    // -- Challenge path
-    const rateLimitResult = await checkRateLimit(
-      "x402_connect_challenge",
-      null,
-      10,
-      60
-    );
-    if (!rateLimitResult.success) {
-      await logConnectCall({ principal: null, chargeId: null, resultStatus: "rate_limited" });
-      return NextResponse.json(
-        {
-          error: "rate_limited",
-          retryAfter: rateLimitResult.resetIn ?? 60,
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(rateLimitResult.resetIn ?? 60),
-          },
-        }
-      );
-    }
-
-    const result = await handleConnectChallenge(context);
-    if (!result.ok) {
-      console.error(`[POST /api/x402/connect] Challenge build failed: ${result.message}`);
-      await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
-      // A missing Solana fee payer is an upstream facilitator outage, not a
-      // server bug: 502 facilitator_unavailable, matching the verify paths.
-      if (result.error === "fee_payer_unavailable") {
-        return NextResponse.json(
-          { error: "facilitator_unavailable", message: result.message },
-          { status: 502 }
-        );
-      }
-      return NextResponse.json(
-        { error: "internal", message: result.message },
-        { status: 500 }
-      );
-    }
-
-    await logConnectCall({ principal: null, chargeId: null, resultStatus: "402_required" });
-    return buildPaymentRequiredResponse(result.challengeBody);
-  }
-
   // -- Verify path
   const result = await handleConnectVerify(paymentHeader, context);
 
@@ -196,6 +173,135 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     : {};
 
   return NextResponse.json(result.payload, { status: 200, headers });
+}
+
+/**
+ * GET /api/x402/connect
+ *
+ * Challenge-only probe path: A2MCP marketplace validators (OKX) GET
+ * registered endpoints (curl -i) and require the standard 402 challenge.
+ * Never initiates a connection; the paid flow lives on POST. Next.js
+ * derives HEAD from this handler automatically.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const startMs = performance.now();
+  const ipHash = await extractIpHash();
+  const userAgent = await extractUserAgent();
+
+  const url = new URL(request.url);
+  const platformParam = url.searchParams.get("platform");
+  const platform =
+    platformParam !== null && isX402Platform(platformParam)
+      ? platformParam
+      : CHALLENGE_FALLBACK_PLATFORM;
+
+  return respondUnpaidConnectChallenge(request, platform, async (resultStatus) => {
+    await logX402Call({
+      principal: null,
+      action: "connect_account",
+      endpoint: ENDPOINT_PATH,
+      chargeId: null,
+      resultStatus,
+      latencyMs: Math.round(performance.now() - startMs),
+      ipHash,
+      userAgent,
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shared unpaid-challenge path (POST without payment header, and GET)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rate limits, resolves the network from ?network, and returns the 402
+ * challenge for connect_account. Shared by the POST challenge branch and
+ * the GET probe handler so the two paths cannot drift.
+ */
+async function respondUnpaidConnectChallenge(
+  request: NextRequest,
+  platform: Platform,
+  logCall: (
+    resultStatus: "402_required" | "rate_limited" | "error"
+  ) => Promise<void>,
+): Promise<NextResponse> {
+  const rateLimitResult = await checkRateLimit(
+    "x402_connect_challenge",
+    null,
+    10,
+    60
+  );
+  if (!rateLimitResult.success) {
+    await logCall("rate_limited");
+    return NextResponse.json(
+      {
+        error: "rate_limited",
+        retryAfter: rateLimitResult.resetIn ?? 60,
+      },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimitResult.resetIn ?? 60),
+        },
+      }
+    );
+  }
+
+  const url = new URL(request.url);
+  const networkParam = url.searchParams.get("network");
+  let network: NetworkConfig;
+  if (networkParam) {
+    const requestedNetwork = getNetworkConfig(networkParam);
+    if (!requestedNetwork) {
+      await logCall("error");
+      return NextResponse.json(
+        {
+          error: "unsupported_network",
+          message: `Network "${networkParam}" is not supported.`,
+        },
+        { status: 400 }
+      );
+    }
+    network = requestedNetwork;
+  } else {
+    network = getDefaultNetwork();
+  }
+
+  const recipientAddress = getRecipientAddress(network);
+  if (!recipientAddress) {
+    console.error(`[respondUnpaidConnectChallenge] Recipient address env not set for network "${network.name}".`);
+    await logCall("error");
+    return NextResponse.json(
+      { error: "internal", message: "Server misconfiguration." },
+      { status: 500 }
+    );
+  }
+
+  const result = await handleConnectChallenge({
+    network,
+    recipientAddress,
+    resourceUrl: `${getBaseUrl()}${ENDPOINT_PATH}`,
+    platform,
+  });
+  if (!result.ok) {
+    console.error(`[respondUnpaidConnectChallenge] Challenge build failed: ${result.message}`);
+    await logCall("error");
+    // A missing Solana fee payer is an upstream facilitator outage, not a
+    // server bug: 502 facilitator_unavailable, matching the verify paths.
+    if (result.error === "fee_payer_unavailable") {
+      return NextResponse.json(
+        { error: "facilitator_unavailable", message: result.message },
+        { status: 502 }
+      );
+    }
+    return NextResponse.json(
+      { error: "internal", message: result.message },
+      { status: 500 }
+    );
+  }
+
+  await logCall("402_required");
+  return buildPaymentRequiredResponse(result.challengeBody);
 }
 
 // ---------------------------------------------------------------------------

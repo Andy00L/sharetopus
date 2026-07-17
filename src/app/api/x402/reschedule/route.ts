@@ -42,6 +42,7 @@ export const POST = x402PaidEndpoint<RescheduleBody, RescheduleResult>({
   endpointPath: "/api/x402/reschedule",
   rateLimitScope: "x402:reschedule",
   rateLimitPerMinute: 30,
+  defaultAction: "reschedule",
 
   parseBody: async (req: NextRequest) => {
     try {

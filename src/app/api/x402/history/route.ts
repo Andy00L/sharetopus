@@ -49,6 +49,7 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
   endpointPath: "/api/x402/history",
   rateLimitScope: "x402:history",
   rateLimitPerMinute: 60,
+  defaultAction: "list_history",
 
   parseBody: async (req: NextRequest) => {
     const url = new URL(req.url);

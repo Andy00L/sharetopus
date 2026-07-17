@@ -3,7 +3,10 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
+import {
+  x402PaidEndpoint,
+  x402ChallengeGet,
+} from "@/lib/x402/middleware/x402PaidEndpoint";
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
 import {
   PostBodyBaseSchema,
@@ -37,10 +40,20 @@ type PostNowResult = {
   dispatched: number;
 };
 
+// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
+// the 402 challenge). post.text is the representative price for the probe.
+export const GET = x402ChallengeGet({
+  endpointPath: "/api/x402/post-now",
+  action: "post.text",
+  rateLimitScope: "x402:post-now",
+  rateLimitPerMinute: 20,
+});
+
 export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
   endpointPath: "/api/x402/post-now",
   rateLimitScope: "x402:post-now",
   rateLimitPerMinute: 20,
+  defaultAction: "post.text",
 
   parseBody: async (req: NextRequest) => {
     try {

@@ -36,6 +36,7 @@ export const POST = x402PaidEndpoint<DeleteBody, DeleteResult>({
   endpointPath: "/api/x402/delete",
   rateLimitScope: "x402:delete",
   rateLimitPerMinute: 30,
+  defaultAction: "delete",
 
   parseBody: async (req: NextRequest) => {
     try {
