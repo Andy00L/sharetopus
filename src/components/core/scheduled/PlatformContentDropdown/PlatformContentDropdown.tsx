@@ -4,10 +4,10 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
-import { ScheduledPost } from "@/lib/types/dbTypes";
+import { ScheduledPostListItem } from "@/lib/types/dbTypes";
 
 interface PlatformContentDropdownProps {
-  post: ScheduledPost;
+  post: ScheduledPostListItem;
 }
 
 export default function PlatformContentDropdown({

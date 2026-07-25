@@ -8,12 +8,10 @@ import { Switch } from "@/components/ui/switch";
 import type { TikTokOptions } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 import { CalendarIcon, Clock, Loader2, SendHorizontal } from "lucide-react";
-import FilePreview from "../../../../renderFilePreview";
 
 interface SchedulingPanelProps {
+  /** Still needed for the upload-progress block below. */
   readonly selectedFile: File | null;
-  readonly previewUrl: string | null;
-  readonly postType: "text" | "image" | "video";
   readonly isScheduled: boolean;
   readonly setIsScheduled: (v: boolean) => void;
   readonly scheduledDate: string;
@@ -32,8 +30,6 @@ interface SchedulingPanelProps {
 
 export default function SchedulingPanel({
   selectedFile,
-  previewUrl,
-  postType,
   isScheduled,
   setIsScheduled,
   scheduledDate,
@@ -56,22 +52,6 @@ export default function SchedulingPanel({
     tikTokOptions?.brandedContent === true;
   return (
     <>
-      {/* Preview panel */}
-      {selectedFile && (
-        <div className="border rounded-2xl  bg-white ">
-          <div className="p-5">
-            <h1 className="mb-3">Media Preview</h1>
-            <div className="rounded-lg overflow-hidden bg-white relative max-h-72 flex items-center justify-center [&_img]:max-h-72 [&_video]:max-h-72 [&_img]:w-auto [&_video]:w-auto [&_img]:object-contain [&_video]:object-contain">
-              <FilePreview
-                selectedFile={selectedFile}
-                mediaType={postType}
-                previewUrl={previewUrl}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       {/**Scheduling button */}
       <div className=" p-2.5 border rounded-2xl  bg-white">
         {/* Scheduling toggle */}
@@ -95,7 +75,7 @@ export default function SchedulingPanel({
                   type="date"
                   value={scheduledDate}
                   min={format(new Date(), "yyyy-MM-dd")}
-                  onChange={(e) => setScheduledDate(e.target.value)}
+                  onChange={(event) => setScheduledDate(event.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -104,7 +84,7 @@ export default function SchedulingPanel({
                   id="schedule-time"
                   type="time"
                   value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
+                  onChange={(event) => setScheduledTime(event.target.value)}
                 />
               </div>
             </div>

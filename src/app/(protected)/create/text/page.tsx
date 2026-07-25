@@ -1,6 +1,10 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 import SocialPostForm from "@/components/core/create/SocialPostForm/SocialPostForm";
+import {
+  parseSchedulePrefill,
+  type SchedulePrefill,
+} from "@/components/core/create/SocialPostForm/state/parseSchedulePrefill";
 import RateLimitError from "@/components/RateLimitError";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
@@ -9,7 +13,11 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
-async function SocialPostFormWithData() {
+async function SocialPostFormWithData({
+  initialSchedule,
+}: {
+  readonly initialSchedule: SchedulePrefill | null;
+}) {
   const { userId } = await auth();
   const isPaid = await checkActiveSubscription(userId);
   if (!isPaid.isActive) {
@@ -37,17 +45,25 @@ async function SocialPostFormWithData() {
       accounts={accounts.data ?? []}
       userId={userId}
       postType="text"
+      initialSchedule={initialSchedule}
     />
   );
 }
 
-export default function CreateTestPostPage() {
+export default async function CreateTextPostPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<{ date?: string; time?: string }>;
+}) {
+  const { date, time } = await searchParams;
+  const initialSchedule = parseSchedulePrefill(date, time);
+
   return (
     <SidebarContent className="px-4 py-6">
       <h1 className="text-2xl font-bold mb-2">Create a text post</h1>
       <div className="flex flex-col lg:flex-row gap-6">
         <Suspense fallback={<SocialPostFormSkeleton />}>
-          <SocialPostFormWithData />
+          <SocialPostFormWithData initialSchedule={initialSchedule} />
         </Suspense>
       </div>
     </SidebarContent>

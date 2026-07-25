@@ -21,6 +21,34 @@ export type ScheduledPost = Tables<"scheduled_posts"> & {
   social_accounts?: SocialAccountAccessible | null;
 };
 
+/**
+ * The exact projection getScheduledPosts selects for list surfaces (web
+ * grid, calendar, MCP list, x402 list). Narrower than the full row on
+ * purpose: the query never reads the remaining columns, so typing them
+ * present would lie to consumers. sourceRef:
+ * src/actions/server/scheduleActions/getScheduledPosts.ts (select string).
+ */
+export type ScheduledPostListItem = Pick<
+  Tables<"scheduled_posts">,
+  | "id"
+  | "scheduled_at"
+  | "status"
+  | "platform"
+  | "post_title"
+  | "post_description"
+  | "error_message"
+  | "media_type"
+  | "media_storage_path"
+  | "batch_id"
+  | "created_via"
+> & {
+  social_accounts: {
+    id: string;
+    display_name: string | null;
+    avatar_url: string | null;
+  } | null;
+};
+
 export type ContentHistory = Tables<"content_history"> & {
   social_accounts?: { avatar_url: string | null } | null;
 };

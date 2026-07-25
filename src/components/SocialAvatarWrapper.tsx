@@ -2,26 +2,11 @@
 "use client";
 
 import AvatarWithFallback from "./AvatarWithFallback";
-import PinterestSVGIcon, {
-  FacebookSVGIcon,
-  InstagramSVGIcon,
-  LinkedinSVGIcon,
-  ThreadsSVGIcon,
-  TiktokSVGIcon,
-  TwitterVGIcon,
-  YoutubeSVGIcon,
-} from "./icons/allPlatformsIcons";
+import {
+  getPlatformBrandIcon,
+  PlatformLetterBadge,
+} from "./icons/platformBrandIcons";
 
-/** Keys are DB platform values (database.types.ts Platform alias). */
-type SocialPlatform =
-  | "linkedin"
-  | "pinterest"
-  | "tiktok"
-  | "instagram"
-  | "x"
-  | "youtube"
-  | "facebook"
-  | "threads";
 interface SocialAvatarWrapperProps {
   /** Image URL for the avatar */
   readonly src?: string | null;
@@ -35,17 +20,7 @@ interface SocialAvatarWrapperProps {
   readonly size?: number;
   readonly isSelected?: boolean;
 }
-// Map of platform names to their respective icon components
-const PLATFORM_ICONS = {
-  linkedin: LinkedinSVGIcon,
-  pinterest: PinterestSVGIcon,
-  tiktok: TiktokSVGIcon,
-  instagram: InstagramSVGIcon,
-  x: TwitterVGIcon,
-  youtube: YoutubeSVGIcon,
-  facebook: FacebookSVGIcon,
-  threads: ThreadsSVGIcon,
-};
+
 export default function SocialAvatarWrapper({
   src,
   alt,
@@ -57,14 +32,10 @@ export default function SocialAvatarWrapper({
   // Calculate icon size (approximately 1/3 of the avatar size)
   const iconSize = Math.floor(size / 2);
 
-  // Get the appropriate icon component based on platform name
-  const IconComponent =
-    PLATFORM_ICONS[platform.toLowerCase() as SocialPlatform];
-
-  // If no matching platform is found, return just the avatar without an icon
-  if (!IconComponent) {
-    return <AvatarWithFallback src={src} alt={alt} size={size} />;
-  }
+  // Shared registry covers legacy and registry platforms alike; platforms
+  // without a brand glyph fall back to the letter badge so every connected
+  // account carries a platform marker.
+  const IconComponent = getPlatformBrandIcon(platform);
 
   return (
     <div className="relative inline-flex">
@@ -91,7 +62,11 @@ export default function SocialAvatarWrapper({
           style={{ width: iconSize * 0.6, height: iconSize * 0.6 }}
           className="flex items-center justify-center text-primary"
         >
-          <IconComponent />
+          {IconComponent ? (
+            <IconComponent />
+          ) : (
+            <PlatformLetterBadge platform={platform} />
+          )}
         </div>
       </div>
     </div>

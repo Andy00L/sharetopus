@@ -3,7 +3,7 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { CreatedVia, PostStatus } from "@/lib/types/database.types";
-import type { ScheduledPost } from "@/lib/types/dbTypes";
+import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
@@ -18,7 +18,8 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
  * **Tables:** `scheduled_posts`, `social_accounts` (join).
  *
  * Default filter: excludes status='posted' (matches existing web UI behavior).
- * Caller can override by passing an explicit status in `filters`.
+ * Caller can override with an explicit status, or set includePosted to get
+ * every status at once (the calendar view shows posted posts in place).
  */
 export async function getScheduledPosts(
   principalId: string,
@@ -27,11 +28,12 @@ export async function getScheduledPosts(
     platform?: string;
     status?: PostStatus;
     limit?: number;
+    includePosted?: boolean;
   },
 ): Promise<{
   success: boolean;
   message: string;
-  data?: ScheduledPost[];
+  data?: ScheduledPostListItem[];
   resetIn?: number;
 }> {
   console.log(
@@ -81,7 +83,7 @@ export async function getScheduledPosts(
     }
     if (filters?.status) {
       query = query.eq("status", filters.status);
-    } else {
+    } else if (!filters?.includePosted) {
       query = query.neq("status", "posted");
     }
     if (filters?.limit) {
@@ -98,13 +100,15 @@ export async function getScheduledPosts(
       };
     }
 
+    const posts: ScheduledPostListItem[] = data ?? [];
+
     return {
       success: true,
       message:
-        data && data.length > 0
-          ? `Retrieved ${data.length} scheduled post(s).`
+        posts.length > 0
+          ? `Retrieved ${posts.length} scheduled post(s).`
           : "No scheduled posts found.",
-      data: (data ?? []) as unknown as ScheduledPost[],
+      data: posts,
     };
   } catch (err) {
     console.error(

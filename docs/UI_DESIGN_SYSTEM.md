@@ -77,6 +77,29 @@ action), token-built, never two per page.
 - Code cards: ink surface, cream-2 code text, muted uppercase label bar,
   copy button fades in on hover.
 
+## Dashboard surfaces (protected app)
+
+The dashboard runs on the shadcn token set (`:root` zinc scale) over the
+cream field (`.protected-theme` background `#F3F4EF`), Geist Sans/Mono,
+white `bg-card` panels with `border-border` hairlines. Rules the calendar
+and composer preview established, for every future dashboard surface:
+
+- Accent: `--chart-1` (burnt orange oklch) is the dashboard's one spark,
+  already the create-card hover accent. It marks today's date chip, the
+  week view's now line, and drop-target highlights. Never a second
+  saturated color at rest.
+- Status colors live in one map:
+  `src/components/core/scheduled/statusStyles.ts` (badge text/border +
+  solid dot per status). Every surface showing post status reads it.
+- Platform glyphs live in one registry:
+  `src/components/icons/platformBrandIcons.tsx` (legacy inline SVGs +
+  Tabler brand icons + letter-badge fallback). No local icon maps.
+- Grid material: hairline cells via `gap-px` over `bg-border` inside a
+  `rounded-xl border` shell (calendar month and week grids).
+- Motion: 150ms color/opacity transitions only; drag feedback is a
+  `shadow-lg` overlay clone plus a dimmed (opacity-40) source chip.
+- Time is always `font-mono` + `tabular-nums`.
+
 ## House style, one line
 
 Warm paper, precise ink, one orange spark: a printed field guide that

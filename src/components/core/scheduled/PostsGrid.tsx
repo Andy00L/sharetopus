@@ -2,7 +2,7 @@
 import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
 import RateLimitError from "@/components/RateLimitError";
 import { SidebarGroup } from "@/components/ui/sidebar";
-import { ScheduledPost } from "@/lib/types/database.types";
+import { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import NoData from "../posted/noData";
@@ -36,7 +36,7 @@ export default async function PostsGrid() {
   }
   // Inline batch grouping (was getScheduledPostsGroupedByBatch)
   const groupedPosts = postsResult.data.reduce(
-    (acc: Record<string, ScheduledPost[]>, post) => {
+    (acc: Record<string, ScheduledPostListItem[]>, post) => {
       const batchId = post.batch_id || "no-batch";
       if (!acc[batchId]) acc[batchId] = [];
       acc[batchId].push(post);

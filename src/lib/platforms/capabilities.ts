@@ -148,3 +148,15 @@ export function listPlatformsSupportingMediaType(
     PLATFORM_MEDIA_SUPPORT[platform].includes(mediaType),
   );
 }
+
+/**
+ * Human-readable name for any platform value: legacy adapters answer from
+ * PLATFORM_LABELS, registry providers from their catalog label, and
+ * unknown values echo back unchanged so UI never renders blank.
+ */
+export function getPlatformDisplayLabel(platform: string): string {
+  if (isPostingPlatform(platform)) {
+    return PLATFORM_LABELS[platform];
+  }
+  return getProviderMetadata(platform)?.label ?? platform;
+}

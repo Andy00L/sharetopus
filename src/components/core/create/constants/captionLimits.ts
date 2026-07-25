@@ -1,3 +1,5 @@
+import { getProviderMetadata } from "@/lib/platforms/providers/catalog";
+
 /**
  * Max caption/description length per platform, in characters. Keys are the
  * DB platform values (database.types.ts Platform alias): lookups everywhere
@@ -23,3 +25,19 @@ export const CAPTION_LIMITS = {
 } as const;
 
 export type CaptionPlatform = keyof typeof CAPTION_LIMITS;
+
+/**
+ * Text limit for any platform value: legacy platforms answer from the map
+ * above, registry providers from their catalog rules (maxTextLength), and
+ * everything else falls back to the default. Character counts here are
+ * plain string lengths; platform-weighted counting (X counts every URL as
+ * 23) is deliberately not modeled, so treat near-limit values as a warning
+ * rather than a guarantee.
+ */
+export function resolvePlatformTextLimit(platform: string): number {
+  if (platform !== "default" && platform in CAPTION_LIMITS) {
+    return CAPTION_LIMITS[platform as CaptionPlatform];
+  }
+  const registryLimit = getProviderMetadata(platform)?.rules.maxTextLength;
+  return registryLimit ?? CAPTION_LIMITS.default;
+}

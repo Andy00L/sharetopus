@@ -17,6 +17,7 @@ import {
   ALLOWED_VIDEO_TYPES,
 } from "../constants/constants";
 import NoAccountAvailable from "../NoAccountAvailable";
+import PostPreviewPanel from "../preview/PostPreviewPanel";
 import { ImageUploads } from "../upload/ImageUpload";
 import { VideoCoverSelector } from "../upload/VideoCoverSelector";
 import { VideoUploads } from "../upload/VideoUpload";
@@ -37,6 +38,7 @@ import {
   defaultTextInputs,
   getDefaultScheduledDate,
 } from "./state/defaults";
+import type { SchedulePrefill } from "./state/parseSchedulePrefill";
 import { checkFormSubmission } from "./validation/checkFormSubmission";
 
 interface SocialPostFormProps {
@@ -44,6 +46,11 @@ interface SocialPostFormProps {
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
   readonly uploadLimits?: { image: number; video: number };
+  /**
+   * When set (calendar quick-create links), the form opens with
+   * scheduling on and this date/time filled in.
+   */
+  readonly initialSchedule?: SchedulePrefill | null;
 }
 
 export default function SocialPostForm({
@@ -51,6 +58,7 @@ export default function SocialPostForm({
   userId,
   postType,
   uploadLimits,
+  initialSchedule = null,
 }: SocialPostFormProps) {
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 8) * 1024 * 1024;
   const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 8) * 1024 * 1024;
@@ -65,10 +73,12 @@ export default function SocialPostForm({
   const [platformOptions, setPlatformOptions] = useState(() => ({
     ...defaultPlatformOptions,
   }));
-  const [isScheduled, setIsScheduled] = useState(false);
-  const [scheduledDate, setScheduledDate] = useState(getDefaultScheduledDate);
+  const [isScheduled, setIsScheduled] = useState(initialSchedule !== null);
+  const [scheduledDate, setScheduledDate] = useState(
+    () => initialSchedule?.date ?? getDefaultScheduledDate(),
+  );
   const [scheduledTime, setScheduledTime] = useState<string>(
-    DEFAULT_SCHEDULED_TIME,
+    initialSchedule?.time ?? DEFAULT_SCHEDULED_TIME,
   );
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -129,7 +139,9 @@ export default function SocialPostForm({
       [accountId]: !prev[accountId],
     }));
 
-    const account = accounts.find((a) => a.id === accountId);
+    const account = accounts.find(
+      (candidateAccount) => candidateAccount.id === accountId,
+    );
     if (!account) return;
 
     if (!wasSelected) {
@@ -162,7 +174,7 @@ export default function SocialPostForm({
     updateDefaultText(
       newInputs,
       platformOptions.pinterest?.link || "",
-      selectedPinterestAccounts.map((a) => a.id),
+      selectedPinterestAccounts.map((pinterestAccount) => pinterestAccount.id),
     );
   }
 
@@ -172,7 +184,7 @@ export default function SocialPostForm({
     updateDefaultText(
       newInputs,
       platformOptions.pinterest?.link || "",
-      selectedPinterestAccounts.map((a) => a.id),
+      selectedPinterestAccounts.map((pinterestAccount) => pinterestAccount.id),
     );
   }
 
@@ -184,7 +196,7 @@ export default function SocialPostForm({
     updateDefaultText(
       textInputs,
       link,
-      selectedPinterestAccounts.map((a) => a.id),
+      selectedPinterestAccounts.map((pinterestAccount) => pinterestAccount.id),
     );
   }
 
@@ -453,8 +465,8 @@ export default function SocialPostForm({
           <Textarea
             id="text-content"
             value={textInputs.description}
-            onChange={(e) =>
-              handleTextInputChange("description", e.target.value)
+            onChange={(event) =>
+              handleTextInputChange("description", event.target.value)
             }
             placeholder={
               postType === "text"
@@ -567,10 +579,18 @@ export default function SocialPostForm({
       </SidebarGroup>
 
       <SidebarGroup className="w-full  lg:w-2/6 space-y-6">
-        <SchedulingPanel
+        <PostPreviewPanel
+          accounts={allSelectedAccounts}
+          accountContent={accountContent}
+          defaultTitle={textInputs.title}
+          defaultDescription={textInputs.description}
+          postType={postType}
           selectedFile={selectedFile}
           previewUrl={previewUrl}
-          postType={postType}
+          pinterestLink={platformOptions.pinterest?.link || ""}
+        />
+        <SchedulingPanel
+          selectedFile={selectedFile}
           isScheduled={isScheduled}
           setIsScheduled={setIsScheduled}
           scheduledDate={scheduledDate}
