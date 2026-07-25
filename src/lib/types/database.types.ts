@@ -1353,7 +1353,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           account_identifier: string;
           display_name: string | null;
           username: string | null;
@@ -1384,7 +1404,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           account_identifier: string;
           display_name?: string | null;
           username?: string | null;
@@ -1415,7 +1455,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           account_identifier?: string;
           display_name?: string | null;
           username?: string | null;
@@ -1468,7 +1528,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           oauth_state: string;
           oauth_code_verifier: string | null;
           redirect_uri: string;
@@ -1500,7 +1580,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           oauth_state: string;
           oauth_code_verifier?: string | null;
           redirect_uri: string;
@@ -1532,7 +1632,27 @@ export type Database = {
             | "facebook"
             | "threads"
             | "youtube"
-            | "x";
+            | "x"
+            | "bluesky"
+            | "mastodon"
+            | "telegram"
+            | "discord"
+            | "slack"
+            | "devto"
+            | "wordpress"
+            | "reddit"
+            | "tumblr"
+            | "twitch"
+            | "kick"
+            | "hashnode"
+            | "medium"
+            | "lemmy"
+            | "farcaster"
+            | "listmonk"
+            | "nostr"
+            | "linkedin_page"
+            | "dribbble"
+            | "gmb";
           oauth_state?: string;
           oauth_code_verifier?: string | null;
           redirect_uri?: string;
@@ -2492,7 +2612,27 @@ export type Platform =
   | "facebook"
   | "threads"
   | "youtube"
-  | "x";
+  | "x"
+  | "bluesky"
+  | "mastodon"
+  | "telegram"
+  | "discord"
+  | "slack"
+  | "devto"
+  | "wordpress"
+  | "reddit"
+  | "tumblr"
+  | "twitch"
+  | "kick"
+  | "hashnode"
+  | "medium"
+  | "lemmy"
+  | "farcaster"
+  | "listmonk"
+  | "nostr"
+  | "linkedin_page"
+  | "dribbble"
+  | "gmb";
 
 export type ConnectionStatus =
   | "pending"

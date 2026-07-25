@@ -35,7 +35,7 @@ where contype = 'c'
 ## Path A: `platform` is an enum
 
 Enum values cannot be added inside a transaction block that also uses them, and
-they cannot be removed. Add all seven in one go.
+they cannot be removed. Add all twenty in one go.
 
 ```sql
 alter type platform add value if not exists 'bluesky';
@@ -45,6 +45,20 @@ alter type platform add value if not exists 'discord';
 alter type platform add value if not exists 'slack';
 alter type platform add value if not exists 'devto';
 alter type platform add value if not exists 'wordpress';
+alter type platform add value if not exists 'reddit';
+alter type platform add value if not exists 'tumblr';
+alter type platform add value if not exists 'twitch';
+alter type platform add value if not exists 'kick';
+alter type platform add value if not exists 'hashnode';
+alter type platform add value if not exists 'medium';
+alter type platform add value if not exists 'lemmy';
+alter type platform add value if not exists 'farcaster';
+alter type platform add value if not exists 'listmonk';
+alter type platform add value if not exists 'nostr';
+alter type platform add value if not exists 'linkedin_page';
+alter type platform add value if not exists 'dribbble';
+alter type platform add value if not exists 'gmb';
+-- 'threads' already exists in the union.
 ```
 
 Note the ordering: `add value` appends to the end of the enum, which changes
@@ -64,11 +78,13 @@ alter table public.<table> drop constraint <constraint_name>;
 alter table public.<table> add constraint <constraint_name>
   check (platform in (
     'linkedin','tiktok','pinterest','instagram','facebook','threads','youtube','x',
-    'bluesky','mastodon','telegram','discord','slack','devto','wordpress'
+    'bluesky','mastodon','telegram','discord','slack','devto','wordpress',
+    'reddit','tumblr','twitch','kick','hashnode','medium','lemmy','farcaster','listmonk',
+    'nostr','linkedin_page','dribbble','gmb'
   ));
 ```
 
-## No other schema change is needed for these seven providers
+## No other schema change is needed for any of these providers
 
 Provider configuration (Mastodon instance URL, Telegram chat ID, Discord
 channel and guild IDs, Bluesky DID and service URL, Slack channel and team,
@@ -88,7 +104,7 @@ union and to the `social_accounts` / `scheduled_posts` row and insert types.
 Per your standing rule I will not regenerate that file, only edit those unions
 by hand.
 
-Until that edit lands, the seven providers compile and run in isolation but
+Until that edit lands, the new providers compile and run in isolation but
 cannot be written to `social_accounts`, because the row type still rejects
 their platform values.
 
