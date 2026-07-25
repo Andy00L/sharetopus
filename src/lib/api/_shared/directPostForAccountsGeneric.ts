@@ -225,11 +225,19 @@ export async function directPostForAccountsGeneric<
     );
 
     if (!historyResult.success) {
-      return {
-        success: false,
-        count: 0,
-        message: `Post succeeded but failed to save history: ${historyResult.message}`,
-      };
+      // The post IS live on the platform. Reporting failure here made the
+      // worker mark scheduled_posts as 'failed', write a failed_posts row,
+      // and fire a post.failed webhook for content that is publicly
+      // visible, which invites the user (or their agent) to repost and
+      // duplicate it. A lost content_history row is a bookkeeping problem,
+      // not a publishing one: report the success and log the gap loudly so
+      // it can be reconciled from the platform side.
+      console.error(
+        `${logPrefix} CONTENT HISTORY NOT RECORDED for a published post ` +
+          `(platform=${platform} account=${account.id} ` +
+          `scheduled_post_id=${config.scheduledPostId ?? "none"} ` +
+          `content_id=${historyFields.content_id}): ${historyResult.message}`,
+      );
     }
 
     if (adapter.onPostSuccess) {

@@ -14,12 +14,27 @@ export type PlatformErrorReason =
   | "invalid_input"
   | "unknown";
 
-export function isRetryableReason(reason: PlatformErrorReason): boolean {
-  return (
-    reason === "auth_expired" ||
-    reason === "rate_limited" ||
-    reason === "transient"
-  );
+/**
+ * Whether re-running the platform call for this reason is both USEFUL and
+ * SAFE TO REPEAT. Only a rate limit qualifies.
+ *
+ * A 429 is the platform refusing the request outright: nothing was
+ * published, so a backoff retry cannot produce a second public post.
+ *
+ * Deliberately excluded, even though a retry might occasionally succeed:
+ *   - transient (timeout, ECONNRESET, 5xx): the outcome is UNKNOWN. The
+ *     platform may have accepted the post before the connection died, so
+ *     retrying can publish it twice. A duplicate public post cannot be
+ *     undone from here; a post marked failed can be rescheduled by its
+ *     owner. The asymmetry decides it.
+ *   - auth_expired: ensureValidToken already refreshes a clock-expired
+ *     token before the call, so a 401/403 here means the grant was revoked
+ *     on the platform side. Retrying re-sends the same dead credential.
+ *   - policy_rejected / invalid_input / unknown: deterministic. The same
+ *     request produces the same rejection.
+ */
+export function isSafeToRetryPost(reason: PlatformErrorReason): boolean {
+  return reason === "rate_limited";
 }
 
 /**
@@ -54,7 +69,6 @@ export function classifyDirectPostFailure(
     return "rate_limited";
   if (m.includes("timeout") || m.includes("etimedout")) return "transient";
   if (m.includes("network") || m.includes("econnreset")) return "transient";
-  if (m.includes("history")) return "invalid_input";
 
   // The youtube/x/facebook postTo helpers embed the HTTP status as
   // "... failed (429)"; classify by that suffix.

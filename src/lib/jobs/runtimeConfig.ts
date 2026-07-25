@@ -63,6 +63,33 @@ export const RUNTIME = {
   tikTokPublishPollIntervalMs: 60_000,
 } as const;
 
+/**
+ * Retry counts Inngest accepts on a function config.
+ * sourceRef: node_modules/inngest/components/InngestFunction.d.ts:336
+ */
+const INNGEST_RETRY_VALUES = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+] as const;
+
+export type InngestRetryCount = (typeof INNGEST_RETRY_VALUES)[number];
+
+/**
+ * Clamps an operator-supplied retry count (WORKER_MAX_RETRIES) into the
+ * range Inngest accepts, returning it as the literal union the SDK expects.
+ *
+ * Indexing the frozen tuple is what produces the union, so no assertion is
+ * needed: the previous `Math.min(...) as 0 | 1 | 2 | 3 | 4 | 5` compiled
+ * but lied, since an operator setting WORKER_MAX_RETRIES=10 produced a 10
+ * typed as 5.
+ */
+export function toInngestRetryCount(requested: number): InngestRetryCount {
+  const clamped = Math.min(
+    Math.max(Math.trunc(requested), 0),
+    INNGEST_RETRY_VALUES.length - 1,
+  );
+  return INNGEST_RETRY_VALUES[clamped];
+}
+
 function readPositiveInt(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || raw.trim() === "") return fallback;

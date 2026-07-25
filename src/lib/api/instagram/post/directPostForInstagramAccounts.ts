@@ -145,20 +145,24 @@ export async function directPostForInstagramAccounts(config: {
       );
 
       if (!historyResult.success) {
+        // The post IS live on Instagram. Reporting failure here made the
+        // worker mark scheduled_posts as 'failed', write a failed_posts
+        // row, and fire a post.failed webhook for content that is publicly
+        // visible, which invites a repost and duplicates it. A lost
+        // content_history row is a bookkeeping problem, not a publishing
+        // one. Same handling as directPostForAccountsGeneric.
         console.error(
-          `[Instagram Direct Post] Error saving to content history:`,
-          historyResult.message,
+          `[Instagram Direct Post] CONTENT HISTORY NOT RECORDED for a ` +
+            `published post (account=${account.id} ` +
+            `scheduled_post_id=${config.scheduledPostId ?? "none"} ` +
+            `content_id=${postResult.postId ?? "unknown"}): ` +
+            `${historyResult.message}`,
         );
-        return {
-          success: false,
-          count: 0,
-          message: `Post succeeded but failed to save history: ${historyResult.message}`,
-        };
+      } else {
+        console.log(
+          `[Instagram Direct Post] Successfully posted to account and saved to history`,
+        );
       }
-
-      console.log(
-        `[Instagram Direct Post] Successfully posted to account and saved to history`,
-      );
     }
 
     // Add more detailed error logging
