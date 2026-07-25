@@ -7,16 +7,14 @@ import { headers } from "next/headers";
 import { Webhook } from "svix";
 
 export async function POST(req: Request) {
-  const WEBHOOK_SECRET =
+  const webhookSecret =
     process.env.NODE_ENV === "production"
-      ? process.env.CLERK_WEBHOOK_SECRET!
-      : process.env.CLERK_WEBHOOK_SECRET_DEV!;
+      ? process.env.CLERK_WEBHOOK_SECRET
+      : process.env.CLERK_WEBHOOK_SECRET_DEV;
 
-  if (!WEBHOOK_SECRET) {
-    console.error(
-      " [Clerk Routes] Le secret du webhook Clerk n'est pas défini",
-    );
-    return new Response("Configuration webhook manquante", { status: 500 });
+  if (!webhookSecret) {
+    console.error("[Clerk Routes]: Clerk webhook secret is not set");
+    return new Response("Webhook configuration missing", { status: 500 });
   }
 
   const headerPayload = await headers();
@@ -25,26 +23,34 @@ export async function POST(req: Request) {
   const svix_signature = headerPayload.get("svix-signature");
 
   if (!svix_id || !svix_timestamp || !svix_signature) {
-    return new Response("En-têtes de signature manquants", { status: 400 });
+    return new Response("Missing signature headers", { status: 400 });
   }
 
-  // Récupérer le corps de la requête
-  const payload = await req.json();
-  const body = JSON.stringify(payload);
+  // Read the RAW request body. Svix signs the exact bytes Clerk sent, so
+  // the verified payload must be those bytes. The previous JSON.parse then
+  // JSON.stringify round trip re-serialized them, and re-serialization is
+  // not byte-identical: Go's encoding/json (Clerk's backend) emits the
+  // ampersand and the angle brackets as six-character unicode escapes,
+  // which JSON.stringify writes back as the literal characters. The
+  // resulting string no longer matches the signature, so any event
+  // carrying one of them (an avatar URL with a query string, for
+  // instance) was rejected on every delivery and every retry, and the
+  // user never landed in Supabase.
+  // sourceRef: docs.svix.com webhook verification (raw body required).
+  const rawBody = await req.text();
 
-  // Vérifier la signature
-  const wh = new Webhook(WEBHOOK_SECRET);
+  const wh = new Webhook(webhookSecret);
   let evt: WebhookEvent;
 
   try {
-    evt = wh.verify(body, {
+    evt = wh.verify(rawBody, {
       "svix-id": svix_id,
       "svix-timestamp": svix_timestamp,
       "svix-signature": svix_signature,
     }) as WebhookEvent;
   } catch (err) {
-    console.error("[Clerk Routes]: Erreur de vérification du webhook:", err);
-    return new Response("Échec de la vérification de la signature", {
+    console.error("[Clerk Routes]: Webhook verification failed:", err);
+    return new Response("Signature verification failed", {
       status: 400,
     });
   }
@@ -64,17 +70,17 @@ export async function POST(req: Request) {
         await handleUserDeleted(data as { id: string });
         break;
       default:
-        console.log("[Clerk Routes]:Événement non géré:", eventType);
+        console.log("[Clerk Routes]: Unhandled event:", eventType);
         break;
     }
 
-    return new Response("Webhook traité avec succès", { status: 200 });
+    return new Response("Webhook processed", { status: 200 });
   } catch (error) {
     console.error(
-      "[Clerk Routes]: Erreur lors du traitement du webhook:",
+      "[Clerk Routes]: Webhook processing failed:",
       error,
     );
-    return new Response("Erreur lors du traitement du webhook", {
+    return new Response("Webhook processing failed", {
       status: 500,
     });
   }
@@ -107,7 +113,7 @@ async function handleUserCreated(data: ClerkUserData) {
     const email = data.email_addresses?.[0]?.email_address;
     // Extra fields from Clerk
     const username = data.username ?? null;
-    // Determine first and last names. Fall back on full_name if individual names aren’t available.
+    // Determine first and last names. Fall back on full_name when the individual fields are absent.
     const firstName =
       data.first_name ??
       (data.full_name ? data.full_name.split(" ")[0] : username);
@@ -136,7 +142,7 @@ async function handleUserCreated(data: ClerkUserData) {
       );
     } catch (stripeError) {
       console.error(
-        "[Clerk Routes]: Erreur lors de la création du client Stripe:",
+        "[Clerk Routes]: Stripe customer creation failed:",
         stripeError,
       );
       return;
@@ -151,12 +157,12 @@ async function handleUserCreated(data: ClerkUserData) {
       );
 
     if (principalError) {
-      console.error("[Clerk Routes]: Erreur upsert principal:", principalError);
+      console.error("[Clerk Routes]: Principal upsert failed:", principalError);
       try {
         await stripe.customers.del(stripeCustomerId);
       } catch (deleteError) {
         console.error(
-          "[Clerk Routes]: Erreur rollback Stripe après échec principal:",
+          "[Clerk Routes]: Stripe rollback failed after principal upsert error:",
           deleteError,
         );
       }
@@ -174,7 +180,7 @@ async function handleUserCreated(data: ClerkUserData) {
 
     if (error) {
       console.error(
-        "[Clerk Routes]: Erreur lors de la création de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Supabase user insert failed:",
         error,
       );
 
@@ -186,14 +192,14 @@ async function handleUserCreated(data: ClerkUserData) {
         );
       } catch (deleteError) {
         console.error(
-          "[Clerk Routes]: Erreur lors de la suppression du client Stripe:",
+          "[Clerk Routes]: Stripe customer delete failed:",
           deleteError,
         );
         throw error;
       }
     }
   } catch (error) {
-    console.error("[Clerk Routes]: Erreur dans handleUserCreated:", error);
+    console.error("[Clerk Routes]: handleUserCreated failed:", error);
     throw error;
   }
 }
@@ -223,7 +229,7 @@ async function handleUserUpdated(data: ClerkUserData) {
 
     if (error) {
       console.error(
-        "[Clerk Routes]: Erreur lors de la mise à jour de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Supabase user update failed:",
         error,
       );
     }
@@ -240,17 +246,17 @@ async function handleUserUpdated(data: ClerkUserData) {
           email: email,
         });
         console.log(
-          `[Clerk Routes]: Client Stripe mis à jour: ${userData.stripe_customer_id}`,
+          `[Clerk Routes]: Stripe customer updated: ${userData.stripe_customer_id}`,
         );
       } catch (stripeError) {
         console.error(
-          "[Clerk Routes]: Erreur mise à jour client Stripe:",
+          "[Clerk Routes]: Stripe customer update failed:",
           stripeError,
         );
       }
     }
   } catch (error) {
-    console.error("[Clerk Routes]: Erreur dans handleUserUpdated:", error);
+    console.error("[Clerk Routes]: handleUserUpdated failed:", error);
     throw error;
   }
 }
@@ -270,7 +276,7 @@ async function handleUserDeleted(data: { id: string }) {
 
     if (error) {
       console.error(
-        "[Clerk Routes]: Erreur lors de la suppression de l'utilisateur dans Supabase:",
+        "[Clerk Routes]: Supabase user delete failed:",
         error,
       );
     } else {
@@ -279,11 +285,11 @@ async function handleUserDeleted(data: { id: string }) {
         try {
           await stripe.customers.del(userData.stripe_customer_id);
           console.log(
-            `[Clerk Routes]: Client Stripe supprimé: ${userData.stripe_customer_id}`,
+            `[Clerk Routes]: Stripe customer deleted: ${userData.stripe_customer_id}`,
           );
         } catch (stripeError) {
           console.error(
-            "[Clerk Routes]: Erreur suppression client Stripe:",
+            "[Clerk Routes]: Stripe customer delete failed:",
             stripeError,
           );
         }
@@ -298,17 +304,17 @@ async function handleUserDeleted(data: { id: string }) {
       );
       if (!success) {
         console.error(
-          "[Clerk Routes]: Erreur lors de la suppression du dossier de l'utilisateur dans Storage:",
+          "[Clerk Routes]: Storage folder delete failed for user:",
           message,
         );
       } else {
         console.log(
-          `[Clerk Routes]: Dossier de l'utilisateur ${userId} supprimé avec succès`,
+          `[Clerk Routes]: Storage folder deleted for user ${userId}`,
         );
       }
     }
   } catch (error) {
-    console.error("[Clerk Routes]: Erreur dans handleUserDeleted:", error);
+    console.error("[Clerk Routes]: handleUserDeleted failed:", error);
     throw error;
   }
 }
