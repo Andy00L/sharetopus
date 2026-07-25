@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PROVIDER_CATALOG, getProviderMetadata } from "./catalog";
+import { FULL_PROVIDER_CATALOG, getProviderMetadata } from "./catalog";
 import type { ProviderBehavior, ProviderDefinition, ProviderMetadata } from "./types";
 
 import { blueskyBehavior } from "./bluesky";
@@ -10,6 +10,22 @@ import { mastodonBehavior } from "./mastodon";
 import { slackBehavior } from "./slack";
 import { telegramBehavior } from "./telegram";
 import { wordpressBehavior } from "./wordpress";
+import { redditBehavior } from "./reddit";
+import { threadsBehavior } from "./threads";
+import { tumblrBehavior } from "./tumblr";
+import { twitchBehavior, kickBehavior } from "./twitchKick";
+import {
+  hashnodeBehavior,
+  lemmyBehavior,
+  mediumBehavior,
+} from "./blogCredentials";
+import { farcasterBehavior, listmonkBehavior } from "./miscCredentials";
+import { nostrBehavior } from "./nostr";
+import {
+  dribbbleBehavior,
+  gmbBehavior,
+  linkedinPageBehavior,
+} from "./oauthVariants";
 
 /**
  * Server-side provider registry: metadata from the catalog joined with the
@@ -30,6 +46,20 @@ const PROVIDER_BEHAVIORS: Readonly<Record<string, ProviderBehavior>> = {
   slack: slackBehavior,
   devto: devtoBehavior,
   wordpress: wordpressBehavior,
+  reddit: redditBehavior,
+  threads: threadsBehavior,
+  tumblr: tumblrBehavior,
+  twitch: twitchBehavior,
+  kick: kickBehavior,
+  hashnode: hashnodeBehavior,
+  medium: mediumBehavior,
+  lemmy: lemmyBehavior,
+  farcaster: farcasterBehavior,
+  listmonk: listmonkBehavior,
+  nostr: nostrBehavior,
+  linkedin_page: linkedinPageBehavior,
+  dribbble: dribbbleBehavior,
+  gmb: gmbBehavior,
 };
 
 /**
@@ -113,7 +143,7 @@ export function resolveConfiguredProvider(
  * behavior functions cross this boundary.
  */
 export function listAvailableProviders(): ProviderMetadata[] {
-  return Object.values(PROVIDER_CATALOG)
+  return Object.values(FULL_PROVIDER_CATALOG)
     .filter((metadata) => PROVIDER_BEHAVIORS[metadata.id] !== undefined)
     .filter((metadata) => isProviderConfigured(metadata));
 }

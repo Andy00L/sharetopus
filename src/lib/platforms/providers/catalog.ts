@@ -302,12 +302,407 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   },
 };
 
+/** OAuth providers: env pairs gate availability (see requiredEnv). */
+const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
+  reddit: {
+    id: "reddit",
+    label: "Reddit",
+    category: "social",
+    authKind: "oauth2",
+    requiredEnv: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: 40_000,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    tools: [
+      {
+        methodName: "listFlairs",
+        description:
+          "Lists the link flairs available in a subreddit so a caller can pass a valid flairId when scheduling.",
+        parameters: [
+          {
+            name: "subreddit",
+            kind: "string",
+            required: true,
+            description: "Subreddit name, without the r/ prefix.",
+          },
+        ],
+      },
+    ],
+  },
+  threads: {
+    id: "threads",
+    label: "Threads",
+    category: "social",
+    authKind: "oauth2",
+    requiredEnv: ["THREADS_CLIENT_ID", "THREADS_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: 500,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    tools: [],
+  },
+  tumblr: {
+    id: "tumblr",
+    label: "Tumblr",
+    category: "social",
+    authKind: "oauth2",
+    requiredEnv: ["TUMBLR_CLIENT_ID", "TUMBLR_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: ARTICLE_MAX_CHARS,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    tools: [
+      {
+        methodName: "listBlogs",
+        description:
+          "Lists the blogs on the connected Tumblr account so a caller can target one via options.blog.",
+        parameters: [],
+      },
+    ],
+  },
+  twitch: {
+    id: "twitch",
+    label: "Twitch",
+    category: "video",
+    authKind: "oauth2",
+    requiredEnv: ["TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET"],
+    rules: {
+      // Twitch chat message ceiling.
+      maxTextLength: 500,
+      supportedMediaTypes: ["text"],
+      maxMediaPerPost: 0,
+      mediaRequired: false,
+    },
+    tools: [],
+  },
+  kick: {
+    id: "kick",
+    label: "Kick",
+    category: "video",
+    authKind: "oauth2_pkce",
+    requiredEnv: ["KICK_CLIENT_ID", "KICK_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: 500,
+      supportedMediaTypes: ["text"],
+      maxMediaPerPost: 0,
+      mediaRequired: false,
+    },
+    tools: [],
+  },
+};
+
+/** Additional credentials providers (no app registration needed). */
+const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
+  hashnode: {
+    id: "hashnode",
+    label: "Hashnode",
+    category: "blog",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: ARTICLE_MAX_CHARS,
+      supportedMediaTypes: ["text", "image"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "apiToken",
+        label: "API token",
+        kind: "secret",
+        required: true,
+        placeholder: "",
+        helpText: "Hashnode account settings, Developer, Personal Access Token.",
+        mapsTo: "access_token",
+      },
+    ],
+    tools: [
+      {
+        methodName: "listPublications",
+        description:
+          "Lists the account's publications so a caller can target one via options.publicationId.",
+        parameters: [],
+      },
+    ],
+  },
+  medium: {
+    id: "medium",
+    label: "Medium",
+    category: "blog",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: ARTICLE_MAX_CHARS,
+      supportedMediaTypes: ["text", "image"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "integrationToken",
+        label: "Integration token",
+        kind: "secret",
+        required: true,
+        placeholder: "",
+        helpText:
+          "Medium Settings, Security, Integration tokens. Medium no longer issues new tokens; only accounts that already have one can connect.",
+        mapsTo: "access_token",
+      },
+    ],
+    tools: [],
+  },
+  lemmy: {
+    id: "lemmy",
+    label: "Lemmy",
+    category: "social",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: 10_000,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "instanceUrl",
+        label: "Instance URL",
+        kind: "url",
+        required: true,
+        placeholder: "https://lemmy.world",
+        helpText: "Your Lemmy server. Any instance works.",
+      },
+      {
+        key: "username",
+        label: "Username",
+        kind: "text",
+        required: true,
+        placeholder: "",
+        helpText: "Your username or email on that instance.",
+      },
+      {
+        key: "password",
+        label: "Password",
+        kind: "secret",
+        required: true,
+        placeholder: "",
+        helpText:
+          "Used once to open a session; only the session token is stored, never the password.",
+      },
+    ],
+    tools: [
+      {
+        methodName: "listCommunities",
+        description:
+          "Lists the communities the account subscribes to so a caller can pass a valid options.communityId.",
+        parameters: [],
+      },
+    ],
+  },
+  farcaster: {
+    id: "farcaster",
+    label: "Farcaster",
+    category: "social",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: 320,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "neynarApiKey",
+        label: "Neynar API key",
+        kind: "secret",
+        required: true,
+        placeholder: "",
+        helpText: "From dev.neynar.com. The free tier is enough for casting.",
+        mapsTo: "access_token",
+      },
+      {
+        key: "signerUuid",
+        label: "Signer UUID",
+        kind: "text",
+        required: true,
+        placeholder: "",
+        helpText:
+          "An approved Neynar managed signer for your Farcaster account (approve it once in Warpcast).",
+      },
+    ],
+    tools: [],
+  },
+  listmonk: {
+    id: "listmonk",
+    label: "Listmonk",
+    category: "business",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: ARTICLE_MAX_CHARS,
+      supportedMediaTypes: ["text", "image"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "instanceUrl",
+        label: "Instance URL",
+        kind: "url",
+        required: true,
+        placeholder: "https://news.example.com",
+        helpText: "Your self-hosted Listmonk address.",
+      },
+      {
+        key: "apiUser",
+        label: "API user",
+        kind: "text",
+        required: true,
+        placeholder: "api_user",
+        helpText: "Listmonk Settings, Users: an API user, not your admin login.",
+      },
+      {
+        key: "apiToken",
+        label: "API token",
+        kind: "secret",
+        required: true,
+        placeholder: "",
+        helpText: "The token issued for that API user.",
+      },
+      {
+        key: "listId",
+        label: "List ID",
+        kind: "text",
+        required: true,
+        placeholder: "1",
+        helpText: "Numeric id of the subscriber list campaigns are sent to.",
+      },
+    ],
+    tools: [],
+  },
+};
+
+/** OAuth variants and approval-gated APIs (code complete; activate on env). */
+const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
+  linkedin_page: {
+    id: "linkedin_page",
+    label: "LinkedIn Page",
+    category: "business",
+    authKind: "oauth2",
+    // Reuses the existing LinkedIn app; only the scopes differ.
+    requiredEnv: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: 3000,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    tools: [
+      {
+        methodName: "listPages",
+        description:
+          "Lists the company pages this account administers so a caller can target one via options.organizationId.",
+        parameters: [],
+      },
+    ],
+  },
+  dribbble: {
+    id: "dribbble",
+    label: "Dribbble",
+    category: "business",
+    authKind: "oauth2",
+    requiredEnv: ["DRIBBBLE_CLIENT_ID", "DRIBBBLE_CLIENT_SECRET"],
+    rules: {
+      maxTextLength: 10_000,
+      supportedMediaTypes: ["image"],
+      maxMediaPerPost: 1,
+      mediaRequired: true,
+    },
+    tools: [],
+  },
+  gmb: {
+    id: "gmb",
+    label: "Google Business",
+    category: "business",
+    authKind: "oauth2",
+    requiredEnv: ["GMB_CLIENT_ID", "GMB_CLIENT_SECRET"],
+    rules: {
+      // localPosts summary ceiling.
+      maxTextLength: 1500,
+      supportedMediaTypes: ["text", "image"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    tools: [
+      {
+        methodName: "listLocations",
+        description:
+          "Lists the business locations under the connected account so a caller can pass a valid options.locationName.",
+        parameters: [],
+      },
+    ],
+  },
+  nostr: {
+    id: "nostr",
+    label: "Nostr",
+    category: "social",
+    authKind: "credentials",
+    requiredEnv: [],
+    rules: {
+      maxTextLength: 10_000,
+      supportedMediaTypes: ["text", "image", "video"],
+      maxMediaPerPost: 1,
+      mediaRequired: false,
+    },
+    credentialFields: [
+      {
+        key: "privateKey",
+        label: "Private key (hex)",
+        kind: "secret",
+        required: true,
+        placeholder: "64 hex characters",
+        helpText:
+          "Your Nostr private key as 64 hex characters. Convert an nsec key to hex in your Nostr client first.",
+        mapsTo: "access_token",
+      },
+      {
+        key: "relays",
+        label: "Relays",
+        kind: "text",
+        required: true,
+        placeholder: "wss://relay.damus.io, wss://nos.lol",
+        helpText: "Up to five wss:// relay URLs, separated by commas.",
+      },
+    ],
+    tools: [],
+  },
+};
+
+/** Merged view served to the registry and the connect UI. */
+export const FULL_PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> =
+  {
+    ...PROVIDER_CATALOG,
+    ...OAUTH_CATALOG,
+    ...CREDENTIALS_CATALOG,
+    ...VARIANT_CATALOG,
+  };
+
 /** Every provider id served by the registry. */
-export const PROVIDER_IDS: readonly string[] = Object.keys(PROVIDER_CATALOG);
+export const PROVIDER_IDS: readonly string[] = Object.keys(
+  FULL_PROVIDER_CATALOG,
+);
 
 /** Metadata lookup. Returns null for unknown ids so callers fail closed. */
 export function getProviderMetadata(
   providerId: string,
 ): ProviderMetadata | null {
-  return PROVIDER_CATALOG[providerId] ?? null;
+  return FULL_PROVIDER_CATALOG[providerId] ?? null;
 }

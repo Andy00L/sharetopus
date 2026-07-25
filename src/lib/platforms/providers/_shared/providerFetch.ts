@@ -36,7 +36,7 @@ export type ProviderFetchResult =
   | { ok: false; message: string };
 
 export type ProviderFetchOptions = {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   headers?: Record<string, string>;
   /** Pre-serialized request body. */
   body?: string | Uint8Array;
