@@ -18,6 +18,200 @@ export type Database = {
   public: {
     Tables: {
       // ────────────────────────────────────────────────────────────────
+      // Teams. Hand-added to match docs/DB_CHANGES_TEAMS.md; this file is
+      // never regenerated, so these three blocks are edited by hand along
+      // with the SQL.
+      teams: {
+        Row: {
+          id: string;
+          name: string;
+          owner_principal_id: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name: string;
+          owner_principal_id: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          owner_principal_id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "teams_owner_principal_id_fkey";
+            columns: ["owner_principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_members: {
+        Row: {
+          id: string;
+          team_id: string;
+          principal_id: string;
+          role: "owner" | "admin" | "member";
+          joined_at: string;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          principal_id: string;
+          role: "owner" | "admin" | "member";
+          joined_at?: string;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          principal_id?: string;
+          role?: "owner" | "admin" | "member";
+          joined_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_members_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "team_members_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      team_invites: {
+        Row: {
+          id: string;
+          team_id: string;
+          email: string;
+          role: "admin" | "member";
+          token_hash: string;
+          invited_by_principal_id: string;
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by_principal_id: string | null;
+          revoked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          team_id: string;
+          email: string;
+          role: "admin" | "member";
+          token_hash: string;
+          invited_by_principal_id: string;
+          expires_at: string;
+          accepted_at?: string | null;
+          accepted_by_principal_id?: string | null;
+          revoked_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          team_id?: string;
+          email?: string;
+          role?: "admin" | "member";
+          token_hash?: string;
+          invited_by_principal_id?: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          accepted_by_principal_id?: string | null;
+          revoked_at?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "team_invites_team_id_fkey";
+            columns: ["team_id"];
+            isOneToOne: false;
+            referencedRelation: "teams";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      // Channel groups. Hand-added to match docs/DB_CHANGES_GROUPS.md.
+      channel_groups: {
+        Row: {
+          id: string;
+          principal_id: string;
+          name: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          principal_id: string;
+          name: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          principal_id?: string;
+          name?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "channel_groups_principal_id_fkey";
+            columns: ["principal_id"];
+            isOneToOne: false;
+            referencedRelation: "principals";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      channel_group_members: {
+        Row: {
+          id: string;
+          group_id: string;
+          social_account_id: string;
+          added_at: string;
+        };
+        Insert: {
+          id?: string;
+          group_id: string;
+          social_account_id: string;
+          added_at?: string;
+        };
+        Update: {
+          id?: string;
+          group_id?: string;
+          social_account_id?: string;
+          added_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "channel_group_members_group_id_fkey";
+            columns: ["group_id"];
+            isOneToOne: false;
+            referencedRelation: "channel_groups";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "channel_group_members_social_account_id_fkey";
+            columns: ["social_account_id"];
+            isOneToOne: true;
+            referencedRelation: "social_accounts";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      // ────────────────────────────────────────────────────────────────
       analytics_metrics: {
         Row: {
           id: string;
