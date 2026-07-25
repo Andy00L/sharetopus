@@ -14,6 +14,27 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
  * postOptions field. The platform adapters already know how to read
  * that structure from the post_options jsonb column.
  */
+/**
+ * Registry-provider option keys, folded into post_options under the names
+ * each provider's publish reads. Returns null when the input carries none,
+ * so legacy platforms keep a null post_options exactly as before.
+ */
+function buildRegistryPostOptions(
+  input: PostCreateInput,
+): SchedulePostData["postOptions"] {
+  const registryOptions: NonNullable<SchedulePostData["postOptions"]> = {};
+  if (input.subreddit) registryOptions.subreddit = input.subreddit;
+  if (input.flair_id) registryOptions.flairId = input.flair_id;
+  if (input.community_id) registryOptions.communityId = input.community_id;
+  if (input.publication_id) registryOptions.publicationId = input.publication_id;
+  if (input.blog) registryOptions.blog = input.blog;
+  if (input.location_name) registryOptions.locationName = input.location_name;
+  if (input.organization_id) registryOptions.organizationId = input.organization_id;
+  if (input.canonical_url) registryOptions.canonicalUrl = input.canonical_url;
+  if (input.tags && input.tags.length > 0) registryOptions.tags = input.tags;
+  return Object.keys(registryOptions).length > 0 ? registryOptions : null;
+}
+
 export function restInputToSchedulePostData(
   input: PostCreateInput,
 ): SchedulePostData {
@@ -34,7 +55,7 @@ export function restInputToSchedulePostData(
     title: input.title ?? null,
     description: input.description ?? null,
     mediaStoragePath: input.media_storage_path ?? "",
-    postOptions: pinterestOptions,
+    postOptions: pinterestOptions ?? buildRegistryPostOptions(input),
     batch_id: input.batch_id ?? generateBatchId(),
     idempotency_key: input.idempotency_key,
   };
@@ -61,5 +82,6 @@ export function restInputToDirectPostData(
     pinterestBoardName: input.pinterest_board_name,
     pinterestLink: input.pinterest_link,
     idempotency_key: input.idempotency_key,
+    postOptions: buildRegistryPostOptions(input),
   };
 }

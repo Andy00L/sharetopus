@@ -37,6 +37,8 @@ export type DirectPostData = {
   pinterestBoardName?: string;
   pinterestLink?: string;
   idempotency_key?: string;
+  /** Registry-provider per-post options; null/absent for legacy platforms. */
+  postOptions?: Record<string, unknown> | null;
 };
 
 export type DirectPostBatchResult = {
@@ -509,6 +511,7 @@ function buildEventPayloads(
         post.idempotency_key ??
         (useAgentBatchIdForIdempotency ? `${batchId}:${index}` : undefined),
       request_id: requestId ?? null,
+      post_options: post.postOptions ?? null,
     };
 
     return { name: "post.now" as const, data };

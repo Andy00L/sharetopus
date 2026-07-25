@@ -10,7 +10,13 @@ import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
 import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
 import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
-import { PLATFORM_LABELS, platformSupportsMediaType } from "@/lib/platforms/capabilities";
+import {
+  PLATFORM_LABELS,
+  isPostingPlatform,
+  platformHotlinksMedia,
+  platformSupportsMediaType,
+} from "@/lib/platforms/capabilities";
+import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
@@ -170,6 +176,15 @@ export type SignedUrlsResult =
  *     storage and upload them directly
  * For text posts (no media_storage_path) both are null.
  */
+/**
+ * Signed-URL lifetime for hotlinking registry providers, in seconds
+ * (30 days). Their publish embeds the URL in durable content (markdown
+ * image, link post, chat message), so the default short TTL would leave a
+ * dead link minutes after publishing. The media file itself is preserved
+ * by the cleanup skip in processSinglePost.
+ */
+export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
+
 export async function buildPlatformSignedUrls(
   post: ScheduledPost,
   platform: Platform,
@@ -179,6 +194,30 @@ export async function buildPlatformSignedUrls(
       success: true,
       message: "no media",
       mediaUrl: null,
+      tiktokMediaUrl: null,
+    };
+  }
+
+  // Registry providers all take one https media URL; only the lifetime
+  // differs (see HOTLINK_SIGNED_URL_TTL_S). Checked before the legacy
+  // special cases so those stay exactly as they were.
+  if (!isPostingPlatform(platform)) {
+    const registrySigned = await getServerSignedViewUrl(
+      post.media_storage_path,
+      platformHotlinksMedia(platform)
+        ? HOTLINK_SIGNED_URL_TTL_S
+        : RUNTIME.signedUrlTtlS,
+    );
+    if (!registrySigned.success) {
+      return {
+        success: false,
+        message: registrySigned.message ?? "Failed to mint signed URL",
+      };
+    }
+    return {
+      success: true,
+      message: "registry signed url minted",
+      mediaUrl: registrySigned.url ?? null,
       tiktokMediaUrl: null,
     };
   }
@@ -479,11 +518,24 @@ export async function callPlatformDirectPost(args: {
         break;
       }
       default: {
-        return {
-          ok: false,
-          reason: "invalid_input",
-          message: `Unsupported platform: ${post.platform}`,
-        };
+        // Everything outside the seven legacy adapters publishes through
+        // the provider registry. Unknown platforms come back as a
+        // not-available message and classify as terminal below.
+        result = await publishViaRegistry({
+          account,
+          principalId: post.principal_id,
+          title: post.post_title,
+          body: post.post_description,
+          mediaType: post.media_type,
+          mediaUrl,
+          fileName,
+          mediaMimeType: mediaType,
+          options: post.post_options,
+          batchId: post.batch_id ?? post.id,
+          scheduledPostId: post.id,
+          createdVia: post.created_via ?? "web",
+        });
+        break;
       }
     }
 

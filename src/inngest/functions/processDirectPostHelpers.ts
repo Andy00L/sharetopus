@@ -8,6 +8,13 @@ import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directP
 import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
 import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
 import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
+import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
+import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
+import {
+  HOTLINK_SIGNED_URL_TTL_S,
+} from "@/inngest/functions/processSinglePostHelpers";
+import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { MediaType, Platform } from "@/lib/types/database.types";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
@@ -45,6 +52,12 @@ export type PostNowEventData = {
   // Correlation ID propagated from the originating request. Optional because
   // pre-existing scheduled posts may dispatch events without one.
   request_id?: string | null;
+  /**
+   * Per-post provider options for registry platforms (subreddit,
+   * communityId, ...). Optional so legacy in-flight events without it stay
+   * valid; legacy platforms read platform_options instead.
+   */
+  post_options?: Record<string, unknown> | null;
 };
 
 // ---------- fetch-account ----------
@@ -243,10 +256,46 @@ export async function callDirectPostFromEvent(
         break;
       }
       default: {
+        // Registry platforms. The event's media_url is caller-minted with
+        // the default short TTL, so it is re-minted here with the
+        // hotlink-aware lifetime; hotlinking providers embed the URL in
+        // durable content and a 5-minute link would die published.
+        let registryMediaUrl: string | null = media_url ?? null;
+        if (media_path && media_path !== "") {
+          const signed = await getServerSignedViewUrl(
+            media_path,
+            platformHotlinksMedia(platform)
+              ? HOTLINK_SIGNED_URL_TTL_S
+              : RUNTIME.signedUrlTtlS,
+          );
+          if (!signed.success) {
+            return {
+              success: false,
+              message: signed.message ?? "Failed to mint signed URL",
+              contentId: null,
+            };
+          }
+          registryMediaUrl = signed.url ?? null;
+        }
+
+        const registryResult = await publishViaRegistry({
+          account,
+          principalId: data.principal_id,
+          title: account_content.title || null,
+          body: account_content.description || null,
+          mediaType: post_type,
+          mediaUrl: registryMediaUrl,
+          fileName: file_name,
+          mediaMimeType: media_type,
+          options: data.post_options ?? {},
+          batchId: batch_id,
+          scheduledPostId: null,
+          createdVia,
+        });
         return {
-          success: false,
-          message: `Unsupported platform: ${platform}`,
-          contentId: null,
+          success: registryResult.success,
+          message: registryResult.message ?? null,
+          contentId: registryResult.success ? batch_id : null,
         };
       }
     }

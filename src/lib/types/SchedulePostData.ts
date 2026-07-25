@@ -33,7 +33,18 @@ export interface SchedulePostData {
 
     // YouTube-specific options
     privacyStatus?: "public" | "unlisted" | "private";
-    // Add other platform options here as needed
+
+    // Registry-provider options (read by publishViaRegistry). Keys match
+    // what each provider's publish reads from its options input.
+    subreddit?: string;
+    flairId?: string;
+    communityId?: number;
+    publicationId?: string;
+    blog?: string;
+    locationName?: string;
+    organizationId?: string;
+    canonicalUrl?: string;
+    tags?: string[];
   } | null;
   idempotency_key?: string;
 }

@@ -1,4 +1,5 @@
 import { inngest } from "@/inngest/client";
+import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import {
   callDirectPostFromEvent,
@@ -71,8 +72,12 @@ export const processDirectPost = inngest.createFunction(
     // For TikTok success: do NOT cleanup here. The tikTokPublishStatusPollWorker
     // handles cleanup after the publish reaches a terminal state.
     // For TikTok failure (init failed): cleanup here because no pending pull was created.
+    // Hotlinking registry platforms embed the media URL in the published
+    // content, so the file must outlive the post (mirrors the skip in
+    // processSinglePost).
+    const keepsMediaAlive = platformHotlinksMedia(data.platform) && result.success;
     const isTikTokSuccess = data.platform === "tiktok" && result.success;
-    if (!isTikTokSuccess && data.media_path) {
+    if (!isTikTokSuccess && !keepsMediaAlive && data.media_path) {
       await step.run("cleanup-media", () =>
         cleanupMediaIfUnreferenced(data.media_path, data.principal_id)
       );

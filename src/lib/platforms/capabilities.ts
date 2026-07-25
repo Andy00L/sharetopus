@@ -1,5 +1,11 @@
 import type { MediaType, Platform } from "@/lib/types/database.types";
 
+import {
+  getProviderMetadata,
+  REGISTRY_PLATFORM_IDS,
+  type RegistryPlatformId,
+} from "@/lib/platforms/providers/catalog";
+
 /**
  * Single source of truth for which platforms the app can post to and what
  * media each one accepts. Client-safe on purpose (no "server-only"): the
@@ -80,16 +86,58 @@ export function isPostingPlatform(value: string): value is PostingPlatform {
 }
 
 /**
- * Whether a platform accepts the given media type. Unknown platforms
- * (e.g. "threads", which is in the DB union but not implemented) report
- * false for everything so callers fail closed.
+ * Every platform a post can be scheduled to: the seven legacy adapters
+ * plus every registry provider. Same union-tuple typing trick as
+ * POSTING_PLATFORMS so z.enum() call sites stay clear of TS2589.
+ *
+ * The legacy set stays separate on purpose: POSTING_PLATFORMS still means
+ * "has a bespoke adapter" and gates the code paths only those seven have
+ * (TikTok pulls, Pinterest boards, the x402 connect surface).
+ */
+export type SchedulablePlatform = PostingPlatform | RegistryPlatformId;
+
+export const SCHEDULABLE_PLATFORMS: readonly [
+  SchedulablePlatform,
+  ...SchedulablePlatform[],
+] = [...POSTING_PLATFORMS, ...REGISTRY_PLATFORM_IDS];
+
+/** Type guard covering legacy and registry platforms alike. */
+export function isSchedulablePlatform(
+  value: string,
+): value is SchedulablePlatform {
+  return (SCHEDULABLE_PLATFORMS as readonly string[]).includes(value);
+}
+
+/**
+ * Whether a platform accepts the given media type. Legacy platforms answer
+ * from the local map, registry platforms from their catalog rules. Unknown
+ * platforms (e.g. a DB value with no implementation) report false for
+ * everything so callers fail closed.
  */
 export function platformSupportsMediaType(
   platform: string,
   mediaType: MediaType,
 ): boolean {
-  if (!isPostingPlatform(platform)) return false;
-  return PLATFORM_MEDIA_SUPPORT[platform].includes(mediaType);
+  if (isPostingPlatform(platform)) {
+    return PLATFORM_MEDIA_SUPPORT[platform].includes(mediaType);
+  }
+  const registryMetadata = getProviderMetadata(platform);
+  if (registryMetadata) {
+    return registryMetadata.rules.supportedMediaTypes.includes(mediaType);
+  }
+  return false;
+}
+
+/**
+ * True when the platform's publish embeds the media URL in durable content
+ * instead of re-hosting the bytes. The worker mints a long-lived URL for
+ * these and must NOT delete the media file after publishing, because the
+ * published post keeps pointing at it. Legacy platforms all re-host, so
+ * they are never hotlinking.
+ */
+export function platformHotlinksMedia(platform: string): boolean {
+  const registryMetadata = getProviderMetadata(platform);
+  return registryMetadata?.rules.hotlinksMedia === true;
 }
 
 /** Platforms that accept the given media type, in POSTING_PLATFORMS order. */

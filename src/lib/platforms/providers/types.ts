@@ -66,6 +66,15 @@ export type ProviderPostingRules = {
   maxMediaPerPost: number;
   /** True when the provider requires media (no text-only posts). */
   mediaRequired: boolean;
+  /**
+   * True when publish EMBEDS the media URL in durable content instead of
+   * re-hosting the bytes (markdown image, link post, chat message). The
+   * worker then mints a long-lived URL and skips post-publish storage
+   * cleanup, because deleting the file would kill the published embed.
+   * Absent means false: the provider fetches at send time or uploads
+   * bytes, so the short-lived URL and normal cleanup are safe.
+   */
+  hotlinksMedia?: true;
 };
 
 /**

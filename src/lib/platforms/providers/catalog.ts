@@ -199,6 +199,7 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -242,6 +243,7 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -315,6 +317,7 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     tools: [
       {
@@ -411,6 +414,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -443,6 +447,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -469,6 +474,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -517,6 +523,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -551,6 +558,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -604,6 +612,7 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     tools: [
       {
@@ -661,6 +670,7 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      hotlinksMedia: true,
     },
     credentialFields: [
       {
@@ -706,3 +716,35 @@ export function getProviderMetadata(
 ): ProviderMetadata | null {
   return FULL_PROVIDER_CATALOG[providerId] ?? null;
 }
+
+/**
+ * Registry platform ids as a literal tuple, for z.enum and the
+ * schedulable-platform union in capabilities.ts. Kept in catalog so the
+ * list lives next to the entries it mirrors; getProviderMetadata returning
+ * non-null for each id is asserted by the registry parity audit.
+ */
+export const REGISTRY_PLATFORM_IDS = [
+  "bluesky",
+  "mastodon",
+  "telegram",
+  "discord",
+  "slack",
+  "devto",
+  "wordpress",
+  "reddit",
+  "threads",
+  "tumblr",
+  "twitch",
+  "kick",
+  "hashnode",
+  "medium",
+  "lemmy",
+  "farcaster",
+  "listmonk",
+  "nostr",
+  "linkedin_page",
+  "dribbble",
+  "gmb",
+] as const;
+
+export type RegistryPlatformId = (typeof REGISTRY_PLATFORM_IDS)[number];

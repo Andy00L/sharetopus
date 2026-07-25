@@ -1,5 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
+import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
 import type { Platform } from "@/lib/types/database.types";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { isSafeToRetryPost, type PlatformPostOutcome } from "./platformErrors";
@@ -142,7 +143,15 @@ export const processSinglePost = inngest.createFunction(
       }),
     );
 
-    if (fetched.post.media_storage_path) {
+    // Hotlinking registry providers embed the media URL in the published
+    // content (markdown image, link post), so the file must outlive the
+    // post: deleting it here would kill the live embed. deleteSupabaseFile
+    // only preserves files referenced by scheduled/processing rows, and by
+    // this point the row is posted, so the skip has to happen here.
+    if (
+      fetched.post.media_storage_path &&
+      !platformHotlinksMedia(data.platform)
+    ) {
       await step.run("cleanup-storage", () =>
         cleanupMediaIfUnreferenced(
           fetched.post.media_storage_path,
