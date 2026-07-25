@@ -2,6 +2,10 @@
 
 # dependencies
 /node_modules
+# nested installs (demo/ and any future sub-package) are generated too;
+# the root pattern above is anchored and does not reach them, so an
+# unqualified `git add demo/` would stage ~13k vendored files.
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
