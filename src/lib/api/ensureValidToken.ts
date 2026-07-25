@@ -65,10 +65,36 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
     );
 
     if (!updateSuccess) {
-      console.error(
-        `[ensureValidToken ${account.platform}] DB update failed after refresh`,
-      );
-      // The refreshed token is still valid even if persisting it failed.
+      // The refreshed access token still works for THIS call, so the
+      // caller proceeds. What the caller cannot see is whether the
+      // account was just left unrecoverable.
+      //
+      // Platforms that rotate the refresh token (X returns a fresh one
+      // and invalidates the old one on every refresh) consumed the stored
+      // credential to produce these tokens. If the new pair was not
+      // persisted, the stored refresh token is now dead and its
+      // replacement is gone: every later refresh fails and the user must
+      // reconnect by hand. That warrants a distinct, greppable line
+      // rather than the generic message this branch used to log.
+      const refreshTokenWasRotated =
+        Boolean(newTokens.refresh_token) &&
+        newTokens.refresh_token !== account.refresh_token;
+
+      if (refreshTokenWasRotated) {
+        console.error(
+          `[ensureValidToken ${account.platform}] RECONNECT REQUIRED: ` +
+            `refresh token rotated but could not be persisted for account ` +
+            `${account.id}. The stored refresh token is now invalid and its ` +
+            `replacement was lost; automatic refresh will fail from here on.`,
+        );
+      } else {
+        console.error(
+          `[ensureValidToken ${account.platform}] DB update failed after ` +
+            `refresh for account ${account.id}; the stored refresh token is ` +
+            `still valid, so the next call will refresh again.`,
+        );
+      }
+
       return {
         success: true,
         token: newTokens.access_token,
@@ -213,23 +239,41 @@ async function updateTokenInDatabase(
     const now = new Date();
     const expiresAt = new Date(now.getTime() + tokenData.expires_in * 1000);
 
-    const { error } = await adminSupabase
-      .from("social_accounts")
-      .update({
-        access_token: tokenData.access_token,
-        // Keep the existing refresh token when the response omits or blanks
-        // it; X rotates it and returns a fresh one, which takes precedence.
-        refresh_token: tokenData.refresh_token || currentRefreshToken,
-        token_expires_at: expiresAt.toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", accountId)
-      .eq("platform", platform);
+    const updatePayload = {
+      access_token: tokenData.access_token,
+      // Keep the existing refresh token when the response omits or blanks
+      // it; X rotates it and returns a fresh one, which takes precedence.
+      refresh_token: tokenData.refresh_token || currentRefreshToken,
+      token_expires_at: expiresAt.toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-    if (error) {
+    const runUpdate = async (): Promise<string | null> => {
+      const { error } = await adminSupabase
+        .from("social_accounts")
+        .update(updatePayload)
+        .eq("id", accountId)
+        .eq("platform", platform);
+      return error ? error.message : null;
+    };
+
+    // One immediate retry. On platforms that rotate the refresh token, the
+    // credential that produced these tokens is already spent, so losing
+    // this write costs the user a manual reconnect. A transient Supabase
+    // error is worth a second attempt before accepting that.
+    let updateError = await runUpdate();
+    if (updateError) {
+      console.warn(
+        `[updateTokenInDatabase ${platform}] Update failed for account ` +
+          `${accountId}, retrying once: ${updateError}`,
+      );
+      updateError = await runUpdate();
+    }
+
+    if (updateError) {
       console.error(
-        `[updateTokenInDatabase ${platform}] Update error:`,
-        error,
+        `[updateTokenInDatabase ${platform}] Update error after retry for ` +
+          `account ${accountId}: ${updateError}`,
       );
       return false;
     }
