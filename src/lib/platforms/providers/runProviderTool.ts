@@ -57,6 +57,20 @@ export async function listProviderToolsForAccount(params: {
 
   const providerResult = resolveConfiguredProvider(account.platform);
   if (!providerResult.ok) {
+    // The seven legacy platforms (linkedin, tiktok, ...) are not in the
+    // registry, so an unknown provider here is a valid connection that
+    // simply has no registry tools. That is an empty list, not an error;
+    // agents iterate every connection and a 500 would page for nothing.
+    // A registry provider whose env is unset stays an error, because its
+    // declared tools exist and are unavailable for an operator reason.
+    if (providerResult.reason === "unknown_provider") {
+      return {
+        ok: true,
+        providerId: account.platform,
+        providerLabel: account.platform,
+        tools: [],
+      };
+    }
     return {
       ok: false,
       reason: "provider_unavailable",

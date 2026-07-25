@@ -54,10 +54,22 @@ const CREDENTIAL_PLATFORM_IDS = [
   "nostr",
 ] as const satisfies readonly SocialAccountPlatform[];
 
+/**
+ * Ceiling on submitted form entries. The largest declared field set today
+ * is Listmonk's four; 20 leaves headroom while stopping a caller from
+ * posting thousands of keys per request.
+ */
+const MAX_CREDENTIAL_VALUE_ENTRIES = 20;
+
 const ConnectBodySchema = z.object({
   provider: z.enum(CREDENTIAL_PLATFORM_IDS),
   /** Raw form values keyed by ProviderCredentialField.key. */
-  values: z.record(z.string(), z.string().max(2048)),
+  values: z
+    .record(z.string().max(64), z.string().max(2048))
+    .refine(
+      (record) => Object.keys(record).length <= MAX_CREDENTIAL_VALUE_ENTRIES,
+      { message: `At most ${MAX_CREDENTIAL_VALUE_ENTRIES} values are accepted.` },
+    ),
 });
 
 export const GET = withRestEndpoint({
