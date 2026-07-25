@@ -143,13 +143,32 @@ async function listFolderFiles(
 }
 
 /**
+ * Number of paths per `.in()` filter. PostgREST sends the filter in the
+ * request URL, so a chunk of 1000 storage paths (~50 chars each) builds a
+ * query string large enough to be rejected as a 414 by the gateway. 200
+ * keeps the URL comfortably small; the caller loops.
+ */
+const REFERENCE_CHUNK_SIZE = 200;
+
+/**
+ * Rows fetched per page inside one chunk query. PostgREST caps a response
+ * at the project's `max-rows` setting (commonly 1000) and returns the
+ * truncated page WITHOUT an error, so every chunk query must paginate to
+ * completion instead of trusting a single response.
+ */
+const REFERENCE_PAGE_SIZE = 500;
+
+/**
  * Returns the subset of `paths` that are referenced by any of the four
  * media-storage-path tables: scheduled_posts, failed_posts,
  * pending_tiktok_pulls, pending_direct_posts.
  *
  * No status filters: the orphan sweep is conservative (any reference = keep).
  *
- * Chunks internally for >1000 paths to stay within Postgres query limits.
+ * Correctness note: everything this function fails to report as referenced
+ * gets DELETED from storage by the caller. A silently short result is
+ * therefore user data loss, not a missed optimization, which is why the
+ * chunk queries paginate explicitly and any error aborts the whole sweep.
  */
 export async function findReferencedStoragePaths(
   paths: string[]
@@ -162,14 +181,13 @@ export async function findReferencedStoragePaths(
   }
 
   const referencedSet = new Set<string>();
-  const chunkSize = 1000;
 
-  for (let i = 0; i < paths.length; i += chunkSize) {
-    const chunk = paths.slice(i, i + chunkSize);
+  for (let i = 0; i < paths.length; i += REFERENCE_CHUNK_SIZE) {
+    const chunk = paths.slice(i, i + REFERENCE_CHUNK_SIZE);
     const result = await queryReferencesForChunk(chunk);
     if (!result.success) return result;
-    for (const p of result.found) {
-      referencedSet.add(p);
+    for (const referencedPath of result.found) {
+      referencedSet.add(referencedPath);
     }
   }
 
@@ -190,12 +208,7 @@ async function queryReferencesForChunk(
   ] as const;
 
   const results = await Promise.allSettled(
-    tables.map((table) =>
-      adminSupabase
-        .from(table)
-        .select("media_storage_path")
-        .in("media_storage_path", chunk)
-    )
+    tables.map((table) => readAllReferencesFromTable(table, chunk))
   );
 
   const found: string[] = [];
@@ -213,28 +226,73 @@ async function queryReferencesForChunk(
       };
     }
 
-    const { data, error } = result.value;
-    if (error) {
+    if (!result.value.success) {
       console.error(
         `[findReferencedStoragePaths] Query to ${tables[i]} failed:`,
-        error.message
+        result.value.message
       );
       return {
         success: false,
-        message: `Query to ${tables[i]} failed: ${error.message}`,
+        message: `Query to ${tables[i]} failed: ${result.value.message}`,
       };
     }
 
-    if (data) {
-      for (const row of data) {
-        if (row.media_storage_path) {
-          found.push(row.media_storage_path);
-        }
-      }
-    }
+    found.push(...result.value.found);
   }
 
   return { success: true, found };
+}
+
+/**
+ * Reads EVERY row of one table whose media_storage_path is in `chunk`,
+ * paging until a short page proves the result set is exhausted.
+ *
+ * A single unpaginated select cannot be trusted here: one storage path can
+ * be referenced by many rows (the same media fanned out across platforms,
+ * or reused across posts), so a 200-path chunk can match far more than 200
+ * rows, and PostgREST silently truncates at the project's max-rows cap.
+ * Any reference missed by that truncation would be read as an orphan and
+ * its file deleted.
+ */
+async function readAllReferencesFromTable(
+  table:
+    | "scheduled_posts"
+    | "failed_posts"
+    | "pending_tiktok_pulls"
+    | "pending_direct_posts",
+  chunk: string[]
+): Promise<
+  { success: true; found: string[] } | { success: false; message: string }
+> {
+  const found: string[] = [];
+  let offset = 0;
+
+  for (;;) {
+    const { data, error } = await adminSupabase
+      .from(table)
+      .select("media_storage_path")
+      .in("media_storage_path", chunk)
+      .range(offset, offset + REFERENCE_PAGE_SIZE - 1);
+
+    if (error) {
+      return { success: false, message: error.message };
+    }
+    if (!data || data.length === 0) {
+      return { success: true, found };
+    }
+
+    for (const row of data) {
+      if (row.media_storage_path) {
+        found.push(row.media_storage_path);
+      }
+    }
+
+    // A short page means the range exceeded the result set: done.
+    if (data.length < REFERENCE_PAGE_SIZE) {
+      return { success: true, found };
+    }
+    offset += REFERENCE_PAGE_SIZE;
+  }
 }
 
 /**
