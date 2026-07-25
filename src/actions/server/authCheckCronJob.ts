@@ -1,3 +1,7 @@
+import "server-only";
+
+import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
+
 /**
  * Validates cron job requests using a secret key
  * @param {string} userId - The user ID for logging purposes
@@ -9,15 +13,18 @@ export async function authCheckCronJob(
   cronSecret: string | undefined,
 ): Promise<boolean> {
   // Ensure the environment variable is set
-  if (!process.env.CRON_SECRET_KEY) {
+  const expectedCronSecret = process.env.CRON_SECRET_KEY;
+  if (!expectedCronSecret) {
     console.error(
       `[authCheckCronJob] CRON_SECRET_KEY environment variable is not set`,
     );
     return false;
   }
 
-  // Validate the cron secret key
-  if (cronSecret === process.env.CRON_SECRET_KEY) {
+  // Validate the cron secret key. Constant-time: a plain === compares
+  // byte by byte and returns early on the first mismatch, which leaks the
+  // secret's prefix to anyone who can time the responses.
+  if (cronSecret && timingSafeEqualSecret(cronSecret, expectedCronSecret)) {
     return true;
   }
 

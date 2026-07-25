@@ -5,25 +5,20 @@ import { redis } from "@/actions/api/upstash";
 import { Ratelimit } from "@upstash/ratelimit";
 import { headers } from "next/headers";
 
+import { resolveClientIp } from "@/lib/net/clientIp";
+import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
+
 /**
- * Get the client IP address from request headers
- * Returns null if IP can't be determined
+ * Get the client IP address from request headers.
+ * Returns null if the IP can't be determined.
+ *
+ * Delegates to the shared resolver so the rate-limit bucket key and the
+ * audit-log IP hash can never disagree about who the caller is. The
+ * resolver deliberately ignores the caller-supplied head of
+ * x-forwarded-for; see lib/net/clientIp.ts.
  */
 async function getIpAddress(): Promise<string | null> {
-  const headersList = await headers();
-
-  // Try different headers to get IP (order matters - most reliable first)
-  const forwardedFor = headersList.get("x-forwarded-for");
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0].trim();
-  }
-
-  const realIp = headersList.get("x-real-ip");
-  if (realIp) {
-    return realIp;
-  }
-
-  return null;
+  return resolveClientIp(await headers());
 }
 
 /**
@@ -44,12 +39,13 @@ export async function checkRateLimit(
   bypassSecret?: string | undefined
 ): Promise<{ success: boolean; message?: string; resetIn?: number }> {
   try {
-    // Check for valid bypass secret
+    // Check for valid bypass secret. Compared in constant time: a plain
+    // === leaks the shared cron secret's prefix through response timing.
     const validBypassSecret = process.env.CRON_SECRET_KEY;
     if (
       bypassSecret &&
       validBypassSecret &&
-      bypassSecret === validBypassSecret
+      timingSafeEqualSecret(bypassSecret, validBypassSecret)
     ) {
       console.log(
         `[checkRateLimit] Rate limiting bypassed for operation: ${operationName}`

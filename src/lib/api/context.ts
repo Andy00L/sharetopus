@@ -3,23 +3,22 @@ import "server-only";
 import { headers } from "next/headers";
 
 import { hashClientIp } from "@/lib/mcp/ipHash";
+import { resolveClientIp } from "@/lib/net/clientIp";
 
 /**
- * Reads the client IP from request headers (x-forwarded-for first, then
- * x-real-ip), hashes it, and returns the hex digest. Returns null if no
- * IP header is present.
+ * Reads the client IP from the proxy headers, hashes it, and returns the
+ * hex digest. Returns null if no IP header is present.
+ *
+ * Resolution is delegated to lib/net/clientIp so the value hashed into
+ * mcp_audit_log / rest_audit_log / x402_access_log is the same one the
+ * rate limiter buckets on, and so neither can be steered by a
+ * caller-supplied x-forwarded-for entry.
  *
  * Shared between MCP and REST. The previous home in
  * src/lib/mcp/context.ts now re-exports this as a deprecated shim.
  */
 export async function extractIpHash(): Promise<string | null> {
-  const headerList = await headers();
-  const forwardedFor = headerList.get("x-forwarded-for");
-  const realIp = headerList.get("x-real-ip");
-  const candidateIp = forwardedFor
-    ? forwardedFor.split(",")[0].trim()
-    : (realIp ?? null);
-  return hashClientIp(candidateIp);
+  return hashClientIp(resolveClientIp(await headers()));
 }
 
 /**

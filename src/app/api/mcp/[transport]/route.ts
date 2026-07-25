@@ -4,6 +4,7 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { resolveMcpPrincipal } from "@/lib/mcp/auth/resolve";
 import { assertExhaustiveKind, type McpPrincipal } from "@/lib/mcp/auth/types";
 import { hashClientIp } from "@/lib/mcp/ipHash";
+import { resolveClientIp } from "@/lib/net/clientIp";
 import { registerPrompts } from "@/lib/mcp/prompts";
 import { registerTools } from "@/lib/mcp/tools";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
@@ -53,19 +54,6 @@ const MAX_INITIALIZE_BODY_BYTES = 16 * 1024;
  */
 function sanitizeClientField(raw: string, maxLength: number): string {
   return raw.replace(/[\x00-\x1f<>'"&]/g, "").slice(0, maxLength);
-}
-
-/**
- * Extracts the best-guess client IP from request headers. Prefers
- * x-forwarded-for (first hop) and falls back to x-real-ip. Returns
- * null when neither header is present so callers can pass through
- * unauthenticated requests without a hash.
- */
-function readClientIp(req: Request): string | null {
-  const forwardedFor = req.headers.get("x-forwarded-for");
-  if (forwardedFor) return forwardedFor.split(",")[0].trim();
-  const realIp = req.headers.get("x-real-ip");
-  return realIp ?? null;
 }
 
 /**
@@ -122,7 +110,7 @@ const authHandler = withMcpAuth(
     // unauthenticated probes are bounded. Requests with no resolvable
     // IP (synthetic load tests, internal calls) bypass the limiter
     // because checkRateLimit needs a scope key.
-    const rawClientIp = readClientIp(req);
+    const rawClientIp = resolveClientIp(req.headers);
     const clientIpHash = hashClientIp(rawClientIp);
 
     if (clientIpHash) {
