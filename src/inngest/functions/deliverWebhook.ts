@@ -8,6 +8,15 @@ const DELIVERY_TIMEOUT_MS = 10_000;
 const AUTO_DISABLE_THRESHOLD = 10;
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 
+/**
+ * Inngest retry budget for one dispatch. Declared here (rather than inline
+ * on the function config) because the handler needs it to recognize its
+ * final attempt: `attempt` is zero-indexed, so the last one is
+ * MAX_DELIVERY_RETRIES.
+ * sourceRef: node_modules/inngest/types.d.ts, BaseContext.attempt.
+ */
+const MAX_DELIVERY_RETRIES = 3;
+
 type WebhookDispatchEventData = {
   subscription_id: string;
   event_type: string;
@@ -35,11 +44,11 @@ export const deliverWebhook = inngest.createFunction(
   {
     id: "deliver-webhook",
     name: "Deliver Webhook",
-    retries: 3,
+    retries: MAX_DELIVERY_RETRIES,
     throttle: { limit: 100, period: "60s" },
     triggers: [{ event: "webhook.dispatch.v1" }],
   },
-  async ({ event }) => {
+  async ({ event, attempt }) => {
     const eventData = event.data as WebhookDispatchEventData;
     const { subscription_id, event_type, event_id, payload } = eventData;
 
@@ -97,7 +106,10 @@ export const deliverWebhook = inngest.createFunction(
       payload: payload as Json,
       status_code: statusCode,
       response_body: responseBody,
-      attempt: 1,
+      // Real attempt number. `attempt` is zero-indexed, the column is
+      // 1-indexed. This used to be hardcoded to 1, so every retry row
+      // claimed to be the first try.
+      attempt: attempt + 1,
       latency_ms: latencyMs,
       delivered_at: wasSuccess ? new Date().toISOString() : null,
       failed_at: wasSuccess ? null : new Date().toISOString(),
@@ -118,28 +130,37 @@ export const deliverWebhook = inngest.createFunction(
       return { delivered: true, status_code: statusCode };
     }
 
-    // Step 6: failure path -- increment failure_count, auto-disable at threshold.
-    const newFailureCount = subscriptionRow.failure_count + 1;
-    const shouldAutoDisable = newFailureCount >= AUTO_DISABLE_THRESHOLD;
+    // Step 6: failure path. This handler uses no step.run, so a retry
+    // re-executes the whole body. Counting a failure on every attempt made
+    // one bad event cost MAX_DELIVERY_RETRIES + 1 increments, so a
+    // subscriber hit AUTO_DISABLE_THRESHOLD (10) after ~2 failing events
+    // instead of 10 and was silently deactivated. Count once per event: on
+    // the last attempt, or immediately when the status is terminal and no
+    // retry will follow.
+    const failureIsRetryable =
+      statusCode === null || RETRYABLE_STATUS_CODES.has(statusCode);
+    const isFinalAttempt = attempt >= MAX_DELIVERY_RETRIES;
 
-    await adminSupabase
-      .from("webhook_subscriptions")
-      .update({
-        failure_count: newFailureCount,
-        active: !shouldAutoDisable,
-        ...(shouldAutoDisable
-          ? { last_disabled_at: new Date().toISOString() }
-          : {}),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", subscription_id);
+    if (!failureIsRetryable || isFinalAttempt) {
+      const newFailureCount = subscriptionRow.failure_count + 1;
+      const shouldAutoDisable = newFailureCount >= AUTO_DISABLE_THRESHOLD;
+
+      await adminSupabase
+        .from("webhook_subscriptions")
+        .update({
+          failure_count: newFailureCount,
+          active: !shouldAutoDisable,
+          ...(shouldAutoDisable
+            ? { last_disabled_at: new Date().toISOString() }
+            : {}),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", subscription_id);
+    }
 
     // Step 7: retryable failures throw for Inngest backoff. Terminal
     // failures (4xx that are not 408/429) return cleanly.
-    if (
-      statusCode === null ||
-      RETRYABLE_STATUS_CODES.has(statusCode)
-    ) {
+    if (failureIsRetryable) {
       throw new Error(
         `Webhook delivery failed: status=${statusCode ?? "network"} err=${errorMessage ?? "5xx"}`,
       );
