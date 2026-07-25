@@ -103,7 +103,22 @@ export interface VerifyPaymentInput {
 }
 
 export type VerifyPaymentResult =
-  | { ok: true; payerAddress: string; nonce: string; chargeAmountUsdc: number }
+  | {
+      ok: true;
+      payerAddress: string;
+      nonce: string;
+      chargeAmountUsdc: number;
+      /**
+       * The server-built requirements this payment was verified against.
+       * Callers pass this exact object to settlePayment so settlement runs
+       * on the terms the server priced, never on the copy the client
+       * embedded in its payload. Handing the same object forward (instead
+       * of rebuilding it) also keeps the Solana extra.feePayer stable
+       * across verify and settle, which a rebuild could not guarantee once
+       * the facilitator rotates signers.
+       */
+      requirements: PaymentRequirements;
+    }
   | { ok: false; error: VerifyPaymentError };
 
 export type VerifyPaymentError =
@@ -227,6 +242,7 @@ export async function verifyPayment(
         payerAddress,
         nonce,
         chargeAmountUsdc: input.amountUsdc,
+        requirements,
       };
     }
 
@@ -263,6 +279,12 @@ export interface SettlePaymentInput {
 
   /** The network the payment is on. */
   network: NetworkConfig;
+
+  /**
+   * The requirements verifyPayment returned for this payment. Server-built,
+   * never the client's payload.accepted copy.
+   */
+  requirements: PaymentRequirements;
 }
 
 export type SettlePaymentResult =
@@ -285,9 +307,15 @@ export type SettlePaymentError =
  * Settles a previously verified payment on-chain. The facilitator submits
  * the transaction and waits for confirmation.
  *
- * Settlement reuses the requirements the client accepted (embedded in the
- * payload); a payload without them cannot be settled safely, so that case
- * fails closed instead of fabricating requirements.
+ * Settlement runs against input.requirements, the server-built object that
+ * verifyPayment already checked the signature against. It deliberately does
+ * NOT read payload.accepted: that field is inside the base64 header the
+ * client controls, so settling on it would hand an attacker a say in the
+ * terms of the on-chain transfer (asset, amount, payTo, Solana feePayer)
+ * after the server had priced the request. Taking the verified object
+ * forward also removes the old "payload carries no accepted requirements"
+ * dead end, which fired only after the pending charge row existed and was
+ * then logged as an indeterminate settle needing manual reconciliation.
  *
  * blockNumber and facilitatorFeeUsdc are not available from the @x402/core
  * SettleResponse; they are null here and may be enriched from transaction
@@ -310,23 +338,11 @@ export async function settlePayment(
     };
   }
 
-  const acceptedRequirements = paymentPayload.accepted;
-  if (!acceptedRequirements) {
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message:
-          "Payment payload carries no accepted requirements; cannot settle.",
-      },
-    };
-  }
-
   try {
     const facilitator = getFacilitatorClient(input.network);
     const response = await facilitator.settle(
       paymentPayload,
-      acceptedRequirements
+      input.requirements
     );
 
     if (response.success) {

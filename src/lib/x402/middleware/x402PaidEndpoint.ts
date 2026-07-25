@@ -443,7 +443,13 @@ export function x402PaidEndpoint<TBody, TResult>(
     const chargeId = chargeResult.chargeId;
 
     // ── Step 10: Settle payment (on-chain) ───────────────────────────────
-    const settleResult = await settlePayment({ paymentHeader, network });
+    // Settle on the requirements verify already bound the signature to, not
+    // on the copy the client embedded in its payload.
+    const settleResult = await settlePayment({
+      paymentHeader,
+      network,
+      requirements: verifyResult.requirements,
+    });
     if (!settleResult.ok) {
       const settleError = settleResult.error;
       // Only a definitive facilitator rejection proves no money moved. A

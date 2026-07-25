@@ -306,9 +306,12 @@ export async function handleConnectVerify(
   }
 
   // -- 8. Settle payment (on-chain USDC transfer)
+  // Settle on the requirements verify already bound the signature to, not
+  // on the copy the client embedded in its payload.
   const settleResult = await settlePayment({
     paymentHeader,
     network: context.network,
+    requirements: verifyResult.requirements,
   });
 
   if (!settleResult.ok) {
