@@ -2,13 +2,13 @@
 
 import type { CreatorInfoData } from "@/lib/api/tiktok/data/getTikTokCreatorInfo";
 import { getTikTokCreatorInfoForAccount } from "@/lib/api/tiktok/data/getTikTokCreatorInfoForAccount";
-import type { SocialAccount } from "@/lib/types/dbTypes";
+import type { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { useEffect, useRef, useState } from "react";
 
 export type { CreatorInfoData };
 
 export function useTikTokCreatorInfo(
-  socialAccounts: SocialAccount[],
+  socialAccounts: ClientSocialAccount[],
   enabled: boolean,
 ) {
   const [creatorInfo, setCreatorInfo] = useState<
@@ -41,7 +41,9 @@ export function useTikTokCreatorInfo(
 
   function refetch(accountId: string) {
     fetchedRef.current.delete(accountId);
-    const account = socialAccounts.find((a) => a.id === accountId);
+    const account = socialAccounts.find(
+      (candidateAccount) => candidateAccount.id === accountId,
+    );
     if (!account) return;
 
     fetchedRef.current.add(accountId);

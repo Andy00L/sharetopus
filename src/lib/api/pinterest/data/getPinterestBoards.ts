@@ -1,5 +1,9 @@
 // lib/api/pinterest/data/getPinterestBoards.ts
-"use server";
+// Server-only library function, NOT a server action: it takes a raw access
+// token, so exposing it as an action would hand out an open Pinterest
+// proxy. Client components go through pinterestBoardsForAccount.ts, which
+// resolves the token by account id after an ownership check.
+import "server-only";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 

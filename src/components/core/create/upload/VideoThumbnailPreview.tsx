@@ -32,7 +32,7 @@ export function VideoThumbnailPreview({
       <div className="flex items-center justify-between gap-4 mt-2">
         <button
           onClick={onReplaceMedia}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded"
+          className="flex items-center gap-2 px-3 py-2 bg-muted hover:bg-accent rounded"
         >
           <svg
             width="16"
@@ -53,7 +53,7 @@ export function VideoThumbnailPreview({
         </button>
         <button
           onClick={onSetCoverImage}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded"
+          className="flex items-center gap-2 px-3 py-2 bg-muted hover:bg-accent rounded"
         >
           <svg
             width="16"

@@ -3,18 +3,17 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { usePathname } from "next/navigation";
 
+import { ModeToggle } from "./ModeToggle";
+
 export function SiteHeader() {
   const pathname = usePathname();
 
-  // Fonction pour obtenir le nom de la page à partir du chemin URL
+  // Maps the first URL segment to a readable page name.
   const getPageName = (path: string) => {
-    // Si c'est la page d'accueil
-    if (path === "/") return "Accueil";
+    if (path === "/") return "Home";
 
-    // Supprime le slash au début et divise par les slashs
     const segments = path.slice(1).split("/");
 
-    // Correspondance des chemins avec des noms plus lisibles
     const pageNames: Record<string, string> = {
       create: "Create",
       studio: "Studio",
@@ -24,7 +23,7 @@ export function SiteHeader() {
       posted: "Posted",
     };
 
-    // Utilise le nom personnalisé s'il existe, sinon met en majuscule le segment
+    // Use the custom name when one exists, otherwise capitalize the segment.
     return (
       pageNames[segments[0]] ||
       segments[0].charAt(0).toUpperCase() + segments[0].slice(1)
@@ -47,7 +46,7 @@ export function SiteHeader() {
           <h1 className="text-lg sm:text-base font-medium">{pageName}</h1>
         </div>
 
-        {/**<ModeToggle />*/}
+        <ModeToggle />
       </div>
     </header>
   );

@@ -13,14 +13,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
 interface Props {
-  readonly account: SocialAccount;
+  readonly account: ClientSocialAccount;
   readonly userId: string;
 }
 
@@ -94,7 +94,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
       >
         <AvatarWithFallback
           src={account.avatar_url}
-          alt={account.display_name ?? `Utilisateur ${account.platform}`}
+          alt={account.display_name ?? `${account.platform} user`}
           className="h-8 w-8"
         />
 
@@ -113,7 +113,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
                 : "hover:bg-red-100"
             }
           `}
-          aria-label="Déconnecter le compte"
+          aria-label="Disconnect account"
           type="button"
         >
           <X size={14} />

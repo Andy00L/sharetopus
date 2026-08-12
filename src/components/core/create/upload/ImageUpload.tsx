@@ -90,10 +90,10 @@ export function ImageUploads({ onFileSelected, maxSizeMB }: ImageUploadProps) {
       role="button"
       tabIndex={0}
       aria-label="Upload image area"
-      className={`border-2 border-dashed bg-white rounded-lg p-12 text-center transition-colors cursor-pointer ${
+      className={`border-2 border-dashed bg-card rounded-lg p-12 text-center transition-colors cursor-pointer ${
         isDragging
           ? "border-primary bg-primary/5 "
-          : "border-muted-foreground/20 hover:border-primary/50 hover:bg-[#e6e6e1]"
+          : "border-muted-foreground/20 hover:border-primary/50 hover:bg-accent"
       }`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

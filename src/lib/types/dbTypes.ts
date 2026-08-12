@@ -11,6 +11,25 @@ export type User = Tables<"users">;
 
 export type SocialAccount = Tables<"social_accounts">;
 
+/**
+ * The social_accounts projection that may cross to client components.
+ * Deliberately excludes access_token, refresh_token, and expiry columns:
+ * full rows serialized into RSC payloads put tokens in the page source.
+ * Server code resolves tokens by account id (ensureValidToken); the
+ * client never holds one. Full rows satisfy this type structurally, so
+ * server-only call sites keep working unchanged.
+ */
+export type ClientSocialAccount = Pick<
+  SocialAccount,
+  | "id"
+  | "platform"
+  | "username"
+  | "display_name"
+  | "avatar_url"
+  | "account_identifier"
+  | "is_verified"
+>;
+
 export type AnalyticsMetric = Tables<"analytics_metrics">;
 
 export type StripeSubscription = Tables<"stripe_subscriptions">;

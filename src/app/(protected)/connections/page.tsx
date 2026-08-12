@@ -23,6 +23,7 @@ import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { tierMeets } from "@/lib/types/plans";
+import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
 import { auth } from "@clerk/nextjs/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -46,7 +47,9 @@ const AccountsPageWithData = async () => {
     return <RateLimitError resetIn={fetchResult.resetIn} />;
   }
 
-  const accounts = fetchResult.data!;
+  // Client-safe projection: badges only need identity fields, and full
+  // rows would serialize token columns into the RSC payload.
+  const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);
 
   // Filter accounts by platform
   const tiktokAccounts = accounts.filter((acc) => acc.platform === "tiktok");
@@ -77,7 +80,7 @@ const AccountsPageWithData = async () => {
         {/* Account limits display */}
         {limitsCheck.success && (
           <div
-            className="mt-4 p-3 bg-white
+            className="mt-4 p-3 bg-card
            rounded-md"
           >
             <p className="text-sm">

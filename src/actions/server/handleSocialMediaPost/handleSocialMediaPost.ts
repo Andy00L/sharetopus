@@ -14,7 +14,7 @@ import {
 } from "@/lib/platforms/capabilities";
 import { MediaType } from "@/lib/types/database.types";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { getMimeTypeFromFileName } from "../../../lib/utils/getMimeTypeFromFileName";
 import {
@@ -77,7 +77,7 @@ function buildZeroCounts(): PlatformCounts {
 // ────────────────────────────────────────────────────────────
 
 type ScheduleOptionsBuilderArgs = {
-  account: SocialAccount;
+  account: ClientSocialAccount;
   content: ContentInfo;
   platformOptions: PlatformOptions;
   selectedBoard: BoardInfo | undefined;
@@ -171,7 +171,12 @@ const PLATFORM_FORM_ADAPTERS: Record<PostingPlatform, PlatformFormAdapter> = {
  *   - Inner (schedulePostBatch): 10 calls per 60s per user, scheduled only.
  */
 export async function handleSocialMediaPost(config: {
-  accounts: SocialAccount[];
+  /**
+   * Client-safe account projections. Full rows also satisfy this; the
+   * batch cores re-verify ownership by id, so nothing here is trusted
+   * beyond routing.
+   */
+  accounts: ClientSocialAccount[];
   mediaPath: string;
   coverTimestamp: number;
   fileName?: string;
@@ -257,7 +262,7 @@ export async function handleSocialMediaPost(config: {
 
   // Step 4: group accounts by platform; unknown platforms are reported,
   // never silently dropped.
-  const accountsByPlatform = new Map<PostingPlatform, SocialAccount[]>();
+  const accountsByPlatform = new Map<PostingPlatform, ClientSocialAccount[]>();
   const unsupportedErrors: AccountError[] = [];
   for (const account of accounts) {
     if (!isPostingPlatform(account.platform)) {
@@ -408,9 +413,9 @@ function findSelectedBoard(
 }
 
 function buildAccountsLookup(
-  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>,
-): Map<string, SocialAccount> {
-  const lookup = new Map<string, SocialAccount>();
+  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>,
+): Map<string, ClientSocialAccount> {
+  const lookup = new Map<string, ClientSocialAccount>();
   for (const platformAccounts of accountsByPlatform.values()) {
     for (const account of platformAccounts) {
       lookup.set(account.id, account);
@@ -434,7 +439,7 @@ function countAcceptedByPlatform(
 
 function mapRejectionsToAccountErrors(
   rejections: { socialAccountId: string; reason: string }[],
-  accountsLookup: Map<string, SocialAccount>,
+  accountsLookup: Map<string, ClientSocialAccount>,
 ): AccountError[] {
   return rejections.map((rejection) => {
     const account = accountsLookup.get(rejection.socialAccountId);
@@ -463,7 +468,7 @@ function mapRejectionsToAccountErrors(
  * selector already prevents selecting them.
  */
 async function scheduleAllPosts(args: {
-  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>;
+  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -564,7 +569,7 @@ async function scheduleAllPosts(args: {
 // ────────────────────────────────────────────────────────────
 
 async function directPostFromForm(args: {
-  accountsByPlatform: Map<PostingPlatform, SocialAccount[]>;
+  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];

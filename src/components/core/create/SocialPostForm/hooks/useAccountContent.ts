@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 
 export type AccountContentEntry = {
   accountId: string;
@@ -21,7 +21,7 @@ export function useAccountContent() {
    * current default text values. Idempotent: skips if already present.
    */
   function addAccountContent(
-    account: SocialAccount,
+    account: ClientSocialAccount,
     defaultText: { title: string; description: string; link: string },
     pinterestLink: string
   ) {

@@ -53,7 +53,7 @@ export default function SchedulingPanel({
   return (
     <>
       {/**Scheduling button */}
-      <div className=" p-2.5 border rounded-2xl  bg-white">
+      <div className=" p-2.5 border rounded-2xl  bg-card">
         {/* Scheduling toggle */}
         <div className="flex items-center  space-x-2 py-2">
           <Switch

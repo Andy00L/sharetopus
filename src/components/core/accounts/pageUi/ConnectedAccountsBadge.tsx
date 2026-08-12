@@ -1,11 +1,11 @@
 // src/components/core/accounts/social/ConnectedAccounts.tsx
 
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 
 import SocialAccountBadge from "./SocialAccountBadge";
 
 interface ConnectedAccountsProps {
-  readonly accounts: SocialAccount[];
+  readonly accounts: ClientSocialAccount[];
   readonly userId: string | null;
 }
 

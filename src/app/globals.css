@@ -117,6 +117,14 @@
   --sidebar: #E9EAE4;
 }
 
+/* Dark column for the dashboard scope: without this, .protected-theme's
+   light cream field would sit under dark cards. Values are the .dark root
+   field and card tones so the dashboard matches the shadcn dark set. */
+.dark .protected-theme {
+  --background: oklch(0.141 0.005 285.823);
+  --sidebar: oklch(0.21 0.006 285.885);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

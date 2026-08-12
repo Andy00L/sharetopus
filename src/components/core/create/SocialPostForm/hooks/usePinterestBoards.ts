@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { createPinterestBoard } from "@/lib/api/pinterest/data/createPinterestBoard";
-import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
-import { SocialAccount } from "@/lib/types/dbTypes";
+import {
+  createPinterestBoardForAccount,
+  getPinterestBoardsForAccount,
+} from "@/lib/api/pinterest/data/pinterestBoardsForAccount";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { toast } from "sonner";
 
 export type BoardEntry = {
@@ -13,6 +15,12 @@ export type BoardEntry = {
   isSelected: boolean;
 };
 
+/**
+ * Board state for the Pinterest settings tab. All Pinterest API calls go
+ * through the ForAccount server actions with an account id only; the
+ * access token is resolved and refreshed server-side and never reaches
+ * this hook.
+ */
 export function usePinterestBoards(userId: string | null) {
   const [boards, setBoards] = useState<BoardEntry[]>([]);
   const [checkedAccountIds, setCheckedAccountIds] = useState<string[]>([]);
@@ -29,12 +37,12 @@ export function usePinterestBoards(userId: string | null) {
    *
    * Uses functional setState everywhere to avoid stale closures.
    */
-  async function fetchAndSetBoards(account: SocialAccount) {
-    if (!userId || !account.access_token) return;
+  async function fetchAndSetBoards(account: ClientSocialAccount) {
+    if (!userId) return;
 
     setIsLoadingBoards(true);
     try {
-      const result = await getPinterestBoards(account.access_token, userId);
+      const result = await getPinterestBoardsForAccount(account.id);
 
       if (result.success && result.boards.length > 0) {
         const formatted: BoardEntry[] = result.boards.map((board) => ({
@@ -45,12 +53,12 @@ export function usePinterestBoards(userId: string | null) {
         }));
 
         setBoards((prev) => [
-          ...prev.filter((b) => b.accountId !== account.id),
+          ...prev.filter((entry) => entry.accountId !== account.id),
           ...formatted,
         ]);
       } else {
         setBoards((prev) => [
-          ...prev.filter((b) => b.accountId !== account.id),
+          ...prev.filter((entry) => entry.accountId !== account.id),
           {
             boardID: `no-boards-${account.id}`,
             boardName: "no-boards",
@@ -73,18 +81,17 @@ export function usePinterestBoards(userId: string | null) {
    * Idempotent on repeated toggles: skips if boards for this account
    * are already loaded. First-time loads delegate to fetchAndSetBoards.
    */
-  async function loadBoardsForAccount(account: SocialAccount) {
+  async function loadBoardsForAccount(account: ClientSocialAccount) {
     if (!userId) return;
-    if (!account.access_token) return;
     if (checkedAccountIds.includes(account.id)) return;
-    if (boards.some((b) => b.accountId === account.id)) return;
+    if (boards.some((entry) => entry.accountId === account.id)) return;
 
     await fetchAndSetBoards(account);
   }
 
   /** Called when a Pinterest account is unchecked. */
   function unloadBoardsForAccount(accountId: string) {
-    setBoards((prev) => prev.filter((b) => b.accountId !== accountId));
+    setBoards((prev) => prev.filter((entry) => entry.accountId !== accountId));
     setCheckedAccountIds((prev) => prev.filter((id) => id !== accountId));
   }
 
@@ -109,30 +116,32 @@ export function usePinterestBoards(userId: string | null) {
    */
   async function handleCreateBoard(
     accountId: string,
-    accounts: SocialAccount[]
+    accounts: ClientSocialAccount[]
   ) {
     if (!newBoardName.trim()) {
       toast.error("Please enter a board name");
       return;
     }
 
-    const account = accounts.find((acc) => acc.id === accountId);
-    if (!account?.access_token) return;
+    const account = accounts.find(
+      (candidateAccount) => candidateAccount.id === accountId
+    );
+    if (!account) return;
 
     setIsCreatingBoard(true);
 
     try {
-      const result = await createPinterestBoard(
-        account.access_token,
+      const result = await createPinterestBoardForAccount(
+        account.id,
         newBoardName
       );
 
-      if (result) {
+      if (result.success) {
         toast.success("Board created successfully!");
         setNewBoardName("");
         await fetchAndSetBoards(account);
       } else {
-        toast.error("Failed to create board");
+        toast.error(result.message || "Failed to create board");
       }
     } catch {
       toast.error("Error creating board");

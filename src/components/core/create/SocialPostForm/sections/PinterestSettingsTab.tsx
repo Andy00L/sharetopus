@@ -11,12 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import { Loader2 } from "lucide-react";
 import type { BoardEntry } from "../hooks/usePinterestBoards";
 
 interface PinterestSettingsTabProps {
-  readonly selectedPinterestAccounts: SocialAccount[];
+  readonly selectedPinterestAccounts: ClientSocialAccount[];
   readonly boards: BoardEntry[];
   readonly isLoadingBoards: boolean;
   readonly newBoardName: string;
@@ -50,7 +50,7 @@ export default function PinterestSettingsTab({
       {selectedPinterestAccounts.map((account) => (
         <div
           key={`pinterest-${account.id}`}
-          className="space-y-3 border rounded p-3 bg-[#e6e6e1]"
+          className="space-y-3 border rounded p-3 bg-accent"
         >
           <div className="flex items-center gap-2">
             <AvatarWithFallback
@@ -65,7 +65,7 @@ export default function PinterestSettingsTab({
           </div>
 
           {isLoadingBoards && (
-            <div className="p-2 border rounded-md text-gray-500">
+            <div className="p-2 border rounded-md text-muted-foreground">
               Loading boards...
             </div>
           )}
@@ -76,11 +76,11 @@ export default function PinterestSettingsTab({
                 board.accountId === account.id &&
                 board.boardName === "no-boards"
             ) && (
-              <div className="flex gap-2 bg-white">
+              <div className="flex gap-2 bg-card">
                 <Input
                   placeholder="Board name"
                   value={newBoardName}
-                  onChange={(e) => setNewBoardName(e.target.value)}
+                  onChange={(event) => setNewBoardName(event.target.value)}
                   disabled={isCreatingBoard}
                 />
                 <Button
@@ -101,7 +101,7 @@ export default function PinterestSettingsTab({
               (board) =>
                 board.accountId === account.id && board.boardName === "error"
             ) && (
-              <div className="p-2 border rounded-md bg-white text-red-500">
+              <div className="p-2 border rounded-md bg-card text-red-500">
                 Error loading boards for this account. Please try reconnecting.
               </div>
             )}
@@ -112,12 +112,12 @@ export default function PinterestSettingsTab({
               <Select
                 value={
                   boards.find(
-                    (b) => b.accountId === account.id && b.isSelected
+                    (board) => board.accountId === account.id && board.isSelected
                   )?.boardID ?? ""
                 }
                 onValueChange={(boardId) => onSelectBoard(account.id, boardId)}
               >
-                <SelectTrigger className="bg-white">
+                <SelectTrigger className="bg-card">
                   <SelectValue placeholder="Select a board" />
                 </SelectTrigger>
                 <SelectContent>
@@ -147,8 +147,8 @@ export default function PinterestSettingsTab({
         <Input
           id="pinterest-title"
           value={textInputs.title}
-          onChange={(e) => onTitleChange(e.target.value)}
-          className="bg-white"
+          onChange={(event) => onTitleChange(event.target.value)}
+          className="bg-card"
           placeholder="Add a title for all Pinterest pins"
         />
       </div>
@@ -159,9 +159,9 @@ export default function PinterestSettingsTab({
           id="pinterest-link"
           type="url"
           value={platformOptions.pinterest?.link ?? ""}
-          onChange={(e) => onLinkChange(e.target.value)}
+          onChange={(event) => onLinkChange(event.target.value)}
           placeholder="https://example.com"
-          className="bg-white"
+          className="bg-card"
         />
       </div>
     </div>

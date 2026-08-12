@@ -1,8 +1,8 @@
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 
 export function validateAccountContent(
-  accounts: SocialAccount[],
+  accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
   platform: string,
   boards?: BoardInfo[],
@@ -27,7 +27,7 @@ export function validateAccountContent(
     // Platform-specific validations
     if (platform === "pinterest" && postType !== "text") {
       const hasSelectedBoard = boards?.some(
-        (b) => b.accountId === account.id && b.isSelected,
+        (board) => board.accountId === account.id && board.isSelected,
       );
       if (!hasSelectedBoard) {
         errors.push({

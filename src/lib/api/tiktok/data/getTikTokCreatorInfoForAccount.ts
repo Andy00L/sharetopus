@@ -1,7 +1,8 @@
 "use server";
 
+import { auth } from "@clerk/nextjs/server";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { SocialAccount } from "@/lib/types/dbTypes";
 import { ensureValidToken } from "../../ensureValidToken";
 import {
   getTikTokCreatorInfo,
@@ -26,6 +27,16 @@ type GetCreatorInfoForAccountResult =
 export async function getTikTokCreatorInfoForAccount(
   socialAccountId: string,
 ): Promise<GetCreatorInfoForAccountResult> {
+  // Public server action: require a session and account ownership, or any
+  // client could probe creator info by account id.
+  const { userId } = await auth();
+  if (!userId) {
+    return {
+      success: false,
+      message: "Authentication required. Please sign in again.",
+    };
+  }
+
   const { data: account, error: accountError } = await adminSupabase
     .from("social_accounts")
     .select("*")
@@ -44,6 +55,16 @@ export async function getTikTokCreatorInfoForAccount(
     };
   }
 
+  if (account.principal_id !== userId) {
+    console.error(
+      `[getTikTokCreatorInfoForAccount] Ownership mismatch for account ${socialAccountId}`,
+    );
+    return {
+      success: false,
+      message: "TikTok account not found or deleted.",
+    };
+  }
+
   if (account.platform !== "tiktok") {
     return {
       success: false,
@@ -51,7 +72,7 @@ export async function getTikTokCreatorInfoForAccount(
     };
   }
 
-  const tokenResult = await ensureValidToken(account as SocialAccount);
+  const tokenResult = await ensureValidToken(account);
 
   if (!tokenResult.success || !tokenResult.token) {
     console.error(

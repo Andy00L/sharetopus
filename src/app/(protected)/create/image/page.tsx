@@ -10,6 +10,7 @@ import RateLimitError from "@/components/RateLimitError";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";
+import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
@@ -44,7 +45,7 @@ async function SocialPostFormWithData({
 
   return (
     <SocialPostForm
-      accounts={accounts.data ?? []}
+      accounts={(accounts.data ?? []).map(toClientSocialAccount)}
       uploadLimits={uploadLimits}
       userId={userId}
       postType="image"

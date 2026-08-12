@@ -3,7 +3,7 @@
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { SocialAccount } from "@/lib/types/dbTypes";
+import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import {
   CAPTION_LIMITS,
   CaptionPlatform,
@@ -11,7 +11,7 @@ import {
 import type { AccountContentEntry } from "../hooks/useAccountContent";
 
 interface CaptionsTabProps {
-  readonly accounts: SocialAccount[];
+  readonly accounts: ClientSocialAccount[];
   readonly selectedAccounts: Record<string, boolean>;
   readonly accountContent: AccountContentEntry[];
   readonly editingAccounts: Record<string, boolean>;
@@ -94,14 +94,14 @@ export default function CaptionsTab({
                 </Button>
               </div>
 
-              <div className="space-y-2 bg-white border rounded-lg ">
+              <div className="space-y-2 bg-card border rounded-lg ">
                 <Textarea
                   value={accountData?.description || ""}
-                  onChange={(e) => {
+                  onChange={(event) => {
                     if (isEditing) {
                       onSetCustomCaption(
                         account.id,
-                        e.target.value.slice(0, platformLimit),
+                        event.target.value.slice(0, platformLimit),
                         true
                       );
                     }
@@ -110,7 +110,7 @@ export default function CaptionsTab({
                   rows={3}
                   disabled={!isEditing}
                   className={`max-h-40 overflow-y-auto ${
-                    !isEditing ? "bg-muted/20" : "bg-white"
+                    !isEditing ? "bg-muted/20" : "bg-card"
                   }`}
                   maxLength={platformLimit}
                 />

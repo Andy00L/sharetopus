@@ -1,3 +1,4 @@
+import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Analytics } from "@vercel/analytics/next";
@@ -89,6 +90,13 @@ export const metadata: Metadata = {
     apple: "/logo_16x16.ico", // For Apple devices
   },
   referrer: "strict-origin-when-cross-origin", // Security for referrer data
+
+  // Base app ownership verification tag. Renders as
+  // <meta name="base:app_id" content="..."> in <head> on every page,
+  // including the homepage where the verifier looks for it.
+  other: {
+    "base:app_id": "6a7c480cbb30de7bbb11891a",
+  },
 };
 
 export default function RootLayout({
@@ -97,16 +105,25 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning: next-themes stamps the theme class on
+    // <html> before hydration, which React would otherwise flag.
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable}  antialiased`}
       >
-        <ClerkProvider>
-          {children}
-          <Toaster />
-          <Analytics />
-          <SpeedInsights />
-        </ClerkProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <ClerkProvider>
+            {children}
+            <Toaster />
+            <Analytics />
+            <SpeedInsights />
+          </ClerkProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

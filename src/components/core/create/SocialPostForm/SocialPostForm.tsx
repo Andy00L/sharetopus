@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { SidebarGroup } from "@/components/ui/sidebar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { SocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
+import { ClientSocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -42,7 +42,7 @@ import type { SchedulePrefill } from "./state/parseSchedulePrefill";
 import { checkFormSubmission } from "./validation/checkFormSubmission";
 
 interface SocialPostFormProps {
-  readonly accounts: SocialAccount[];
+  readonly accounts: ClientSocialAccount[];
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
   readonly uploadLimits?: { image: number; video: number };
@@ -473,7 +473,7 @@ export default function SocialPostForm({
                 ? "Write your post content here"
                 : "Write a caption for your post"
             }
-            className="h-40 max-h-40 w-full resize-none overflow-y-auto break-words bg-white"
+            className="h-40 max-h-40 w-full resize-none overflow-y-auto break-words bg-card"
             maxLength={CAPTION_LIMITS.default}
             rows={6}
             required

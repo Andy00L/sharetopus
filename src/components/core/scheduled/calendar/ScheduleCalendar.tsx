@@ -42,6 +42,12 @@ const DRAG_ACTIVATION_DISTANCE_PX = 6;
 interface ScheduleCalendarProps {
   readonly posts: ScheduledPostListItem[];
   readonly userId: string;
+  /**
+   * Dependency seam for the reschedule call. Production omits it (the
+   * real server action is the default); harnesses inject a stub to
+   * exercise the optimistic flow without a signed-in session.
+   */
+  readonly rescheduleAction?: typeof updateScheduledTimeBatchAction;
 }
 
 /**
@@ -55,6 +61,7 @@ interface ScheduleCalendarProps {
 export default function ScheduleCalendar({
   posts,
   userId,
+  rescheduleAction = updateScheduledTimeBatchAction,
 }: ScheduleCalendarProps) {
   const router = useRouter();
 
@@ -203,7 +210,7 @@ export default function ScheduleCalendar({
     );
 
     const postIds = draggedBatch.posts.map((post) => post.id);
-    updateScheduledTimeBatchAction(postIds, targetDate, userId)
+    rescheduleAction(postIds, targetDate, userId)
       .then((result) => {
         if (result.success) {
           toast.success(result.message);

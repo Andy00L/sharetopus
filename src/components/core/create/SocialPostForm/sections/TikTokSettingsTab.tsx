@@ -19,14 +19,14 @@ import {
 } from "@/components/ui/tooltip";
 import { MediaType } from "@/lib/types/database.types";
 import type {
+  ClientSocialAccount,
   PrivacyLevel,
-  SocialAccount,
   TikTokOptions,
 } from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 
 interface TikTokSettingsTabProps {
-  readonly selectedTikTokAccounts: SocialAccount[];
+  readonly selectedTikTokAccounts: ClientSocialAccount[];
   readonly creatorInfo: Record<string, CreatorInfoData>;
   readonly isLoadingCreatorInfo: Record<string, boolean>;
   readonly creatorInfoErrors: Record<string, string | null>;
@@ -84,9 +84,9 @@ export default function TikTokSettingsTab({
       : [];
 
   // Interaction flags: disabled if ANY account has it disabled
-  const commentForceDisabled = loadedInfos.some((i) => i.comment_disabled);
-  const duetForceDisabled = loadedInfos.some((i) => i.duet_disabled);
-  const stitchForceDisabled = loadedInfos.some((i) => i.stitch_disabled);
+  const commentForceDisabled = loadedInfos.some((info) => info.comment_disabled);
+  const duetForceDisabled = loadedInfos.some((info) => info.duet_disabled);
+  const stitchForceDisabled = loadedInfos.some((info) => info.stitch_disabled);
 
   const isVideo = postType === "video";
   const brandedContentActive = tikTokOptions.brandedContent === true;
@@ -117,7 +117,7 @@ export default function TikTokSettingsTab({
         return (
           <div
             key={`tiktok-${account.id}`}
-            className="space-y-2 border rounded p-3 bg-[#e6e6e1]"
+            className="space-y-2 border rounded p-3 bg-accent"
           >
             <div className="flex items-center gap-2">
               <AvatarWithFallback
@@ -177,7 +177,7 @@ export default function TikTokSettingsTab({
                 onOptionsChange({ privacyLevel: value as PrivacyLevel })
               }
             >
-              <SelectTrigger className="bg-white">
+              <SelectTrigger className="bg-card">
                 <SelectValue placeholder="Select privacy level" />
               </SelectTrigger>
               <SelectContent>

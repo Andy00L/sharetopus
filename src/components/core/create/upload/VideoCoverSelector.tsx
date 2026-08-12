@@ -113,7 +113,7 @@ export function VideoCoverSelector({
   }, [duration]);
 
   return (
-    <div className="space-y-4 border-2 border-dashed border-chart-1 bg-white rounded-lg p-12 text-center transition-colors hover:border-chart-1/80 hover:bg-[#e6e6e1]">
+    <div className="space-y-4 border-2 border-dashed border-chart-1 bg-card rounded-lg p-12 text-center transition-colors hover:border-chart-1/80 hover:bg-accent">
       {" "}
       {/* Hidden video element for thumbnail generation */}
       <video

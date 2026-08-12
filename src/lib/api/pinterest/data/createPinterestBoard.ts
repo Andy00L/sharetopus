@@ -1,4 +1,6 @@
-"use server";
+// Server-only library function, NOT a server action (same rationale as
+// getPinterestBoards.ts: raw-token input must never be client-callable).
+import "server-only";
 
 import { PinterestBoard } from "./getPinterestBoards";
 
@@ -26,10 +28,7 @@ export async function createPinterestBoard(
   }
 
   try {
-    console.log(
-      "[CreatePinterestBoard] Creating board with token:",
-      accessToken.substring(0, 10) + "..."
-    );
+    console.log("[CreatePinterestBoard] Creating board:", name);
 
     const url = "https://api.pinterest.com/v5/boards";
 
