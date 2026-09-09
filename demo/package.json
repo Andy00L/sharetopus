@@ -1,0 +1,13 @@
+{
+  "name": "sharetopus-x402-demo",
+  "private": true,
+  "type": "module",
+  "description": "Demo client for Sharetopus x402 paid endpoints. Pays with USDC on Solana (default) or Base; see x402-demo.mjs for env and commands.",
+  "dependencies": {
+    "@solana/kit": "^8.2.0",
+    "@x402/evm": "^2.25.0",
+    "@x402/fetch": "^2.25.0",
+    "@x402/svm": "^2.25.0",
+    "viem": "^2.0.0"
+  }
+}

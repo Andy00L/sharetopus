@@ -1470,7 +1470,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       ],
     },
     tableNote:
-      "Settlement runs through the Coinbase CDP facilitator on base, polygon, arbitrum, and solana, and through the Celo facilitator (x402.celo.org) on celo. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base.",
+      "Settlement runs through the Coinbase CDP facilitator on base, polygon, arbitrum, and solana, and through the Celo facilitator (x402.celo.org) on celo. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base. Solana also has a public ledger of settlements at /solana and a post-now Blink (Solana Action) at /api/actions/post-now?account_id=&platform=, which pays from the wallet directly and records the charge with facilitator solana_direct.",
   },
 
   // ── Pricing ─────────────────────────────────────────────────────────────

@@ -211,6 +211,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `X402_RECIPIENT_SOLANA` | For x402 | Solana wallet address for USDC payments |
 | `X402_DEFAULT_NETWORK` | No | Default: `base` |
 | `X402_FACILITATOR_URL` | No | Default: Coinbase hosted facilitator |
+| `X402_SOLANA_RPC_URL` | Recommended | Dedicated Solana RPC (https) for refund blockhash reads. Unset falls back to the rate-limited public endpoint |
 | `CDP_WEBHOOK_SIGNING_SECRET` | For x402 | HMAC verification of CDP webhook events |
 
 ### App config

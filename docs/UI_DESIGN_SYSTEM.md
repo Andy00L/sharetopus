@@ -77,6 +77,33 @@ action), token-built, never two per page.
 - Code cards: ink surface, cream-2 code text, muted uppercase label bar,
   copy button fades in on hover.
 
+## The Solana proof ledger (/solana)
+
+- Structure: marketing nav and footer, then a 64rem (`max-w-5xl`) column:
+  eyebrow + display title + ink-2 subtitle, a chip row of the real lane
+  facts (CAIP-2 id, USDC mint, payTo; mono, white card chips), the latest
+  receipt beside the way-in code card, then the ledger table.
+- Signature placement: the **latest receipt** card carries the ink stamp
+  (`border-foreground` + `shadow-[var(--shadow-hard)]`) and the page's one
+  bespoke silhouette, a torn receipt edge (a 12px sawtooth in the card
+  color over the field). Never a second stamp on this page; the code card
+  stays unfeatured.
+- Outcome marks: a 6px dot plus a word, never a pill. Published = solid
+  ink; in progress (publishing, scheduled, not linked) = hollow muted ring;
+  failed and refunded = solid destructive; cancelled = hollow destructive.
+  One map, `src/components/solana/OutcomeMark.tsx`.
+- Ledger table: the PricingTable recipe (white card, hairline, cream-2
+  head, zebra rows); signatures and addresses truncated in the middle
+  (8 + 8, 4 + 4) in `font-mono tabular-nums` with the full value in
+  `title`; time in UTC.
+- Explorer links (`src/components/solana/ExplorerLink.tsx`): mono ink
+  text with the orange up-right arrow; hover and focus underline in
+  orange; focus ring 2px orange, offset 2. Orange text at 12px is 3.1:1 on
+  white and never carries a link label. Platform slugs and fact labels sit
+  in ink-2, not muted (muted is 3.5:1 on white).
+- Width: 64rem is a recorded exception to the 80rem docs width. A ledger
+  reads better on a shorter measure.
+
 ## Dashboard surfaces (protected app)
 
 The dashboard runs on the shadcn token set (`:root` zinc scale) over the

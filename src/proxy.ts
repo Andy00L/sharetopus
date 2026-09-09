@@ -6,6 +6,8 @@ import { NextResponse } from "next/server";
 const isPublicRoute = createRouteMatcher([
   "/api/mcp/(.*)",
   "/api/x402/(.*)",
+  "/api/actions/(.*)",
+  "/actions.json",
   "/.well-known/oauth-protected-resource(.*)",
   "/.well-known/oauth-authorization-server(.*)",
 ]);

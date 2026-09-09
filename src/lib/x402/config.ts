@@ -91,6 +91,48 @@ export function getRecipientAddress(network: NetworkConfig): string | null {
   return recipientAddress ?? null;
 }
 
+/**
+ * Solana JSON-RPC endpoint for server-side reads on the refund path.
+ *
+ * networks.ts carries the public api.mainnet-beta.solana.com endpoint as the
+ * registry default. It is rate-limited and sheds requests under load, which on
+ * a refund means the blockhash read fails and the USDC never goes back. Set
+ * X402_SOLANA_RPC_URL to a dedicated provider to pin it.
+ *
+ * A missing or malformed value falls back to the registry endpoint rather than
+ * failing closed: a rate-limited refund attempt beats no refund attempt.
+ * The configured URL is never logged. Provider endpoints usually carry the API
+ * key in the query string or the path, so printing one would leak a credential.
+ */
+export function getSolanaRpcUrl(network: NetworkConfig): string {
+  const configuredRpcUrl = process.env.X402_SOLANA_RPC_URL;
+  if (!configuredRpcUrl) {
+    console.warn(
+      "[getSolanaRpcUrl] X402_SOLANA_RPC_URL is not set. Falling back to the rate-limited public endpoint from networks.ts.",
+    );
+    return network.rpcUrl;
+  }
+
+  let parsedRpcUrl: URL;
+  try {
+    parsedRpcUrl = new URL(configuredRpcUrl);
+  } catch {
+    console.warn(
+      "[getSolanaRpcUrl] X402_SOLANA_RPC_URL is not a parseable URL. Falling back to the public endpoint from networks.ts.",
+    );
+    return network.rpcUrl;
+  }
+
+  if (parsedRpcUrl.protocol !== "https:") {
+    console.warn(
+      `[getSolanaRpcUrl] X402_SOLANA_RPC_URL must use https (got "${parsedRpcUrl.protocol}"). Falling back to the public endpoint from networks.ts.`,
+    );
+    return network.rpcUrl;
+  }
+
+  return configuredRpcUrl;
+}
+
 /** Public site origin used for resource URLs. */
 export function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";

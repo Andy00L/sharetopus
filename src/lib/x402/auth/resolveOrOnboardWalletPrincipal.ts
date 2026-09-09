@@ -83,9 +83,7 @@ export async function resolveOrOnboardWalletPrincipal(params: {
   payerAddress: string;
   network: NetworkConfig;
 }): Promise<ResolveOrOnboardWalletPrincipalResult> {
-  const normalizedAddress = params.payerAddress.startsWith("0x")
-    ? params.payerAddress.toLowerCase()
-    : params.payerAddress;
+  const normalizedAddress = normalizeWalletAddress(params.payerAddress);
 
   const existingLookup = await lookupWalletByAddress(normalizedAddress);
   if (!existingLookup.ok) {
@@ -174,9 +172,53 @@ export async function resolveOrOnboardWalletPrincipal(params: {
   return buildDisposition(adoptedLookup.wallet, false);
 }
 
+export type ResolveExistingWalletPrincipalResult =
+  | { ok: true; principal: WalletPrincipal }
+  | { ok: false; reason: "unknown_wallet" }
+  | {
+      ok: false;
+      reason: "sanctioned";
+      message: string;
+      principal: WalletPrincipal;
+    }
+  | { ok: false; reason: "db_error"; message: string };
+
+/**
+ * Lookup-only variant for flows where no facilitator screened the payer
+ * (the post-now Blink: the wallet broadcasts its own payment). It never
+ * onboards, so no sanctions_screenings row is written claiming a KYT check
+ * that did not happen. A wallet must have paid through x402 at least once
+ * (connect) before it can use those flows; the sanctions disposition from
+ * that screening still applies here.
+ *
+ * Called by: solanaActions/postNowBlink.ts
+ * Tables touched: wallets (read)
+ */
+export async function resolveExistingWalletPrincipal(
+  payerAddress: string
+): Promise<ResolveExistingWalletPrincipalResult> {
+  const lookup = await lookupWalletByAddress(normalizeWalletAddress(payerAddress));
+  if (!lookup.ok) {
+    return { ok: false, reason: "db_error", message: "Failed to look up wallet." };
+  }
+  if (!lookup.wallet) {
+    return { ok: false, reason: "unknown_wallet" };
+  }
+  const disposition = buildDisposition(lookup.wallet, false);
+  if (disposition.ok) {
+    return { ok: true, principal: disposition.principal };
+  }
+  return disposition;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/** EVM addresses compare lowercased; Solana base58 is case-significant and kept verbatim. */
+function normalizeWalletAddress(walletAddress: string): string {
+  return walletAddress.startsWith("0x") ? walletAddress.toLowerCase() : walletAddress;
+}
 
 interface WalletRow {
   id: string;

@@ -14,6 +14,7 @@ import {
 } from "@/lib/x402/middleware/postBodySchema";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
+import { adminSupabase } from "@/actions/api/adminSupabase";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,7 +28,9 @@ export const maxDuration = 60;
  * 2. Resolve pricing action from post_type.
  * 3. x402 middleware handles auth, payment, charge, refund-on-fail.
  * 4. On settle, call directPostBatch with createdVia="x402".
- * 5. Return batch result + PAYMENT-RESPONSE header.
+ * 5. Store the batch id on the charge (metadata.batch_id) so the settlement
+ *    can be matched to its outcome later.
+ * 6. Return batch result + PAYMENT-RESPONSE header.
  */
 
 const PostNowBodySchema = withMediaPathRule(PostBodyBaseSchema);
@@ -84,7 +87,7 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
     return { success: true, action: result.action };
   },
 
-  handler: async ({ body, principal, requestId }) => {
+  handler: async ({ body, principal, chargeId, requestId }) => {
     // Build DirectPostData from the validated body.
     const directPost: DirectPostData = {
       socialAccountId: body.social_account_id,
@@ -115,6 +118,24 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         message: batchResult.message,
         refundable: true,
       };
+    }
+
+    // Remember which batch this charge paid for. The post itself is created
+    // asynchronously by the post.now consumer and keyed by batch_id
+    // (content_history on success, failed_posts on failure), so this is the
+    // only link between a settlement and its outcome. Best-effort, like the
+    // scheduled_post_id wiring in /schedule: money and post both exist, only
+    // the back-reference would be missing. metadata is otherwise unused on
+    // x402_charges (insertPendingX402Charge never sets it), so a plain
+    // replace is safe.
+    const { error: linkError } = await adminSupabase
+      .from("x402_charges")
+      .update({ metadata: { batch_id: batchResult.batchId } })
+      .eq("id", chargeId);
+    if (linkError) {
+      console.error(
+        `[POST /api/x402/post-now] Failed to link charge ${chargeId} to batch ${batchResult.batchId}: ${linkError.message}`,
+      );
     }
 
     return {

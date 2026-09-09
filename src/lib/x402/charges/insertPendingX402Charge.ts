@@ -32,6 +32,12 @@ export async function insertPendingX402Charge(params: {
   requestId: string;
   payerAddress: string;
   recipientAddress: string;
+  /**
+   * Who settled the payment. Defaults to the network's facilitator
+   * (config.getFacilitatorName); the Blink path passes its own label because
+   * the wallet broadcast the payment itself and no facilitator was involved.
+   */
+  facilitator?: string;
 }): Promise<
   | { success: true; chargeId: string }
   | { success: false; message: string; conflictReason?: "nonce_used" | "request_id_used" }
@@ -51,7 +57,7 @@ export async function insertPendingX402Charge(params: {
       payer_address: params.payerAddress,
       recipient_address: params.recipientAddress,
       status: "pending",
-      facilitator: getFacilitatorName(params.network),
+      facilitator: params.facilitator ?? getFacilitatorName(params.network),
     })
     .select("id")
     .single();
