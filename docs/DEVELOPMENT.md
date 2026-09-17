@@ -208,7 +208,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `CDP_API_KEY_SECRET` | For x402 | Coinbase CDP API key secret |
 | `CDP_WALLET_SECRET` | For x402 | CDP wallet secret |
 | `X402_RECIPIENT_EVM` | For x402 | EVM wallet address for USDC payments |
-| `X402_RECIPIENT_SOLANA` | For x402 | Solana wallet address for USDC payments |
+| `X402_RECIPIENT_SOLANA` | For x402 | Solana wallet address for USDC payments. It must already hold a USDC token account before the first payment: the x402 client never creates the recipient's account, and the facilitator's simulation fails with `InvalidAccountData` until one exists. Receiving any USDC amount into the wallet once creates it |
 | `X402_DEFAULT_NETWORK` | No | Default: `base` |
 | `X402_FACILITATOR_URL` | No | Default: Coinbase hosted facilitator |
 | `X402_SOLANA_RPC_URL` | Recommended | Dedicated Solana RPC (https) for refund blockhash reads. Unset falls back to the rate-limited public endpoint |

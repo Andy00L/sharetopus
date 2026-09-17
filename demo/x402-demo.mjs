@@ -176,6 +176,21 @@ async function printResponse(response) {
   } catch {
     console.log(bodyText);
   }
+  explainRecipientAccountFailure(response.status, bodyText);
+}
+
+// The facilitator simulates the payment before settling it. When the
+// recipient wallet has never held USDC on Solana, its token account does not
+// exist yet and the simulation fails inside the transfer instruction with
+// InvalidAccountData. The x402 client never creates that account (only the
+// recipient or a funder can), so the fix is on the operator's side.
+// sourceRef: @x402/svm createPaymentPayload builds [computeLimit,
+// computePrice, transferChecked, memo]; index 2 is the transfer.
+function explainRecipientAccountFailure(status, bodyText) {
+  if (status !== 502 || !bodyText.includes("InvalidAccountData")) return;
+  console.error(
+    "[explainRecipientAccountFailure] The recipient wallet has no USDC token account on this network yet, so the transfer cannot simulate. Nothing was charged. The operator must receive any USDC amount into the payTo wallet once; then retry.",
+  );
 }
 
 const [command, ...commandArgs] = process.argv.slice(2);
