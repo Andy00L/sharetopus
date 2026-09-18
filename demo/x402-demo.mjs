@@ -64,6 +64,20 @@ const NETWORKS = {
     caipNetwork: "eip155:5042",
     label: "USDC on Arc mainnet",
     explorerTxUrl: (hash) => `https://explorer.arc.io/tx/${hash}`,
+    // @x402/fetch ships a list of recognized USDC deployments and refuses
+    // to sign for anything else. Arc's system contract is too new to be on
+    // it, so it is named here explicitly. The cap stays at 1 USDC, the same
+    // ceiling the default controls put on every other network, rather than
+    // opening the allowlist with `true` or turning spend controls off.
+    spendControls: {
+      allowedAssets: [
+        {
+          network: "eip155:5042",
+          asset: "0x3600000000000000000000000000000000000000",
+          maxAmountPerPayment: "1000000",
+        },
+      ],
+    },
   },
 };
 
@@ -163,6 +177,7 @@ async function buildPaidFetch() {
   console.error(`[buildPaidFetch] Paying from ${account.address} (${network.label})`);
   return wrapFetchWithPaymentFromConfig(fetch, {
     schemes: [{ network: network.caipNetwork, client: new ExactEvmScheme(account) }],
+    ...(network.spendControls ? { spendControls: network.spendControls } : {}),
   });
 }
 
