@@ -56,6 +56,23 @@ const NETWORKS = {
     label: "USDC on Base",
     explorerTxUrl: (hash) => `https://basescan.org/tx/${hash}`,
   },
+  // Celo settles through the hosted facilitator at x402.celo.org, which
+  // sponsors the gas, so the agent holds USDC and no CELO.
+  celo: {
+    caipNetwork: "eip155:42220",
+    label: "USDC on Celo",
+    explorerTxUrl: (hash) => `https://celoscan.io/tx/${hash}`,
+    // Celo's USDC is not on the client's built-in list either.
+    spendControls: {
+      allowedAssets: [
+        {
+          network: "eip155:42220",
+          asset: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+          maxAmountPerPayment: "1000000",
+        },
+      ],
+    },
+  },
   // Arc is the one network Sharetopus settles itself, because no hosted
   // facilitator moves a plain EIP-3009 authorization from an agent wallet
   // there. Nothing changes on this side: the client signs the same exact
