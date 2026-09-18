@@ -91,12 +91,12 @@ action), token-built, never two per page.
 - Outcome marks: a 6px dot plus a word, never a pill. Published = solid
   ink; in progress (publishing, scheduled, not linked) = hollow muted ring;
   failed and refunded = solid destructive; cancelled = hollow destructive.
-  One map, `src/components/solana/OutcomeMark.tsx`.
+  One map, `src/components/proof/OutcomeMark.tsx`.
 - Ledger table: the PricingTable recipe (white card, hairline, cream-2
   head, zebra rows); signatures and addresses truncated in the middle
   (8 + 8, 4 + 4) in `font-mono tabular-nums` with the full value in
   `title`; time in UTC.
-- Explorer links (`src/components/solana/ExplorerLink.tsx`): mono ink
+- Explorer links (`src/components/proof/ExplorerLink.tsx`): mono ink
   text with the orange up-right arrow; hover and focus underline in
   orange; focus ring 2px orange, offset 2. Orange text at 12px is 3.1:1 on
   white and never carries a link label. Platform slugs and fact labels sit

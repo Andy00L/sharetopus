@@ -1,5 +1,5 @@
 /**
- * Display formatting for the Solana proof ledger. Shared by the ledger
+ * Display formatting for the proof ledger. Shared by the ledger
  * table and the latest-receipt card so both print identifiers, amounts,
  * and times the same way (docs/UI_DESIGN_SYSTEM.md, "The Solana proof
  * ledger"). Pure functions, safe on the server and the client.

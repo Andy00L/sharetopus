@@ -1,8 +1,8 @@
-import type { LedgerOutcome } from "@/lib/x402/solana/proofLedger";
+import type { LedgerOutcome } from "@/lib/x402/proof/proofLedger";
 
 /**
- * The one outcome vocabulary of the Solana proof ledger: a 6px dot and a
- * word, never a pill (docs/UI_DESIGN_SYSTEM.md, "The Solana proof ledger").
+ * The one outcome vocabulary of the proof ledger: a 6px dot and a
+ * word, never a pill (docs/UI_DESIGN_SYSTEM.md, "The proof ledger").
  * Solid ink means done, a hollow muted ring means still moving, destructive
  * means the money or the post went wrong.
  */

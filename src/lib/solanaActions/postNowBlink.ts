@@ -20,7 +20,7 @@ import type { Platform } from "@/lib/x402/connect/types";
 import { refundPayment } from "@/lib/x402/facilitator";
 import { NETWORKS } from "@/lib/x402/networks";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
-import { buildSolanaExplorerTxUrl } from "@/lib/x402/solana/explorer";
+import { buildKnownExplorerTxUrl } from "@/lib/x402/proof/explorer";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildUsdcPaymentTransaction } from "./buildUsdcPaymentTransaction";
 import { verifyUsdcPayment } from "./verifyUsdcPayment";
@@ -414,7 +414,7 @@ export async function confirmPostNowPayment(params: {
   return {
     ok: true,
     txSignature: verification.txSignature,
-    explorerUrl: buildSolanaExplorerTxUrl(verification.txSignature),
+    explorerUrl: buildKnownExplorerTxUrl("solana", verification.txSignature),
     batchId: batchResult.batchId,
   };
 }

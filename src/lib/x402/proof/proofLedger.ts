@@ -4,12 +4,12 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { Json } from "@/lib/types/database.types";
 
 /**
- * Public proof ledger for the Solana lane (/solana).
+ * Public proof ledger behind /proof and the per-network pages.
  *
- * Reads the most recent Solana x402 charges that reached the chain and
- * resolves what each payment bought and whether that post went live. Only
- * values already public on-chain (signature, payer, amount) or harmless
- * (action, outcome, timestamp) leave this module. Principal ids, wallet ids,
+ * Reads the most recent x402 charges that reached a chain and resolves what
+ * each payment bought and whether that post went live. Only values already
+ * public on-chain (transaction hash, payer, amount) or harmless (network,
+ * action, outcome, timestamp) leave this module. Principal ids, wallet ids,
  * nonces, request ids, error messages, and post content never do.
  *
  * Outcome resolution follows how each route records its work:
@@ -21,13 +21,11 @@ import type { Json } from "@/lib/types/database.types";
  *     carries the outcome.
  *   - every other action (connect, upload_url, list_*) buys no post.
  *
- * Called by: src/app/(marketing)/solana/page.tsx
+ * Called by: src/app/(marketing)/proof/page.tsx (every network),
+ *            src/app/(marketing)/solana/page.tsx (scoped to solana)
  * Tables touched: x402_charges, content_history, failed_posts,
  *                 scheduled_posts (all read-only)
  */
-
-/** Registry slug of the Solana entry. sourceRef: src/lib/x402/networks.ts */
-const SOLANA_NETWORK_NAME = "solana";
 
 /** Rows on the public page: enough to prove the lane, one screen tall. */
 const LEDGER_LIMIT = 25;
@@ -45,8 +43,10 @@ export type LedgerOutcome =
   | "no_post"
   | "unlinked";
 
-export interface SolanaLedgerEntry {
-  txSignature: string;
+export interface ProofLedgerEntry {
+  /** Registry slug of the network the payment settled on. */
+  network: string;
+  txHash: string;
   action: string;
   amountUsdc: number;
   payerAddress: string;
@@ -56,8 +56,8 @@ export interface SolanaLedgerEntry {
   settledAt: string;
 }
 
-export type SolanaLedgerResult =
-  | { ok: true; entries: SolanaLedgerEntry[] }
+export type ProofLedgerResult =
+  | { ok: true; entries: ProofLedgerEntry[] }
   | { ok: false; reason: "ledger_read_failed" };
 
 type PlatformByKey = Map<string, string | null>;
@@ -77,20 +77,30 @@ type LookupResult<Value> =
   | { ok: true; value: Value }
   | { ok: false };
 
-export async function loadSolanaProofLedger(): Promise<SolanaLedgerResult> {
-  const { data: chargeRows, error: chargesError } = await adminSupabase
+/**
+ * The ledger, newest first. Pass networkName to scope it to one lane;
+ * omit it for the cross-network page.
+ */
+export async function loadProofLedger(options?: {
+  networkName?: string;
+}): Promise<ProofLedgerResult> {
+  const baseQuery = adminSupabase
     .from("x402_charges")
     .select(
-      "id, action, amount_usdc, status, tx_hash, payer_address, settled_at, created_at, metadata, scheduled_post_id",
+      "id, network, action, amount_usdc, status, tx_hash, payer_address, settled_at, created_at, metadata, scheduled_post_id",
     )
-    .eq("network", SOLANA_NETWORK_NAME)
-    .not("tx_hash", "is", null)
+    .not("tx_hash", "is", null);
+  const scopedQuery = options?.networkName
+    ? baseQuery.eq("network", options.networkName)
+    : baseQuery;
+
+  const { data: chargeRows, error: chargesError } = await scopedQuery
     .order("created_at", { ascending: false })
     .limit(LEDGER_LIMIT);
 
   if (chargesError) {
     console.error(
-      `[loadSolanaProofLedger] x402_charges read failed: ${chargesError.message}`,
+      `[loadProofLedger] x402_charges read failed: ${chargesError.message}`,
     );
     return { ok: false, reason: "ledger_read_failed" };
   }
@@ -114,7 +124,7 @@ export async function loadSolanaProofLedger(): Promise<SolanaLedgerResult> {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
-  const entries: SolanaLedgerEntry[] = [];
+  const entries: ProofLedgerEntry[] = [];
   for (const charge of charges) {
     // Filtered server-side already; the narrow keeps the type honest.
     if (charge.tx_hash === null) continue;
@@ -128,7 +138,8 @@ export async function loadSolanaProofLedger(): Promise<SolanaLedgerResult> {
       scheduledById: scheduledLookup.value,
     });
     entries.push({
-      txSignature: charge.tx_hash,
+      network: charge.network,
+      txHash: charge.tx_hash,
       action: charge.action,
       amountUsdc: charge.amount_usdc,
       payerAddress: charge.payer_address,

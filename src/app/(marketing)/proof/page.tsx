@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 
 import Navbar from "@/components/marketing-page/nav-bar/nav-bar";
 import Footer from "@/components/marketing-page/footer";
@@ -12,7 +11,11 @@ import { ProofLedgerTable } from "@/components/proof/ProofLedgerTable";
 import { truncateMiddle } from "@/components/proof/ledgerFormat";
 import { getRecipientAddress } from "@/lib/x402/config";
 import { NETWORKS } from "@/lib/x402/networks";
-import { buildExplorerAddressUrl } from "@/lib/x402/proof/explorer";
+import type { NetworkConfig } from "@/lib/x402/networks";
+import {
+  buildExplorerAddressUrl,
+  networkDisplayName,
+} from "@/lib/x402/proof/explorer";
 import { loadProofLedger } from "@/lib/x402/proof/proofLedger";
 
 // A settlement lands on-chain in seconds and its post publishes shortly
@@ -20,43 +23,36 @@ import { loadProofLedger } from "@/lib/x402/proof/proofLedger";
 // bounding the read load on a public, unauthenticated route.
 export const revalidate = 30;
 
-/** Registry slug of the Solana entry. sourceRef: src/lib/x402/networks.ts */
-const SOLANA_NETWORK_NAME = "solana";
-
 export const metadata: Metadata = {
-  title: "Solana lane | Sharetopus",
+  title: "Proof | Sharetopus",
   description:
-    "Live ledger of x402 settlements on Solana mainnet: every USDC payment an agent made, the action it bought, and whether the post went live.",
+    "Live ledger of x402 settlements across every network Sharetopus accepts: the USDC an agent paid, the action it bought, and whether the post went live.",
 };
 
-// The calls a judge can run themselves. Mirrors demo/x402-demo.mjs; the
-// last line is the Blink, for a wallet with no code at all.
+// The calls a judge can run themselves. Mirrors demo/x402-demo.mjs.
 const WAY_IN_COMMANDS = `cd demo && npm install
+
+# Solana: the wallet signs, the CDP facilitator pays the network fee
+export X402_NETWORK=solana
 export SOLANA_PRIVATE_KEY=<base58 secret key of a wallet holding USDC>
+
+# Arc: the wallet signs, Sharetopus settles it and pays the gas
+export X402_NETWORK=arc
+export EVM_PRIVATE_KEY=<0x key of a wallet holding USDC on Arc>
 
 node x402-demo.mjs challenge
 node x402-demo.mjs connect linkedin
-node x402-demo.mjs post <social_account_id> linkedin "Posted by an agent, paid in USDC"
-
-# Or from a wallet, no code: open this Blink with your connected account id
-https://dial.to/?action=solana-action:https://sharetopus.com/api/actions/post-now?account_id=<social_account_id>&platform=linkedin`;
+node x402-demo.mjs post <social_account_id> linkedin "Posted by an agent, paid in USDC"`;
 
 /**
- * Public proof of the Solana lane. Server component: reads the ledger
+ * Public proof across every network. Server component: reads the ledger
  * through the service-role client (only on-chain-public columns leave the
  * loader) and composes the page from the marketing shell and the reference
  * family's cards. Layout and tokens: docs/UI_DESIGN_SYSTEM.md, "The proof
  * ledger".
- *
- * Superseded by /proof, which carries every network. This page stays while
- * the link already handed to the Solana grant reviewers is still in use.
  */
-export default async function SolanaLanePage() {
-  const ledgerResult = await loadProofLedger({
-    networkName: SOLANA_NETWORK_NAME,
-  });
-  const solanaNetwork = NETWORKS.solana ?? null;
-  const payToAddress = solanaNetwork ? getRecipientAddress(solanaNetwork) : null;
+export default async function ProofPage() {
+  const ledgerResult = await loadProofLedger();
 
   const receiptState: ReceiptState = !ledgerResult.ok
     ? { kind: "unavailable" }
@@ -64,22 +60,22 @@ export default async function SolanaLanePage() {
       ? { kind: "empty" }
       : { kind: "entry", entry: ledgerResult.entries[0] };
 
-  const laneFacts: { label: string; value: string; explorerAddress?: string }[] = [];
-  if (solanaNetwork) {
-    laneFacts.push({ label: "Network", value: solanaNetwork.caipNetwork });
-    laneFacts.push({
-      label: "USDC mint",
-      value: solanaNetwork.usdcAddress,
-      explorerAddress: solanaNetwork.usdcAddress,
-    });
-  }
-  if (payToAddress) {
-    laneFacts.push({
-      label: "Pay to",
-      value: payToAddress,
-      explorerAddress: payToAddress,
-    });
-  }
+  // Only lanes that actually took a payment are advertised here, so the page
+  // never claims a network no agent has ever settled on.
+  const provenNetworkNames = ledgerResult.ok
+    ? [...new Set(ledgerResult.entries.map((entry) => entry.network))]
+    : [];
+  const laneFacts = provenNetworkNames
+    .map((networkName) => {
+      const network: NetworkConfig | undefined = (
+        NETWORKS as Record<string, NetworkConfig | undefined>
+      )[networkName];
+      if (!network) return null;
+      const payToAddress = getRecipientAddress(network);
+      if (!payToAddress) return null;
+      return { networkName, caipNetwork: network.caipNetwork, payToAddress };
+    })
+    .filter((fact): fact is NonNullable<typeof fact> => fact !== null);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -87,47 +83,37 @@ export default async function SolanaLanePage() {
       <main className="flex-1">
         <div className="mx-auto max-w-5xl px-4 pt-12 pb-16 sm:px-6 md:pt-16 lg:px-8">
           <header className="border-b border-border pb-10">
-            <p className="t-eyebrow mb-3">Solana lane</p>
+            <p className="t-eyebrow mb-3">Proof</p>
             <h1 className="font-display mb-3 text-4xl text-foreground">
-              Every Solana payment, and what it bought.
+              Every payment, and what it bought.
             </h1>
             <p className="t-body max-w-2xl">
-              x402 settlements on Solana mainnet, newest first: the USDC an
-              agent paid, the action it paid for, and whether the post went
-              live. Every signature opens on Solana Explorer.
-            </p>
-            <p className="mt-3 text-sm text-[var(--ink-2)]">
-              Paying on another network?{" "}
-              <Link
-                href="/proof"
-                className="text-foreground underline decoration-[var(--orange)] underline-offset-4"
-              >
-                The full ledger covers every lane.
-              </Link>
+              x402 settlements across every network Sharetopus accepts, newest
+              first: the USDC an agent paid, the action it paid for, and
+              whether the post went live. Every transaction opens on that
+              network&apos;s explorer.
             </p>
             {laneFacts.length > 0 && (
               <dl className="mt-6 flex flex-wrap gap-2">
                 {laneFacts.map((fact) => (
                   <div
-                    key={fact.label}
+                    key={fact.networkName}
                     className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm"
                   >
-                    <dt className="text-[var(--ink-2)]">{fact.label}</dt>
+                    <dt className="text-[var(--ink-2)]">
+                      {networkDisplayName(fact.networkName)}
+                    </dt>
                     <dd className="font-mono text-[12px] text-foreground">
-                      {fact.explorerAddress ? (
-                        <ExplorerLink
-                          href={buildExplorerAddressUrl(
-                            SOLANA_NETWORK_NAME,
-                            fact.explorerAddress,
-                          )}
-                          title={fact.value}
-                          ariaLabel={`Open ${fact.label} ${fact.value} on Solana Explorer`}
-                        >
-                          {truncateMiddle(fact.value, 8, 8)}
-                        </ExplorerLink>
-                      ) : (
-                        fact.value
-                      )}
+                      <ExplorerLink
+                        href={buildExplorerAddressUrl(
+                          fact.networkName,
+                          fact.payToAddress,
+                        )}
+                        title={fact.payToAddress}
+                        ariaLabel={`Open the ${networkDisplayName(fact.networkName)} recipient ${fact.payToAddress} on its explorer`}
+                      >
+                        {truncateMiddle(fact.payToAddress, 6, 6)}
+                      </ExplorerLink>
                     </dd>
                   </div>
                 ))}
@@ -139,8 +125,9 @@ export default async function SolanaLanePage() {
             <LatestReceipt state={receiptState} />
             <div>
               <p className="mb-3 text-sm text-[var(--ink-2)]">
-                Any agent with USDC on Solana can be the next row. No account,
-                no API key: the wallet signs, the facilitator pays the fee.
+                Any agent holding USDC can be the next row. No account, no API
+                key: the wallet signs, and on Arc, Sharetopus settles the
+                authorization and pays the gas itself.
               </p>
               <CodeCard label="The way in" code={WAY_IN_COMMANDS} />
             </div>
@@ -157,11 +144,11 @@ export default async function SolanaLanePage() {
               </Callout>
             ) : ledgerResult.entries.length === 0 ? (
               <p className="text-sm text-[var(--ink-2)]">
-                No Solana settlement recorded yet. The first row appears within
-                a minute of the first paid call.
+                No settlement recorded yet. The first row appears within a
+                minute of the first paid call.
               </p>
             ) : (
-              <ProofLedgerTable entries={ledgerResult.entries} />
+              <ProofLedgerTable entries={ledgerResult.entries} showNetwork />
             )}
           </section>
         </div>

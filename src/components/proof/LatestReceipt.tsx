@@ -1,17 +1,18 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import type { SolanaLedgerEntry } from "@/lib/x402/solana/proofLedger";
+import type { ProofLedgerEntry } from "@/lib/x402/proof/proofLedger";
 import {
-  buildSolanaExplorerAddressUrl,
-  buildSolanaExplorerTxUrl,
-} from "@/lib/x402/solana/explorer";
+  buildExplorerAddressUrl,
+  buildExplorerTxUrl,
+  networkDisplayName,
+} from "@/lib/x402/proof/explorer";
 import { cn } from "@/lib/utils";
 import { ExplorerLink } from "./ExplorerLink";
 import { OutcomeMark } from "./OutcomeMark";
 import { formatUsdc, formatUtcTimestamp, truncateMiddle } from "./ledgerFormat";
 
 export type ReceiptState =
-  | { kind: "entry"; entry: SolanaLedgerEntry }
+  | { kind: "entry"; entry: ProofLedgerEntry }
   | { kind: "empty" }
   | { kind: "unavailable" };
 
@@ -64,7 +65,7 @@ function ReceiptShape({
 
 /**
  * The latest settlement as a printed receipt. It carries the page's single
- * ink stamp (docs/UI_DESIGN_SYSTEM.md, "The Solana proof ledger"), cast by
+ * ink stamp (docs/UI_DESIGN_SYSTEM.md, "The proof ledger"), cast by
  * the whole silhouette so the tear shows in the shadow too. Three states,
  * each designed: a settlement, none yet, or the ledger being unreadable.
  */
@@ -89,7 +90,7 @@ export function LatestReceipt({ state }: { state: ReceiptState }) {
           <ReceiptBody entry={state.entry} />
         ) : state.kind === "empty" ? (
           <ReceiptNotice
-            headline="No Solana settlement yet."
+            headline="No settlement yet."
             detail="The first paid call prints here with its signature."
           />
         ) : (
@@ -112,8 +113,11 @@ function ReceiptNotice({ headline, detail }: { headline: string; detail: string 
   );
 }
 
-function ReceiptBody({ entry }: { entry: SolanaLedgerEntry }) {
+function ReceiptBody({ entry }: { entry: ProofLedgerEntry }) {
+  const networkLabel = networkDisplayName(entry.network);
+  const explorerName = `${networkLabel} explorer`;
   const receiptLines: { label: string; value: ReactNode }[] = [
+    { label: "Network", value: <span className="font-mono text-[12px]">{networkLabel}</span> },
     { label: "Action", value: <span className="font-mono text-[12px]">{entry.action}</span> },
     {
       label: "Post",
@@ -123,9 +127,9 @@ function ReceiptBody({ entry }: { entry: SolanaLedgerEntry }) {
       label: "Payer",
       value: (
         <ExplorerLink
-          href={buildSolanaExplorerAddressUrl(entry.payerAddress)}
+          href={buildExplorerAddressUrl(entry.network, entry.payerAddress)}
           title={entry.payerAddress}
-          ariaLabel={`Open payer ${entry.payerAddress} on Solana Explorer`}
+          ariaLabel={`Open payer ${entry.payerAddress} on the ${explorerName}`}
         >
           {truncateMiddle(entry.payerAddress, 4, 4)}
         </ExplorerLink>
@@ -140,14 +144,14 @@ function ReceiptBody({ entry }: { entry: SolanaLedgerEntry }) {
       ),
     },
     {
-      label: "Signature",
+      label: "Transaction",
       value: (
         <ExplorerLink
-          href={buildSolanaExplorerTxUrl(entry.txSignature)}
-          title={entry.txSignature}
-          ariaLabel={`Open transaction ${entry.txSignature} on Solana Explorer`}
+          href={buildExplorerTxUrl(entry.network, entry.txHash)}
+          title={entry.txHash}
+          ariaLabel={`Open transaction ${entry.txHash} on the ${explorerName}`}
         >
-          {truncateMiddle(entry.txSignature, 8, 8)}
+          {truncateMiddle(entry.txHash, 8, 8)}
         </ExplorerLink>
       ),
     },
