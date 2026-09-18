@@ -39,11 +39,32 @@ const SANCTIONS_SOURCE_CDP_KYT = "cdp_kyt";
  */
 const SANCTIONS_SOURCE_CELO_FACILITATOR = "celo_facilitator";
 
+/**
+ * Source recorded when nobody screened the payer. Arc has no hosted
+ * facilitator for ordinary wallets, so Sharetopus verifies and settles the
+ * payment itself (arc/arcFacilitator.ts) and no third party runs KYT along
+ * the way. The row says so instead of borrowing CDP's name, and the wallet
+ * it belongs to is left at sanctions_status "unchecked".
+ */
+const SANCTIONS_SOURCE_UNSCREENED = "unscreened";
+
 /** Screening source for the facilitator that verified this payment. */
 function sanctionsSourceForNetwork(network: NetworkConfig): string {
-  return getFacilitatorName(network.name) === "celo"
-    ? SANCTIONS_SOURCE_CELO_FACILITATOR
-    : SANCTIONS_SOURCE_CDP_KYT;
+  const facilitatorName = getFacilitatorName(network.name);
+  if (facilitatorName === "celo") return SANCTIONS_SOURCE_CELO_FACILITATOR;
+  if (!hasFacilitatorScreening(network)) return SANCTIONS_SOURCE_UNSCREENED;
+  return SANCTIONS_SOURCE_CDP_KYT;
+}
+
+/**
+ * Whether a third-party facilitator screened the payer during verify.
+ *
+ * False only where Sharetopus is its own facilitator. Everything downstream
+ * keys off this rather than off a network name, so the next self-settled
+ * network inherits the honest default instead of a borrowed claim.
+ */
+function hasFacilitatorScreening(network: NetworkConfig): boolean {
+  return getFacilitatorName(network.name) !== "arc_local";
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +165,25 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     console.log(
       `[resolveOrOnboardWalletPrincipal] Onboarded wallet ${row.wallet_id} (${normalizedAddress}) on ${params.network.name}`
     );
+    // onboard_wallet_atomic marks a fresh wallet clean, which is only true
+    // where a facilitator screened it during verify. On a self-settled
+    // network it did not, so the row is corrected to "unchecked" rather
+    // than left claiming a check nobody ran. A failed correction is logged
+    // and the call still proceeds: the gate below only ever blocks
+    // "sanctioned", so an over-optimistic label changes no access decision,
+    // and failing the payment here would punish the agent for our bookkeeping.
+    const screened = hasFacilitatorScreening(params.network);
+    if (!screened) {
+      const { error: unscreenedError } = await adminSupabase
+        .from("wallets")
+        .update({ sanctions_status: "unchecked" })
+        .eq("id", row.wallet_id);
+      if (unscreenedError) {
+        console.error(
+          `[resolveOrOnboardWalletPrincipal] Could not mark wallet ${row.wallet_id} unchecked on ${params.network.name}: ${unscreenedError.message}`
+        );
+      }
+    }
     return {
       ok: true,
       isNewWallet: true,
@@ -153,7 +193,7 @@ export async function resolveOrOnboardWalletPrincipal(params: {
         walletId: row.wallet_id,
         address: normalizedAddress,
         chain: params.network.name,
-        sanctionsStatus: "clean",
+        sanctionsStatus: screened ? "clean" : "unchecked",
       },
     };
   }

@@ -13,12 +13,15 @@
 //   post <social_account_id> <platform> <text...>
 //       PAID (0.50 USDC, text). Publishes immediately.
 //
-// Network: X402_NETWORK=solana (default) or base.
+// Network: X402_NETWORK=solana (default), base, or arc.
 //   solana  SOLANA_PRIVATE_KEY: the 64-byte secret key as base58 (Phantom or
 //           Solflare export) or as the JSON byte array solana-keygen writes.
 //           Optional SOLANA_RPC_URL: dedicated RPC for the client's blockhash
 //           read; unset uses the public mainnet endpoint.
 //   base    EVM_PRIVATE_KEY: 0x-prefixed key of a wallet holding USDC on Base.
+//   arc     EVM_PRIVATE_KEY: 0x-prefixed key of a wallet holding USDC on Arc.
+//           The wallet needs no gas there either: it signs the same EIP-3009
+//           authorization and Sharetopus broadcasts it.
 // The wallet needs USDC only; the facilitator pays the network fee. Every
 // command marked PAID spends real money. The client keeps @x402/fetch's
 // default spend control: recognized USDC only, at most $1 per payment.
@@ -52,6 +55,15 @@ const NETWORKS = {
     caipNetwork: "eip155:8453",
     label: "USDC on Base",
     explorerTxUrl: (hash) => `https://basescan.org/tx/${hash}`,
+  },
+  // Arc is the one network Sharetopus settles itself, because no hosted
+  // facilitator moves a plain EIP-3009 authorization from an agent wallet
+  // there. Nothing changes on this side: the client signs the same exact
+  // scheme it signs for Base, and still pays no gas.
+  arc: {
+    caipNetwork: "eip155:5042",
+    label: "USDC on Arc mainnet",
+    explorerTxUrl: (hash) => `https://explorer.arc.io/tx/${hash}`,
   },
 };
 
@@ -144,7 +156,7 @@ async function buildPaidFetch() {
   const evmPrivateKey = process.env.EVM_PRIVATE_KEY;
   if (!evmPrivateKey || !evmPrivateKey.startsWith("0x")) {
     exitWithError(
-      "[buildPaidFetch] Set EVM_PRIVATE_KEY to the 0x-prefixed key of a wallet holding USDC on Base.",
+      `[buildPaidFetch] Set EVM_PRIVATE_KEY to the 0x-prefixed key of a wallet holding ${network.label}.`,
     );
   }
   const account = privateKeyToAccount(evmPrivateKey);

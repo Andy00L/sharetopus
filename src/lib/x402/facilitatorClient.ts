@@ -17,18 +17,52 @@ import "server-only";
 
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import type {
+  PaymentPayload,
+  PaymentRequirements,
+  SettleResponse,
+  SupportedResponse,
+  VerifyResponse,
+} from "@x402/core/types";
 import type { NetworkConfig } from "@/lib/x402/networks";
+import { getArcFacilitator } from "@/lib/x402/arc/arcFacilitator";
 import { DEFAULT_FACILITATOR_URL, getFacilitatorUrl } from "@/lib/x402/config";
+
+/**
+ * The two operations facilitator.ts asks of a facilitator, whether it is
+ * reached over HTTP or runs in this process.
+ *
+ * Structural on purpose: HTTPFacilitatorClient satisfies it, and so does the
+ * in-process ExactEvmScheme the Arc lane runs (its verify and settle take
+ * two extra optional parameters, which a two-argument call ignores). That
+ * keeps verifyPayment and settlePayment identical for every network.
+ */
+export interface X402FacilitatorClient {
+  verify(
+    paymentPayload: PaymentPayload,
+    paymentRequirements: PaymentRequirements,
+  ): Promise<VerifyResponse>;
+  settle(
+    paymentPayload: PaymentPayload,
+    paymentRequirements: PaymentRequirements,
+  ): Promise<SettleResponse>;
+  /**
+   * Optional: only a hosted facilitator advertises what it supports. The
+   * in-process Arc scheme has nothing to advertise to itself, and the one
+   * caller (solana/feePayer.ts) asks a hosted facilitator by construction.
+   */
+  getSupported?(): Promise<SupportedResponse>;
+}
 
 /**
  * One lazily created client per facilitator family. Keyed by family, not
  * URL, because auth wiring follows the family: pointing both env URLs at
  * one host must still produce two clients with their own auth headers.
  */
-type FacilitatorFamily = "celo" | "default";
+type FacilitatorFamily = "arc" | "celo" | "default";
 const facilitatorClientsByFamily = new Map<
   FacilitatorFamily,
-  HTTPFacilitatorClient
+  X402FacilitatorClient
 >();
 
 /**
@@ -46,16 +80,25 @@ const facilitatorClientsByFamily = new Map<
  * env). A custom X402_FACILITATOR_URL gets a plain client because the CDP
  * JWTs are signed for the CDP host and would be meaningless elsewhere.
  *
- * Throws on missing credentials for either family; callers catch and map
+ * Arc: no HTTP at all. No hosted facilitator settles a plain EIP-3009
+ * authorization from an agent's own wallet there, so Sharetopus runs the
+ * exact scheme in process over its own Arc key (arc/arcFacilitator.ts).
+ *
+ * Throws on missing credentials for any family; callers catch and map
  * to facilitator_error (fail closed).
  */
 export function getFacilitatorClient(
   network: NetworkConfig
-): HTTPFacilitatorClient {
-  const family: FacilitatorFamily =
-    network.name === "celo" ? "celo" : "default";
+): X402FacilitatorClient {
+  const family = resolveFacilitatorFamily(network);
   const cachedClient = facilitatorClientsByFamily.get(family);
   if (cachedClient) return cachedClient;
+
+  if (family === "arc") {
+    const arcFacilitator = getArcFacilitator(network);
+    facilitatorClientsByFamily.set(family, arcFacilitator);
+    return arcFacilitator;
+  }
 
   const facilitatorUrl = getFacilitatorUrl(network);
   let client: HTTPFacilitatorClient;
@@ -93,4 +136,11 @@ export function getFacilitatorClient(
 
   facilitatorClientsByFamily.set(family, client);
   return client;
+}
+
+/** Which facilitator implementation serves this network. */
+function resolveFacilitatorFamily(network: NetworkConfig): FacilitatorFamily {
+  if (network.name === "arc") return "arc";
+  if (network.name === "celo") return "celo";
+  return "default";
 }

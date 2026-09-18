@@ -90,6 +90,13 @@ async function fetchSolanaFeePayerFromFacilitator(): Promise<
     // Solana resolves through the CDP-configured facilitator; passing the
     // solana network config keeps this pinned there (celo has its own).
     const facilitator = getFacilitatorClient(solanaNetwork);
+    if (!facilitator.getSupported) {
+      return {
+        ok: false,
+        message:
+          "The facilitator serving Solana does not advertise a /supported endpoint.",
+      };
+    }
     const supported = await facilitator.getSupported();
 
     const solanaKind = supported.kinds.find(

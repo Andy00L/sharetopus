@@ -48,6 +48,10 @@ next-env.d.ts
 /.clerk/
 
 .claude/settings.local.json
+# Agent skill kits travel by copy, never through git.
+.agents/
+AGENTS.md
+skills-lock.json
 .vscode/Users0ther.claude.json
 .claude/
 change/

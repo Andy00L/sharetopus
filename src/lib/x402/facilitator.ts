@@ -2,9 +2,11 @@ import "server-only";
 
 /**
  * Thin wrapper around the x402 facilitators (Coinbase CDP for base,
- * polygon, arbitrum, and solana; the Celo facilitator for celo). Three
- * operations: verify a payment header, settle a verified payment, and
- * refund a settled payment. Each returns an errors-as-values result.
+ * polygon, arbitrum, and solana; the Celo facilitator for celo; our own
+ * in-process one for arc, which has no hosted facilitator for ordinary
+ * wallets). Three operations: verify a payment header, settle a verified
+ * payment, and refund a settled payment. Each returns an errors-as-values
+ * result.
  *
  * Called by: x402PaidEndpoint, register/connect verify flows
  * Tables touched: none (the facilitator is external; DB writes happen in the
@@ -29,7 +31,7 @@ import "server-only";
  *   - Refunds never go through a facilitator (it only handles
  *     agent -> merchant): CDP SDK for base/polygon/arbitrum, the
  *     solana/refundSolana module for solana, the celo/refundCelo module
- *     for celo.
+ *     for celo, the arc/refundArc module for arc.
  */
 
 import { CdpClient } from "@coinbase/cdp-sdk";
@@ -406,9 +408,10 @@ export type RefundPaymentError =
  * hold a status-scoped charge transition so refunds are not double-issued.
  *
  * Refunds never go through a facilitator (it only handles agent->merchant;
- * this is merchant->agent). Dispatch: celo/refundCelo for celo (the CDP SDK
- * cannot send on Celo), cdp.evm.sendTransaction for the CDP EVM networks,
- * solana/refundSolana for solana.
+ * this is merchant->agent). Dispatch: celo/refundCelo for celo and
+ * arc/refundArc for arc (the CDP SDK can send on neither),
+ * cdp.evm.sendTransaction for the CDP EVM networks, solana/refundSolana for
+ * solana.
  */
 export async function refundPayment(
   input: RefundPaymentInput
@@ -426,6 +429,10 @@ export async function refundPayment(
   try {
     if (input.network.name === "celo") {
       return await refundCeloViaModule(input);
+    }
+
+    if (input.network.name === "arc") {
+      return await refundArcViaModule(input);
     }
 
     if (input.network.isEvm) {
@@ -518,6 +525,37 @@ async function refundCeloViaModule(
   const { refundCelo } = await import("@/lib/x402/celo/refundCelo");
 
   const result = await refundCelo({
+    payerAddress: input.payerAddress,
+    amountUsdc: input.amountUsdc,
+    network: input.network,
+    reason: input.reason,
+  });
+
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: {
+        kind: "facilitator_error",
+        message: result.error.message,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    refundTxHash: result.refundTxHash,
+    refundedAt: new Date().toISOString(),
+  };
+}
+
+async function refundArcViaModule(
+  input: RefundPaymentInput
+): Promise<RefundPaymentResult> {
+  // Delegate to the dedicated Arc refund module (locally signed with the
+  // Arc operations key; the CDP SDK cannot send on Arc either).
+  const { refundArc } = await import("@/lib/x402/arc/refundArc");
+
+  const result = await refundArc({
     payerAddress: input.payerAddress,
     amountUsdc: input.amountUsdc,
     network: input.network,

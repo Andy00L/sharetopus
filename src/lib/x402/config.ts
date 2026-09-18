@@ -35,6 +35,10 @@ export const DEFAULT_CELO_FACILITATOR_URL = "https://api.x402.celo.org";
  * Facilitator base URL for a network. Celo settles through the Celo
  * facilitator (env X402_CELO_FACILITATOR_URL overrides); every other
  * network keeps the CDP default (env X402_FACILITATOR_URL overrides).
+ *
+ * Arc never reaches here: it has no hosted facilitator and settles in
+ * process (arc/arcFacilitator.ts), so facilitatorClient returns before
+ * asking for a URL.
  */
 export function getFacilitatorUrl(network: NetworkConfig): string {
   if (network.name === "celo") {
@@ -47,9 +51,17 @@ export function getFacilitatorUrl(network: NetworkConfig): string {
  * Identifier stored in x402_charges.facilitator, per network. The DB column
  * is free text; short names are the domain vocabulary (full URLs were
  * normalized out of historical rows in June 2026).
+ *
+ * "arc_local" says out loud that no third party verified or settled that
+ * charge, which also means no third party screened the payer: Arc rows
+ * record their sanctions status as unchecked rather than borrowing a claim
+ * from a facilitator that was never called
+ * (auth/resolveOrOnboardWalletPrincipal).
  */
 export function getFacilitatorName(networkName: string): string {
-  return networkName === "celo" ? "celo" : "coinbase_cdp";
+  if (networkName === "celo") return "celo";
+  if (networkName === "arc") return "arc_local";
+  return "coinbase_cdp";
 }
 
 /** How long an x402-initiated OAuth connection stays claimable. */
@@ -85,10 +97,50 @@ export function getRecipientAddress(network: NetworkConfig): string | null {
   if (network.name === "celo") {
     return process.env.X402_RECIPIENT_CELO ?? null;
   }
+  // Arc likewise never falls back to the shared EVM address: the wallet
+  // named here is the one that signs settlements and refunds with
+  // X402_ARC_KEY, so it has to be the Arc operations wallet specifically.
+  if (network.name === "arc") {
+    return process.env.X402_RECIPIENT_ARC ?? null;
+  }
   const recipientAddress = network.isEvm
     ? process.env.X402_RECIPIENT_EVM
     : process.env.X402_RECIPIENT_SOLANA;
   return recipientAddress ?? null;
+}
+
+/**
+ * Arc JSON-RPC endpoint for verification, settlement and refunds.
+ *
+ * Unlike Solana's, the registry default (rpc.mainnet.arc.io) is Arc's own
+ * public endpoint and needs no key, so X402_ARC_RPC_URL is an override for
+ * operators who want a dedicated provider, not a requirement. A missing or
+ * malformed value falls back to the registry endpoint with a warning rather
+ * than failing closed, and the configured URL is never logged because
+ * provider endpoints usually carry their API key in the URL.
+ */
+export function getArcRpcUrl(network: NetworkConfig): string {
+  const configuredRpcUrl = process.env.X402_ARC_RPC_URL;
+  if (!configuredRpcUrl) return network.rpcUrl;
+
+  let parsedRpcUrl: URL;
+  try {
+    parsedRpcUrl = new URL(configuredRpcUrl);
+  } catch {
+    console.warn(
+      "[getArcRpcUrl] X402_ARC_RPC_URL is not a parseable URL. Falling back to the public endpoint from networks.ts.",
+    );
+    return network.rpcUrl;
+  }
+
+  if (parsedRpcUrl.protocol !== "https:") {
+    console.warn(
+      `[getArcRpcUrl] X402_ARC_RPC_URL must use https (got "${parsedRpcUrl.protocol}"). Falling back to the public endpoint from networks.ts.`,
+    );
+    return network.rpcUrl;
+  }
+
+  return configuredRpcUrl;
 }
 
 /**

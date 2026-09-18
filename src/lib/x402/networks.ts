@@ -131,6 +131,29 @@ export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
       usdcDecimals: 6,
       usdcEip712: { name: "USDC", version: "2" },
     },
+    // Arc settles in process: Sharetopus is its own facilitator there
+    // (arc/arcFacilitator.ts). No hosted facilitator handles a plain
+    // EIP-3009 authorization from an agent wallet on Arc, and gas is USDC
+    // itself, so the operations wallet broadcasts for a fraction of a cent.
+    // chainId and rpcUrl from docs.arc.io/arc/references/rpc-endpoints,
+    // confirmed live (eth_chainId -> 0x13b2). usdcAddress is the system
+    // contract from docs.arc.io/arc/references/contract-addresses; its
+    // name/version/decimals were read on mainnet (2026-09-17) and the
+    // EIP-712 domain separator recomputed from them matches the contract's
+    // own DOMAIN_SEPARATOR, so exact-scheme clients sign valid Arc
+    // authorizations with no client-side change.
+    arc: {
+      name: "arc",
+      chainId: 5042,
+      caipNetwork: "eip155:5042",
+      displayName: "Arc",
+      rpcUrl: "https://rpc.mainnet.arc.io",
+      usdcAddress: "0x3600000000000000000000000000000000000000",
+      isTestnet: false,
+      isEvm: true,
+      usdcDecimals: 6,
+      usdcEip712: { name: "USDC", version: "2" },
+    },
     solana: {
       name: "solana",
       chainId: null,
