@@ -66,7 +66,7 @@ export async function buildPaymentRequirements(params: {
     ok: true,
     requirements: {
       scheme: "exact",
-      network: params.network.caipNetwork as `${string}:${string}`,
+      network: params.network.caipNetwork,
       asset: params.network.usdcAddress,
       amount: usdcToAtomic(params.amountUsdc, params.network.usdcDecimals),
       payTo: params.recipientAddress,

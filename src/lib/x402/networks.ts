@@ -30,7 +30,7 @@ export interface NetworkConfig {
    * Divergence from prompt spec: @x402/core defines Network as `${string}:${string}`
    * (CAIP format), not as WalletChain. This field bridges the two representations.
    */
-  caipNetwork: string;
+  caipNetwork: `${string}:${string}`;
 
   /** Human-readable display name shown in errors and logs. */
   displayName: string;

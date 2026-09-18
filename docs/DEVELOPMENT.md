@@ -212,6 +212,10 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `X402_DEFAULT_NETWORK` | No | Default: `base` |
 | `X402_FACILITATOR_URL` | No | Default: Coinbase hosted facilitator |
 | `X402_SOLANA_RPC_URL` | Recommended | Dedicated Solana RPC (https) for refund blockhash reads. Unset falls back to the rate-limited public endpoint |
+| `X402_RECIPIENT_ARC` | For Arc | Arc wallet that receives payments and signs settlements and refunds |
+| `X402_ARC_KEY` | For Arc | Private key of `X402_RECIPIENT_ARC`. Sharetopus is its own facilitator on Arc, so it signs there itself; no CDP wallet can |
+| `X402_ARC_RPC_URL` | No | Dedicated Arc RPC (https). Unset uses Arc's own public endpoint, which needs no key |
+| `X402_FACILITATOR_SETTLE_KEY` | No | Opens `POST /api/x402/facilitator/settle` to the holder. Unset keeps settling closed to outside callers; `/supported` and `/verify` stay open either way |
 | `CDP_WEBHOOK_SIGNING_SECRET` | For x402 | HMAC verification of CDP webhook events |
 
 ### App config
