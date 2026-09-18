@@ -1,0 +1,27 @@
+{
+  "type": "Agent",
+  "name": "Sharetopus",
+  "description": "Social publishing that an AI agent buys per call in USDC over x402. It connects a LinkedIn, TikTok, YouTube or Pinterest account and publishes to it, with no human account, API key or OAuth app. Payment settles on Celo through the hosted x402 facilitator, and on Arc through the facilitator Sharetopus built and published for wallets that hold nothing but USDC.",
+  "image": "https://sharetopus.com/logo.png",
+  "endpoints": [
+    {
+      "type": "a2a",
+      "url": "https://sharetopus.com/.well-known/agent.json"
+    },
+    {
+      "type": "mcp",
+      "url": "https://sharetopus.com/api/mcp/mcp"
+    },
+    {
+      "type": "wallet",
+      "address": "0x1061f932f43267C6115973d4a43ccbDE31e43711",
+      "chainId": 42220
+    },
+    {
+      "type": "wallet",
+      "address": "0x583df12057097E3EC06F785d1Cd90eA83BABDdF6",
+      "chainId": 5042
+    }
+  ],
+  "supportedTrust": ["reputation"]
+}
