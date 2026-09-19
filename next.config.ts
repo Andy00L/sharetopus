@@ -53,6 +53,15 @@ const nextConfig: NextConfig = {
     return [
       // Serve MDX docs as raw markdown for AI agents and CLI tools.
       { source: "/docs/:slug.md", destination: "/api/docs/:slug" },
+      // ERC-8004 endpoint domain verification. 8004scan probes this path and
+      // accepts the domain once it finds a registrations entry matching the
+      // on-chain agent, which the registration file already carries, so the
+      // same file answers both paths and there is nothing to keep in sync.
+      // sourceRef: https://best-practices.8004scan.io/docs/official-specification/erc-8004-official.md
+      {
+        source: "/.well-known/agent-registration.json",
+        destination: "/.well-known/agent.json",
+      },
     ];
   },
 };
