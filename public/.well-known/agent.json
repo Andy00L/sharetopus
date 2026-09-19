@@ -1,27 +1,53 @@
 {
-  "type": "Agent",
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
   "name": "Sharetopus",
-  "description": "Social publishing that an AI agent buys per call in USDC over x402. It connects a LinkedIn, TikTok, YouTube or Pinterest account and publishes to it, with no human account, API key or OAuth app. Payment settles on Celo through the hosted x402 facilitator, and on Arc through the facilitator Sharetopus built and published for wallets that hold nothing but USDC.",
+  "description": "Social publishing that an AI agent buys per call in USDC over x402. It connects a LinkedIn, TikTok, YouTube or Pinterest account and publishes to it, with no human account, API key or OAuth app. Payment settles on Celo through the hosted x402 facilitator, which sponsors the gas, so the agent needs USDC and no CELO.",
   "image": "https://sharetopus.com/logo.png",
-  "endpoints": [
+  "services": [
     {
-      "type": "a2a",
-      "url": "https://sharetopus.com/.well-known/agent.json"
+      "name": "web",
+      "endpoint": "https://sharetopus.com"
     },
     {
-      "type": "mcp",
-      "url": "https://sharetopus.com/api/mcp/mcp"
+      "name": "MCP",
+      "endpoint": "https://sharetopus.com/api/mcp/mcp",
+      "version": "2025-11-25",
+      "mcpTools": [
+        "list_connections",
+        "list_pinterest_boards",
+        "list_scheduled_posts",
+        "list_content_history",
+        "list_billing_summary",
+        "request_account_reauth_link",
+        "attach_media_from_url",
+        "request_upload_url",
+        "schedule_post",
+        "post_now",
+        "cancel_scheduled_posts",
+        "resume_scheduled_posts",
+        "reschedule_posts",
+        "delete_scheduled_posts",
+        "bulk_schedule",
+        "bulk_post_now",
+        "get_account_analytics",
+        "generate_post_draft"
+      ]
     },
     {
-      "type": "wallet",
-      "address": "0x1061f932f43267C6115973d4a43ccbDE31e43711",
-      "chainId": 42220
-    },
-    {
-      "type": "wallet",
-      "address": "0x583df12057097E3EC06F785d1Cd90eA83BABDdF6",
-      "chainId": 5042
+      "name": "agentWallet",
+      "endpoint": "eip155:42220:0x1061f932f43267C6115973d4a43ccbDE31e43711"
     }
   ],
-  "supportedTrust": ["reputation"]
+  "registrations": [
+    {
+      "agentId": 9854,
+      "agentRegistry": "eip155:42220:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+    }
+  ],
+  "x402Support": true,
+  "active": true,
+  "supportedTrust": [
+    "reputation"
+  ],
+  "updatedAt": 1789798556
 }
