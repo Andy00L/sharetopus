@@ -20,6 +20,16 @@ export interface NormalizedConnectedAccount {
   /** ISO expiry; null means the token never expires (Facebook Page tokens). */
   tokenExpiresAt: string | null;
   extra: Json;
+  /**
+   * Profile columns for platforms whose profile call returns them (Pinterest,
+   * TikTok). Omitted, the upsert leaves those columns untouched.
+   */
+  profileStats?: {
+    isVerified: boolean;
+    bioDescription: string | null;
+    followerCount: number | null;
+    followingCount: number | null;
+  };
 }
 
 export type ExchangeAndFetchAccountsResult =
@@ -51,10 +61,10 @@ export interface WebOAuthCallbackConfig {
  * verifier retrieval, token exchange, social_accounts upsert (one row per
  * returned account), and the popup HTML that notifies the opener window.
  *
- * Extracted for the youtube/x/facebook routes; the four older platform
- * connect routes predate it and still inline the same steps.
+ * The LinkedIn and Instagram connect routes predate it and still inline the
+ * same steps.
  *
- * Called by: /api/social/{youtube,x,facebook}/connect
+ * Called by: /api/social/{youtube,x,facebook,pinterest,tiktok}/connect
  */
 export async function completeWebOAuthConnect(
   request: NextRequest,
@@ -182,6 +192,14 @@ export async function completeWebOAuthConnect(
             token_expires_at: connectedAccount.tokenExpiresAt,
             extra: connectedAccount.extra,
             updated_at: new Date().toISOString(),
+            ...(connectedAccount.profileStats
+              ? {
+                  is_verified: connectedAccount.profileStats.isVerified,
+                  bio_description: connectedAccount.profileStats.bioDescription,
+                  follower_count: connectedAccount.profileStats.followerCount,
+                  following_count: connectedAccount.profileStats.followingCount,
+                }
+              : {}),
           },
           { onConflict: "principal_id, platform, account_identifier" },
         );
