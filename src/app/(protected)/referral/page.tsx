@@ -1,5 +1,9 @@
 import { getReferralSummary } from "@/actions/server/referral/getReferralSummary";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
+import {
+  MAX_REFERRAL_WEEKS,
+  REFERRALS_PER_FREE_WEEK,
+} from "@/lib/referral/referralRules";
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -46,8 +50,8 @@ export default async function ReferralPage() {
       <SidebarGroup className="mb-8">
         <h1 className="text-2xl font-bold mb-2">Refer & Earn</h1>
         <p className="text-muted-foreground mb-6">
-          Refer 3 people to earn 1 free week of Creator access. Up to 5 weeks
-          total.
+          Refer {REFERRALS_PER_FREE_WEEK} people to earn 1 free week of Creator
+          access. Up to {MAX_REFERRAL_WEEKS} weeks total.
         </p>
 
         {/* Share link */}
@@ -65,7 +69,7 @@ export default async function ReferralPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="rounded-lg border p-4 text-center">
             <p className="text-3xl font-bold text-[#FF4A20]">
-              {summary.towardNextWeek}/3
+              {summary.towardNextWeek}/{REFERRALS_PER_FREE_WEEK}
             </p>
             <p className="text-sm text-muted-foreground mt-1">
               Toward next week
@@ -107,8 +111,8 @@ export default async function ReferralPage() {
         {summary.capReached && (
           <div className="rounded-lg border p-4">
             <p className="text-sm font-medium text-muted-foreground">
-              You have earned the maximum 5 free weeks. Thank you for spreading
-              the word!
+              You have earned the maximum {MAX_REFERRAL_WEEKS} free weeks. Thank
+              you for spreading the word!
             </p>
           </div>
         )}

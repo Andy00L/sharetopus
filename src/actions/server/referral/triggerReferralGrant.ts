@@ -13,9 +13,10 @@ import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscript
  * and marking referrals as redeemed. This wrapper does NOT mutate
  * referral status or creator_access_until itself.
  *
- * Cache invalidation after a successful grant ensures the referrer's
- * new Creator access is visible on the next web request to the same
- * Vercel instance (other instances catch up at the 60s TTL).
+ * The web gate (checkActiveSubscription) reads creator_access_until from
+ * Postgres on every request, so the web sees a grant at once. Only the MCP
+ * gate caches plans: invalidation clears this instance's entry, and other
+ * instances catch up at the 60s TTL.
  *
  * Called by: recordReferralOnSignup (after a new referral is verified)
  * Tables touched (via RPC): referrals, referral_reward_grants, users
@@ -41,8 +42,8 @@ export async function triggerReferralGrant(
   const grantedWeeks = typeof weeksGranted === "number" ? weeksGranted : 0;
 
   if (grantedWeeks > 0) {
-    // Invalidate the subscription cache so the referrer's new access
-    // is visible immediately on web (same function the Stripe webhook uses).
+    // Invalidate the MCP subscription cache so the new access applies to MCP
+    // calls on this instance (same function the Stripe webhook uses).
     invalidateCachedSubscription(referrerId);
     console.log(
       `[triggerReferralGrant] Granted ${grantedWeeks} week(s) to referrer ${referrerId}, cache invalidated`,

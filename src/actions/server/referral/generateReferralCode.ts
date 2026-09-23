@@ -5,8 +5,8 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 /**
  * Generates (or retrieves) a unique referral code for a user.
  *
- * Called eagerly at signup (from ensureUserExists) and lazily as a
- * fallback from the referral page if the eager call was skipped.
+ * Called when the user opens the referral page, the only place the code is
+ * shown, so the code exists before anyone can share it.
  *
  * Idempotent: if a code already exists for this user, returns it.
  * Collision-safe: on unique-violation (duplicate code), retries with
@@ -16,7 +16,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
  * ambiguous glyphs (0, O, 1, I, L) for readability when shared.
  *
  * Tables: referral_codes (read + insert)
- * Called by: ensureUserExists, getReferralSummary (lazy fallback)
+ * Called by: getReferralSummary (referral page)
  */
 
 const UNAMBIGUOUS_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";

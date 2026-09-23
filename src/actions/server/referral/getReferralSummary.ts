@@ -1,19 +1,22 @@
-"use server";
+import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ensureReferralCode } from "./generateReferralCode";
-import { getReferralProgress } from "./getReferralProgress";
+import { loadReferralProgress } from "./loadReferralProgress";
 
 /**
  * Returns the full referral summary for the referral page: the user's
  * referral code, share link, progress counts, and creator_access_until.
  *
- * Calls ensureReferralCode as a lazy fallback in case the eager generation
- * at signup was skipped (e.g., ensureUserExists errored on that step).
+ * Creates the user's referral code on first visit (ensureReferralCode): the
+ * code is only ever shown here, so nothing needs it earlier.
+ *
+ * A plain server function, not a server action: its userId is trusted, and
+ * only the referral page (which takes it from auth()) calls it.
  *
  * Tables: referral_codes (read/insert via ensureReferralCode),
- *         referrals (read via getReferralProgress),
- *         referral_reward_grants (read via getReferralProgress),
+ *         referrals (read via loadReferralProgress),
+ *         referral_reward_grants (read via loadReferralProgress),
  *         users (read for creator_access_until)
  * Called by: referral page server component
  */
@@ -34,14 +37,14 @@ export async function getReferralSummary(
     }
   | { success: false; message: string }
 > {
-  // Ensure the user has a referral code (lazy fallback)
+  // Creates the code on the user's first visit, the only place it is shown
   const codeResult = await ensureReferralCode(userId);
   if (!codeResult.success) {
     return { success: false, message: codeResult.message };
   }
 
   // Get progress toward next week and total weeks earned
-  const progressResult = await getReferralProgress(userId);
+  const progressResult = await loadReferralProgress(userId);
   if (!progressResult.success) {
     return { success: false, message: progressResult.message };
   }
@@ -77,13 +80,21 @@ export async function getReferralSummary(
   }
 
   // Read creator_access_until for display
-  const { data: userData } = await adminSupabase
+  const { data: userData, error: userError } = await adminSupabase
     .from("users")
     .select("creator_access_until")
     .eq("id", userId)
     .single();
 
-  const creatorAccessUntil = userData?.creator_access_until ?? null;
+  if (userError) {
+    console.error(
+      `[getReferralSummary] Failed to read creator_access_until for ${userId}:`,
+      userError.message,
+    );
+    return { success: false, message: "Failed to load referral access" };
+  }
+
+  const creatorAccessUntil = userData.creator_access_until;
 
   return {
     success: true,

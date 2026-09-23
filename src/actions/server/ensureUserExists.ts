@@ -1,9 +1,11 @@
 import "server-only";
 import { currentUser } from "@clerk/nextjs/server";
+import { cookies } from "next/headers";
+import { after } from "next/server";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
+import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
 import stripe from "@/lib/stripe";
-import { ensureReferralCode } from "@/actions/server/referral/generateReferralCode";
 import { recordReferralOnSignup } from "@/actions/server/referral/recordReferralOnSignup";
 
 /**
@@ -30,10 +32,6 @@ export async function ensureUserExists() {
         syncStripeInvoices(user.id, existingUser.stripe_customer_id),
       ]);
     }
-    // Ensure referral code exists (idempotent, non-blocking)
-    ensureReferralCode(user.id).catch((err) =>
-      console.error("[ensureUserExists] Referral code generation failed:", err),
-    );
     return;
   }
 
@@ -108,14 +106,17 @@ export async function ensureUserExists() {
       syncStripeInvoices(user.id, stripeCustomerId),
     ]);
 
-    // --- Referral system: eager code gen + attribution (first creation only) ---
-    // Both are best-effort: failures are logged but never block user creation.
-    ensureReferralCode(user.id).catch((err) =>
-      console.error("[ensureUserExists] Referral code generation failed:", err),
-    );
-    recordReferralOnSignup(user.id, email).catch((err) =>
-      console.error("[ensureUserExists] Referral attribution failed:", err),
-    );
+    // Referral attribution, first creation only. The cookie is read now,
+    // while the request is live; the attribution runs after the response,
+    // and after() keeps the serverless function alive until it finishes
+    // (a floating promise can be frozen mid-write). Best-effort: it logs its
+    // own failures and never blocks user creation.
+    const referralCode = (await cookies()).get(REFERRAL_COOKIE_NAME)?.value;
+    if (referralCode) {
+      after(() =>
+        recordReferralOnSignup({ newUserId: user.id, newUserEmail: email, referralCode }),
+      );
+    }
   }
 }
 

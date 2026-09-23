@@ -1,6 +1,11 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
+import {
+  REFERRAL_COOKIE_MAX_AGE_SECONDS,
+  REFERRAL_COOKIE_NAME,
+} from "@/lib/referral/referralRules";
+
 // MCP and OAuth discovery routes must be publicly accessible.
 // The MCP handler does its own auth via Bearer tokens, but still needs
 // clerkMiddleware to have run: its OAuth resolver calls auth() with
@@ -34,8 +39,8 @@ const isProtectedRoute = createRouteMatcher([
 export default clerkMiddleware(async (auth, req) => {
   // --- Referral cookie: first-touch attribution ---
   // On any non-protected request carrying a valid ?ref= code and no existing
-  // stx_ref cookie, stamp the attribution cookie. Read during signup
-  // (ensureUserExists -> recordReferralOnSignup) to record the referral.
+  // attribution cookie, stamp one. ensureUserExists reads it when the user is
+  // first created and records the referral.
   // Protected routes are excluded because auth.protect() may redirect to
   // the login page, losing the query param. The referral link targets the
   // homepage: /?ref=CODE
@@ -43,14 +48,14 @@ export default clerkMiddleware(async (auth, req) => {
   if (
     refCode &&
     !isProtectedRoute(req) &&
-    !req.cookies.has("stx_ref") &&
+    !req.cookies.has(REFERRAL_COOKIE_NAME) &&
     /^[A-Z0-9]{1,16}$/.test(refCode)
   ) {
     const response = NextResponse.next();
     response.cookies.set({
-      name: "stx_ref",
+      name: REFERRAL_COOKIE_NAME,
       value: refCode,
-      maxAge: 2592000, // 30 days
+      maxAge: REFERRAL_COOKIE_MAX_AGE_SECONDS,
       sameSite: "lax",
       secure: true,
       path: "/",

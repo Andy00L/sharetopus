@@ -1,40 +1,37 @@
 import "server-only";
 
-import { cookies } from "next/headers";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { triggerReferralGrant } from "./triggerReferralGrant";
 
 /**
- * Reads the stx_ref attribution cookie, resolves the referral code to a
- * referrer, validates the referral, and inserts a referral row.
+ * Records a referral for a newly created user, then asks the grant function
+ * whether the referrer has earned a free week.
  *
- * Because Clerk enforces email verification before the user.created event
- * fires, the referral is inserted directly as "verified" and the grant
- * trigger is called immediately.
+ * The referral code is passed in: the caller reads the attribution cookie
+ * while the page renders, and this runs afterwards inside after(), where
+ * request cookies are unavailable. It never writes cookies. Next.js throws
+ * on a cookie write during a Server Component render, and the old cookie
+ * cleanup here did exactly that, so every grant was silently skipped. The
+ * UNIQUE constraint on referrals.referred_id already makes attribution
+ * one-time, so the cookie is left to expire.
  *
- * Entirely best-effort: any failure is logged and returns an error value.
- * MUST NEVER block user creation.
+ * Clerk verifies the email before the user exists, so the referral is
+ * inserted directly as "verified".
+ *
+ * Best-effort: failures are logged and returned as values; it never blocks
+ * user creation.
  *
  * Called by: ensureUserExists, on FIRST user creation only.
- *
  * Tables: referral_codes (read), referrals (insert), users (read)
- * Side effects: may call triggerReferralGrant (which calls the RPC + cache invalidation)
+ * Side effects: may call triggerReferralGrant (RPC + cache invalidation)
  */
-export async function recordReferralOnSignup(
-  newUserId: string,
-  newUserEmail: string,
-): Promise<{ success: true } | { success: false; message: string }> {
+export async function recordReferralOnSignup(params: {
+  newUserId: string;
+  newUserEmail: string;
+  referralCode: string;
+}): Promise<{ success: true } | { success: false; message: string }> {
+  const { newUserId, newUserEmail, referralCode } = params;
   try {
-    // Read the attribution cookie set by the middleware
-    const cookieStore = await cookies();
-    const refCookie = cookieStore.get("stx_ref");
-    if (!refCookie?.value) {
-      return { success: true }; // No referral attribution -- normal signup
-    }
-
-    const referralCode = refCookie.value;
-
-    // Resolve the code to a referrer
     const { data: codeRow, error: codeError } = await adminSupabase
       .from("referral_codes")
       .select("user_id")
@@ -53,23 +50,18 @@ export async function recordReferralOnSignup(
       console.warn(
         `[recordReferralOnSignup] Unknown referral code "${referralCode}" for user ${newUserId}`,
       );
-      // Clear the invalid cookie so it doesn't persist
-      cookieStore.delete("stx_ref");
       return { success: false, message: "Unknown referral code" };
     }
 
     const referrerId = codeRow.user_id;
 
-    // --- Validation: self-referral by user ID ---
     if (referrerId === newUserId) {
       console.warn(
         `[recordReferralOnSignup] Self-referral blocked (same ID) for ${newUserId}`,
       );
-      cookieStore.delete("stx_ref");
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    // --- Validation: self-referral by email ---
     const { data: referrerUser } = await adminSupabase
       .from("users")
       .select("email")
@@ -83,29 +75,25 @@ export async function recordReferralOnSignup(
       console.warn(
         `[recordReferralOnSignup] Self-referral blocked (same email) for ${newUserId}`,
       );
-      cookieStore.delete("stx_ref");
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    // --- Insert referral row (status = verified, since Clerk forces email verification) ---
-    const nowIso = new Date().toISOString();
     const { error: insertError } = await adminSupabase
       .from("referrals")
       .insert({
         referrer_id: referrerId,
         referred_id: newUserId,
         status: "verified",
-        verified_at: nowIso,
+        verified_at: new Date().toISOString(),
       });
 
     if (insertError) {
-      // Unique constraint on referred_id means this user was already attributed
+      // UNIQUE (referred_id): this user was already attributed.
       if (insertError.code === "23505") {
         console.warn(
           `[recordReferralOnSignup] Duplicate referral for ${newUserId} -- already attributed`,
         );
-        cookieStore.delete("stx_ref");
-        return { success: true }; // Not an error, just already done
+        return { success: true };
       }
 
       console.error(
@@ -119,13 +107,10 @@ export async function recordReferralOnSignup(
       `[recordReferralOnSignup] Referral recorded: ${referrerId} -> ${newUserId}`,
     );
 
-    // Clear the cookie now that attribution is persisted
-    cookieStore.delete("stx_ref");
-
-    // Fire the grant trigger for the referrer (may award a week if they hit 3)
+    // May award a week if the referrer now has enough verified referrals.
     const grantResult = await triggerReferralGrant(referrerId);
     if (!grantResult.success) {
-      // Non-fatal: the referral is recorded, the grant can be retried later
+      // Non-fatal: the referral is recorded and the next grant call picks it up.
       console.error(
         `[recordReferralOnSignup] Grant trigger failed for referrer ${referrerId}: ${grantResult.message}`,
       );

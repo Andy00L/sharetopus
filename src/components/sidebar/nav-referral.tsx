@@ -1,6 +1,7 @@
 "use client";
 
 import { getReferralProgress } from "@/actions/server/referral/getReferralProgress";
+import { REFERRALS_PER_FREE_WEEK } from "@/lib/referral/referralRules";
 import { Gift } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -28,12 +29,14 @@ export function NavReferral() {
   const { user } = useUser();
   const [badge, setBadge] = useState<string | null>(null);
 
+  // Refetches when the signed-in user changes; the action reads the user
+  // from the session, so the id is only the trigger.
   useEffect(() => {
     if (!user?.id) return;
 
-    getReferralProgress(user.id).then((result) => {
+    getReferralProgress().then((result) => {
       if (result.success && !result.capReached) {
-        setBadge(`${result.towardNextWeek}/3`);
+        setBadge(`${result.towardNextWeek}/${REFERRALS_PER_FREE_WEEK}`);
       }
     });
   }, [user?.id]);
