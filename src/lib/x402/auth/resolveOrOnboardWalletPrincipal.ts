@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import type { SanctionsStatus, WalletChain } from "@/lib/types/database.types";
-import { getFacilitatorName } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { callPostgrestRpc } from "@/lib/x402/rpc/callPostgrestRpc";
 import type { WalletPrincipal } from "./types";
@@ -40,31 +39,33 @@ const SANCTIONS_SOURCE_CDP_KYT = "cdp_kyt";
 const SANCTIONS_SOURCE_CELO_FACILITATOR = "celo_facilitator";
 
 /**
- * Source recorded when nobody screened the payer. Arc has no hosted
- * facilitator for ordinary wallets, so Sharetopus verifies and settles the
- * payment itself (arc/arcFacilitator.ts) and no third party runs KYT along
- * the way. The row says so instead of borrowing CDP's name, and the wallet
- * it belongs to is left at sanctions_status "unchecked".
+ * Source recorded when nobody screened the payer: on the arc_local lane
+ * Sharetopus verifies and settles the payment itself (arc/arcFacilitator.ts)
+ * and no third party runs KYT along the way. The row says so instead of
+ * borrowing CDP's name, and the wallet is left at sanctions_status
+ * "unchecked".
  */
 const SANCTIONS_SOURCE_UNSCREENED = "unscreened";
 
-/** Screening source for the facilitator that verified this payment. */
+/** Screening source for the lane that verified this payment. */
 function sanctionsSourceForNetwork(network: NetworkConfig): string {
-  const facilitatorName = getFacilitatorName(network.name);
-  if (facilitatorName === "celo") return SANCTIONS_SOURCE_CELO_FACILITATOR;
-  if (!hasFacilitatorScreening(network)) return SANCTIONS_SOURCE_UNSCREENED;
-  return SANCTIONS_SOURCE_CDP_KYT;
+  switch (network.settlement) {
+    case "coinbase_cdp":
+      return SANCTIONS_SOURCE_CDP_KYT;
+    case "celo":
+      return SANCTIONS_SOURCE_CELO_FACILITATOR;
+    case "arc_local":
+      return SANCTIONS_SOURCE_UNSCREENED;
+  }
 }
 
 /**
- * Whether a third-party facilitator screened the payer during verify.
- *
- * False only where Sharetopus is its own facilitator. Everything downstream
- * keys off this rather than off a network name, so the next self-settled
- * network inherits the honest default instead of a borrowed claim.
+ * Whether a third-party facilitator screened the payer during verify. Keyed
+ * on the settlement lane, so the next self-settled lane inherits the honest
+ * default instead of a borrowed claim.
  */
 function hasFacilitatorScreening(network: NetworkConfig): boolean {
-  return getFacilitatorName(network.name) !== "arc_local";
+  return network.settlement !== "arc_local";
 }
 
 // ---------------------------------------------------------------------------

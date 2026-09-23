@@ -1,29 +1,23 @@
 import "server-only";
 
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
-import { getNetworkConfig, getDefaultNetwork } from "@/lib/x402/networks";
-import type { NetworkConfig } from "@/lib/x402/networks";
-import {
-  getBaseUrl,
-  getRecipientAddress,
-  isX402Platform,
-  X402_PLATFORMS,
-} from "@/lib/x402/config";
+import { getBaseUrl, isX402Platform, X402_PLATFORMS } from "@/lib/x402/config";
 import {
   readPaymentHeader,
   paymentResponseHeaders,
 } from "@/lib/x402/http/paymentHttp";
-import { logX402Call } from "@/lib/x402/audit/logX402Call";
+import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
+import { resolveRequestNetwork } from "@/lib/x402/http/resolveRequestNetwork";
+import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { handleConnectChallenge } from "@/lib/x402/connect/handleConnectChallenge";
 import { handleConnectVerify } from "@/lib/x402/connect/handleConnectVerify";
 import type { ConnectVerifyError } from "@/lib/x402/connect/handleConnectVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
-import type { ConnectNetworkContext, Platform } from "@/lib/x402/connect/types";
+import type { Platform } from "@/lib/x402/connect/types";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
 export const runtime = "nodejs";
@@ -39,6 +33,8 @@ const ENDPOINT_PATH = "/api/x402/connect";
  */
 const CHALLENGE_FALLBACK_PLATFORM = "linkedin" as const;
 
+type ConnectAuditStatus = X402AuditEntry["resultStatus"];
+
 /**
  * POST /api/x402/connect?platform=linkedin
  *
@@ -49,124 +45,73 @@ const CHALLENGE_FALLBACK_PLATFORM = "linkedin" as const;
  *     body). ?platform is optional here so A2MCP validation probes with a
  *     bare URL still get the standard challenge.
  *   - Payment header present: require valid ?platform, verify payment,
- *     settle, create pending connection, return OAuth URL + connection
- *     token
+ *     settle through the shared charge lifecycle, create the pending
+ *     connection, return OAuth URL + connection token.
  *
  * Query params:
  *   ?platform (required on paid requests; any X402_PLATFORMS member)
- *   ?network=polygon|arbitrum|celo|solana (optional; default base; unknown
- *   values are 400)
+ *   ?network=polygon|arbitrum|celo|arc|solana (optional; default base;
+ *   unknown values are 400)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const startMs = performance.now();
-  const ipHash = await extractIpHash();
-  const userAgent = await extractUserAgent();
+  const audit = await createConnectAudit();
 
-  // Helper: audit entry for this endpoint with the current latency.
-  const logConnectCall = async (params: {
-    principal: WalletPrincipal | null;
-    chargeId: string | null;
-    resultStatus: "ok" | "402_required" | "sanctioned" | "rate_limited" | "error";
-  }): Promise<void> => {
-    await logX402Call({
-      principal: params.principal,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: params.chargeId,
-      resultStatus: params.resultStatus,
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
-  };
-
-  // -- Check for the payment header first (payment-first ordering): an
-  // unpaid request gets the 402 challenge even without a valid ?platform.
+  // Step 1: read the payment header before validating ?platform (x402 is
+  // payment-first).
   const paymentHeader = readPaymentHeader(request);
 
-  // -- Parse platform query param (required only when a payment is presented)
   const url = new URL(request.url);
   const platformParam = url.searchParams.get("platform");
   const requestedPlatform =
-    platformParam !== null && isX402Platform(platformParam)
-      ? platformParam
-      : null;
+    platformParam !== null && isX402Platform(platformParam) ? platformParam : null;
 
   if (requestedPlatform === null && paymentHeader) {
-    await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
+    audit({ principal: null, chargeId: null, resultStatus: "error" });
     return NextResponse.json(
       {
         error: "invalid_platform",
         message: `Query param ?platform is required. Supported: ${[...X402_PLATFORMS].join(", ")}.`,
       },
-      { status: 400 }
+      { status: 400 },
     );
   }
   const platform = requestedPlatform ?? CHALLENGE_FALLBACK_PLATFORM;
 
-  // -- Challenge path (no payment header)
+  // Step 2: no payment header, answer with the challenge.
   if (!paymentHeader) {
-    return respondUnpaidConnectChallenge(request, platform, (resultStatus) =>
-      logConnectCall({ principal: null, chargeId: null, resultStatus })
-    );
+    return respondUnpaidConnectChallenge(request, platform, audit);
   }
 
-  // -- Resolve network (unknown values are rejected)
-  const networkParam = url.searchParams.get("network");
-  let network: NetworkConfig;
-  if (networkParam) {
-    const requestedNetwork = getNetworkConfig(networkParam);
-    if (!requestedNetwork) {
-      await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
-      return NextResponse.json(
-        {
-          error: "unsupported_network",
-          message: `Network "${networkParam}" is not supported.`,
-        },
-        { status: 400 }
-      );
-    }
-    network = requestedNetwork;
-  } else {
-    network = getDefaultNetwork();
+  // Step 3: network and payout address.
+  const networkResult = resolveRequestNetwork(request.url);
+  if (!networkResult.ok) {
+    audit({ principal: null, chargeId: null, resultStatus: "error" });
+    return networkResult.reason === "unsupported_network"
+      ? NextResponse.json(
+          { error: "unsupported_network", message: networkResult.message },
+          { status: 400 },
+        )
+      : NextResponse.json({ error: "internal", message: "Server misconfiguration." }, { status: 500 });
   }
 
-  // -- Build network context
-  const recipientAddress = getRecipientAddress(network);
-  if (!recipientAddress) {
-    console.error(`[POST /api/x402/connect] Recipient address env not set for network "${network.name}".`);
-    await logConnectCall({ principal: null, chargeId: null, resultStatus: "error" });
-    return NextResponse.json(
-      { error: "internal", message: "Server misconfiguration." },
-      { status: 500 }
-    );
-  }
-
-  const context: ConnectNetworkContext = {
-    network,
-    recipientAddress,
+  // Step 4: verify, settle, create the connection.
+  const result = await handleConnectVerify(paymentHeader, {
+    network: networkResult.network,
+    recipientAddress: networkResult.recipientAddress,
     resourceUrl: `${getBaseUrl()}${ENDPOINT_PATH}`,
     platform,
-  };
-
-  // -- Verify path
-  const result = await handleConnectVerify(paymentHeader, context);
+  });
 
   if (!result.ok) {
-    await logConnectCall({
-      principal: null,
-      chargeId: null,
+    audit({
+      principal: result.principal,
+      chargeId: result.chargeId,
       resultStatus: mapErrorToAuditStatus(result.error),
     });
     return buildConnectErrorResponse(result.error);
   }
 
-  // -- Success
-  await logConnectCall({
-    principal: result.principal,
-    chargeId: result.chargeId,
-    resultStatus: "ok",
-  });
+  audit({ principal: result.principal, chargeId: result.chargeId, resultStatus: "ok" });
 
   const headers: Record<string, string> = result.settleResponseHeader
     ? paymentResponseHeaders(result.settleResponseHeader)
@@ -176,131 +121,102 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 /**
- * GET /api/x402/connect
+ * GET /api/x402/connect?platform=linkedin
  *
- * Challenge-only probe path: A2MCP marketplace validators (OKX) GET
- * registered endpoints (curl -i) and require the standard 402 challenge.
- * Never initiates a connection; the paid flow lives on POST. Next.js
- * derives HEAD from this handler automatically.
+ * Challenge-only probe for A2MCP validators (curl -i / curl -I). Always
+ * answers 402; paying still requires POST.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const startMs = performance.now();
-  const ipHash = await extractIpHash();
-  const userAgent = await extractUserAgent();
-
-  const url = new URL(request.url);
-  const platformParam = url.searchParams.get("platform");
+  const audit = await createConnectAudit();
+  const platformParam = new URL(request.url).searchParams.get("platform");
   const platform =
     platformParam !== null && isX402Platform(platformParam)
       ? platformParam
       : CHALLENGE_FALLBACK_PLATFORM;
-
-  return respondUnpaidConnectChallenge(request, platform, async (resultStatus) => {
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus,
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
-  });
+  return respondUnpaidConnectChallenge(request, platform, audit);
 }
 
 // ---------------------------------------------------------------------------
-// Shared unpaid-challenge path (POST without payment header, and GET)
+// Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Rate limits, resolves the network from ?network, and returns the 402
- * challenge for connect_account. Shared by the POST challenge branch and
- * the GET probe handler so the two paths cannot drift.
- */
+type ConnectAudit = (entry: {
+  principal: WalletPrincipal | null;
+  chargeId: string | null;
+  resultStatus: ConnectAuditStatus;
+}) => void;
+
+/** Audit rows for /connect are written after the response is sent. */
+async function createConnectAudit(): Promise<ConnectAudit> {
+  const startMs = performance.now();
+  const ipHash = await extractIpHash();
+  const userAgent = await extractUserAgent();
+  return (entry) => {
+    const auditEntry: X402AuditEntry = {
+      principal: entry.principal,
+      action: "connect_account",
+      endpoint: ENDPOINT_PATH,
+      chargeId: entry.chargeId,
+      resultStatus: entry.resultStatus,
+      latencyMs: Math.round(performance.now() - startMs),
+      ipHash,
+      userAgent,
+    };
+    after(() => logX402Call(auditEntry));
+  };
+}
+
+/** Shared 402 challenge for POST without payment and for GET probes. */
 async function respondUnpaidConnectChallenge(
   request: NextRequest,
   platform: Platform,
-  logCall: (
-    resultStatus: "402_required" | "rate_limited" | "error"
-  ) => Promise<void>,
+  audit: ConnectAudit,
 ): Promise<NextResponse> {
-  const rateLimitResult = await checkRateLimit(
-    "x402_connect_challenge",
-    null,
-    10,
-    60
-  );
+  const rateLimitResult = await checkRateLimit("x402_connect_challenge", null, 10, 60);
   if (!rateLimitResult.success) {
-    await logCall("rate_limited");
+    const rejection = describeRateLimitRejection(rateLimitResult);
+    audit({ principal: null, chargeId: null, resultStatus: rejection.auditStatus });
     return NextResponse.json(
+      { error: rejection.errorKind, retryAfter: rejection.retryAfterSeconds },
       {
-        error: "rate_limited",
-        retryAfter: rateLimitResult.resetIn ?? 60,
+        status: rejection.httpStatus,
+        headers: { "Retry-After": String(rejection.retryAfterSeconds) },
       },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": String(rateLimitResult.resetIn ?? 60),
-        },
-      }
     );
   }
 
-  const url = new URL(request.url);
-  const networkParam = url.searchParams.get("network");
-  let network: NetworkConfig;
-  if (networkParam) {
-    const requestedNetwork = getNetworkConfig(networkParam);
-    if (!requestedNetwork) {
-      await logCall("error");
-      return NextResponse.json(
-        {
-          error: "unsupported_network",
-          message: `Network "${networkParam}" is not supported.`,
-        },
-        { status: 400 }
-      );
-    }
-    network = requestedNetwork;
-  } else {
-    network = getDefaultNetwork();
-  }
-
-  const recipientAddress = getRecipientAddress(network);
-  if (!recipientAddress) {
-    console.error(`[respondUnpaidConnectChallenge] Recipient address env not set for network "${network.name}".`);
-    await logCall("error");
-    return NextResponse.json(
-      { error: "internal", message: "Server misconfiguration." },
-      { status: 500 }
-    );
+  const networkResult = resolveRequestNetwork(request.url);
+  if (!networkResult.ok) {
+    audit({ principal: null, chargeId: null, resultStatus: "error" });
+    return networkResult.reason === "unsupported_network"
+      ? NextResponse.json(
+          { error: "unsupported_network", message: networkResult.message },
+          { status: 400 },
+        )
+      : NextResponse.json({ error: "internal", message: "Server misconfiguration." }, { status: 500 });
   }
 
   const result = await handleConnectChallenge({
-    network,
-    recipientAddress,
+    network: networkResult.network,
+    recipientAddress: networkResult.recipientAddress,
     resourceUrl: `${getBaseUrl()}${ENDPOINT_PATH}`,
     platform,
   });
   if (!result.ok) {
     console.error(`[respondUnpaidConnectChallenge] Challenge build failed: ${result.message}`);
-    await logCall("error");
+    audit({ principal: null, chargeId: null, resultStatus: "error" });
     // A missing Solana fee payer is an upstream facilitator outage, not a
     // server bug: 502 facilitator_unavailable, matching the verify paths.
     if (result.error === "fee_payer_unavailable") {
       return NextResponse.json(
         { error: "facilitator_unavailable", message: result.message },
-        { status: 502 }
+        { status: 502 },
       );
     }
-    return NextResponse.json(
-      { error: "internal", message: result.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "internal", message: result.message }, { status: 500 });
   }
 
-  await logCall("402_required");
+  audit({ principal: null, chargeId: null, resultStatus: "402_required" });
   return buildPaymentRequiredResponse(result.challengeBody);
 }
 
@@ -316,98 +232,99 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
         {
           status: 429,
           headers: { "Retry-After": String(error.retryAfterSeconds) },
-        }
+        },
+      );
+
+    case "rate_limiter_unavailable":
+      return NextResponse.json(
+        { error: error.kind, message: error.message, retryAfter: error.retryAfterSeconds },
+        {
+          status: 503,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
       );
 
     case "malformed_payment":
-      return NextResponse.json(
-        { error: error.kind, message: error.message },
-        { status: 400 }
-      );
+    case "verify_invalid_payment":
+      return NextResponse.json({ error: error.kind, message: error.message }, { status: 400 });
 
     case "wallet_sanctioned":
-      return NextResponse.json(
-        { error: "sanctioned", message: error.message },
-        { status: 403 }
-      );
+    case "verify_kyt_sanctioned":
+      return NextResponse.json({ error: "sanctioned", message: error.message }, { status: 403 });
 
     case "verify_invalid_signature":
       return NextResponse.json(
         { error: "invalid_payment_signature", message: error.message },
-        { status: 400 }
+        { status: 400 },
       );
 
     case "verify_amount_mismatch":
     case "verify_network_mismatch":
     case "verify_recipient_mismatch":
-      return NextResponse.json(
-        { error: error.kind, message: error.message },
-        { status: 402 }
-      );
+    case "verify_authorization_expired":
+      return NextResponse.json({ error: error.kind, message: error.message }, { status: 402 });
 
+    case "verify_insufficient_funds":
     case "settle_insufficient_funds":
+    case "settle_not_verified":
       return NextResponse.json(
-        { error: "insufficient_funds", message: error.message },
-        { status: 402 }
+        {
+          error: error.kind === "settle_not_verified" ? "payment_not_verified" : "insufficient_funds",
+          message: error.message,
+        },
+        { status: 402 },
       );
 
     case "verify_replay_detected":
-      return NextResponse.json(
-        { error: "replay", message: error.message },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: "replay", message: error.message }, { status: 409 });
 
-    case "verify_kyt_sanctioned":
+    case "payment_in_progress":
       return NextResponse.json(
-        { error: "sanctioned", message: error.message },
-        { status: 403 }
+        { error: "payment_in_progress", message: error.message },
+        { status: 409, headers: { "Retry-After": "5" } },
       );
 
     case "verify_facilitator_error":
     case "settle_facilitator_error":
       return NextResponse.json(
         { error: "facilitator_unavailable", message: error.message },
-        { status: 502 }
+        { status: 502 },
       );
 
     case "settle_timeout":
-      return NextResponse.json(
-        { error: "settlement_timeout", message: error.message },
-        { status: 504 }
-      );
+      return NextResponse.json({ error: "settlement_timeout", message: error.message }, { status: 504 });
 
-    case "settle_not_verified":
     case "db_error":
     case "server_misconfiguration":
-      return NextResponse.json(
-        { error: "internal", message: error.message },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "internal", message: error.message }, { status: 500 });
+
+    // Its own code: the payment settled, so the client must not present it
+    // again, unlike the failures above where nothing was charged.
+    case "settlement_unrecorded":
+      return NextResponse.json({ error: error.kind, message: error.message }, { status: 500 });
 
     case "db_insert_failed":
-      // refundInitiated is only true when the on-chain refund actually
-      // succeeded; false plus a null tx hash means the settled payment
-      // needs manual reconciliation.
+      // refundInitiated is true once a refund transaction exists; false plus
+      // a null tx hash means the settled payment needs manual reconciliation.
       return NextResponse.json(
         {
           error: "internal",
+          message: error.message,
           refundInitiated: error.refundInitiated,
           refundTxHash: error.refundTxHash,
         },
-        { status: 500 }
+        { status: 500 },
       );
 
     default: {
-      const _exhaustive: never = error;
-      void _exhaustive;
+      const unhandledError: never = error;
+      void unhandledError;
       return NextResponse.json({ error: "internal" }, { status: 500 });
     }
   }
 }
 
-function mapErrorToAuditStatus(
-  error: ConnectVerifyError
-): "rate_limited" | "sanctioned" | "error" {
+function mapErrorToAuditStatus(error: ConnectVerifyError): ConnectAuditStatus {
   if (error.kind === "rate_limited") return "rate_limited";
   if (error.kind === "verify_kyt_sanctioned" || error.kind === "wallet_sanctioned") {
     return "sanctioned";

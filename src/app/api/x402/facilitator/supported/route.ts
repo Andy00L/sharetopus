@@ -3,11 +3,14 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import { loadArcOperationsAccount } from "@/lib/x402/arc/arcChain";
 import {
   buildSupportedResponse,
   resolveFacilitatedNetwork,
 } from "@/lib/x402/arc/facilitatorApi";
+import {
+  buildRateLimitJsonResponse,
+  describeRateLimitRejection,
+} from "@/lib/x402/http/rateLimitRejection";
 
 /**
  * GET /api/x402/facilitator/supported
@@ -30,13 +33,7 @@ export async function GET(): Promise<NextResponse> {
     60,
   );
   if (!rateLimitResult.success) {
-    return NextResponse.json(
-      { error: "rate_limited", retryAfter: rateLimitResult.resetIn ?? 60 },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimitResult.resetIn ?? 60) },
-      },
-    );
+    return buildRateLimitJsonResponse(describeRateLimitRejection(rateLimitResult));
   }
 
   const networkResult = resolveFacilitatedNetwork();
@@ -47,18 +44,8 @@ export async function GET(): Promise<NextResponse> {
     );
   }
 
-  // Resolved again rather than threaded through: resolveFacilitatedNetwork
-  // already proved the key loads, so this cannot fail here.
-  const accountResult = loadArcOperationsAccount();
-  if (!accountResult.ok) {
-    return NextResponse.json(
-      { error: "facilitator_unavailable", message: accountResult.message },
-      { status: 503 },
-    );
-  }
-
   return NextResponse.json(
-    buildSupportedResponse(networkResult.network, accountResult.account.address),
+    buildSupportedResponse(networkResult.network, networkResult.signerAddress),
     { status: 200 },
   );
 }

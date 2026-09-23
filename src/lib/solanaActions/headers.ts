@@ -15,13 +15,7 @@ import { NETWORKS } from "@/lib/x402/networks";
 /** Spec version advertised in X-Action-Version. sourceRef: @solana/actions-spec package.json */
 const SOLANA_ACTIONS_SPEC_VERSION = "2.4.2";
 
-// Module-load assertion, same pattern as networks.ts for "base": the
-// blockchain id must come from the registry, never a second literal.
-if (!NETWORKS.solana) {
-  throw new Error(
-    "[solanaActions/headers] Solana entry missing from NETWORKS. This is a build-time configuration error.",
-  );
-}
+// The blockchain id comes from the registry, never a second literal.
 const SOLANA_BLOCKCHAIN_ID = NETWORKS.solana.caipNetwork;
 
 const ACTIONS_CORS_HEADERS = {

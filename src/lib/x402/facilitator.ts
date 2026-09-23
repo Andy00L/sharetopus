@@ -1,87 +1,46 @@
 import "server-only";
 
 /**
- * Thin wrapper around the x402 facilitators (Coinbase CDP for base,
- * polygon, arbitrum, and solana; the Celo facilitator for celo; our own
- * in-process one for arc, which has no hosted facilitator for ordinary
- * wallets). Three operations: verify a payment header, settle a verified
- * payment, and refund a settled payment. Each returns an errors-as-values
- * result.
+ * Wrapper around the x402 facilitators (CDP for base, polygon, arbitrum and
+ * solana; the Celo facilitator for celo; the in-process one for arc). Three
+ * operations: verify a payment header, settle a verified payment, and
+ * refund a settled payment. Each returns an errors-as-values result.
  *
- * Called by: x402PaidEndpoint, register/connect verify flows
+ * Called by: charges/chargeLifecycle.ts, connect/handleConnectVerify.ts,
+ *            the paid middleware (verify)
  * Tables touched: none (the facilitator is external; DB writes happen in the
- * flow handlers)
- * Env: CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET (CDP SDK),
- *      X402_RECIPIENT_EVM (CDP EVM refund sender); Celo facilitator auth and
- *      refund keys live in facilitatorClient.ts and celo/refundCelo.ts;
- *      facilitator URLs via config.ts
+ * charge lifecycle)
  *
  * SDK notes (verified against @x402/core v2.14.0):
  *   - Network is CAIP format ("eip155:8453") in the SDK, not WalletChain
  *     ("base"). NetworkConfig.caipNetwork bridges the two (networks.ts).
- *   - VerifyResponse is { isValid, invalidReason?, invalidMessage?, payer? };
- *     this wrapper maps invalidReason strings to typed error kinds. The Celo
- *     facilitator returns the same wire shape (probed live 2026-07-16, with
- *     an extra invalidReasonDetails field this wrapper does not read).
- *   - SettleResponse is { success, transaction, network, errorReason?, ... }.
- *     It carries no blockNumber or facilitator fee; those fields are null in
- *     the wrapper result.
- *   - Facilitator auth (CDP JWTs, Celo X-API-Key) is wired per network in
- *     facilitatorClient.ts (shared with solana/feePayer.ts).
- *   - Refunds never go through a facilitator (it only handles
- *     agent -> merchant): CDP SDK for base/polygon/arbitrum, the
- *     solana/refundSolana module for solana, the celo/refundCelo module
- *     for celo, the arc/refundArc module for arc.
+ *   - VerifyResponse is { isValid, invalidReason?, invalidMessage?, payer? }
+ *     and SettleResponse is { success, transaction, network, errorReason?, ... }.
+ *     Reason codes are matched exactly against the codes @x402/evm defines
+ *     (v2.14.0 exact facilitator); see classifyVerifyReason and
+ *     classifySettleReason.
+ *   - Facilitator auth (CDP JWTs, Celo X-API-Key) is wired per lane in
+ *     facilitatorClient.ts.
+ *   - Refunds never go through a facilitator (it only handles agent to
+ *     merchant); refundPayment dispatches on the lane and confirms on-chain.
  */
 
-import { CdpClient } from "@coinbase/cdp-sdk";
 import { decodePaymentSignatureHeader } from "@x402/core/http";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
-import type { NetworkConfig } from "@/lib/x402/networks";
-import { getRecipientAddress } from "@/lib/x402/config";
+
+import { refundArc } from "@/lib/x402/arc/refundArc";
+import { refundCdpEvm } from "@/lib/x402/cdp/refundCdpEvm";
+import { refundCelo } from "@/lib/x402/celo/refundCelo";
+import { confirmTransaction } from "@/lib/x402/chain/confirmTransaction";
+import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
-import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildPaymentRequirements } from "@/lib/x402/http/paymentHttp";
+import { addressesMatch, type NetworkConfig } from "@/lib/x402/networks";
 import {
   extractNonceFromPayload,
   fallbackNonceFromHeader,
 } from "@/lib/x402/payment/paymentPayload";
-
-// ---------------------------------------------------------------------------
-// CDP Client singleton
-// ---------------------------------------------------------------------------
-
-let cdpClientInstance: CdpClient | null = null;
-
-/**
- * Lazy singleton CDP client. Reads CDP_API_KEY_ID, CDP_API_KEY_SECRET,
- * CDP_WALLET_SECRET from env automatically. Throws on first access if any
- * of the three env vars is missing; every caller invokes it inside a
- * try/catch that converts the throw into an errors-as-values result, so the
- * throw is a documented fail-fast on misconfiguration, not control flow.
- */
-export function getCdpClient(): CdpClient {
-  if (cdpClientInstance) return cdpClientInstance;
-
-  const apiKeyId = process.env.CDP_API_KEY_ID;
-  const apiKeySecret = process.env.CDP_API_KEY_SECRET;
-  const walletSecret = process.env.CDP_WALLET_SECRET;
-
-  if (!apiKeyId || !apiKeySecret || !walletSecret) {
-    const missing = [
-      !apiKeyId && "CDP_API_KEY_ID",
-      !apiKeySecret && "CDP_API_KEY_SECRET",
-      !walletSecret && "CDP_WALLET_SECRET",
-    ].filter(Boolean);
-    throw new Error(
-      `[getCdpClient] Missing required env var(s): ${missing.join(", ")}. ` +
-        "Set them in .env.local or Vercel environment settings."
-    );
-  }
-
-  cdpClientInstance = new CdpClient();
-  return cdpClientInstance;
-}
+import { refundSolana } from "@/lib/x402/solana/refundSolana";
 
 // ---------------------------------------------------------------------------
 // Verify
@@ -91,64 +50,56 @@ export interface VerifyPaymentInput {
   /** Raw payment header value (PAYMENT-SIGNATURE, or X-PAYMENT from v1 clients). */
   paymentHeader: string;
 
-  /** Resource URL the agent is paying to access. */
-  resourceUrl: string;
-
   /** Expected payment amount in USDC units (human, not atomic). */
   amountUsdc: number;
 
-  /** Recipient address (Server Wallet) on this network. */
+  /** Recipient (payTo) address on this network. */
   recipientAddress: string;
 
   /** Network the agent claims to be paying on. */
   network: NetworkConfig;
 }
 
+export interface VerifiedPayment {
+  payerAddress: string;
+  nonce: string;
+  chargeAmountUsdc: number;
+  /**
+   * The server-built requirements this payment was verified against.
+   * Settlement runs on this exact object, never on the copy the client
+   * embedded in its payload, and handing it forward (instead of rebuilding
+   * it) keeps the Solana extra.feePayer stable across verify and settle.
+   */
+  requirements: PaymentRequirements;
+}
+
 export type VerifyPaymentResult =
-  | {
-      ok: true;
-      payerAddress: string;
-      nonce: string;
-      chargeAmountUsdc: number;
-      /**
-       * The server-built requirements this payment was verified against.
-       * Callers pass this exact object to settlePayment so settlement runs
-       * on the terms the server priced, never on the copy the client
-       * embedded in its payload. Handing the same object forward (instead
-       * of rebuilding it) also keeps the Solana extra.feePayer stable
-       * across verify and settle, which a rebuild could not guarantee once
-       * the facilitator rotates signers.
-       */
-      requirements: PaymentRequirements;
-    }
+  | ({ ok: true } & VerifiedPayment)
   | { ok: false; error: VerifyPaymentError };
 
 export type VerifyPaymentError =
   | { kind: "malformed_header"; message: string }
   | { kind: "invalid_signature"; message: string }
+  | { kind: "invalid_payment"; message: string }
   | { kind: "amount_mismatch"; expected: number; received: number }
   | { kind: "network_mismatch"; expected: string; received: string }
   | { kind: "recipient_mismatch"; expected: string; received: string }
+  | { kind: "insufficient_funds"; message: string }
+  | { kind: "authorization_expired"; message: string }
   | { kind: "replay_detected"; nonce: string }
   | { kind: "facilitator_error"; message: string }
   | { kind: "kyt_sanctioned"; payerAddress: string };
 
 /**
- * Verifies a payment header against the facilitator. Does NOT settle yet.
- * The CDP facilitator runs KYT (sanctions screening) as part of verify;
- * sanctioned payers are rejected here, before any DB write. The Celo
- * facilitator's screening is its own behavior; wallet onboarding records
- * which facilitator cleared the payment (auth/resolveOrOnboardWalletPrincipal).
+ * Verifies a payment header against the facilitator. Does NOT settle.
  *
  * On success the result carries the payer address recovered by the
  * facilitator (not the unverified claim inside the payload) and a replay
- * nonce: the scheme nonce when the payload has one, otherwise a SHA-256 of
- * the payment header (see payment/paymentPayload.ts).
+ * nonce (see payment/paymentPayload.ts).
  */
 export async function verifyPayment(
-  input: VerifyPaymentInput
+  input: VerifyPaymentInput,
 ): Promise<VerifyPaymentResult> {
-  // 1. Decode the payment header
   let paymentPayload: PaymentPayload;
   try {
     paymentPayload = decodePaymentSignatureHeader(input.paymentHeader);
@@ -156,108 +107,74 @@ export async function verifyPayment(
     console.error("[verifyPayment] Failed to decode payment header:", err instanceof Error ? err.message : err);
     return {
       ok: false,
-      error: {
-        kind: "malformed_header",
-        message: "Payment header is not valid base64-encoded JSON.",
-      },
+      error: { kind: "malformed_header", message: "Payment header is not valid base64-encoded JSON." },
     };
   }
 
-  // 2. Build expected requirements from the route configuration. On Solana
-  //    this resolves the facilitator fee payer (extra.feePayer), which the
-  //    facilitator's verify requires; without it the payment cannot be
-  //    verified, so the failure maps to facilitator_error (502 everywhere).
+  // On Solana this resolves the facilitator fee payer (extra.feePayer),
+  // which the facilitator's verify requires; without it the payment cannot
+  // be verified, so the failure maps to facilitator_error.
   const requirementsResult = await buildPaymentRequirements({
     network: input.network,
     amountUsdc: input.amountUsdc,
     recipientAddress: input.recipientAddress,
   });
   if (!requirementsResult.ok) {
-    return {
-      ok: false,
-      error: { kind: "facilitator_error", message: requirementsResult.message },
-    };
+    return { ok: false, error: { kind: "facilitator_error", message: requirementsResult.message } };
   }
-  const requirements: PaymentRequirements = requirementsResult.requirements;
+  const requirements = requirementsResult.requirements;
 
-  // 3. Pre-verify checks: network and recipient mismatch
   const payloadNetwork = paymentPayload.accepted?.network;
   if (payloadNetwork && payloadNetwork !== requirements.network) {
     return {
       ok: false,
-      error: {
-        kind: "network_mismatch",
-        expected: requirements.network,
-        received: payloadNetwork,
-      },
+      error: { kind: "network_mismatch", expected: requirements.network, received: payloadNetwork },
     };
   }
 
   const payloadPayTo = paymentPayload.accepted?.payTo;
-  if (payloadPayTo) {
-    // EVM addresses are case-insensitive (EIP-55 checksum casing); Solana
-    // base58 is case-sensitive (Abc and abc are different keys), so only
-    // fold case for EVM networks.
-    const isEvmNetwork = requirements.network.startsWith("eip155:");
-    const payToMatches = isEvmNetwork
-      ? payloadPayTo.toLowerCase() === requirements.payTo.toLowerCase()
-      : payloadPayTo === requirements.payTo;
-    if (!payToMatches) {
-      return {
-        ok: false,
-        error: {
-          kind: "recipient_mismatch",
-          expected: requirements.payTo,
-          received: payloadPayTo,
-        },
-      };
-    }
+  if (payloadPayTo && !addressesMatch(input.network, payloadPayTo, requirements.payTo)) {
+    return {
+      ok: false,
+      error: { kind: "recipient_mismatch", expected: requirements.payTo, received: payloadPayTo },
+    };
   }
 
-  // 4. Call the facilitator for this network
   try {
     const facilitator = getFacilitatorClient(input.network);
     const response = await facilitator.verify(paymentPayload, requirements);
 
-    if (response.isValid) {
-      // The payer recovered by the facilitator is the address money actually
-      // moves from; downstream wallet resolution and refunds depend on it,
-      // so a missing payer is a malformed facilitator response, not "unknown".
-      const payerAddress = response.payer;
-      if (!payerAddress) {
-        console.error("[verifyPayment] Facilitator verify succeeded but returned no payer address.");
-        return {
-          ok: false,
-          error: {
-            kind: "facilitator_error",
-            message: "Facilitator verify response is missing the payer address.",
-          },
-        };
-      }
-
-      const nonce =
-        extractNonceFromPayload(paymentPayload) ??
-        fallbackNonceFromHeader(input.paymentHeader);
-
+    if (!response.isValid) {
       return {
-        ok: true,
-        payerAddress,
-        nonce,
-        chargeAmountUsdc: input.amountUsdc,
-        requirements,
+        ok: false,
+        error: buildVerifyError({
+          reason: response.invalidReason,
+          message: response.invalidMessage,
+          payer: response.payer,
+          input,
+          requirements,
+          payload: paymentPayload,
+        }),
       };
     }
 
-    // Map invalidReason to typed error
+    // The payer recovered by the facilitator is the address money actually
+    // moves from; wallet resolution and refunds depend on it, so a missing
+    // payer is a malformed facilitator response, not "unknown".
+    if (!response.payer) {
+      console.error("[verifyPayment] Facilitator verify succeeded but returned no payer address.");
+      return {
+        ok: false,
+        error: { kind: "facilitator_error", message: "Facilitator verify response is missing the payer address." },
+      };
+    }
+
     return {
-      ok: false,
-      error: mapVerifyInvalidReason(
-        response.invalidReason,
-        response.invalidMessage,
-        response.payer,
-        input,
-        paymentPayload
-      ),
+      ok: true,
+      payerAddress: response.payer,
+      nonce: extractNonceFromPayload(paymentPayload) ?? fallbackNonceFromHeader(input.paymentHeader),
+      chargeAmountUsdc: input.amountUsdc,
+      requirements,
     };
   } catch (err) {
     console.error("[verifyPayment] Facilitator verify threw:", err instanceof Error ? err.message : err);
@@ -278,53 +195,35 @@ export async function verifyPayment(
 export interface SettlePaymentInput {
   /** The verified payment header (same one passed to verifyPayment). */
   paymentHeader: string;
-
-  /** The network the payment is on. */
   network: NetworkConfig;
-
-  /**
-   * The requirements verifyPayment returned for this payment. Server-built,
-   * never the client's payload.accepted copy.
-   */
+  /** The requirements verifyPayment returned. Server-built, never the client's copy. */
   requirements: PaymentRequirements;
 }
 
 export type SettlePaymentResult =
-  | {
-      ok: true;
-      txHash: string;
-      blockNumber: number | null;
-      facilitatorFeeUsdc: number | null;
-      settledAt: string;
-    }
+  | { ok: true; txHash: string; settledAt: string }
   | { ok: false; error: SettlePaymentError };
 
+/**
+ * not_verified and insufficient_funds are definitive: the facilitator
+ * rejected the payment before broadcasting, so no money moved. The other
+ * two are indeterminate: a transaction may have been sent (its hash, when
+ * the facilitator reported one, rides along for reconciliation).
+ */
 export type SettlePaymentError =
   | { kind: "not_verified"; message: string }
   | { kind: "insufficient_funds"; message: string }
-  | { kind: "facilitator_error"; message: string }
-  | { kind: "timeout"; message: string };
+  | { kind: "facilitator_error"; message: string; transaction: string | null }
+  | { kind: "timeout"; message: string; transaction: string | null };
 
 /**
- * Settles a previously verified payment on-chain. The facilitator submits
- * the transaction and waits for confirmation.
- *
- * Settlement runs against input.requirements, the server-built object that
- * verifyPayment already checked the signature against. It deliberately does
- * NOT read payload.accepted: that field is inside the base64 header the
- * client controls, so settling on it would hand an attacker a say in the
- * terms of the on-chain transfer (asset, amount, payTo, Solana feePayer)
- * after the server had priced the request. Taking the verified object
- * forward also removes the old "payload carries no accepted requirements"
- * dead end, which fired only after the pending charge row existed and was
- * then logged as an indeterminate settle needing manual reconciliation.
- *
- * blockNumber and facilitatorFeeUsdc are not available from the @x402/core
- * SettleResponse; they are null here and may be enriched from transaction
- * receipts later.
+ * Settles a previously verified payment on-chain against input.requirements.
+ * It deliberately does NOT read payload.accepted: that field is inside the
+ * base64 header the client controls, so settling on it would hand the client
+ * a say in the terms of the transfer after the server priced the request.
  */
 export async function settlePayment(
-  input: SettlePaymentInput
+  input: SettlePaymentInput,
 ): Promise<SettlePaymentResult> {
   let paymentPayload: PaymentPayload;
   try {
@@ -333,42 +232,42 @@ export async function settlePayment(
     console.error("[settlePayment] Failed to decode header for settle:", err instanceof Error ? err.message : err);
     return {
       ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: "Failed to decode payment header for settlement.",
-      },
+      error: { kind: "not_verified", message: "Failed to decode the payment header for settlement." },
     };
   }
 
   try {
     const facilitator = getFacilitatorClient(input.network);
-    const response = await facilitator.settle(
-      paymentPayload,
-      input.requirements
-    );
+    const response = await facilitator.settle(paymentPayload, input.requirements);
 
+    if (response.success && response.transaction) {
+      return { ok: true, txHash: response.transaction, settledAt: new Date().toISOString() };
+    }
     if (response.success) {
+      // Success without a transaction hash cannot be recorded or refunded.
       return {
-        ok: true,
-        txHash: response.transaction,
-        blockNumber: null, // Not available from @x402/core SettleResponse
-        facilitatorFeeUsdc: null, // Not available from @x402/core SettleResponse
-        settledAt: new Date().toISOString(),
+        ok: false,
+        error: {
+          kind: "facilitator_error",
+          message: "Facilitator reported success without a transaction hash.",
+          transaction: null,
+        },
       };
     }
 
     return {
       ok: false,
-      error: mapSettleErrorReason(response.errorReason, response.errorMessage),
+      error: classifySettleFailure(response.errorReason, response.errorMessage, response.transaction),
     };
   } catch (err) {
-    console.error("[settlePayment] Facilitator settle threw:", err instanceof Error ? err.message : err);
+    const message = err instanceof Error ? err.message : "Unknown facilitator error during settle.";
+    console.error(`[settlePayment] Facilitator settle threw: ${message}`);
+    const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
     return {
       ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: err instanceof Error ? err.message : "Unknown facilitator error during settle.",
-      },
+      error: isTimeout
+        ? { kind: "timeout", message, transaction: null }
+        : { kind: "facilitator_error", message, transaction: null },
     };
   }
 }
@@ -377,305 +276,239 @@ export async function settlePayment(
 // Refund
 // ---------------------------------------------------------------------------
 
-export interface RefundPaymentInput {
-  /** The original settled charge's tx_hash. */
-  originalTxHash: string;
-
-  /** Payer's wallet address (refund destination). */
-  payerAddress: string;
-
-  /** Amount to refund in USDC units. Must be > 0 and <= original charge amount. */
-  amountUsdc: number;
-
-  /** Network the original charge was on. */
-  network: NetworkConfig;
-
-  /** Reason for refund. Logged for observability. */
-  reason: string;
-}
-
-export type RefundPaymentResult =
-  | { ok: true; refundTxHash: string; refundedAt: string }
-  | { ok: false; error: RefundPaymentError };
-
-export type RefundPaymentError =
-  | { kind: "facilitator_error"; message: string }
-  | { kind: "invalid_amount"; message: string };
+export type RefundPaymentInput = RefundSendInput;
 
 /**
- * Issues an on-chain USDC refund from the Server Wallet back to the payer.
- * Used when the platform-side action fails after settlement. Caller must
- * hold a status-scoped charge transition so refunds are not double-issued.
- *
- * Refunds never go through a facilitator (it only handles agent->merchant;
- * this is merchant->agent). Dispatch: celo/refundCelo for celo and
- * arc/refundArc for arc (the CDP SDK can send on neither),
- * cdp.evm.sendTransaction for the CDP EVM networks, solana/refundSolana for
- * solana.
+ * confirmed: the refund landed. unconfirmed: it was sent but did not confirm
+ * in time; it may still land, so it is neither refunded nor failed yet.
+ * failed: nothing was sent, or the chain reverted it.
+ */
+export type RefundPaymentResult =
+  | { status: "confirmed"; refundTxHash: string; refundedAt: string }
+  | { status: "unconfirmed"; refundTxHash: string; message: string }
+  | { status: "failed"; refundTxHash: string | null; message: string };
+
+/**
+ * Sends an on-chain USDC refund from the payout wallet back to the payer
+ * and waits for the chain to confirm it. Callers record "refunded" only on
+ * a confirmed result (charges/chargeLifecycle.refundCharge).
  */
 export async function refundPayment(
-  input: RefundPaymentInput
+  input: RefundPaymentInput,
 ): Promise<RefundPaymentResult> {
-  if (input.amountUsdc <= 0) {
-    return {
-      ok: false,
-      error: {
-        kind: "invalid_amount",
-        message: "Refund amount must be greater than zero.",
-      },
-    };
+  if (!Number.isFinite(input.amountUsdc) || input.amountUsdc <= 0) {
+    return { status: "failed", refundTxHash: null, message: "Refund amount must be a positive number." };
   }
 
-  try {
-    if (input.network.name === "celo") {
-      return await refundCeloViaModule(input);
-    }
+  const sendResult = await sendRefund(input);
+  if (!sendResult.ok) {
+    return { status: "failed", refundTxHash: null, message: sendResult.message };
+  }
 
-    if (input.network.name === "arc") {
-      return await refundArcViaModule(input);
-    }
+  const confirmation = await confirmTransaction({
+    network: input.network,
+    txHash: sendResult.txHash,
+    mode: "wait",
+  });
+  switch (confirmation.status) {
+    case "confirmed":
+      return { status: "confirmed", refundTxHash: sendResult.txHash, refundedAt: new Date().toISOString() };
+    case "reverted":
+      return { status: "failed", refundTxHash: sendResult.txHash, message: "The refund transaction reverted on-chain." };
+    case "pending":
+      return {
+        status: "unconfirmed",
+        refundTxHash: sendResult.txHash,
+        message: "The refund was sent but has not confirmed yet.",
+      };
+  }
+}
 
-    if (input.network.isEvm) {
-      return await refundEvm(input);
+/** Picks the sender for the network's settlement lane. */
+function sendRefund(input: RefundSendInput): Promise<RefundSendResult> {
+  const { network } = input;
+  switch (network.settlement) {
+    case "celo":
+      return refundCelo(input);
+    case "arc_local":
+      return refundArc(input);
+    case "coinbase_cdp":
+      return network.family === "evm" ? refundCdpEvm(input, network) : refundSolana(input);
+    default: {
+      const unhandledLane: never = network.settlement;
+      return Promise.resolve({ ok: false, message: `No refund sender for lane ${String(unhandledLane)}.` });
     }
-
-    return await refundSolanaViaModule(input);
-  } catch (err) {
-    console.error("[refundPayment] Refund threw:", err instanceof Error ? err.message : err);
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: err instanceof Error ? err.message : "Unknown error during refund.",
-      },
-    };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Reason classification
 // ---------------------------------------------------------------------------
 
+type VerifyReasonKind =
+  | "invalid_signature"
+  | "amount_mismatch"
+  | "insufficient_funds"
+  | "network_mismatch"
+  | "recipient_mismatch"
+  | "replay_detected"
+  | "authorization_expired";
+
 /**
- * Encodes an ERC-20 transfer(address,uint256) calldata as a hex string.
- * No external ABI library needed; the encoding is deterministic.
- * Exported for reuse by celo/refundCelo.ts (that module is loaded via
- * dynamic import below, so the cycle never materializes at init time).
+ * Exact reason codes with a specific meaning.
+ * sourceRef: @x402/evm dist/cjs/exact/facilitator/index.js (Err* constants),
+ * plus the x402 core "insufficient_funds" reason.
  */
-export function encodeErc20TransferCalldata(
-  toAddress: string,
-  amountAtomic: bigint
-): `0x${string}` {
-  // transfer(address,uint256) selector = keccak256("transfer(address,uint256)")[0:4]
-  const selector = "a9059cbb";
-  const paddedTo = toAddress.toLowerCase().replace("0x", "").padStart(64, "0");
-  const paddedAmount = amountAtomic.toString(16).padStart(64, "0");
-  return `0x${selector}${paddedTo}${paddedAmount}`;
-}
+const VERIFY_REASON_KINDS: Readonly<Record<string, VerifyReasonKind>> = {
+  invalid_exact_evm_signature: "invalid_signature",
+  invalid_permit2_signature: "invalid_signature",
+  invalid_exact_evm_authorization_value: "amount_mismatch",
+  permit2_amount_mismatch: "amount_mismatch",
+  insufficient_funds: "insufficient_funds",
+  invalid_exact_evm_insufficient_balance: "insufficient_funds",
+  permit2_insufficient_balance: "insufficient_funds",
+  invalid_exact_evm_network_mismatch: "network_mismatch",
+  invalid_exact_evm_recipient_mismatch: "recipient_mismatch",
+  invalid_permit2_recipient_mismatch: "recipient_mismatch",
+  invalid_exact_evm_nonce_already_used: "replay_detected",
+  invalid_exact_evm_payload_authorization_valid_before: "authorization_expired",
+  invalid_exact_evm_payload_authorization_valid_after: "authorization_expired",
+  permit2_deadline_expired: "authorization_expired",
+  eip2612_deadline_expired: "authorization_expired",
+};
 
-async function refundEvm(
-  input: RefundPaymentInput
-): Promise<RefundPaymentResult> {
-  // The Server Wallet that received the payment is the refund sender.
-  const senderAddress = getRecipientAddress(input.network);
-  if (!senderAddress) {
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: "X402_RECIPIENT_EVM env var not set. Cannot issue EVM refund.",
-      },
-    };
+/**
+ * Prefixes of payment-rejection codes. A code in these families means the
+ * facilitator checked the payment and refused it: the client's problem
+ * (4xx), never a facilitator outage (5xx). Solana codes from the CDP
+ * facilitator land here by family.
+ */
+const PAYMENT_REJECTION_PREFIXES = [
+  "invalid_",
+  "permit2_",
+  "erc20_",
+  "eip2612_",
+  "eip6492_",
+  "unsupported_",
+] as const;
+
+/** CDP's sanctions screening reasons are not part of the x402 code set. */
+const SANCTION_REASON_MARKERS = ["sanction", "kyt", "blocked"] as const;
+
+function buildVerifyError(params: {
+  reason: string | undefined;
+  message: string | undefined;
+  payer: string | undefined;
+  input: VerifyPaymentInput;
+  requirements: PaymentRequirements;
+  payload: PaymentPayload;
+}): VerifyPaymentError {
+  const reason = params.reason ?? "";
+  const displayMessage = params.message || params.reason || "Verification failed.";
+
+  const specificKind = VERIFY_REASON_KINDS[reason];
+  if (specificKind) {
+    switch (specificKind) {
+      case "invalid_signature":
+        return { kind: "invalid_signature", message: displayMessage };
+      case "amount_mismatch":
+        return {
+          kind: "amount_mismatch",
+          expected: params.input.amountUsdc,
+          received: readSignedAmountUsdc(params.payload, params.input.network),
+        };
+      case "insufficient_funds":
+        return { kind: "insufficient_funds", message: displayMessage };
+      case "network_mismatch":
+        return {
+          kind: "network_mismatch",
+          expected: params.requirements.network,
+          received: params.payload.accepted?.network ?? "unknown",
+        };
+      case "recipient_mismatch":
+        return {
+          kind: "recipient_mismatch",
+          expected: params.requirements.payTo,
+          received: params.payload.accepted?.payTo ?? "unknown",
+        };
+      case "replay_detected":
+        return { kind: "replay_detected", nonce: extractNonceFromPayload(params.payload) ?? "unavailable" };
+      case "authorization_expired":
+        return { kind: "authorization_expired", message: displayMessage };
+      default: {
+        const unhandledKind: never = specificKind;
+        return { kind: "facilitator_error", message: `Unhandled verify reason ${String(unhandledKind)}.` };
+      }
+    }
   }
 
-  // Resolved here, not in refundPayment: celo refunds must not require the
-  // CDP env vars this getter throws on.
-  const cdp = getCdpClient();
-
-  const atomicAmount = BigInt(
-    usdcToAtomic(input.amountUsdc, input.network.usdcDecimals)
-  );
-  const calldata = encodeErc20TransferCalldata(input.payerAddress, atomicAmount);
-
-  // CDP sendTransaction for EVM. The CDP SDK speaks the same short network
-  // names as WalletChain for base, polygon, and arbitrum; celo never reaches
-  // this function (dispatched to celo/refundCelo.ts in refundPayment).
-  const result = await cdp.evm.sendTransaction({
-    address: senderAddress as `0x${string}`,
-    transaction: {
-      to: input.network.usdcAddress as `0x${string}`,
-      data: calldata,
-      value: BigInt(0),
-    },
-    network: input.network.name as "base" | "polygon" | "arbitrum",
-  });
-
-  return {
-    ok: true,
-    refundTxHash: result.transactionHash,
-    refundedAt: new Date().toISOString(),
-  };
-}
-
-async function refundCeloViaModule(
-  input: RefundPaymentInput
-): Promise<RefundPaymentResult> {
-  // Delegate to the dedicated Celo refund module (locally signed via the
-  // operator-held key; the CDP SDK cannot send on Celo).
-  const { refundCelo } = await import("@/lib/x402/celo/refundCelo");
-
-  const result = await refundCelo({
-    payerAddress: input.payerAddress,
-    amountUsdc: input.amountUsdc,
-    network: input.network,
-    reason: input.reason,
-  });
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: result.error.message,
-      },
-    };
+  const reasonLower = reason.toLowerCase();
+  if (SANCTION_REASON_MARKERS.some((marker) => reasonLower.includes(marker))) {
+    return { kind: "kyt_sanctioned", payerAddress: params.payer ?? "unavailable" };
   }
-
-  return {
-    ok: true,
-    refundTxHash: result.refundTxHash,
-    refundedAt: new Date().toISOString(),
-  };
-}
-
-async function refundArcViaModule(
-  input: RefundPaymentInput
-): Promise<RefundPaymentResult> {
-  // Delegate to the dedicated Arc refund module (locally signed with the
-  // Arc operations key; the CDP SDK cannot send on Arc either).
-  const { refundArc } = await import("@/lib/x402/arc/refundArc");
-
-  const result = await refundArc({
-    payerAddress: input.payerAddress,
-    amountUsdc: input.amountUsdc,
-    network: input.network,
-    reason: input.reason,
-  });
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: result.error.message,
-      },
-    };
+  if (PAYMENT_REJECTION_PREFIXES.some((prefix) => reasonLower.startsWith(prefix))) {
+    return { kind: "invalid_payment", message: displayMessage };
   }
-
-  return {
-    ok: true,
-    refundTxHash: result.refundTxHash,
-    refundedAt: new Date().toISOString(),
-  };
-}
-
-async function refundSolanaViaModule(
-  input: RefundPaymentInput
-): Promise<RefundPaymentResult> {
-  // Delegate to the dedicated Solana refund module.
-  const { refundSolana } = await import("@/lib/x402/solana/refundSolana");
-
-  const result = await refundSolana({
-    payerAddress: input.payerAddress,
-    amountUsdc: input.amountUsdc,
-    network: input.network,
-    reason: input.reason,
-  });
-
-  if (!result.ok) {
-    return {
-      ok: false,
-      error: {
-        kind: "facilitator_error",
-        message: result.error.message,
-      },
-    };
-  }
-
-  return {
-    ok: true,
-    refundTxHash: result.refundTxHash,
-    refundedAt: new Date().toISOString(),
-  };
+  return { kind: "facilitator_error", message: displayMessage };
 }
 
 /**
- * Maps the facilitator's invalidReason string to a typed error variant.
- *
- * The @x402/core SDK does not define an exhaustive set of invalidReason
- * values. The mapping below covers known reasons from the Coinbase-hosted
- * facilitator. Unknown reasons fall through to "facilitator_error".
+ * Settle reasons that prove nothing was broadcast. The facilitator re-runs
+ * verify inside settle, so any verify-class rejection stops it before the
+ * transfer is sent. Everything else is treated as indeterminate.
+ * sourceRef: @x402/evm dist/cjs/exact/facilitator/index.js, x402 core reasons
  */
-function mapVerifyInvalidReason(
+const DEFINITIVE_SETTLE_REASONS: Readonly<Record<string, "not_verified" | "insufficient_funds">> = {
+  insufficient_funds: "insufficient_funds",
+  invalid_exact_evm_insufficient_balance: "insufficient_funds",
+  permit2_insufficient_balance: "insufficient_funds",
+  invalid_exact_evm_signature: "not_verified",
+  invalid_exact_evm_authorization_value: "not_verified",
+  invalid_exact_evm_network_mismatch: "not_verified",
+  invalid_exact_evm_recipient_mismatch: "not_verified",
+  invalid_exact_evm_payload_authorization_valid_before: "not_verified",
+  invalid_exact_evm_payload_authorization_valid_after: "not_verified",
+  invalid_exact_evm_token_name_mismatch: "not_verified",
+  invalid_exact_evm_token_version_mismatch: "not_verified",
+  invalid_exact_evm_missing_eip712_domain: "not_verified",
+  invalid_exact_evm_eip3009_not_supported: "not_verified",
+  invalid_exact_evm_scheme: "not_verified",
+  invalid_exact_evm_transaction_simulation_failed: "not_verified",
+  invalid_payload: "not_verified",
+  invalid_payment_requirements: "not_verified",
+  invalid_scheme: "not_verified",
+  invalid_network: "not_verified",
+  invalid_x402_version: "not_verified",
+  unsupported_scheme: "not_verified",
+  unsupported_payload_type: "not_verified",
+};
+
+function classifySettleFailure(
   reason: string | undefined,
   message: string | undefined,
-  payer: string | undefined,
-  input: VerifyPaymentInput,
-  payload: PaymentPayload
-): VerifyPaymentError {
-  const displayMessage = message || reason || "Verification failed.";
-  const reasonLower = (reason || "").toLowerCase();
-
-  if (reasonLower.includes("signature") || reasonLower.includes("invalid_signature")) {
-    return { kind: "invalid_signature", message: displayMessage };
-  }
-
-  if (reasonLower.includes("amount") || reasonLower.includes("insufficient")) {
-    // The received amount here is display-only error context, not settlement
-    // math, so the float division is acceptable.
-    const receivedAtomic = payload.accepted?.amount;
-    return {
-      kind: "amount_mismatch",
-      expected: input.amountUsdc,
-      received: receivedAtomic
-        ? Number(receivedAtomic) / 10 ** input.network.usdcDecimals
-        : 0,
-    };
-  }
-
-  if (reasonLower.includes("replay") || reasonLower.includes("nonce")) {
-    const nonce = extractNonceFromPayload(payload) ?? "unavailable";
-    return { kind: "replay_detected", nonce };
-  }
-
-  if (reasonLower.includes("sanction") || reasonLower.includes("kyt") || reasonLower.includes("blocked")) {
-    return { kind: "kyt_sanctioned", payerAddress: payer ?? "unavailable" };
-  }
-
-  return { kind: "facilitator_error", message: displayMessage };
-}
-
-/**
- * Maps the facilitator's settle errorReason to a typed error variant.
- */
-function mapSettleErrorReason(
-  reason: string | undefined,
-  message: string | undefined
+  transaction: string | undefined,
 ): SettlePaymentError {
   const displayMessage = message || reason || "Settlement failed.";
-  const reasonLower = (reason || "").toLowerCase();
-
-  if (reasonLower.includes("not_verified") || reasonLower.includes("unverified")) {
-    return { kind: "not_verified", message: displayMessage };
-  }
-
-  if (reasonLower.includes("insufficient") || reasonLower.includes("balance")) {
+  const definitiveKind = reason ? DEFINITIVE_SETTLE_REASONS[reason] : undefined;
+  if (definitiveKind === "insufficient_funds") {
     return { kind: "insufficient_funds", message: displayMessage };
   }
-
-  if (reasonLower.includes("timeout") || reasonLower.includes("timed_out")) {
-    return { kind: "timeout", message: displayMessage };
+  if (definitiveKind === "not_verified") {
+    return { kind: "not_verified", message: displayMessage };
   }
+  return { kind: "facilitator_error", message: displayMessage, transaction: transaction || null };
+}
 
-  return { kind: "facilitator_error", message: displayMessage };
+/** The amount the payer actually signed, for error context only. */
+function readSignedAmountUsdc(payload: PaymentPayload, network: NetworkConfig): number {
+  const innerPayload: unknown = payload.payload;
+  let atomicAmount: unknown = payload.accepted?.amount;
+  if (typeof innerPayload === "object" && innerPayload !== null && "authorization" in innerPayload) {
+    const authorization: unknown = innerPayload.authorization;
+    if (typeof authorization === "object" && authorization !== null && "value" in authorization) {
+      atomicAmount = authorization.value;
+    }
+  }
+  const parsedAmount = typeof atomicAmount === "string" ? Number(atomicAmount) : Number.NaN;
+  return Number.isFinite(parsedAmount) ? parsedAmount / 10 ** network.usdcDecimals : 0;
 }

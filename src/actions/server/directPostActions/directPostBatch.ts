@@ -15,6 +15,7 @@ import type {
   Platform,
 } from "@/lib/types/database.types";
 import type { PlatformOptions } from "@/lib/types/dbTypes";
+import type { PreflightResult } from "@/lib/types/preflight";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { randomUUID } from "node:crypto";
@@ -300,6 +301,74 @@ export async function directPostBatch(
       eventIds: [],
     };
   }
+}
+
+/**
+ * Pre-payment check for one post: the field, media-path, ownership and
+ * platform rules directPostBatch applies, plus a duplicate idempotency key,
+ * without the rate limit or the dispatch. A paid caller (x402 post-now) runs
+ * it before settlement so a post that cannot be dispatched costs nothing.
+ * directPostBatch still enforces the same rules when it runs.
+ */
+export async function preflightDirectPost(
+  post: DirectPostData,
+  principalId: string,
+): Promise<PreflightResult> {
+  const validationError = validatePostFields(post, principalId);
+  if (validationError) {
+    return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
+  }
+
+  const ownership = await checkOwnershipAndPlatformMatch([post], principalId);
+  if (!ownership.success) {
+    return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: ownership.message };
+  }
+  if (!ownership.ownedIds.has(post.socialAccountId)) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      errorKind: "account_not_owned",
+      message: "This social account does not belong to the paying wallet.",
+    };
+  }
+  const accountPlatform = ownership.platformByAccountId.get(post.socialAccountId);
+  if (accountPlatform && accountPlatform !== post.platform) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      errorKind: "platform_mismatch",
+      message: `Account platform is ${accountPlatform}, post declared ${post.platform}.`,
+    };
+  }
+
+  // dispatchPostNowEvents skips an already-used key and reports success, so a
+  // paid retry with the same key would be charged for a post it never gets.
+  if (post.idempotency_key) {
+    const { data: existingLocks, error: lockLookupError } = await adminSupabase
+      .from("pending_direct_posts")
+      .select("event_id")
+      .eq("principal_id", principalId)
+      .eq("idempotency_key", post.idempotency_key)
+      .limit(1);
+    if (lockLookupError) {
+      return {
+        ok: false,
+        httpStatus: 500,
+        errorKind: "precheck_failed",
+        message: `Idempotency lookup failed: ${lockLookupError.message}`,
+      };
+    }
+    if (existingLocks && existingLocks.length > 0) {
+      return {
+        ok: false,
+        httpStatus: 409,
+        errorKind: "duplicate_idempotency_key",
+        message: "A post with this idempotency_key was already dispatched.",
+      };
+    }
+  }
+
+  return { ok: true };
 }
 
 // ---------- helpers ----------

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 
 /**
  * Status-scoped transitions for x402_charges rows.
@@ -11,7 +12,8 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
  * failed overwrites). A zero-row result means another request transitioned
  * the charge first; callers decide what that means for their flow.
  *
- * Called by: x402PaidEndpoint (steps 10-13)
+ * Called by: charges/chargeLifecycle.ts, solanaActions/postNowBlink.ts,
+ *            inngest/functions/sweepX402ReconciliationCron.ts
  * Tables touched: x402_charges (update), x402_refunds (insert, refund path)
  *
  * All functions return errors as values. Never throw.
@@ -21,22 +23,24 @@ export type ChargeTransitionResult =
   | { success: true }
   | { success: false; reason: "not_in_expected_status" | "db_error"; message: string };
 
-/** pending -> settled, recording the on-chain settlement facts. */
+/**
+ * pending -> settled, recording the settlement transaction. Facilitator
+ * settlements leave block number and fee null (no SettleResponse carries
+ * them); the Blink path, which reads the chain itself, passes the slot.
+ */
 export async function markChargeSettled(params: {
   chargeId: string;
   txHash: string;
-  blockNumber: number | null;
-  facilitatorFeeUsdc: number | null;
   settledAt: string;
+  blockNumber?: number;
 }): Promise<ChargeTransitionResult> {
   const { data: updatedRows, error } = await adminSupabase
     .from("x402_charges")
     .update({
       status: "settled",
       tx_hash: params.txHash,
-      block_number: params.blockNumber,
-      facilitator_fee_usdc: params.facilitatorFeeUsdc,
       settled_at: params.settledAt,
+      ...(params.blockNumber === undefined ? {} : { block_number: params.blockNumber }),
     })
     .eq("id", params.chargeId)
     .eq("status", "pending")
@@ -88,11 +92,9 @@ export async function markChargeFailed(params: {
 /**
  * settled -> refunded, plus the x402_refunds audit row.
  *
- * Call ONLY after the on-chain refund actually succeeded; recording a
- * refund that never happened would permanently mark the payer as made
- * whole. A failed on-chain refund goes through markChargeFailed with a
- * refund-failed error message instead, flagging the charge for manual
- * reconciliation.
+ * Call ONLY after the chain confirmed the refund; recording a refund that
+ * never landed would permanently mark the payer as made whole. A failed
+ * refund goes through markChargeFailed with a refund_failed message instead.
  */
 export async function markChargeRefunded(params: {
   chargeId: string;
@@ -132,12 +134,17 @@ export async function markChargeRefunded(params: {
     });
 
   if (refundInsertError) {
-    // The charge already says "refunded" and the on-chain refund happened;
-    // losing the x402_refunds row is an audit gap, not a money error, so
-    // log loudly (with the tx hash for reconciliation) and report success.
+    // The charge already says "refunded" and the refund landed; losing the
+    // x402_refunds row would lose the only copy of the refund tx hash, so it
+    // goes to reconciliation. Money-wise this is still a success.
     console.error(
       `[markChargeRefunded] x402_refunds insert failed for charge ${params.chargeId} (refund tx ${params.refundTxHash}): ${refundInsertError.message}`
     );
+    await recordX402Reconciliation({
+      kind: "refund_failed",
+      chargeId: params.chargeId,
+      txHash: params.refundTxHash,
+    });
   }
 
   return { success: true };

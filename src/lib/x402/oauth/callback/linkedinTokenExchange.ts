@@ -14,7 +14,6 @@ const LinkedInTokenSchema = z.object({
 const LinkedInProfileSchema = z.object({
   sub: z.string().min(1),
   name: z.string().optional(),
-  email: z.string().optional(),
   picture: z.string().optional(),
 });
 
@@ -26,7 +25,6 @@ export interface LinkedInExchangeResult {
   accountIdentifier: string;
   profile: {
     name?: string;
-    email?: string;
     avatarUrl?: string;
     sub?: string;
   };
@@ -158,7 +156,6 @@ export async function exchangeLinkedInForX402(
     accountIdentifier: profile.sub,
     profile: {
       name: profile.name,
-      email: profile.email,
       avatarUrl: profile.picture,
       sub: profile.sub,
     },

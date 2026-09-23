@@ -20,9 +20,6 @@ import { loadProofLedger } from "@/lib/x402/proof/proofLedger";
 // bounding the read load on a public, unauthenticated route.
 export const revalidate = 30;
 
-/** Registry slug of the Solana entry. sourceRef: src/lib/x402/networks.ts */
-const SOLANA_NETWORK_NAME = "solana";
-
 export const metadata: Metadata = {
   title: "Solana lane | Sharetopus",
   description:
@@ -52,11 +49,11 @@ https://dial.to/?action=solana-action:https://sharetopus.com/api/actions/post-no
  * the link already handed to the Solana grant reviewers is still in use.
  */
 export default async function SolanaLanePage() {
+  const solanaNetwork = NETWORKS.solana;
   const ledgerResult = await loadProofLedger({
-    networkName: SOLANA_NETWORK_NAME,
+    networkName: solanaNetwork.name,
   });
-  const solanaNetwork = NETWORKS.solana ?? null;
-  const payToAddress = solanaNetwork ? getRecipientAddress(solanaNetwork) : null;
+  const payToAddress = getRecipientAddress(solanaNetwork);
 
   const receiptState: ReceiptState = !ledgerResult.ok
     ? { kind: "unavailable" }
@@ -64,15 +61,14 @@ export default async function SolanaLanePage() {
       ? { kind: "empty" }
       : { kind: "entry", entry: ledgerResult.entries[0] };
 
-  const laneFacts: { label: string; value: string; explorerAddress?: string }[] = [];
-  if (solanaNetwork) {
-    laneFacts.push({ label: "Network", value: solanaNetwork.caipNetwork });
-    laneFacts.push({
+  const laneFacts: { label: string; value: string; explorerAddress?: string }[] = [
+    { label: "Network", value: solanaNetwork.caipNetwork },
+    {
       label: "USDC mint",
       value: solanaNetwork.usdcAddress,
       explorerAddress: solanaNetwork.usdcAddress,
-    });
-  }
+    },
+  ];
   if (payToAddress) {
     laneFacts.push({
       label: "Pay to",
@@ -117,7 +113,7 @@ export default async function SolanaLanePage() {
                       {fact.explorerAddress ? (
                         <ExplorerLink
                           href={buildExplorerAddressUrl(
-                            SOLANA_NETWORK_NAME,
+                            solanaNetwork.name,
                             fact.explorerAddress,
                           )}
                           title={fact.value}

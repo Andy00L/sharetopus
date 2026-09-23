@@ -12,7 +12,7 @@ import {
 } from "@solana/kit";
 import type { Blockhash } from "@solana/kit";
 
-import { getSolanaRpcUrl } from "@/lib/x402/config";
+import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import {
   buildCreateAssociatedTokenAccountIdempotentInstruction,
@@ -58,7 +58,7 @@ export async function buildUsdcPaymentTransaction(params: {
     findAssociatedTokenAddress(recipient, usdcMint),
   ]);
 
-  const blockhashResult = await readLatestBlockhash(getSolanaRpcUrl(params.network));
+  const blockhashResult = await readLatestBlockhash(getRpcUrl(params.network));
   if (!blockhashResult.ok) return blockhashResult;
 
   const transactionMessage = appendTransactionMessageInstructions(

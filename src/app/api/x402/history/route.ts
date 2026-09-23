@@ -4,24 +4,31 @@ import type { NextRequest } from "next/server";
 
 import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
-import type { Platform } from "@/lib/types/database.types";
+import {
+  isSchedulablePlatform,
+  type SchedulablePlatform,
+} from "@/lib/platforms/capabilities";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * GET /api/x402/history
  *
- * Pays list_history for $0.001 USDC. Reads content history for the wallet.
+ * Pays the list_history action (price per pricing_actions). Reads content
+ * history for the wallet.
  * Steps:
  * 1. Parse query params (platform, limit).
- * 2. x402 middleware handles auth, payment, charge.
+ * 2. x402 middleware handles payment and the charge.
  * 3. Query content_history filtered by principal_id.
- * 4. Return history list.
  */
 
+/** Page size bounds for ?limit. */
+const DEFAULT_HISTORY_LIMIT = 20;
+const MAX_HISTORY_LIMIT = 100;
+
 type HistoryParams = {
-  platform: Platform | undefined;
+  platform: SchedulablePlatform | undefined;
   limit: number;
 };
 
@@ -40,11 +47,6 @@ type HistoryResult = {
   }>;
 };
 
-const VALID_PLATFORMS: Platform[] = [
-  "linkedin", "tiktok", "pinterest", "instagram",
-  "facebook", "threads", "youtube", "x",
-];
-
 export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
   endpointPath: "/api/x402/history",
   rateLimitScope: "x402:history",
@@ -56,31 +58,33 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
     const platformParam = url.searchParams.get("platform");
     const limitParam = url.searchParams.get("limit");
 
-    let platform: Platform | undefined;
+    let platform: SchedulablePlatform | undefined;
     if (platformParam) {
-      if (!VALID_PLATFORMS.includes(platformParam as Platform)) {
+      // The platform registry is the one list of platform values
+      // (src/lib/platforms/capabilities.ts), not a copy kept here.
+      if (!isSchedulablePlatform(platformParam)) {
         return {
           success: false,
           httpStatus: 400,
           errorKind: "invalid_platform",
-          message: `Invalid platform "${platformParam}". Must be one of: ${VALID_PLATFORMS.join(", ")}.`,
+          message: `Invalid platform "${platformParam}".`,
         };
       }
-      platform = platformParam as Platform;
+      platform = platformParam;
     }
 
-    let limit = 20;
+    let limit = DEFAULT_HISTORY_LIMIT;
     if (limitParam) {
-      const parsed = parseInt(limitParam, 10);
-      if (isNaN(parsed) || parsed < 1 || parsed > 100) {
+      const parsedLimit = parseInt(limitParam, 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1 || parsedLimit > MAX_HISTORY_LIMIT) {
         return {
           success: false,
           httpStatus: 400,
           errorKind: "invalid_limit",
-          message: "limit must be between 1 and 100.",
+          message: `limit must be between 1 and ${MAX_HISTORY_LIMIT}.`,
         };
       }
-      limit = parsed;
+      limit = parsedLimit;
     }
 
     return { success: true, data: { platform, limit } };
@@ -89,14 +93,10 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
   resolveAction: () => ({ success: true, action: "list_history" }),
 
   handler: async ({ body, principal }) => {
-    const result = await getContentHistory(
-      principal.principalId,
-      "x402",
-      {
-        platform: body.platform,
-        limit: body.limit,
-      },
-    );
+    const result = await getContentHistory(principal.principalId, "x402", {
+      platform: body.platform,
+      limit: body.limit,
+    });
 
     if (!result.success) {
       return {
@@ -107,7 +107,7 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
       };
     }
 
-    // Project fields. content_history has no tokens to strip.
+    // Safe projection: only the fields an agent needs.
     const history = (result.data ?? []).map((entry) => ({
       id: entry.id,
       platform: entry.platform,
@@ -121,9 +121,6 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
       created_at: entry.created_at,
     }));
 
-    return {
-      success: true,
-      data: { history },
-    };
+    return { success: true, data: { history } };
   },
 });

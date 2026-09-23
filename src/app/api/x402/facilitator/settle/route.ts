@@ -9,6 +9,10 @@ import {
   readFacilitatorRequest,
   resolveFacilitatedNetwork,
 } from "@/lib/x402/arc/facilitatorApi";
+import {
+  buildRateLimitJsonResponse,
+  describeRateLimitRejection,
+} from "@/lib/x402/http/rateLimitRejection";
 
 /**
  * POST /api/x402/facilitator/settle
@@ -36,13 +40,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     60,
   );
   if (!rateLimitResult.success) {
-    return NextResponse.json(
-      { error: "rate_limited", retryAfter: rateLimitResult.resetIn ?? 60 },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimitResult.resetIn ?? 60) },
-      },
-    );
+    return buildRateLimitJsonResponse(describeRateLimitRejection(rateLimitResult));
   }
 
   // Checked before the body is read: an unauthorized caller learns nothing

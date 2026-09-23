@@ -11,8 +11,12 @@ import type { NetworkConfig } from "@/lib/x402/networks";
  */
 export type Platform = PostingPlatform;
 
-/** Result of a successful /connect call. */
-export interface ConnectSuccessPayload {
+/**
+ * Result of a successful /connect call. A type alias rather than an
+ * interface so it is assignable to Json: it is stored on the charge as the
+ * replay copy.
+ */
+export type ConnectSuccessPayload = {
   connectionId: string;
   platform: Platform;
   /** Null on idempotent reconnects: there is no new OAuth flow to run. */
@@ -25,7 +29,7 @@ export interface ConnectSuccessPayload {
   connectionToken: string | null;
   expiresAt: string;
   isReconnect: boolean;
-}
+};
 
 export interface ConnectNetworkContext {
   network: NetworkConfig;

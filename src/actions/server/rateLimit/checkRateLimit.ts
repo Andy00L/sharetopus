@@ -29,7 +29,10 @@ async function getIpAddress(): Promise<string | null> {
  * @param limit - Number of requests allowed (default: 20)
  * @param window - Time window in seconds (default: 60)
  * @param bypassSecret - Optional secret to bypass rate limiting (for internal/cron use)
- * @returns Object with success status and optional reset time
+ * @returns Object with success status, optional reset time, and on failure a
+ *   reason: "limited" (the caller hit the limit), "unidentified" (no IP or
+ *   user id to key on) or "unavailable" (the limiter itself failed, so the
+ *   caller did nothing wrong and should not be told to slow down).
  */
 export async function checkRateLimit(
   operationName: string,
@@ -37,7 +40,12 @@ export async function checkRateLimit(
   limit: number = 20,
   window: number = 60,
   bypassSecret?: string | undefined
-): Promise<{ success: boolean; message?: string; resetIn?: number }> {
+): Promise<{
+  success: boolean;
+  message?: string;
+  resetIn?: number;
+  reason?: "limited" | "unidentified" | "unavailable";
+}> {
   try {
     // Check for valid bypass secret. Compared in constant time: a plain
     // === leaks the shared cron secret's prefix through response timing.
@@ -75,6 +83,7 @@ export async function checkRateLimit(
       return {
         success: false,
         message: "Unable to identify client for rate limiting",
+        reason: "unidentified",
       };
     }
 
@@ -97,6 +106,7 @@ export async function checkRateLimit(
       success: false,
       message: "Rate limit exceeded. Please try again later.",
       resetIn: resetInSeconds,
+      reason: "limited",
     };
   } catch (error) {
     console.error(
@@ -107,6 +117,7 @@ export async function checkRateLimit(
     return {
       success: false,
       message: "Rate limit check failed",
+      reason: "unavailable",
     };
   }
 }

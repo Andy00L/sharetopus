@@ -1,12 +1,12 @@
 import "server-only";
 
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { escapeHtml } from "@/lib/api/oauth/escapeHtml";
-import { logX402Call } from "@/lib/x402/audit/logX402Call";
+import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
+import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
 import { handleOAuthCallback } from "@/lib/x402/oauth/callback/handleOAuthCallback";
 import type { OAuthCallbackResult } from "@/lib/x402/oauth/callback/handleOAuthCallback";
 import { isX402Platform, getAppUrl } from "@/lib/x402/config";
@@ -51,6 +51,21 @@ export async function GET(
 
   const platform = platformParam;
 
+  // Audit rows are written after the response is sent.
+  const auditCallback = (resultStatus: X402AuditEntry["resultStatus"]): void => {
+    const auditEntry: X402AuditEntry = {
+      principal: null,
+      action: "connect_account",
+      endpoint: `/api/oauth/callback/${platform}`,
+      chargeId: null,
+      resultStatus,
+      latencyMs: Math.round(performance.now() - startMs),
+      ipHash,
+      userAgent,
+    };
+    after(() => logX402Call(auditEntry));
+  };
+
   // Rate limit before any DB or provider work.
   const rateLimitResult = await checkRateLimit(
     "x402_oauth_callback",
@@ -59,16 +74,20 @@ export async function GET(
     60
   );
   if (!rateLimitResult.success) {
+    const rejection = describeRateLimitRejection(rateLimitResult);
+    const isLimiterOutage = rejection.errorKind === "rate_limiter_unavailable";
     return new NextResponse(
       buildHtmlPage(
-        "Too Many Requests",
-        "Too many callback attempts. Please try again shortly."
+        isLimiterOutage ? "Temporarily Unavailable" : "Too Many Requests",
+        isLimiterOutage
+          ? "The server could not process this callback right now. Please try again shortly."
+          : "Too many callback attempts. Please try again shortly."
       ),
       {
-        status: 429,
+        status: rejection.httpStatus,
         headers: {
           "Content-Type": "text/html",
-          "Retry-After": String(rateLimitResult.resetIn ?? 60),
+          "Retry-After": String(rejection.retryAfterSeconds),
         },
       }
     );
@@ -121,16 +140,7 @@ export async function GET(
         ? `OAuth provider error: ${result.error.message}`
         : result.error.message;
 
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: `/api/oauth/callback/${platform}`,
-      chargeId: null,
-      resultStatus: "error",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
+    auditCallback("error");
 
     // Share-link flows redirect to the share error page instead of inline HTML
     if (result.error.kind.startsWith("share_link_") || result.error.kind === "owner_account_limit_reached") {
@@ -148,16 +158,7 @@ export async function GET(
     );
   }
 
-  await logX402Call({
-    principal: null,
-    action: "connect_account",
-    endpoint: `/api/oauth/callback/${platform}`,
-    chargeId: null,
-    resultStatus: "ok",
-    latencyMs: Math.round(performance.now() - startMs),
-    ipHash,
-    userAgent,
-  });
+  auditCallback("ok");
 
   // Share-link flows redirect to the share success page
   if (result.shareLinkId) {
@@ -196,6 +197,7 @@ function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
     case "state_not_found":
     case "state_expired":
     case "state_already_used":
+    case "platform_mismatch":
     case "provider_error":
       return 400;
     case "token_exchange_failed":

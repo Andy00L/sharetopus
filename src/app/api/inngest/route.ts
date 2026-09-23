@@ -10,6 +10,7 @@ import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
 import { sweepOrphanStorageFiles } from "@/inngest/functions/sweepOrphanStorageFiles";
 import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthClientsCron";
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
+import { sweepX402ReconciliationCron } from "@/inngest/functions/sweepX402ReconciliationCron";
 import { processTikTokPublishWebhook } from "@/inngest/functions/processTikTokPublishWebhook";
 import { tikTokPublishStatusPollWorker } from "@/inngest/functions/tikTokPublishStatusPoll";
 import { deliverWebhook } from "@/inngest/functions/deliverWebhook";
@@ -40,6 +41,7 @@ export const { GET, POST, PUT } = serve({
     cleanupMcpAuditLogCron,
     cleanupSocialConnectionsCron,
     cleanupX402AccessLogCron,
+    sweepX402ReconciliationCron,
     deliverWebhook,
   ],
 });

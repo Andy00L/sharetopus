@@ -2,12 +2,14 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
   CreatedVia,
   Json,
   TablesInsert,
 } from "@/lib/types/database.types";
+import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
@@ -333,6 +335,85 @@ export async function schedulePostBatch(
   }
 }
 
+/**
+ * Pre-payment check for one post: the field, media-path, ownership and
+ * daily-quota rules schedulePostBatch applies, plus a duplicate idempotency
+ * key, without the rate limit or the insert. A paid caller (x402 schedule)
+ * runs it before settlement so a post that cannot be scheduled costs
+ * nothing. schedulePostBatch still enforces the same rules when it runs.
+ */
+export async function preflightSchedulePost(
+  post: SchedulePostData,
+  principalId: string,
+): Promise<PreflightResult> {
+  const validationError = validatePostFields(post, principalId);
+  if (validationError) {
+    return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
+  }
+
+  // Scheduling itself accepts any caption length, but the platform rejects
+  // an oversized one at publish time, and a publish-time failure is not
+  // refunded. A paid caller learns it now instead.
+  if (post.description) {
+    const captionLimit = resolvePlatformTextLimit(post.platform);
+    if (post.description.length > captionLimit) {
+      return {
+        ok: false,
+        httpStatus: 400,
+        errorKind: "validation_error",
+        message: `Caption exceeds ${post.platform} limit of ${captionLimit} chars (got ${post.description.length}).`,
+      };
+    }
+  }
+
+  const ownershipResult = await checkOwnership([post.socialAccountId], principalId);
+  if (!ownershipResult.success) {
+    return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: ownershipResult.message };
+  }
+  if (!ownershipResult.ownedIds.has(post.socialAccountId)) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      errorKind: "account_not_owned",
+      message: "This social account does not belong to the paying wallet.",
+    };
+  }
+
+  const quotaCheck = await checkPlatformDailyQuotas([post], principalId);
+  if (!quotaCheck.success) {
+    return { ok: false, httpStatus: 429, errorKind: "platform_quota_exceeded", message: quotaCheck.message };
+  }
+
+  // The upsert ignores an already-used key and reports success, so a paid
+  // retry with the same key would be charged for a post it never gets.
+  if (post.idempotency_key) {
+    const { data: existingPosts, error: lookupError } = await adminSupabase
+      .from("scheduled_posts")
+      .select("id")
+      .eq("principal_id", principalId)
+      .eq("idempotency_key", post.idempotency_key)
+      .limit(1);
+    if (lookupError) {
+      return {
+        ok: false,
+        httpStatus: 500,
+        errorKind: "precheck_failed",
+        message: `Idempotency lookup failed: ${lookupError.message}`,
+      };
+    }
+    if (existingPosts && existingPosts.length > 0) {
+      return {
+        ok: false,
+        httpStatus: 409,
+        errorKind: "duplicate_idempotency_key",
+        message: "A post with this idempotency_key is already scheduled.",
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
 // ---------- private helpers ----------
 
 /**
@@ -393,10 +474,12 @@ async function checkOwnership(
 > {
   const uniqueIds = [...new Set(socialAccountIds)];
 
+  // Deleted accounts cannot publish; directPostBatch filters them the same way.
   const { data, error } = await adminSupabase
     .from("social_accounts")
     .select("id")
     .eq("principal_id", principalId)
+    .is("deleted_at", null)
     .in("id", uniqueIds);
 
   if (error) {

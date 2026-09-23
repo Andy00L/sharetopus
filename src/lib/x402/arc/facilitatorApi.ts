@@ -4,11 +4,11 @@ import "server-only";
  * Shared logic behind the public Arc facilitator
  * (/api/x402/facilitator/{supported,verify,settle}).
  *
- * Arc is the one network where no hosted facilitator moves a plain EIP-3009
- * authorization from an agent's own wallet, so Sharetopus built one for
- * itself (arc/arcFacilitator.ts). This module exposes it to other Arc
- * builders over the standard x402 facilitator wire protocol, so a resource
- * server can point at it the way it would point at any other facilitator.
+ * Sharetopus settles Arc in process (arc/arcFacilitator.ts). This module
+ * exposes that facilitator to other Arc builders over the standard x402
+ * facilitator wire protocol, so a resource server can point at it the way it
+ * would point at any other facilitator, with no seller proof or Circle API
+ * key.
  *
  * Who pays for what: /supported and /verify are open, because they only
  * read the chain. /settle broadcasts, and on Arc the broadcaster pays the
@@ -29,15 +29,15 @@ import {
 } from "@x402/core/schemas";
 import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 
-import { loadArcOperationsAccount } from "@/lib/x402/arc/arcChain";
+import { getArcSigner } from "@/lib/x402/arc/arcChain";
 import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
 import type { X402FacilitatorClient } from "@/lib/x402/facilitatorClient";
-import { getNetworkConfig } from "@/lib/x402/networks";
+import { NETWORKS } from "@/lib/x402/networks";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
 /** The only network this facilitator serves. sourceRef: networks.ts */
-export const FACILITATED_NETWORK_NAME = "arc";
+const FACILITATED_NETWORK = NETWORKS.arc;
 
 /** Protocol version this facilitator speaks. */
 const X402_VERSION = 2;
@@ -50,7 +50,13 @@ export const SETTLE_KEY_HEADER = "x-api-key";
 // ---------------------------------------------------------------------------
 
 export type FacilitatedNetworkResult =
-  | { ok: true; network: NetworkConfig; facilitator: X402FacilitatorClient }
+  | {
+      ok: true;
+      network: NetworkConfig;
+      facilitator: X402FacilitatorClient;
+      /** Address that broadcasts settlements, advertised on /supported. */
+      signerAddress: string;
+    }
   | { ok: false; httpStatus: number; message: string };
 
 /**
@@ -61,24 +67,21 @@ export type FacilitatedNetworkResult =
  * unconfigured, not to read a stack trace.
  */
 export function resolveFacilitatedNetwork(): FacilitatedNetworkResult {
-  const network = getNetworkConfig(FACILITATED_NETWORK_NAME);
-  if (!network) {
-    return {
-      ok: false,
-      httpStatus: 503,
-      message: "Arc is not in this deployment's network registry.",
-    };
-  }
-  const accountResult = loadArcOperationsAccount();
-  if (!accountResult.ok) {
-    console.error(`[resolveFacilitatedNetwork] ${accountResult.message}`);
+  const signerResult = getArcSigner();
+  if (!signerResult.ok) {
+    console.error(`[resolveFacilitatedNetwork] ${signerResult.message}`);
     return {
       ok: false,
       httpStatus: 503,
       message: "This facilitator is not configured to sign on Arc right now.",
     };
   }
-  return { ok: true, network, facilitator: getFacilitatorClient(network) };
+  return {
+    ok: true,
+    network: FACILITATED_NETWORK,
+    facilitator: getFacilitatorClient(FACILITATED_NETWORK),
+    signerAddress: signerResult.signer.account.address,
+  };
 }
 
 /** The kinds advertised on /supported, with the signer that broadcasts them. */

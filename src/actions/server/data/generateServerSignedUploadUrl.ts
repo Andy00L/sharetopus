@@ -49,6 +49,48 @@ export interface GenerateUploadUrlResult {
   reason?: GenerateUploadUrlReason;
 }
 
+export type UploadRequestCheck =
+  | { ok: true }
+  | { ok: false; reason: "content_type_not_allowed" | "file_too_large"; message: string };
+
+/**
+ * Content-type allow-list and per-file size cap (image vs video, per tier),
+ * without minting anything. Exported so a paid caller (x402 upload-url) can
+ * reject a request before settlement.
+ */
+export function checkUploadRequest(input: {
+  contentType: string;
+  fileSize: number;
+  tier: PlanTier | null;
+}): UploadRequestCheck {
+  if (!ALLOWED_UPLOAD_TYPES.includes(input.contentType)) {
+    return {
+      ok: false,
+      reason: "content_type_not_allowed",
+      message: `Content type "${input.contentType}" is not allowed. Accepted: ${ALLOWED_UPLOAD_TYPES.join(", ")}.`,
+    };
+  }
+
+  const mediaKind: "image" | "video" = input.contentType.startsWith("image/")
+    ? "image"
+    : "video";
+  const limits = input.tier !== null
+    ? TIER_UPLOAD_LIMITS[input.tier]
+    : DEFAULT_UPLOAD_LIMITS;
+  const capMB = mediaKind === "image" ? limits.image : limits.video;
+  const capBytes = capMB * 1024 * 1024;
+
+  if (input.fileSize > capBytes) {
+    return {
+      ok: false,
+      reason: "file_too_large",
+      message: `${mediaKind === "image" ? "Image" : "Video"} files are capped at ${capMB} MB on your plan.`,
+    };
+  }
+
+  return { ok: true };
+}
+
 /**
  * Server-side helper that validates an upload request and mints a
  * Supabase signed upload URL.
@@ -99,31 +141,10 @@ export async function generateServerSignedUploadUrl(
     };
   }
 
-  // 3. Validate content type
-  if (!ALLOWED_UPLOAD_TYPES.includes(input.contentType)) {
-    return {
-      success: false,
-      message: `Content type "${input.contentType}" is not allowed. Accepted: ${ALLOWED_UPLOAD_TYPES.join(", ")}.`,
-      reason: "content_type_not_allowed",
-    };
-  }
-
-  // 4. Per-file size cap (image vs video, per-tier)
-  const mediaKind: "image" | "video" = input.contentType.startsWith("image/")
-    ? "image"
-    : "video";
-  const limits = input.tier !== null
-    ? TIER_UPLOAD_LIMITS[input.tier]
-    : DEFAULT_UPLOAD_LIMITS;
-  const capMB = mediaKind === "image" ? limits.image : limits.video;
-  const capBytes = capMB * 1024 * 1024;
-
-  if (input.fileSize > capBytes) {
-    return {
-      success: false,
-      message: `${mediaKind === "image" ? "Image" : "Video"} files are capped at ${capMB} MB on your plan.`,
-      reason: "file_too_large",
-    };
+  // 3-4. Content type allow-list and per-file size cap
+  const requestCheck = checkUploadRequest(input);
+  if (!requestCheck.ok) {
+    return { success: false, message: requestCheck.message, reason: requestCheck.reason };
   }
 
   // 5. Aggregate storage quota (RPC-based, accurate for any file count)

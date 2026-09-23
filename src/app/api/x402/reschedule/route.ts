@@ -5,26 +5,29 @@ import { z } from "zod";
 
 import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
+import { preflightScheduledPostChange } from "@/actions/server/scheduleActions/preflightScheduledPostChange";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * POST /api/x402/reschedule
  *
- * Pays reschedule for $0.10 USDC. Changes the scheduled_at of one post.
+ * Pays the reschedule action (price per pricing_actions). Changes the
+ * scheduled_at of one post.
  * Steps:
  * 1. Parse body (post_id, new_scheduled_time).
- * 2. x402 middleware handles auth, payment, charge.
- * 3. Call updateScheduledTimeBatch with createdVia="x402".
- * 4. Return reschedule result.
+ * 2. Before settlement, check the post belongs to the payer and is still
+ *    scheduled or cancelled; a failure here costs nothing.
+ * 3. x402 middleware handles payment and the charge.
+ * 4. Call updateScheduledTimeBatch with createdVia="x402".
  */
 
 const RescheduleBodySchema = z.object({
   post_id: z.string().uuid(),
   new_scheduled_time: z.string().refine(
-    (val) => {
-      const date = new Date(val);
+    (value) => {
+      const date = new Date(value);
       return !isNaN(date.getTime()) && date.getTime() > Date.now();
     },
     { message: "new_scheduled_time must be a valid ISO 8601 date in the future." }
@@ -53,7 +56,7 @@ export const POST = x402PaidEndpoint<RescheduleBody, RescheduleResult>({
           success: false,
           httpStatus: 400,
           errorKind: "validation_error",
-          message: parsed.error.issues.map((i) => i.message).join("; "),
+          message: parsed.error.issues.map((issue) => issue.message).join("; "),
         };
       }
       return { success: true, data: parsed.data };
@@ -68,6 +71,13 @@ export const POST = x402PaidEndpoint<RescheduleBody, RescheduleResult>({
   },
 
   resolveAction: () => ({ success: true, action: "reschedule" }),
+
+  precheck: ({ body, principal }) =>
+    preflightScheduledPostChange({
+      postIds: [body.post_id],
+      principalId: principal.principalId,
+      eligibleStatuses: ["scheduled", "cancelled"],
+    }),
 
   handler: async ({ body, principal, requestId }) => {
     const result = await updateScheduledTimeBatch(

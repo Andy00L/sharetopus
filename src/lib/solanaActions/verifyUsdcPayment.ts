@@ -3,7 +3,7 @@ import "server-only";
 import { createSolanaRpc, signature as toSignature } from "@solana/kit";
 import type { Signature } from "@solana/kit";
 
-import { getSolanaRpcUrl } from "@/lib/x402/config";
+import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
 /**
@@ -68,7 +68,7 @@ export async function verifyUsdcPayment(params: {
     };
   }
 
-  const rpc = createSolanaRpc(getSolanaRpcUrl(params.network));
+  const rpc = createSolanaRpc(getRpcUrl(params.network));
   let transaction: Awaited<ReturnType<typeof fetchConfirmedTransaction>> = null;
   for (let attempt = 0; attempt < CONFIRMATION_POLL_ATTEMPTS; attempt += 1) {
     try {

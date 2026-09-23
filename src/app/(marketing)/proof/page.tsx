@@ -10,8 +10,7 @@ import type { ReceiptState } from "@/components/proof/LatestReceipt";
 import { ProofLedgerTable } from "@/components/proof/ProofLedgerTable";
 import { truncateMiddle } from "@/components/proof/ledgerFormat";
 import { getRecipientAddress } from "@/lib/x402/config";
-import { NETWORKS } from "@/lib/x402/networks";
-import type { NetworkConfig } from "@/lib/x402/networks";
+import { getNetworkConfig } from "@/lib/x402/networks";
 import {
   buildExplorerAddressUrl,
   networkDisplayName,
@@ -67,9 +66,7 @@ export default async function ProofPage() {
     : [];
   const laneFacts = provenNetworkNames
     .map((networkName) => {
-      const network: NetworkConfig | undefined = (
-        NETWORKS as Record<string, NetworkConfig | undefined>
-      )[networkName];
+      const network = getNetworkConfig(networkName);
       if (!network) return null;
       const payToAddress = getRecipientAddress(network);
       if (!payToAddress) return null;

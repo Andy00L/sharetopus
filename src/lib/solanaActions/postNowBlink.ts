@@ -8,16 +8,12 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { resolveExistingWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
-import {
-  markChargeFailed,
-  markChargeRefunded,
-  markChargeSettled,
-} from "@/lib/x402/charges/chargeTransitions";
+import { refundCharge } from "@/lib/x402/charges/chargeLifecycle";
+import { markChargeSettled } from "@/lib/x402/charges/chargeTransitions";
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
 import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/config";
 import type { Platform } from "@/lib/x402/connect/types";
-import { refundPayment } from "@/lib/x402/facilitator";
 import { NETWORKS } from "@/lib/x402/networks";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { buildKnownExplorerTxUrl } from "@/lib/x402/proof/explorer";
@@ -64,12 +60,6 @@ const DIRECT_SOLANA_FACILITATOR = "solana_direct";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-// Module-load assertion, same pattern as networks.ts for "base".
-if (!NETWORKS.solana) {
-  throw new Error(
-    "[postNowBlink] Solana entry missing from NETWORKS. This is a build-time configuration error.",
-  );
-}
 const SOLANA_NETWORK = NETWORKS.solana;
 
 export interface PostNowBlinkTarget {
@@ -304,7 +294,7 @@ export async function confirmPostNowPayment(params: {
     action: BLINK_ACTION,
     amountUsdc: priceResult.usdcPrice,
     amountUsdAtReceipt: null,
-    network: SOLANA_NETWORK.name,
+    network: SOLANA_NETWORK,
     nonce: verification.txSignature,
     requestId,
     payerAddress: verification.payerAddress,
@@ -328,7 +318,6 @@ export async function confirmPostNowPayment(params: {
     chargeId,
     txHash: verification.txSignature,
     blockNumber: Number(verification.slot),
-    facilitatorFeeUsdc: null,
     settledAt:
       verification.blockTimeUnixSeconds !== null
         ? new Date(Number(verification.blockTimeUnixSeconds) * 1000).toISOString()
@@ -471,9 +460,10 @@ async function checkAccountOwnership(
 }
 
 /**
- * Mirrors the x402 middleware's refundable-failure step: refund on-chain
- * first, then record it; when the refund fails, flag the charge for manual
- * reconciliation. Always resolves to the failure the client should see.
+ * The x402 middleware's refundable-failure step, through the same charge
+ * lifecycle: refund on-chain, record "refunded" only once the chain confirms
+ * it, and leave a reconciliation row otherwise. Always resolves to the
+ * failure the client should see.
  */
 async function refundAndFail(params: {
   chargeId: string;
@@ -484,55 +474,23 @@ async function refundAndFail(params: {
   httpStatus: number;
   reason: string;
 }): Promise<BlinkFailure> {
-  const refundResult = await refundPayment({
-    originalTxHash: params.txSignature,
+  const refundOutcome = await refundCharge({
+    chargeId: params.chargeId,
+    settleTxHash: params.txSignature,
     payerAddress: params.payerAddress,
     amountUsdc: params.amountUsdc,
     network: SOLANA_NETWORK,
     reason: params.reason,
+    principalId: params.principalId,
   });
 
-  if (refundResult.ok) {
-    const refundedTransition = await markChargeRefunded({
-      chargeId: params.chargeId,
-      reason: params.reason,
-      refundedUsdc: params.amountUsdc,
-      refundTxHash: refundResult.refundTxHash,
-      initiatedBy: params.principalId,
-    });
-    if (!refundedTransition.success) {
-      console.error(
-        `[refundAndFail] CHARGE RECONCILIATION NEEDED: charge ${params.chargeId} refunded on-chain (refund tx ${refundResult.refundTxHash}) but could not be recorded: ${refundedTransition.message}`,
-      );
-    }
-    return {
-      ok: false,
-      httpStatus: params.httpStatus,
-      message: `${params.reason} Your payment was refunded.`,
-      refundTxHash: refundResult.refundTxHash,
-    };
-  }
-
-  console.error(
-    `[refundAndFail] REFUND FAILED for charge ${params.chargeId} (settle tx ${params.txSignature}): ${refundResult.error.message}`,
-  );
-  await recordX402Reconciliation({
-    kind: "refund_failed",
-    chargeId: params.chargeId,
-    txHash: params.txSignature,
-    payerAddress: params.payerAddress,
-    network: SOLANA_NETWORK.name,
-  });
-  await markChargeFailed({
-    chargeId: params.chargeId,
-    fromStatus: "settled",
-    errorMessage: `refund_failed: ${params.reason}`,
-  });
   return {
     ok: false,
     httpStatus: params.httpStatus,
-    message: `${params.reason} The refund could not be sent automatically; support has been notified.`,
-    refundTxHash: null,
+    message: refundOutcome.refundInitiated
+      ? `${params.reason} Your payment is being refunded.`
+      : `${params.reason} The refund could not be sent automatically; it is queued for manual review.`,
+    refundTxHash: refundOutcome.refundTxHash,
   };
 }
 

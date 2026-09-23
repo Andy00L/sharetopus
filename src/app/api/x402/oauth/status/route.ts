@@ -1,11 +1,14 @@
 import "server-only";
 
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import { logX402Call } from "@/lib/x402/audit/logX402Call";
+import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
+import {
+  buildRateLimitJsonResponse,
+  describeRateLimitRejection,
+} from "@/lib/x402/http/rateLimitRejection";
 import { handleStatusQuery } from "@/lib/x402/oauth/status/handleStatusQuery";
 
 export const runtime = "nodejs";
@@ -17,10 +20,12 @@ const ENDPOINT_PATH = "/api/x402/oauth/status";
  * GET /api/x402/oauth/status
  * Headers: Authorization: Bearer <connectionToken>
  *
- * Returns current state of an OAuth connection. Polled by agents during OAuth flow.
+ * Returns current state of an OAuth connection. Polled by agents during the
+ * OAuth flow, so it is the busiest x402 route: a routine successful poll
+ * writes only its poll counter, and audit rows are kept for rejections and
+ * written after the response is sent.
  *
  * Auth: HMAC-signed connectionToken issued at /connect time.
- *
  * Rate limit: 120/min per IP (x402_oauth_status_poll scope).
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -28,103 +33,58 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
 
-  // -- Rate limit
-  const rateLimitResult = await checkRateLimit(
-    "x402_oauth_status_poll",
-    null,
-    120,
-    60
-  );
-  if (!rateLimitResult.success) {
-    await logX402Call({
+  const auditRejection = (resultStatus: X402AuditEntry["resultStatus"]): void => {
+    const auditEntry: X402AuditEntry = {
       principal: null,
       action: "connect_account",
       endpoint: ENDPOINT_PATH,
       chargeId: null,
-      resultStatus: "rate_limited",
+      resultStatus,
       latencyMs: Math.round(performance.now() - startMs),
       ipHash,
       userAgent,
-    });
-    return NextResponse.json(
-      {
-        error: "rate_limited",
-        retryAfter: rateLimitResult.resetIn ?? 60,
-      },
-      {
-        status: 429,
-        headers: { "Retry-After": String(rateLimitResult.resetIn ?? 60) },
-      }
-    );
+    };
+    after(() => logX402Call(auditEntry));
+  };
+
+  // Step 1: rate limit per IP.
+  const rateLimitResult = await checkRateLimit("x402_oauth_status_poll", null, 120, 60);
+  if (!rateLimitResult.success) {
+    const rejection = describeRateLimitRejection(rateLimitResult);
+    auditRejection(rejection.auditStatus);
+    return buildRateLimitJsonResponse(rejection);
   }
 
-  // -- Extract Bearer token
+  // Step 2: bearer token.
   const authHeader = request.headers.get("authorization");
-  const connectionToken = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : "";
+  const connectionToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
   if (!connectionToken) {
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "error",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
+    auditRejection("error");
     return NextResponse.json(
       {
         error: "missing_authorization",
         message: "Authorization: Bearer <connectionToken> header is required.",
       },
-      { status: 401 }
+      { status: 401 },
     );
   }
 
-  // -- Query status
+  // Step 3: verify the token and read the connection.
   const result = await handleStatusQuery({ connectionToken }, ipHash);
 
   if (!result.ok) {
-    const status = mapStatusErrorToHttpStatus(result.error.kind);
-
-    await logX402Call({
-      principal: null,
-      action: "connect_account",
-      endpoint: ENDPOINT_PATH,
-      chargeId: null,
-      resultStatus: "error",
-      latencyMs: Math.round(performance.now() - startMs),
-      ipHash,
-      userAgent,
-    });
-
+    auditRejection("error");
     return NextResponse.json(
       { error: result.error.kind, message: result.error.message },
-      { status }
+      { status: mapStatusErrorToHttpStatus(result.error.kind) },
     );
   }
-
-  await logX402Call({
-    principal: null,
-    action: "connect_account",
-    endpoint: ENDPOINT_PATH,
-    chargeId: null,
-    resultStatus: "ok",
-    latencyMs: Math.round(performance.now() - startMs),
-    ipHash,
-    userAgent,
-  });
 
   return NextResponse.json(result.payload, { status: 200 });
 }
 
-/**
- * server_misconfigured is a 500 on purpose: it means OUR HMAC secret is
- * missing, and a 401 would send well-behaved agents into a re-auth loop.
- */
+/** Maps handleStatusQuery error kinds to HTTP status codes. */
 function mapStatusErrorToHttpStatus(
   kind:
     | "missing_token"

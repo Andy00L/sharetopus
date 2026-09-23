@@ -34,8 +34,12 @@ export type BuildOAuthUrlResult =
 /**
  * Builds the OAuth authorization URL for the given platform.
  *
- * Reads client ID from per-platform env vars. Scopes and auth URLs mirror
- * the web initiate routes exactly.
+ * Reads client ID from per-platform env vars. Auth URLs mirror the web
+ * initiate routes. Scopes are the minimum the x402 flow uses, which is
+ * narrower than the web routes on two platforms: LinkedIn skips "email"
+ * (nothing reads it) and Pinterest skips "catalogs:*" (pins never touch a
+ * merchant catalog). Every stored token is a posting credential, so a scope
+ * nobody uses is only extra blast radius.
  */
 export function buildOAuthUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
   switch (input.platform) {
@@ -76,7 +80,8 @@ function buildLinkedInUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  const scopes = ["openid", "profile", "email", "w_member_social"].join(" ");
+  // openid + profile return the OpenID "sub" the account is keyed on.
+  const scopes = ["openid", "profile", "w_member_social"].join(" ");
 
   const url =
     `https://www.linkedin.com/oauth/v2/authorization` +
@@ -140,8 +145,6 @@ function buildPinterestUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     "pins:read",
     "pins:write",
     "user_accounts:read",
-    "catalogs:read",
-    "catalogs:write",
   ].join(",");
 
   const url =

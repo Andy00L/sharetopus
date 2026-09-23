@@ -1,50 +1,32 @@
 import "server-only";
 
 /**
- * Arc mainnet chain definition and the viem clients the Arc lane runs on.
+ * Arc mainnet chain definition and the operations signer.
  *
- * Arc is the one network where Sharetopus is its own facilitator: no hosted
- * facilitator settles a plain EIP-3009 authorization from an agent's own
- * wallet there (CDP does not list eip155:5042 at all, and Circle's own
- * facilitator settles through Gateway against pre-deposited funds). The
- * operations wallet named by X402_RECIPIENT_ARC therefore both receives
- * payments and broadcasts them, which costs it a fraction of a cent per
- * settlement because gas on Arc is USDC itself.
+ * The operations wallet named by X402_RECIPIENT_ARC both receives payments
+ * and broadcasts them; gas on Arc is USDC, so each broadcast costs it a
+ * fraction of a cent. Every Arc transaction (settlements and refunds) goes
+ * through chain/broadcastCall.ts with this signer, so the two share one
+ * nonce-safe send path.
  *
- * Called by: arc/arcFacilitator.ts (verify + settle), arc/refundArc.ts
+ * Called by: arc/arcFacilitator.ts (verify + settle), arc/refundArc.ts,
+ *            arc/facilitatorApi.ts
  * Tables touched: none
- * Env: X402_ARC_KEY (operations key, held by the operator), and the RPC URL
- *      resolved by config.getArcRpcUrl
+ * Env: X402_ARC_KEY (operations key, held by the operator); the RPC URL is
+ *      resolved by config.getRpcUrl (X402_ARC_RPC_URL override)
  */
 
-import {
-  createPublicClient,
-  createWalletClient,
-  defineChain,
-  http,
-  type Account,
-  type PublicClient,
-  type WalletClient,
-} from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { defineChain } from "viem";
 
-import { getArcRpcUrl } from "@/lib/x402/config";
-import type { NetworkConfig } from "@/lib/x402/networks";
+import { buildOperatorSigner, type OperatorSigner } from "@/lib/x402/chain/broadcastCall";
+import { loadOperatorAccount } from "@/lib/x402/chain/operatorKey";
+import { getRpcUrl } from "@/lib/x402/config";
+import { NETWORKS } from "@/lib/x402/networks";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** 32-byte hex private key, 0x prefix optional. Mirrors celo/refundCelo.ts. */
-const PRIVATE_KEY_PATTERN = /^(0x)?[0-9a-fA-F]{64}$/;
-
-/** 20-byte hex EVM address. */
-export const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
+const ARC_NETWORK = NETWORKS.arc;
 
 /**
- * Arc mainnet. Chain id, RPC and explorer read from
- * docs.arc.io/arc/references/rpc-endpoints and confirmed against the live
- * endpoint (eth_chainId returned 0x13b2 on 2026-09-17).
+ * Arc mainnet. Chain id and RPC come from the registry entry.
  *
  * nativeCurrency is USDC at 18 decimals on purpose: Arc exposes one asset
  * through two interfaces, the native gas balance at 18 decimals and the
@@ -52,72 +34,37 @@ export const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
  * side always goes through NetworkConfig.usdcDecimals instead of this field.
  */
 export const ARC_CHAIN = defineChain({
-  id: 5042,
-  name: "Arc",
+  id: ARC_NETWORK.chainId,
+  name: ARC_NETWORK.displayName,
   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-  rpcUrls: { default: { http: ["https://rpc.mainnet.arc.io"] } },
+  rpcUrls: { default: { http: [ARC_NETWORK.rpcUrl] } },
   blockExplorers: {
     default: { name: "Arc Explorer", url: "https://explorer.arc.io" },
   },
 });
 
-// ---------------------------------------------------------------------------
-// Operations account
-// ---------------------------------------------------------------------------
-
-export type ArcOperationsAccountResult =
-  | { ok: true; account: Account }
+export type ArcSignerResult =
+  | { ok: true; signer: OperatorSigner }
   | { ok: false; message: string };
 
-/**
- * The locally held key that signs every Arc settlement and refund.
- *
- * Errors as values rather than a throw: both callers already map failures to
- * a facilitator error, and a missing key must not take down an unrelated
- * network's request path. The key itself is never logged, only whether it is
- * absent or malformed.
- */
-export function loadArcOperationsAccount(): ArcOperationsAccountResult {
-  const operationsKey = process.env.X402_ARC_KEY;
-  if (!operationsKey) {
+let cachedArcSigner: OperatorSigner | null = null;
+
+/** The Arc operations signer, built once per process. Errors as values. */
+export function getArcSigner(): ArcSignerResult {
+  if (cachedArcSigner) return { ok: true, signer: cachedArcSigner };
+
+  const accountResult = loadOperatorAccount("X402_ARC_KEY");
+  if (!accountResult.ok) {
     return {
       ok: false,
-      message:
-        "X402_ARC_KEY env var not set. Sharetopus settles Arc payments itself and cannot sign without it.",
+      message: `${accountResult.message} Sharetopus settles Arc payments itself and cannot sign without it.`,
     };
   }
-  if (!PRIVATE_KEY_PATTERN.test(operationsKey)) {
-    return {
-      ok: false,
-      message: "X402_ARC_KEY is not a 32-byte hex key.",
-    };
-  }
-  const normalizedKey = (
-    operationsKey.startsWith("0x") ? operationsKey : `0x${operationsKey}`
-  ) as `0x${string}`;
-  return { ok: true, account: privateKeyToAccount(normalizedKey) };
-}
 
-// ---------------------------------------------------------------------------
-// Clients
-// ---------------------------------------------------------------------------
-
-/** Read-only client for balance, nonce and receipt queries on Arc. */
-export function createArcPublicClient(network: NetworkConfig): PublicClient {
-  return createPublicClient({
+  cachedArcSigner = buildOperatorSigner({
+    account: accountResult.account,
     chain: ARC_CHAIN,
-    transport: http(getArcRpcUrl(network)),
+    rpcUrl: getRpcUrl(ARC_NETWORK),
   });
-}
-
-/** Signing client for the operations wallet. */
-export function createArcWalletClient(
-  network: NetworkConfig,
-  account: Account,
-): WalletClient {
-  return createWalletClient({
-    account,
-    chain: ARC_CHAIN,
-    transport: http(getArcRpcUrl(network)),
-  });
+  return { ok: true, signer: cachedArcSigner };
 }

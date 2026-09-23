@@ -83,20 +83,17 @@ async function buildRequirementsExtra(
   | { ok: true; extra: Record<string, unknown> }
   | { ok: false; reason: "fee_payer_unavailable"; message: string }
 > {
-  if (network.isEvm) {
-    const eip712Domain = network.usdcEip712;
+  if (network.family === "evm") {
     return {
       ok: true,
-      extra: eip712Domain
-        ? { name: eip712Domain.name, version: eip712Domain.version }
-        : {},
+      extra: { name: network.usdcEip712.name, version: network.usdcEip712.version },
     };
   }
 
   const feePayerResult = await getSolanaFeePayer();
   if (!feePayerResult.ok) {
     console.error(
-      `[buildPaymentRequirements] Solana fee payer unavailable: ${feePayerResult.message}`
+      `[buildRequirementsExtra] Solana fee payer unavailable: ${feePayerResult.message}`
     );
     return {
       ok: false,

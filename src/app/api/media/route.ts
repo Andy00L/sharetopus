@@ -10,14 +10,14 @@ export async function GET(request: NextRequest) {
   const expiresRaw = searchParams.get("expires") ?? "";
   const sig = searchParams.get("sig") ?? "";
 
-  console.log("[Media Proxy] Incoming request", {
+  console.log("[GET /api/media] Incoming request", {
     user: userId,
     file: filePath,
   });
 
   // SECURITY CHECK 1: All params must be present
   if (!filePath || !userId || !expiresRaw || !sig) {
-    console.warn("[Media Proxy] Missing required parameters");
+    console.warn("[GET /api/media] Missing required parameters");
     return new Response("Missing required parameters", {
       status: 401,
       headers: { "Content-Type": "application/json" },
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
   // SECURITY CHECK 2: Expiry
   const expires = parseInt(expiresRaw, 10);
   if (Number.isNaN(expires) || Math.floor(Date.now() / 1000) >= expires) {
-    console.warn("[Media Proxy] URL expired", { user: userId, file: filePath });
+    console.warn("[GET /api/media] URL expired", { user: userId, file: filePath });
     return new Response("URL expired", {
       status: 410,
       headers: { "Content-Type": "application/json" },
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
   // SECURITY CHECK 3: HMAC signature verification
   const secret = process.env.MEDIA_PROXY_HMAC_SECRET;
   if (!secret) {
-    console.error("[Media Proxy] HMAC secret not configured");
+    console.error("[GET /api/media] HMAC secret not configured");
     return new Response("Server misconfiguration", {
       status: 500,
       headers: { "Content-Type": "application/json" },
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
     sigBuf.length !== expectedBuf.length ||
     !timingSafeEqual(sigBuf, expectedBuf)
   ) {
-    console.warn("[Media Proxy] Signature mismatch", {
+    console.warn("[GET /api/media] Signature mismatch", {
       user: userId,
       file: filePath,
     });
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
 
   // SECURITY CHECK 4: Path ownership (defense in depth)
   if (!filePath.startsWith(`${userId}/`)) {
-    console.warn("[Media Proxy] Path does not belong to user", {
+    console.warn("[GET /api/media] Path does not belong to user", {
       user: userId,
       file: filePath,
     });
@@ -82,14 +82,14 @@ export async function GET(request: NextRequest) {
     filePath.includes("//") ||
     filePath.startsWith("/")
   ) {
-    console.warn(`[Media Proxy] Blocked suspicious file path: ${filePath}`);
+    console.warn(`[GET /api/media] Blocked suspicious file path: ${filePath}`);
     return new Response("Invalid file path", {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  console.log("[Media Proxy] Signature verified", {
+  console.log("[GET /api/media] Signature verified", {
     user: userId,
     file: filePath,
   });
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
       .createSignedUrl(filePath, 600); // 10 minutes
 
     if (error) {
-      console.error("[Media Proxy] Supabase error:", error);
+      console.error("[GET /api/media] Supabase error:", error);
 
       if (
         error.message.includes("not found") ||
@@ -118,14 +118,14 @@ export async function GET(request: NextRequest) {
     }
 
     if (!data?.signedUrl) {
-      console.error("[Media Proxy] No signed URL returned from Supabase");
+      console.error("[GET /api/media] No signed URL returned from Supabase");
       return new Response("File not found", {
         status: 404,
         headers: { "Content-Type": "application/json" },
       });
     }
 
-    console.log("[Media Proxy] Streaming file from Supabase signed URL");
+    console.log("[GET /api/media] Streaming file from Supabase signed URL");
 
     // Stream the file body instead of redirecting. TikTok's Content
     // Posting API rejects redirects on PULL_FROM_URL per their docs.
@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
     try {
       upstream = await fetch(data.signedUrl);
     } catch (fetchErr) {
-      console.error("[Media Proxy] Upstream fetch failed:", fetchErr);
+      console.error("[GET /api/media] Upstream fetch failed:", fetchErr);
       return new Response("Upstream fetch failed", {
         status: 502,
         headers: { "Content-Type": "application/json" },
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!upstream.ok) {
-      console.error(`[Media Proxy] Upstream returned ${upstream.status}`);
+      console.error(`[GET /api/media] Upstream returned ${upstream.status}`);
       if (upstream.status === 404) {
         return new Response("File not found", {
           status: 404,
@@ -156,20 +156,31 @@ export async function GET(request: NextRequest) {
     }
 
     if (!upstream.body) {
-      console.error("[Media Proxy] Upstream response has no body");
+      console.error("[GET /api/media] Upstream response has no body");
       return new Response("Upstream returned empty body", {
         status: 502,
         headers: { "Content-Type": "application/json" },
       });
     }
 
+    // This route serves stored uploads from the app's own origin. The stored
+    // content type is whatever the uploader sent with the signed upload, not
+    // the one the upload request declared, so only image and video types are
+    // passed through; anything else goes out as an opaque download. nosniff
+    // stops the browser guessing a script or HTML type from the bytes, and
+    // the sandbox CSP keeps even a mislabeled file from running script here.
     const responseHeaders: Record<string, string> = {
       "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
     };
 
-    const contentType = upstream.headers.get("content-type");
-    if (contentType) {
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (/^(image|video)\//i.test(contentType)) {
       responseHeaders["Content-Type"] = contentType;
+    } else {
+      responseHeaders["Content-Type"] = "application/octet-stream";
+      responseHeaders["Content-Disposition"] = "attachment";
     }
 
     const contentLength = upstream.headers.get("content-length");
@@ -182,7 +193,7 @@ export async function GET(request: NextRequest) {
       headers: responseHeaders,
     });
   } catch (error) {
-    console.error("[Media Proxy] Unexpected error:", error);
+    console.error("[GET /api/media] Unexpected error:", error);
     return new Response("Internal server error", {
       status: 500,
       headers: { "Content-Type": "application/json" },

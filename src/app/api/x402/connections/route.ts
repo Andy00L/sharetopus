@@ -6,15 +6,16 @@ import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * GET /api/x402/connections
  *
- * Pays list_connections for $0.001 USDC. Reads connected social accounts.
+ * Pays the list_connections action (price per pricing_actions). Reads
+ * connected social accounts.
  * Steps:
  * 1. Parse query params (include_unavailable).
- * 2. x402 middleware handles auth, payment, charge.
+ * 2. x402 middleware handles payment and the charge.
  * 3. Query social_accounts filtered by principal_id.
  * 4. Strip tokens and return safe projection.
  */

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { after } from "next/server";
+
 import type { Platform } from "@/lib/x402/connect/types";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
@@ -41,6 +43,7 @@ export type OAuthCallbackResult =
         | { kind: "state_not_found"; message: string }
         | { kind: "state_expired"; message: string }
         | { kind: "state_already_used"; message: string }
+        | { kind: "platform_mismatch"; message: string }
         | { kind: "provider_error"; code: string; message: string }
         | { kind: "token_exchange_failed"; message: string }
         | { kind: "db_update_failed"; message: string }
@@ -133,6 +136,19 @@ export async function handleOAuthCallback(
       error: {
         kind: "state_expired",
         message: "OAuth connection has expired.",
+      },
+    };
+  }
+
+  // The callback path names the platform whose code is about to be
+  // exchanged; it must be the platform this connection was created and paid
+  // for. The connection is left pending, so its own callback still works.
+  if (connection.platform !== input.platform) {
+    return {
+      ok: false,
+      error: {
+        kind: "platform_mismatch",
+        message: "This connection link belongs to a different platform.",
       },
     };
   }
@@ -381,15 +397,19 @@ export async function handleOAuthCallback(
     logShareLinkAudit(input.platform, "share_link.use_succeeded", "ok");
   }
 
-  // Webhook dispatch is fire-and-forget by design: delivery retries are the
-  // webhook system's job and a slow subscriber must not block the callback.
-  void dispatchWebhook(connection.principal_id, "connection.connected", {
+  // The webhook runs after the response: a slow subscriber must not block
+  // the callback page, and after() keeps the serverless function alive until
+  // the dispatch finishes instead of dropping a floating promise.
+  const connectedWebhookPayload = {
     connection_id: connection.id,
     social_account_id: socialAccount.id,
     platform: input.platform,
     initiated_via: connection.initiated_via,
     share_link_id: shareLinkId,
-  });
+  };
+  after(() =>
+    dispatchWebhook(connection.principal_id, "connection.connected", connectedWebhookPayload),
+  );
 
   // Derive the username for the success page redirect
   const accountUsername =
@@ -466,13 +486,15 @@ function logShareLinkAudit(
   action: "share_link.use_failed" | "share_link.use_succeeded",
   resultStatus: "ok" | "error"
 ): void {
-  void logX402Call({
-    principal: null,
-    action,
-    endpoint: `/api/oauth/callback/${platform}`,
-    chargeId: null,
-    resultStatus,
-  });
+  after(() =>
+    logX402Call({
+      principal: null,
+      action,
+      endpoint: `/api/oauth/callback/${platform}`,
+      chargeId: null,
+      resultStatus,
+    }),
+  );
 }
 
 interface ExchangeSuccess {
@@ -495,123 +517,50 @@ type ExchangeFailure = {
   message: string;
 };
 
+/**
+ * Exchanges the code with the platform and normalizes the profile. LinkedIn
+ * and TikTok expose no handle, so the display name stands in for username;
+ * the upsert above applies the same fallback either way.
+ */
 async function dispatchTokenExchange(
   platform: Platform,
   code: string,
   codeVerifier: string | null
 ): Promise<ExchangeSuccess | ExchangeFailure> {
+  const result = await runPlatformExchange(platform, code, codeVerifier);
+  if (!result.ok) return result;
+
+  const profile = result.profile;
+  return {
+    ok: true,
+    accessToken: result.accessToken,
+    refreshToken: result.refreshToken,
+    expiresIn: result.expiresIn,
+    accountIdentifier: result.accountIdentifier,
+    profile: {
+      name: profile.name,
+      username: ("username" in profile ? profile.username : undefined) ?? profile.name,
+      avatarUrl: profile.avatarUrl,
+    },
+  };
+}
+
+/** The per-platform exchange for this callback. */
+function runPlatformExchange(platform: Platform, code: string, codeVerifier: string | null) {
   switch (platform) {
-    case "linkedin": {
-      const result = await exchangeLinkedInForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.name,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "tiktok": {
-      const result = await exchangeTikTokForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.name,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "pinterest": {
-      const result = await exchangePinterestForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.username,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "instagram": {
-      const result = await exchangeInstagramForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.username,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "youtube": {
-      const result = await exchangeYouTubeForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.username,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "x": {
-      const result = await exchangeXForX402(code, codeVerifier);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.username,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
-    case "facebook": {
-      const result = await exchangeFacebookForX402(code);
-      if (!result.ok) return result;
-      return {
-        ok: true,
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: result.expiresIn,
-        accountIdentifier: result.accountIdentifier,
-        profile: {
-          name: result.profile.name,
-          username: result.profile.username,
-          avatarUrl: result.profile.avatarUrl,
-        },
-      };
-    }
+    case "linkedin":
+      return exchangeLinkedInForX402(code);
+    case "tiktok":
+      return exchangeTikTokForX402(code);
+    case "pinterest":
+      return exchangePinterestForX402(code);
+    case "instagram":
+      return exchangeInstagramForX402(code);
+    case "youtube":
+      return exchangeYouTubeForX402(code);
+    case "x":
+      return exchangeXForX402(code, codeVerifier);
+    case "facebook":
+      return exchangeFacebookForX402(code);
   }
 }

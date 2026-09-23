@@ -232,13 +232,14 @@ Prices are stored in the `pricing_actions` table. Seed SQL: `/x402_pricing_actio
 
 ### Refund Policy
 
-- **Refundable:** Atomic DB insert failures after on-chain settlement trigger automatic refund.
+- **Checked before settlement, nothing charged:** account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
+- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund.
 - **Non-refundable:** Publish failures at Inngest execute time (post.text, post.image, post.video). Pay-per-attempt model.
-- Refund records stored in `x402_refunds`. On-chain tx hash included in error response.
+- Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response.
 
 ### Charge Lifecycle
 
-Status flow: `settled` (default after INSERT) -> `refunded` (handler failure + refund) or `failed` (non-refundable error).
+Status flow: `pending` (inserted before settlement; the UNIQUE nonce blocks a replay) -> `settled` (facilitator confirmed) -> `refunded` (refund confirmed on-chain) or `failed` (definitive settle rejection, non-refundable handler error, or a refund that could not be sent). An indeterminate settle stays `pending` and an unconfirmed refund stays `settled`; both get an `x402_reconciliation` row that the hourly `sweep-x402-reconciliation` Inngest function resolves or reports as a failed run.
 
 ### Storage
 

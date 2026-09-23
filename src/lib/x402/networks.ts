@@ -1,195 +1,220 @@
 import "server-only";
 
 /**
- * Network registry for x402 payment protocol.
+ * Network registry for the x402 payment protocol.
  *
- * Single source of truth for supported networks. Every x402 endpoint and the
- * facilitator wrapper read from here. No magic strings elsewhere.
+ * Single source of truth for supported networks and for how each one
+ * settles. Facilitator choice, payout wallet, RPC override and refund
+ * sender are all read from the entry (settlement, recipientEnvVar,
+ * rpcUrlEnvVar), so no other module compares network names to decide how
+ * money moves.
  *
- * Called by: facilitator.ts, route handlers (Phase 4.1+)
+ * Called by: config.ts, facilitator.ts, facilitatorClient.ts,
+ *            http/resolveRequestNetwork.ts, the /proof and /solana pages,
+ *            solanaActions/*
  * Tables touched: none (pure configuration)
- *
- * USDC contract addresses were verified against the @x402/evm v2.11.0
- * source at build time (the package itself is no longer a dependency; the
- * facilitator does scheme verification server-side).
  */
 
 import type { WalletChain } from "@/lib/types/database.types";
 
-export interface NetworkConfig {
-  /** Network slug used by x402 protocol (matches WalletChain in database.types.ts). */
+/**
+ * Who verifies and settles payments on a network. Stored verbatim in
+ * x402_charges.facilitator, so the values are the domain vocabulary:
+ *   - coinbase_cdp: CDP hosted facilitator; refunds go out through the CDP SDK.
+ *   - celo: Celo hosted facilitator (api.x402.celo.org); refunds are signed
+ *     locally with X402_CELO_REFUND_KEY.
+ *   - arc_local: Sharetopus verifies and settles in process
+ *     (arc/arcFacilitator.ts) and signs refunds with X402_ARC_KEY. No third
+ *     party screens the payer on this lane.
+ */
+export type SettlementLane = "coinbase_cdp" | "celo" | "arc_local";
+
+/** Env var holding the payout (payTo) address, which also sends refunds. */
+export type RecipientEnvVar =
+  | "X402_RECIPIENT_EVM"
+  | "X402_RECIPIENT_SOLANA"
+  | "X402_RECIPIENT_CELO"
+  | "X402_RECIPIENT_ARC";
+
+/** Env var that may point a network at a dedicated RPC provider. */
+export type RpcUrlEnvVar = "X402_ARC_RPC_URL" | "X402_SOLANA_RPC_URL";
+
+interface NetworkConfigBase {
+  /** Slug used in ?network= and stored in DB rows (matches WalletChain). */
   name: WalletChain;
-
-  /** EVM chain ID, or null for non-EVM (Solana). */
-  chainId: number | null;
-
-  /**
-   * CAIP-2 network identifier used by @x402/core.
-   * Format: "eip155:{chainId}" for EVM, "solana:{genesisHashPrefix}" for Solana.
-   *
-   * Divergence from prompt spec: @x402/core defines Network as `${string}:${string}`
-   * (CAIP format), not as WalletChain. This field bridges the two representations.
-   */
+  /** CAIP-2 identifier the x402 wire protocol uses ("eip155:8453"). */
   caipNetwork: `${string}:${string}`;
-
-  /** Human-readable display name shown in errors and logs. */
+  /** Human-readable name for errors and logs. */
   displayName: string;
-
-  /** Public RPC URL used for read-only queries (balance checks, block lookups). */
+  /** Public RPC endpoint, used when no override is configured. */
   rpcUrl: string;
-
-  /** USDC token contract address on this network. Mint address on Solana. */
+  /** Optional dedicated RPC override (config.getRpcUrl), null when none. */
+  rpcUrlEnvVar: RpcUrlEnvVar | null;
+  /** USDC contract (EVM) or mint (Solana). */
   usdcAddress: string;
-
-  /**
-   * Retained for interface compatibility. All entries in NETWORKS are mainnet
-   * (isTestnet = false). Testnet entries were removed from the registry;
-   * WalletChain still includes those values at the DB schema level.
-   */
-  isTestnet: boolean;
-
-  /** True for EVM chains, false for Solana. Used by facilitator dispatch. */
-  isEvm: boolean;
-
-  /**
-   * USDC has 6 decimals on every supported network today (Circle policy).
-   * Hardcoded constant for safety; if a network ever ships a wrapped USDC with
-   * different decimals, override here.
-   */
+  /** USDC decimals: 6 on every supported network (Circle policy). */
   usdcDecimals: number;
+  settlement: SettlementLane;
+  recipientEnvVar: RecipientEnvVar;
+}
 
+/** EVM network: exact-scheme clients sign EIP-3009 over usdcEip712. */
+export interface EvmNetworkConfig extends NetworkConfigBase {
+  family: "evm";
+  chainId: number;
   /**
    * EIP-712 domain of the USDC contract, carried in PaymentRequirements.extra
-   * so exact-scheme EVM clients can sign EIP-3009 authorizations (the
-   * official @x402/evm client refuses to sign without name/version). Null for
-   * non-EVM networks. Values verified against @x402/evm v2.14.0
-   * DEFAULT_STABLECOINS.
+   * (the official @x402/evm client refuses to sign without name/version).
    */
-  usdcEip712: { name: string; version: string } | null;
+  usdcEip712: { name: string; version: string };
 }
 
-/**
- * Frozen registry of supported mainnet networks. Read-only at runtime.
- *
- * Testnet entries (base-sepolia, solana-devnet) intentionally excluded.
- * WalletChain still includes those values at the DB schema level; blocking
- * is app-layer only. Route handlers reject any ?network value that
- * getNetworkConfig() does not resolve with a 400 unsupported_network.
- */
-export const NETWORKS: Readonly<Partial<Record<WalletChain, NetworkConfig>>> =
-  Object.freeze({
-    base: {
-      name: "base",
-      chainId: 8453,
-      caipNetwork: "eip155:8453",
-      displayName: "Base",
-      rpcUrl: "https://mainnet.base.org",
-      usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      isTestnet: false,
-      isEvm: true,
-      usdcDecimals: 6,
-      usdcEip712: { name: "USD Coin", version: "2" },
-    },
-    polygon: {
-      name: "polygon",
-      chainId: 137,
-      caipNetwork: "eip155:137",
-      displayName: "Polygon",
-      rpcUrl: "https://polygon-rpc.com",
-      usdcAddress: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-      isTestnet: false,
-      isEvm: true,
-      usdcDecimals: 6,
-      usdcEip712: { name: "USD Coin", version: "2" },
-    },
-    arbitrum: {
-      name: "arbitrum",
-      chainId: 42161,
-      caipNetwork: "eip155:42161",
-      displayName: "Arbitrum",
-      rpcUrl: "https://arb1.arbitrum.io/rpc",
-      usdcAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-      isTestnet: false,
-      isEvm: true,
-      usdcDecimals: 6,
-      usdcEip712: { name: "USD Coin", version: "2" },
-    },
-    // Celo settles through the Celo facilitator (config.ts), not CDP.
-    // usdcAddress from docs.celo.org/build-on-celo/build-with-ai/x402;
-    // usdcEip712 and decimals read from the contract on Forno (eth_call
-    // name()/version()/decimals(), 2026-07-16): name "USDC" (not Base's
-    // "USD Coin"), version "2", decimals 6.
-    celo: {
-      name: "celo",
-      chainId: 42220,
-      caipNetwork: "eip155:42220",
-      displayName: "Celo",
-      rpcUrl: "https://forno.celo.org",
-      usdcAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
-      isTestnet: false,
-      isEvm: true,
-      usdcDecimals: 6,
-      usdcEip712: { name: "USDC", version: "2" },
-    },
-    // Arc settles in process: Sharetopus is its own facilitator there
-    // (arc/arcFacilitator.ts). No hosted facilitator handles a plain
-    // EIP-3009 authorization from an agent wallet on Arc, and gas is USDC
-    // itself, so the operations wallet broadcasts for a fraction of a cent.
-    // chainId and rpcUrl from docs.arc.io/arc/references/rpc-endpoints,
-    // confirmed live (eth_chainId -> 0x13b2). usdcAddress is the system
-    // contract from docs.arc.io/arc/references/contract-addresses; its
-    // name/version/decimals were read on mainnet (2026-09-17) and the
-    // EIP-712 domain separator recomputed from them matches the contract's
-    // own DOMAIN_SEPARATOR, so exact-scheme clients sign valid Arc
-    // authorizations with no client-side change.
-    arc: {
-      name: "arc",
-      chainId: 5042,
-      caipNetwork: "eip155:5042",
-      displayName: "Arc",
-      rpcUrl: "https://rpc.mainnet.arc.io",
-      usdcAddress: "0x3600000000000000000000000000000000000000",
-      isTestnet: false,
-      isEvm: true,
-      usdcDecimals: 6,
-      usdcEip712: { name: "USDC", version: "2" },
-    },
-    solana: {
-      name: "solana",
-      chainId: null,
-      caipNetwork: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-      displayName: "Solana",
-      rpcUrl: "https://api.mainnet-beta.solana.com",
-      usdcAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-      isTestnet: false,
-      isEvm: false,
-      usdcDecimals: 6,
-      usdcEip712: null,
-    },
-  });
-
-// Module-load assertion: mainnet "base" entry must exist. This runs at process
-// startup, not per-request. Failure here is a build-time configuration error.
-if (!NETWORKS.base) {
-  throw new Error(
-    "[networks.ts] Mainnet 'base' entry missing from NETWORKS. This is a build-time configuration error."
-  );
+/** Solana network: the facilitator co-signs as fee payer (extra.feePayer). */
+export interface SvmNetworkConfig extends NetworkConfigBase {
+  family: "svm";
 }
-const baseConfig: NetworkConfig = NETWORKS.base;
+
+export type NetworkConfig = EvmNetworkConfig | SvmNetworkConfig;
 
 /**
- * Look up a network by name. Returns null for unknown names.
+ * Supported mainnet networks. Testnets are excluded on purpose: WalletChain
+ * still lists them at the DB level, but any ?network value not found here is
+ * rejected with 400 unsupported_network.
  *
- * Used by route handlers to validate the network field on incoming X-PAYMENT
- * headers. Never trust user input; always go through this function.
+ * Base, Polygon and Arbitrum USDC domains verified against @x402/evm
+ * DEFAULT_STABLECOINS (v2.14.0).
  */
+export const NETWORKS = Object.freeze({
+  base: {
+    name: "base",
+    family: "evm",
+    chainId: 8453,
+    caipNetwork: "eip155:8453",
+    displayName: "Base",
+    rpcUrl: "https://mainnet.base.org",
+    rpcUrlEnvVar: null,
+    usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    usdcDecimals: 6,
+    usdcEip712: { name: "USD Coin", version: "2" },
+    settlement: "coinbase_cdp",
+    recipientEnvVar: "X402_RECIPIENT_EVM",
+  },
+  polygon: {
+    name: "polygon",
+    family: "evm",
+    chainId: 137,
+    caipNetwork: "eip155:137",
+    displayName: "Polygon",
+    rpcUrl: "https://polygon-rpc.com",
+    rpcUrlEnvVar: null,
+    usdcAddress: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+    usdcDecimals: 6,
+    usdcEip712: { name: "USD Coin", version: "2" },
+    settlement: "coinbase_cdp",
+    recipientEnvVar: "X402_RECIPIENT_EVM",
+  },
+  arbitrum: {
+    name: "arbitrum",
+    family: "evm",
+    chainId: 42161,
+    caipNetwork: "eip155:42161",
+    displayName: "Arbitrum",
+    rpcUrl: "https://arb1.arbitrum.io/rpc",
+    rpcUrlEnvVar: null,
+    usdcAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    usdcDecimals: 6,
+    usdcEip712: { name: "USD Coin", version: "2" },
+    settlement: "coinbase_cdp",
+    recipientEnvVar: "X402_RECIPIENT_EVM",
+  },
+  // usdcAddress from docs.celo.org/build-on-celo/build-with-ai/x402; the
+  // domain and decimals were read from the contract on Forno (2026-07-16):
+  // name "USDC" (not Base's "USD Coin"), version "2", decimals 6. Celo has
+  // its own payout wallet because refunds must come from a key the operator
+  // holds, which the shared CDP EVM wallet is not.
+  celo: {
+    name: "celo",
+    family: "evm",
+    chainId: 42220,
+    caipNetwork: "eip155:42220",
+    displayName: "Celo",
+    rpcUrl: "https://forno.celo.org",
+    rpcUrlEnvVar: null,
+    usdcAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
+    usdcDecimals: 6,
+    usdcEip712: { name: "USDC", version: "2" },
+    settlement: "celo",
+    recipientEnvVar: "X402_RECIPIENT_CELO",
+  },
+  // chainId and rpcUrl from docs.arc.io/arc/references/rpc-endpoints
+  // (eth_chainId -> 0x13b2). usdcAddress is the system contract from
+  // docs.arc.io/arc/references/contract-addresses; its name, version and
+  // decimals were read on mainnet (2026-09-17) and the EIP-712 domain
+  // separator recomputed from them matches the contract's own. Gas on Arc is
+  // USDC, so the operations wallet that settles here pays a fraction of a
+  // cent per broadcast. Circle's hosted Facilitator Service also settles
+  // Arc since September 2026 but needs a Circle API key in production; this
+  // lane stays self-settled until one is configured.
+  arc: {
+    name: "arc",
+    family: "evm",
+    chainId: 5042,
+    caipNetwork: "eip155:5042",
+    displayName: "Arc",
+    rpcUrl: "https://rpc.mainnet.arc.io",
+    rpcUrlEnvVar: "X402_ARC_RPC_URL",
+    usdcAddress: "0x3600000000000000000000000000000000000000",
+    usdcDecimals: 6,
+    usdcEip712: { name: "USDC", version: "2" },
+    settlement: "arc_local",
+    recipientEnvVar: "X402_RECIPIENT_ARC",
+  },
+  solana: {
+    name: "solana",
+    family: "svm",
+    caipNetwork: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    displayName: "Solana",
+    rpcUrl: "https://api.mainnet-beta.solana.com",
+    rpcUrlEnvVar: "X402_SOLANA_RPC_URL",
+    usdcAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    usdcDecimals: 6,
+    settlement: "coinbase_cdp",
+    recipientEnvVar: "X402_RECIPIENT_SOLANA",
+  },
+} satisfies Partial<Record<WalletChain, NetworkConfig>>);
+
+export type SupportedNetworkName = keyof typeof NETWORKS;
+
+/**
+ * Own-key check. A plain index would also resolve inherited names such as
+ * "constructor" or "__proto__" to Object.prototype members and hand them
+ * back as a network.
+ */
+function isSupportedNetworkName(name: string): name is SupportedNetworkName {
+  return Object.hasOwn(NETWORKS, name);
+}
+
+/** Look up a network by its ?network slug. Null for anything unsupported. */
 export function getNetworkConfig(name: string): NetworkConfig | null {
-  return (NETWORKS as Record<string, NetworkConfig>)[name] ?? null;
+  return isSupportedNetworkName(name) ? NETWORKS[name] : null;
 }
 
 /**
- * The configured default mainnet network (reads X402_DEFAULT_NETWORK env).
- * Falls back to "base" if the env var is missing or invalid.
+ * Address equality on a network. EVM addresses compare case-insensitively
+ * (EIP-55 checksum casing); Solana base58 is case-sensitive.
+ */
+export function addressesMatch(network: NetworkConfig, left: string, right: string): boolean {
+  return network.family === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+/** Every supported network, in registry order. */
+export function listNetworks(): NetworkConfig[] {
+  return Object.values(NETWORKS);
+}
+
+/**
+ * The configured default network (X402_DEFAULT_NETWORK), falling back to
+ * Base when the variable is missing or names an unsupported network.
  */
 export function getDefaultNetwork(): NetworkConfig {
   const envName = process.env.X402_DEFAULT_NETWORK;
@@ -200,6 +225,5 @@ export function getDefaultNetwork(): NetworkConfig {
       `[getDefaultNetwork] X402_DEFAULT_NETWORK="${envName}" is not a known network. Falling back to "base".`,
     );
   }
-  // baseConfig is asserted non-null at module load above.
-  return baseConfig;
+  return NETWORKS.base;
 }

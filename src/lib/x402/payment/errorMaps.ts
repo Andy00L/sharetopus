@@ -7,7 +7,7 @@ import "server-only";
  * facilitator error kind fails to compile here instead of silently
  * diverging.
  *
- * Called by: handleConnectVerify
+ * Called by: connect/handleConnectVerify.ts
  * Tables touched: none
  */
 
@@ -19,9 +19,12 @@ import type {
 export type MappedVerifyError =
   | { kind: "malformed_payment"; message: string }
   | { kind: "verify_invalid_signature"; message: string }
+  | { kind: "verify_invalid_payment"; message: string }
   | { kind: "verify_amount_mismatch"; message: string }
   | { kind: "verify_network_mismatch"; message: string }
   | { kind: "verify_recipient_mismatch"; message: string }
+  | { kind: "verify_insufficient_funds"; message: string }
+  | { kind: "verify_authorization_expired"; message: string }
   | { kind: "verify_replay_detected"; message: string }
   | { kind: "verify_kyt_sanctioned"; message: string }
   | { kind: "verify_facilitator_error"; message: string };
@@ -40,6 +43,8 @@ export function mapVerifyPaymentError(
       return { kind: "malformed_payment", message: error.message };
     case "invalid_signature":
       return { kind: "verify_invalid_signature", message: error.message };
+    case "invalid_payment":
+      return { kind: "verify_invalid_payment", message: error.message };
     case "amount_mismatch":
       return {
         kind: "verify_amount_mismatch",
@@ -55,6 +60,10 @@ export function mapVerifyPaymentError(
         kind: "verify_recipient_mismatch",
         message: `Expected recipient ${error.expected}, received ${error.received}.`,
       };
+    case "insufficient_funds":
+      return { kind: "verify_insufficient_funds", message: error.message };
+    case "authorization_expired":
+      return { kind: "verify_authorization_expired", message: error.message };
     case "replay_detected":
       return {
         kind: "verify_replay_detected",

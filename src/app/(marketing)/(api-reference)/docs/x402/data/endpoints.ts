@@ -109,7 +109,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "The server verifies, settles, then executes.",
-        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP; x402.celo.org for celo) and includes the facilitator's sanctions screening. A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, the charge is refunded on-chain and the error body carries refundInitiated and refundTxHash. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
+        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP, which also screens for sanctions; x402.celo.org for celo; Sharetopus itself for arc, with no third-party screening). A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. Business-rule checks (account ownership, eligibility, quotas, a reused idempotency_key) run before settlement, so a request that cannot succeed is rejected with nothing charged. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, a refund is sent on-chain, the error body carries refundInitiated and refundTxHash, and the charge is recorded as refunded once the chain confirms it. Presenting the same payment again returns the stored result of a settled write action instead of charging twice. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
       },
       {
         title: "For social accounts: finish OAuth.",
@@ -423,7 +423,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/reauth",
         title: "Reauthorize a connection",
         description:
-          "For a connected account whose platform token expired (is_available false in the connections list). Returns a fresh OAuth URL and connection token. The target account must belong to the paying wallet. Ownership and eligibility checks run after settlement: a failed check (account not found, not owned, reauth not needed, unsupported platform) returns 500 with the charge refunded on-chain and refundInitiated true in the body.",
+          "For a connected account whose platform token expired (is_available false in the connections list). Returns a fresh OAuth URL and connection token. The target account must belong to the paying wallet. Ownership and eligibility checks run before settlement: a failed check (account not found, not owned, reauth not needed, unsupported platform) is rejected with nothing charged.",
         sourceRef: "src/app/api/x402/reauth/route.ts",
         paramTables: [
           {
@@ -518,7 +518,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/post-now",
         title: "Create a post",
         description:
-          "Charges post.text, post.image, or post.video based on post_type. Posting runs asynchronously after settlement; the response identifies the dispatched work, not the platform post id. If the dispatch fails, the charge is refunded on-chain.",
+          "Charges post.text, post.image, or post.video based on post_type. Posting runs asynchronously after settlement; the response identifies the dispatched work, not the platform post id. Account ownership, caption length, the media path and a reused idempotency_key are checked before settlement, so those failures charge nothing. If the dispatch fails, the charge is refunded on-chain. A post the platform rejects later, at publish time, is not refunded.",
         sourceRef: "src/app/api/x402/post-now/route.ts",
         paramTables: [
           {
@@ -667,7 +667,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/schedule",
         title: "Schedule a post",
         description:
-          "Charges the same post.text / post.image / post.video actions. The post is stored and published by the scheduler at scheduled_at. The body accepts every post-now field plus the two below. Scheduling failures after settlement are refunded on-chain.",
+          "Charges the same post.text / post.image / post.video actions. The post is stored and published by the scheduler at scheduled_at. The body accepts every post-now field plus the two below. Account ownership, caption length, the platform's daily cap and a reused idempotency_key are checked before settlement. Scheduling failures after settlement are refunded on-chain; a post the platform rejects at publish time is not refunded.",
         sourceRef: "src/app/api/x402/schedule/route.ts",
         paramTables: [
           {
@@ -766,7 +766,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         path: "/api/x402/upload-url",
         title: "Create an upload URL",
         description:
-          "Charges upload_url. Returns a signed storage URL. Upload the file to uploadUrl, then pass path as media_storage_path when posting or scheduling. Wallet storage is capped at 5 GB in total; a request that would exceed the cap fails after settlement with quota_exceeded and the charge is refunded.",
+          "Charges upload_url. Returns a signed storage URL. Upload the file to uploadUrl, then pass path as media_storage_path when posting or scheduling. Wallet storage is capped at 5 GB in total; the content type, the per-file limit and the cap are checked before settlement, so a request that would exceed them is rejected with nothing charged (413 quota_exceeded or file_too_large, 415 content_type_not_allowed).",
         sourceRef: "src/app/api/x402/upload-url/route.ts",
         paramTables: [
           {
@@ -1504,17 +1504,27 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "400",
           "unsupported_network",
-          "?network is not base, polygon, arbitrum, celo, or solana.",
+          "?network is not base, polygon, arbitrum, celo, arc, or solana.",
         ],
         [
           "400",
-          "invalid_platform, invalid_post_type, invalid_status, invalid_limit",
-          "A query or body enum value is out of range.",
+          "invalid_platform, invalid_post_type, invalid_status, invalid_limit, unsupported_platform",
+          "A query or body enum value is out of range, or the account's platform has no x402 flow.",
         ],
         [
           "400",
           "malformed_header, invalid_signature, malformed_payment, invalid_payment_signature",
           "PAYMENT-SIGNATURE is not valid base64 JSON, or its signature failed verification. Most endpoints use the first pair of codes; connect uses the second.",
+        ],
+        [
+          "400",
+          "invalid_payment, verify_invalid_payment",
+          "The facilitator rejected the payment itself (wrong token domain, unsupported scheme, a transfer that would not simulate). Sign a corrected payment; connect uses the second name.",
+        ],
+        [
+          "400",
+          "platform_mismatch",
+          "The post names a platform that differs from the account's platform. Checked before settlement; nothing charged.",
         ],
         [
           "401",
@@ -1534,7 +1544,17 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "402",
           "insufficient_funds",
-          "Settlement failed: payer balance too low.",
+          "The payer's balance is below the price, at verify or at settlement. Nothing moved.",
+        ],
+        [
+          "402",
+          "authorization_expired, verify_authorization_expired",
+          "The signed authorization is outside its validity window. Sign a fresh payment; connect uses the second name.",
+        ],
+        [
+          "402",
+          "not_verified, payment_not_verified",
+          "The facilitator refused the payment while settling it (for example it expired between verify and settle). Nothing moved; connect uses the second name.",
         ],
         [
           "403",
@@ -1542,34 +1562,64 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "Wallet or payer flagged by sanctions screening. kyt_sanctioned comes from the facilitator's screen at verify time; connect reports both cases as sanctioned.",
         ],
         [
+          "403",
+          "account_not_owned, ownership_mismatch, post_not_owned",
+          "The account or posts named in the request belong to another wallet. Checked before settlement; nothing charged.",
+        ],
+        [
           "404",
-          "connection_not_found",
-          "The connection token does not match a known connection.",
+          "connection_not_found, account_not_found, posts_not_found",
+          "The connection token, account, or post ids match nothing. Account and post lookups run before settlement; nothing charged.",
         ],
         [
           "409",
           "replay, replay_detected",
-          "This exact payment was already presented. Sign a fresh payment.",
+          "This payment was already used and has no stored result to return. A settled write action presented again returns its original result with 200 instead.",
+        ],
+        [
+          "409",
+          "payment_in_progress",
+          "The same payment is still settling in another request. Retry the identical request after Retry-After.",
+        ],
+        [
+          "409",
+          "duplicate_idempotency_key, reauth_not_needed, no_eligible_posts",
+          "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged.",
+        ],
+        [
+          "413",
+          "quota_exceeded, file_too_large",
+          "The upload would exceed the wallet storage cap or the per-file limit. Checked before settlement; nothing charged.",
+        ],
+        [
+          "415",
+          "content_type_not_allowed",
+          "The upload content type is not an accepted image or video type. Checked before settlement; nothing charged.",
         ],
         [
           "429",
-          "rate_limited, poll_limit_exceeded",
-          "Per-IP rate limit hit, or the 720-poll connection cap exhausted.",
+          "rate_limited, poll_limit_exceeded, platform_quota_exceeded",
+          "Per-IP rate limit hit, the 720-poll connection cap exhausted, or the platform's daily scheduling cap reached (checked before settlement).",
         ],
         [
           "500",
-          "internal, internal_error, server_misconfiguration, pricing_not_configured, wallet_resolution_failed, charge_insert_failed, charge_update_failed, not_verified",
-          "Server-side failure. When the body carries refundInitiated, a settled payment was refunded on-chain.",
+          "internal, internal_error, server_misconfiguration, pricing_not_configured, wallet_resolution_failed, charge_insert_failed, charge_update_failed, settlement_unrecorded, precheck_failed, redirect_uri_not_configured",
+          "Server-side failure. charge_update_failed and settlement_unrecorded mean the payment settled but could not be recorded; it is queued for reconciliation, so do not present it again.",
         ],
         [
           "500",
-          "execution_failed, query_failed, quota_exceeded, upload_url_mint_failed, account_not_found, ownership_mismatch, reauth_not_needed, unsupported_platform, redirect_uri_not_configured, oauth_url_build_failed, db_insert_failed, token_issue_failed",
-          "The paid action failed after settlement. The charge is refunded on-chain when possible (refundInitiated true).",
+          "execution_failed, query_failed, upload_url_mint_failed, oauth_url_build_failed, db_insert_failed, token_issue_failed",
+          "The paid action failed after settlement. refundInitiated true means a refund transaction was sent and refundTxHash names it; the charge is recorded as refunded once the chain confirms it.",
         ],
         [
           "502",
           "facilitator_error, facilitator_unavailable",
           "Payment facilitator unreachable or returned an error. connect uses the facilitator_unavailable name.",
+        ],
+        [
+          "503",
+          "rate_limiter_unavailable",
+          "The server's rate limiter is down. Not a client limit; retry after Retry-After.",
         ],
         [
           "504",
@@ -1634,7 +1684,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       ],
     },
     tableNote:
-      "All limits are keyed per client IP. Separately, each connection accepts at most 720 status polls over its lifetime (429 poll_limit_exceeded, no Retry-After header). Endpoint handlers also enforce per-wallet limits after settlement; exhausting one returns 500 with the charge refunded on-chain, not a 429.",
+      "All limits are keyed per client IP. Separately, each connection accepts at most 720 status polls over its lifetime (429 poll_limit_exceeded, no Retry-After header). Most per-wallet limits are checked before settlement and reject with nothing charged. A limiter outage answers 503 rate_limiter_unavailable, never 429.",
     codeSamples: [
       {
         label: "Response · 429",
