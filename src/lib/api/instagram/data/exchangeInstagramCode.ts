@@ -18,7 +18,7 @@ export async function exchangeInstagramCode(
     const redirect_uri = process.env.INSTAGRAM_REDIRECT_URL;
 
     if (!client_id || !client_secret || !redirect_uri) {
-      console.error("[Instagram] Missing environment variables:", {
+      console.error("[exchangeInstagramCode] Missing environment variables:", {
         client_id: !!client_id,
         client_secret: !!client_secret,
         redirect_uri: !!redirect_uri,
@@ -41,7 +41,7 @@ export async function exchangeInstagramCode(
     params.append("redirect_uri", redirect_uri);
     params.append("code", code);
 
-    console.log("[Instagram] Exchanging code for tokens...");
+    console.log("[exchangeInstagramCode] Exchanging code for tokens...");
 
     // Make token exchange request
     const response = await fetch(url, {
@@ -56,7 +56,7 @@ export async function exchangeInstagramCode(
     const responseText = await response.text();
 
     if (!response.ok) {
-      console.error("[Instagram] Token exchange failed:", {
+      console.error("[exchangeInstagramCode] Token exchange failed:", {
         status: response.status,
         statusText: response.statusText,
         response: responseText,
@@ -73,10 +73,9 @@ export async function exchangeInstagramCode(
 
     // Check for Instagram API errors
     if (data.error_type || data.error_message) {
-      console.error("[Instagram] API returned error:", {
+      console.error("[exchangeInstagramCode] API returned error:", {
         error_type: data.error_type,
         error_message: data.error_message,
-        full_response: data,
       });
       return {
         success: false,
@@ -88,11 +87,12 @@ export async function exchangeInstagramCode(
     const tokenData = data.data?.[0] ?? data;
 
     // Validate response contains required fields
+    // Field names only: the payload can carry an access token.
     if (!tokenData.access_token || !tokenData.user_id) {
-      console.error("[Instagram] Missing required fields in response:", {
+      console.error("[exchangeInstagramCode] Missing required fields in response:", {
         has_access_token: !!tokenData.access_token,
         has_user_id: !!tokenData.user_id,
-        received_data: data,
+        fields_received: Object.keys(data),
       });
       return {
         success: false,
@@ -109,7 +109,7 @@ export async function exchangeInstagramCode(
 
     if (!longLivedTokenData.success || !longLivedTokenData.data) {
       console.error(
-        "[Instagram] Error while exchanging the short-lived token:",
+        "[exchangeInstagramCode] Error while exchanging the short-lived token:",
         longLivedTokenData.message
       );
       return {
@@ -133,7 +133,7 @@ export async function exchangeInstagramCode(
       data: tokenResponse,
     };
   } catch (error) {
-    console.error("[Instagram] Unexpected error during token exchange:", {
+    console.error("[exchangeInstagramCode] Unexpected error during token exchange:", {
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -157,7 +157,7 @@ async function exchangeForLongLivedToken(
 
     if (!client_secret) {
       console.error(
-        "[Instagram] Missing client secret for long-lived token exchange"
+        "[exchangeForLongLivedToken] Missing client secret for long-lived token exchange"
       );
       return {
         success: false,
@@ -166,11 +166,12 @@ async function exchangeForLongLivedToken(
       };
     }
 
+    // The URL carries the app secret and the user's token: never log it.
     const url = `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(
       client_secret
     )}&access_token=${encodeURIComponent(shortLivedToken)}`;
 
-    console.log("[Instagram] Exchanging for long-lived token...");
+    console.log("[exchangeForLongLivedToken] Exchanging for long-lived token...");
 
     const response = await fetch(url, {
       method: "GET",
@@ -182,8 +183,7 @@ async function exchangeForLongLivedToken(
     const responseText = await response.text();
 
     if (!response.ok) {
-      // If long-lived token exchange fails, return the short-lived token
-      console.error("[Instagram] Long-lived token exchange failed:", {
+      console.error("[exchangeForLongLivedToken] Long-lived token exchange failed:", {
         status: response.status,
         statusText: response.statusText,
         response: responseText,
@@ -197,11 +197,10 @@ async function exchangeForLongLivedToken(
     const data = JSON.parse(responseText);
 
     if (data.error || !data.access_token) {
-      console.error("[Instagram] Long-lived token API error:", {
+      console.error("[exchangeForLongLivedToken] Long-lived token API error:", {
         error: data.error,
         has_access_token: !!data.access_token,
-        full_response: data,
-        url: url,
+        fields_received: Object.keys(data),
       });
       return {
         success: false,
@@ -209,7 +208,7 @@ async function exchangeForLongLivedToken(
       };
     }
 
-    console.log("[Instagram] Successfully obtained long-lived token");
+    console.log("[exchangeForLongLivedToken] Successfully obtained long-lived token");
 
     return {
       success: true,
@@ -221,14 +220,13 @@ async function exchangeForLongLivedToken(
     };
   } catch (error) {
     console.error(
-      "[Instagram] Unexpected error during long-lived token exchange:",
+      "[exchangeForLongLivedToken] Unexpected error during long-lived token exchange:",
       {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       }
     );
 
-    // Fallback to short-lived token
     return {
       success: false,
       message:

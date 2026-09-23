@@ -9,7 +9,7 @@ export async function getPinterestProfile(
 ): Promise<PinterestProfile> {
   try {
     const url = "https://api.pinterest.com/v5/user_account";
-    console.log("[Pinterest] Requesting profile from:", url);
+    console.log("[getPinterestProfile] Requesting profile from:", url);
 
     const response = await fetch(url, {
       method: "GET",
@@ -18,14 +18,14 @@ export async function getPinterestProfile(
       },
     });
 
+    // Never log the body: it holds the account's personal profile.
     const responseText = await response.text();
-    console.log("[Pinterest] Profile API raw response:", responseText);
 
     let data;
     try {
       data = JSON.parse(responseText);
     } catch (parseError) {
-      console.error("[Pinterest] Failed to parse API response:", parseError);
+      console.error("[getPinterestProfile] Failed to parse API response:", parseError);
       return {
         id: userId ?? "",
         username: "",
@@ -42,7 +42,7 @@ export async function getPinterestProfile(
     }
 
     if (!response.ok || data.error) {
-      console.warn(`[Pinterest] API returned an error:`, data.error);
+      console.warn(`[getPinterestProfile] API returned an error:`, data.error);
 
       return {
         id: userId ?? "",
@@ -76,7 +76,7 @@ export async function getPinterestProfile(
       business_name: supabaseUserData.business_name ?? null,
     };
   } catch (error) {
-    console.error("[Pinterest] Profile fetch error:", error);
+    console.error("[getPinterestProfile] Profile fetch error:", error);
 
     return {
       id: userId ?? "",

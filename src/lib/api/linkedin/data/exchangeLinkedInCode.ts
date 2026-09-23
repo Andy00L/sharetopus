@@ -36,8 +36,6 @@ export async function exchangeLinkedInCode(
     params.append("client_id", client_id);
     params.append("client_secret", client_secret);
 
-    console.log("[exchangeLinkedInCode] Request params:", params.toString());
-
     // Make token exchange request
     const response = await fetch(url, {
       method: "POST",
@@ -47,9 +45,9 @@ export async function exchangeLinkedInCode(
       body: params.toString(),
     });
 
-    // Get raw response text for error handling
+    // Raw text for error handling. Never log a successful body: it holds the
+    // user's access and refresh tokens.
     const responseText = await response.text();
-    console.log("[exchangeLinkedInCode] Token response:", responseText);
 
     if (!response.ok) {
       console.error(
@@ -90,8 +88,8 @@ export async function exchangeLinkedInCode(
 
     if (!data.access_token) {
       console.error(
-        "[exchangeLinkedInCode] Missing access_token in response:",
-        JSON.stringify(data)
+        "[exchangeLinkedInCode] Missing access_token in response; fields received:",
+        Object.keys(data).join(", ")
       );
       return {
         success: false,

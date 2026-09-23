@@ -52,9 +52,9 @@ export async function exchangeTikTokCode(
       body: params.toString(),
     });
 
-    // Get raw response text for error handling
+    // Raw text for error handling. Never log a successful body: it holds the
+    // user's access and refresh tokens.
     const responseText = await response.text();
-    console.log("[exchangeTikTokCode] Token response:", responseText);
 
     if (!response.ok) {
       console.error(
@@ -95,8 +95,8 @@ export async function exchangeTikTokCode(
 
     if (!data.access_token || !data.open_id) {
       console.error(
-        "[exchangeTikTokCode] Missing required fields in response:",
-        JSON.stringify(data)
+        "[exchangeTikTokCode] Missing required fields in response; fields received:",
+        Object.keys(data).join(", ")
       );
       return {
         success: false,

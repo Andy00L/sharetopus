@@ -15,7 +15,7 @@ export async function getTikTokProfile(
     const url = `https://open.tiktokapis.com/v2/user/info/?fields=${encodeURIComponent(
       fields
     )}`;
-    console.log("[TikTok] Requesting profile from:", url);
+    console.log("[getTikTokProfile] Requesting profile from:", url);
 
     const response = await fetch(url, {
       method: "GET",
@@ -24,14 +24,14 @@ export async function getTikTokProfile(
       },
     });
 
+    // Never log the body: it holds the creator's personal profile.
     const responseText = await response.text();
-    console.log("[TikTok] Profile API raw response:", responseText);
 
     let data;
     try {
       data = JSON.parse(responseText);
     } catch (parseError) {
-      console.error("[TikTok] Failed to parse API response:", parseError);
+      console.error("[getTikTokProfile] Failed to parse API response:", parseError);
       return {
         id: openId,
         username: `tiktok_user_${openId?.substring(0, 6)}`,
@@ -46,12 +46,12 @@ export async function getTikTokProfile(
     // --- FIX: Check for error object AND error code !== 'ok' ---
     if (data.error && data.error.code !== "ok") {
       console.warn(
-        `[TikTok] API returned an error code: ${data.error.code}`,
+        `[getTikTokProfile] API returned an error code: ${data.error.code}`,
         data.error
       ); // Handle specific errors like scope_not_authorized
       if (data.error.code === "scope_not_authorized") {
         console.warn(
-          "[TikTok] User did not authorize required scope(s). Returning basic info."
+          "[getTikTokProfile] User did not authorize required scope(s). Returning basic info."
         );
         return {
           id: openId,
@@ -80,7 +80,7 @@ export async function getTikTokProfile(
     // Extract user data - handle the case where data.data or data.data.user might be missing
     const userData = data?.data?.user;
     if (!userData) {
-      console.warn("[TikTok] Profile data block missing in API response.");
+      console.warn("[getTikTokProfile] Profile data block missing in API response.");
       // Return fallback if user data is unexpectedly missing
       return {
         id: openId,
@@ -96,7 +96,6 @@ export async function getTikTokProfile(
     }
 
     // Build complete profile from response
-    console.log("[TikTok] Successfully parsed profile data:", userData); // Add log for success
     return {
       id: userData.open_id ?? openId, // Prefer open_id from profile data if available
       username:
@@ -109,7 +108,7 @@ export async function getTikTokProfile(
       following_count: userData.following_count ?? null,
     };
   } catch (error) {
-    console.error("[TikTok] Profile fetch error:", error);
+    console.error("[getTikTokProfile] Profile fetch error:", error);
     // Create fallback profile indicating a fetch error
     return {
       id: openId,

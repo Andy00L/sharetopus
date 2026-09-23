@@ -18,8 +18,8 @@ export async function getLinkedInProfile(
       },
     });
 
+    // Never log the body: it holds the member's name, email and photo.
     const responseText = await response.text();
-    console.log("[getLinkedInProfile] Profile API raw response:", responseText);
 
     let data;
     try {

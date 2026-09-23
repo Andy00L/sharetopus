@@ -39,8 +39,6 @@ export async function exchangePinterestCode(
     params.append("code", code);
     params.append("redirect_uri", redirect_uri);
 
-    console.log("[exchangePinterestCode] Request params:", params.toString());
-
     // Make token exchange request
     const response = await fetch(url, {
       method: "POST",
@@ -51,9 +49,9 @@ export async function exchangePinterestCode(
       body: params.toString(),
     });
 
-    // Get raw response text for error handling
+    // Raw text for error handling. Never log a successful body: it holds the
+    // user's access and refresh tokens.
     const responseText = await response.text();
-    console.log("[exchangePinterestCode] Token response:", responseText);
 
     if (!response.ok) {
       console.error(
@@ -94,8 +92,8 @@ export async function exchangePinterestCode(
 
     if (!data.access_token) {
       console.error(
-        "[exchangePinterestCode] Missing access_token in response:",
-        JSON.stringify(data)
+        "[exchangePinterestCode] Missing access_token in response; fields received:",
+        Object.keys(data).join(", ")
       );
       return {
         success: false,
