@@ -628,72 +628,6 @@ export type Database = {
       };
 
       // ────────────────────────────────────────────────────────────────
-      mcp_sessions: {
-        Row: {
-          id: string;
-          principal_id: string;
-          oauth_client_id: string | null;
-          api_key_id: string | null;
-          protocol_version: string;
-          started_at: string;
-          last_activity_at: string;
-          ended_at: string | null;
-          client_name: string | null;
-          client_version: string | null;
-          ip_hash: string | null;
-        };
-        Insert: {
-          id: string;
-          principal_id: string;
-          oauth_client_id?: string | null;
-          api_key_id?: string | null;
-          protocol_version?: string;
-          started_at?: string;
-          last_activity_at?: string;
-          ended_at?: string | null;
-          client_name?: string | null;
-          client_version?: string | null;
-          ip_hash?: string | null;
-        };
-        Update: {
-          id?: string;
-          principal_id?: string;
-          oauth_client_id?: string | null;
-          api_key_id?: string | null;
-          protocol_version?: string;
-          started_at?: string;
-          last_activity_at?: string;
-          ended_at?: string | null;
-          client_name?: string | null;
-          client_version?: string | null;
-          ip_hash?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: "mcp_sessions_api_key_id_fkey";
-            columns: ["api_key_id"];
-            isOneToOne: false;
-            referencedRelation: "api_keys";
-            referencedColumns: ["id"];
-          },
-          {
-            foreignKeyName: "mcp_sessions_oauth_client_id_fkey";
-            columns: ["oauth_client_id"];
-            isOneToOne: false;
-            referencedRelation: "mcp_oauth_clients";
-            referencedColumns: ["client_id"];
-          },
-          {
-            foreignKeyName: "mcp_sessions_principal_id_fkey";
-            columns: ["principal_id"];
-            isOneToOne: false;
-            referencedRelation: "principals";
-            referencedColumns: ["id"];
-          },
-        ];
-      };
-
-      // ────────────────────────────────────────────────────────────────
       platform_quotas: {
         Row: {
           platform: string;
@@ -2687,7 +2621,6 @@ export type User = Tables<"users">;
 export type Wallet = Tables<"wallets">;
 export type ApiKey = Tables<"api_keys">;
 export type McpOauthClient = Tables<"mcp_oauth_clients">;
-export type McpSession = Tables<"mcp_sessions">;
 export type SanctionsScreening = Tables<"sanctions_screenings">;
 export type ShareLink = Tables<"share_links">;
 export type SocialAccount = Tables<"social_accounts">;

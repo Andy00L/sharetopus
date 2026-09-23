@@ -789,7 +789,7 @@ Before persisting, args pass through `redactSecrets()`:
 - **JWT detector:** any value matching three base64url segments separated by dots is replaced with `[REDACTED_JWT]`
 - **Truncation:** args are capped at 4,096 characters. Oversized payloads are replaced with `{ _truncated: true, _preview: "..." }`
 
-No table tracks sessions: the transport is stateless, so `session_id` is the per-request ID. The `mcp_sessions` table held one row per tool call, a copy of this log, and nothing writes it anymore.
+No table tracks sessions: the transport is stateless, so `session_id` is the per-request ID. The `mcp_sessions` table, which held one row per tool call as a copy of this log, was dropped on 2026-09-23.
 
 ### clientInfo sanitization
 
