@@ -1,7 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, desc, eq, isNull } from "drizzle-orm";
+
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { api_keys } from "@/db/schema";
 
 /**
  * Lists MCP API keys for the authenticated user.
@@ -32,13 +35,26 @@ export async function listApiKeys(
       return { success: false, message: "Authentication required." };
     }
 
-    const { data, error } = await adminSupabase
-      .from("api_keys")
-      .select("id, name, prefix, created_at, last_used_at, expires_at")
-      .eq("principal_id", userId)
-      .eq("kind", "mcp")
-      .is("revoked_at", null)
-      .order("created_at", { ascending: false });
+    const { data, error } = await runQuery(
+      db
+        .select({
+          id: api_keys.id,
+          name: api_keys.name,
+          prefix: api_keys.prefix,
+          created_at: api_keys.created_at,
+          last_used_at: api_keys.last_used_at,
+          expires_at: api_keys.expires_at,
+        })
+        .from(api_keys)
+        .where(
+          and(
+            eq(api_keys.principal_id, userId),
+            eq(api_keys.kind, "mcp"),
+            isNull(api_keys.revoked_at),
+          ),
+        )
+        .orderBy(desc(api_keys.created_at)),
+    );
 
     if (error) {
       return { success: false, message: `Failed to list keys: ${error.message}` };
@@ -46,8 +62,8 @@ export async function listApiKeys(
 
     return {
       success: true,
-      message: `Found ${data?.length ?? 0} active key(s).`,
-      data: data ?? [],
+      message: `Found ${data.length} active key(s).`,
+      data,
     };
   } catch (err) {
     console.error(

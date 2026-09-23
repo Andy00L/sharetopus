@@ -1,7 +1,10 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { db, runQuery } from "@/db/client";
+import { mcp_oauth_clients, rate_limit_events } from "@/db/schema";
 
 import { getCachedOAuthClient, setCachedOAuthClient } from "./oauthClientCache";
 
@@ -77,11 +80,17 @@ export async function checkOAuthClientTrust(
   }
 
   try {
-    const { data: existing, error: lookupErr } = await adminSupabase
-      .from("mcp_oauth_clients")
-      .select("client_id, trust_level, revoked_at, registered_by_user_id")
-      .eq("client_id", clientId)
-      .maybeSingle();
+    const { data: existingRows, error: lookupErr } = await runQuery(
+      db
+        .select({
+          trust_level: mcp_oauth_clients.trust_level,
+          revoked_at: mcp_oauth_clients.revoked_at,
+          registered_by_user_id: mcp_oauth_clients.registered_by_user_id,
+        })
+        .from(mcp_oauth_clients)
+        .where(eq(mcp_oauth_clients.client_id, clientId))
+        .limit(1),
+    );
 
     if (lookupErr) {
       console.error(
@@ -94,6 +103,7 @@ export async function checkOAuthClientTrust(
       return { allowed: false, reason: "lookup_failed" };
     }
 
+    const existing = existingRows[0];
     if (existing) {
       // Cache both allow and deny outcomes. A repeatedly-probing
       // revoked or blocked client otherwise hammers the DB.
@@ -161,11 +171,15 @@ async function firstSightInsert(
     }
   }
 
-  const { count, error: countErr } = await adminSupabase
-    .from("mcp_oauth_clients")
-    .select("client_id", { count: "exact", head: true })
-    .eq("registered_by_user_id", principalId)
-    .eq("trust_level", "verified");
+  const { data: count, error: countErr } = await runQuery(
+    db.$count(
+      mcp_oauth_clients,
+      and(
+        eq(mcp_oauth_clients.registered_by_user_id, principalId),
+        eq(mcp_oauth_clients.trust_level, "verified"),
+      ),
+    ),
+  );
 
   if (countErr) {
     console.error(
@@ -179,12 +193,12 @@ async function firstSightInsert(
   const trustLevel: "verified" | "unverified" =
     verifiedCount < MAX_VERIFIED_CLIENTS_PER_USER ? "verified" : "unverified";
 
-  // Upsert handles race condition: two simultaneous requests for the
-  // same new client_id resolve to one row.
-  const { error: insertErr } = await adminSupabase
-    .from("mcp_oauth_clients")
-    .upsert(
-      {
+  // ON CONFLICT DO NOTHING handles the race: two simultaneous requests
+  // for the same new client_id resolve to one row.
+  const { error: insertErr } = await runQuery(
+    db
+      .insert(mcp_oauth_clients)
+      .values({
         client_id: clientId,
         client_name: hints.clientName ?? "Unknown OAuth Client",
         redirect_uris: [],
@@ -193,9 +207,9 @@ async function firstSightInsert(
         registered_by_user_id: principalId,
         trust_level: trustLevel,
         metadata: {},
-      },
-      { onConflict: "client_id", ignoreDuplicates: true },
-    );
+      })
+      .onConflictDoNothing({ target: mcp_oauth_clients.client_id }),
+  );
 
   if (insertErr) {
     console.error(
@@ -232,11 +246,19 @@ async function logRateLimitEvent(
     const { extractIpHash } = await import("@/lib/api/context");
     const ipHash = await extractIpHash();
 
-    await adminSupabase.from("rate_limit_events").insert({
-      scope,
-      ip_hash: ipHash,
-      principal_id: principalId,
-    });
+    const { error: insertError } = await runQuery(
+      db.insert(rate_limit_events).values({
+        scope,
+        ip_hash: ipHash,
+        principal_id: principalId,
+      }),
+    );
+    if (insertError) {
+      console.error(
+        "[logRateLimitEvent] Failed to record rate-limit event:",
+        insertError.message,
+      );
+    }
   } catch (err) {
     console.error(
       "[logRateLimitEvent] Failed to record rate-limit event:",

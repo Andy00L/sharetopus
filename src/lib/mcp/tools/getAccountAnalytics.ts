@@ -1,7 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { analytics_metrics } from "@/db/schema";
 import type { McpServer } from "@modelcontextprotocol/server";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
@@ -73,23 +75,25 @@ export function registerGetAccountAnalytics(server: McpServer): void {
         sinceDate.setDate(sinceDate.getDate() - args.days);
         const sinceIsoDate = sinceDate.toISOString().split("T")[0];
 
-        let analyticsQuery = adminSupabase
-          .from("analytics_metrics")
-          .select("*")
-          .eq("principal_id", ctx.principal.principalId)
-          .gte("metric_date", sinceIsoDate)
-          .order("metric_date", { ascending: false })
-          .limit(args.limit);
-
-        if (args.platform) {
-          analyticsQuery = analyticsQuery.eq("platform", args.platform);
-        }
-        if (args.content_id) {
-          analyticsQuery = analyticsQuery.eq("content_id", args.content_id);
-        }
-
-        const { data: analyticsRows, error: analyticsError } =
-          await analyticsQuery;
+        const { data: analyticsRows, error: analyticsError } = await runQuery(
+          db
+            .select()
+            .from(analytics_metrics)
+            .where(
+              and(
+                eq(analytics_metrics.principal_id, ctx.principal.principalId),
+                gte(analytics_metrics.metric_date, sinceIsoDate),
+                args.platform
+                  ? eq(analytics_metrics.platform, args.platform)
+                  : undefined,
+                args.content_id
+                  ? eq(analytics_metrics.content_id, args.content_id)
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(analytics_metrics.metric_date))
+            .limit(args.limit),
+        );
 
         if (analyticsError) {
           return {

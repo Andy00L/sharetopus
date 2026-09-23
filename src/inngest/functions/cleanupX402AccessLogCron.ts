@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { x402_access_log } from "@/db/schema";
 
 import { inngest } from "../client";
 
@@ -9,8 +12,10 @@ const RETENTION_DAYS = 90;
 /**
  * Daily cleanup of x402_access_log rows older than 90 days.
  *
- * Runs at 06:00 UTC. Uses the GENERATED `month` column for efficient
- * cutoff comparison. Service-role DELETE bypasses the append-only trigger.
+ * Runs at 06:00 UTC. Like mcp_audit_log, the table's append-only trigger
+ * (reject_mutation) refuses a DELETE unless the transaction sets
+ * app.allow_append_only_delete = 'on'. Nothing sets it yet, so this job
+ * fails at the DELETE and no rows are removed.
  *
  * Mirrors cleanupMcpAuditLogCron retention policy.
  */
@@ -27,18 +32,20 @@ export const cleanupX402AccessLogCron = inngest.createFunction(
     const cutoffIso = cutoff.toISOString();
 
     const result = await step.run("delete-old-x402-log-rows", async () => {
-      const { error, count } = await adminSupabase
-        .from("x402_access_log")
-        .delete({ count: "exact" })
-        .lt("created_at", cutoffIso);
+      const { data: deleteResult, error } = await runQuery(
+        db
+          .delete(x402_access_log)
+          .where(lt(x402_access_log.created_at, cutoffIso)),
+      );
 
       if (error) {
+        // Thrown so Inngest records the step as failed.
         throw new Error(
           `[cleanupX402AccessLogCron] DELETE failed: ${error.message}`,
         );
       }
 
-      return { deleted: count ?? 0 };
+      return { deleted: deleteResult.count };
     });
 
     console.log(

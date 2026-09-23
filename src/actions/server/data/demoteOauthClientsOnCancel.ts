@@ -1,5 +1,9 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { mcp_oauth_clients } from "@/db/schema";
 
 export type DemoteResult =
   | { success: true; demoted: number }
@@ -17,12 +21,18 @@ export async function demoteOauthClientsOnCancel(
   principalId: string
 ): Promise<DemoteResult> {
   try {
-    const { data, error } = await adminSupabase
-      .from("mcp_oauth_clients")
-      .update({ trust_level: "unverified" })
-      .eq("registered_by_user_id", principalId)
-      .eq("trust_level", "verified")
-      .select("client_id");
+    const { data, error } = await runQuery(
+      db
+        .update(mcp_oauth_clients)
+        .set({ trust_level: "unverified" })
+        .where(
+          and(
+            eq(mcp_oauth_clients.registered_by_user_id, principalId),
+            eq(mcp_oauth_clients.trust_level, "verified"),
+          ),
+        )
+        .returning({ client_id: mcp_oauth_clients.client_id }),
+    );
 
     if (error) {
       return {
@@ -31,7 +41,7 @@ export async function demoteOauthClientsOnCancel(
       };
     }
 
-    const count = data?.length ?? 0;
+    const count = data.length;
     if (count > 0) {
       console.log(
         `[demoteOauthClientsOnCancel] Demoted ${count} clients for principal ${principalId}`

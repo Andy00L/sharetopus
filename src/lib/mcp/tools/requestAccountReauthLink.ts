@@ -1,7 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import type { McpServer } from "@modelcontextprotocol/server";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
@@ -42,14 +44,26 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
     withMcpTool(
       "request_account_reauth_link",
       async (ctx, args: RequestAccountReauthLinkArgs) => {
-        const { data: socialAccount, error: accountFetchError } =
-          await adminSupabase
-            .from("social_accounts")
-            .select("id, platform, display_name, is_available")
-            .eq("id", args.social_account_id)
-            .eq("principal_id", ctx.principal.principalId)
-            .single();
+        const { data: socialAccounts, error: accountFetchError } =
+          await runQuery(
+            db
+              .select({
+                id: social_accounts.id,
+                platform: social_accounts.platform,
+                display_name: social_accounts.display_name,
+                is_available: social_accounts.is_available,
+              })
+              .from(social_accounts)
+              .where(
+                and(
+                  eq(social_accounts.id, args.social_account_id),
+                  eq(social_accounts.principal_id, ctx.principal.principalId),
+                ),
+              )
+              .limit(1),
+          );
 
+        const socialAccount = socialAccounts?.[0];
         if (accountFetchError || !socialAccount) {
           return {
             content: [

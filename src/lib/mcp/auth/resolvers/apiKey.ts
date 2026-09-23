@@ -1,8 +1,10 @@
 import "server-only";
 
 import { waitUntil } from "@vercel/functions";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { api_keys, principals } from "@/db/schema";
 import { extractIpHash } from "@/lib/api/context";
 import { hashToken } from "@/lib/api/tokens";
 
@@ -31,14 +33,26 @@ export async function resolveApiKey(
 ): Promise<McpPrincipal | null> {
   const tokenHash = hashToken(rawToken);
 
-  const { data: apiKeyRow, error: apiKeyError } = await adminSupabase
-    .from("api_keys")
-    .select("id, principal_id, kind, scopes, revoked_at, expires_at")
-    .eq("token_hash", tokenHash)
-    .eq("kind", "mcp")
-    .is("revoked_at", null)
-    .single();
+  const { data: apiKeyRows, error: apiKeyError } = await runQuery(
+    db
+      .select({
+        id: api_keys.id,
+        principal_id: api_keys.principal_id,
+        scopes: api_keys.scopes,
+        expires_at: api_keys.expires_at,
+      })
+      .from(api_keys)
+      .where(
+        and(
+          eq(api_keys.token_hash, tokenHash),
+          eq(api_keys.kind, "mcp"),
+          isNull(api_keys.revoked_at),
+        ),
+      )
+      .limit(1),
+  );
 
+  const apiKeyRow = apiKeyRows?.[0];
   if (apiKeyError || !apiKeyRow) return null;
 
   if (apiKeyRow.expires_at && new Date(apiKeyRow.expires_at) < new Date()) {
@@ -48,14 +62,20 @@ export async function resolveApiKey(
   // Belt-and-suspenders: the api_keys.principal_id FK trigger already
   // enforces kind='clerk', but a defense-in-depth check here protects
   // against future schema drift. Costs one extra SELECT on the hot path.
-  const { data: principalRow } = await adminSupabase
-    .from("principals")
-    .select("id, kind")
-    .eq("id", apiKeyRow.principal_id)
-    .eq("kind", "clerk")
-    .single();
+  const { data: principalRows } = await runQuery(
+    db
+      .select({ id: principals.id })
+      .from(principals)
+      .where(
+        and(
+          eq(principals.id, apiKeyRow.principal_id),
+          eq(principals.kind, "clerk"),
+        ),
+      )
+      .limit(1),
+  );
 
-  if (!principalRow) return null;
+  if (!principalRows?.[0]) return null;
 
   // Fire-and-forget `last_used` tracking.
   //
@@ -73,13 +93,15 @@ export async function resolveApiKey(
   const ipHash = await extractIpHash();
   waitUntil(
     (async () => {
-      const { error: updateError } = await adminSupabase
-        .from("api_keys")
-        .update({
-          last_used_at: new Date().toISOString(),
-          last_used_ip: ipHash,
-        })
-        .eq("id", apiKeyRow.id);
+      const { error: updateError } = await runQuery(
+        db
+          .update(api_keys)
+          .set({
+            last_used_at: new Date().toISOString(),
+            last_used_ip: ipHash,
+          })
+          .where(eq(api_keys.id, apiKeyRow.id)),
+      );
 
       if (updateError) {
         console.error(

@@ -293,7 +293,7 @@ Triggers:
 
 | Data | Retention | Mechanism |
 |------|-----------|-----------|
-| `mcp_audit_log` | 90 days | Rows older than 90 days are eligible for deletion by a scheduled cleanup job. |
+| `mcp_audit_log`, `x402_access_log` | 90 days, not enforced yet | Daily cleanup jobs delete older rows, but the append-only trigger refuses a DELETE unless the transaction sets `app.allow_append_only_delete = 'on'`, which nothing does yet. Both jobs fail and no row has been deleted. |
 | `stripe_webhook_events` | 90 days | Same 90-day cleanup window. |
 | `tiktok_webhook_events` | 90 days | Same 90-day cleanup window. |
 | Cancelled posts (`scheduled_posts` with status `cancelled`) | 7-day grace period | Cancelled posts remain queryable for 7 days via `cancelled_by_sub_at`, then eligible for hard deletion. |

@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { sql } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
 import { type PlanTier, tierLabel, tierMeets } from "@/lib/types/plans";
 
@@ -232,10 +234,11 @@ async function checkAndIncrementQuota(
  * never two allows.
  *
  * Return semantics:
- *   - `null` from the RPC means the cap was already reached; the call
- *     did NOT increment. Returned as `{ allowed: false, currentCount: cap }`
+ *   - `null` from the function means the cap was already reached; the
+ *     call did NOT increment. Returned as `{ allowed: false, currentCount: cap }`
  *     so the caller can build the deny message with the cap value.
- *   - Any non-null value is the new count after increment.
+ *   - A number is the new count after increment.
+ *   - No row, or a non-number, is treated like an RPC error.
  *
  * The `_period` RPC parameter is typed `date` in Postgres, so the value
  * must be a valid YYYY-MM-DD string. currentQuotaPeriod() always
@@ -256,12 +259,11 @@ async function incrementQuota(
 ): Promise<{ allowed: boolean; currentCount: number; unavailable?: boolean }> {
   const period = currentQuotaPeriod();
 
-  const { data, error } = await adminSupabase.rpc("atomic_increment_quota", {
-    _principal_id: principalId,
-    _period: period,
-    _action: action,
-    _cap: cap,
-  });
+  const { data: quotaRows, error } = await runQuery(
+    db.execute(
+      sql`select public.atomic_increment_quota(${principalId}, ${period}::date, ${action}, ${cap}::integer) as new_count`,
+    ),
+  );
 
   if (error) {
     console.error(
@@ -271,9 +273,16 @@ async function incrementQuota(
     return { allowed: false, currentCount: 0, unavailable: true };
   }
 
-  if (data === null) {
+  const newCount: unknown = quotaRows[0]?.new_count;
+  if (newCount === null) {
     return { allowed: false, currentCount: cap };
   }
+  if (typeof newCount !== "number") {
+    console.error(
+      `[entitlement] atomic_increment_quota returned no count for ${action}`,
+    );
+    return { allowed: false, currentCount: 0, unavailable: true };
+  }
 
-  return { allowed: true, currentCount: data as number };
+  return { allowed: true, currentCount: newCount };
 }

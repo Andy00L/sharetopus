@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
 import type { SocialAccount } from "@/lib/types/dbTypes";
@@ -66,17 +69,28 @@ export function registerListPinterestBoards(server: McpServer): void {
           process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
 
         // 1. Resolve the account, scoped to principal + platform=pinterest.
-        const { data: pinterestAccount, error: accountFetchError } =
-          await adminSupabase
-            .from("social_accounts")
-            .select(
-              "id, platform, principal_id, access_token, refresh_token, token_expires_at",
-            )
-            .eq("id", args.social_account_id)
-            .eq("principal_id", ctx.principal.principalId)
-            .eq("platform", "pinterest")
-            .is("deleted_at", null)
-            .maybeSingle();
+        const { data: pinterestAccounts, error: accountFetchError } =
+          await runQuery(
+            db
+              .select({
+                id: social_accounts.id,
+                platform: social_accounts.platform,
+                principal_id: social_accounts.principal_id,
+                access_token: social_accounts.access_token,
+                refresh_token: social_accounts.refresh_token,
+                token_expires_at: social_accounts.token_expires_at,
+              })
+              .from(social_accounts)
+              .where(
+                and(
+                  eq(social_accounts.id, args.social_account_id),
+                  eq(social_accounts.principal_id, ctx.principal.principalId),
+                  eq(social_accounts.platform, "pinterest"),
+                  isNull(social_accounts.deleted_at),
+                ),
+              )
+              .limit(1),
+          );
 
         if (accountFetchError) {
           console.error(
@@ -94,6 +108,7 @@ export function registerListPinterestBoards(server: McpServer): void {
           };
         }
 
+        const pinterestAccount = pinterestAccounts[0];
         if (!pinterestAccount) {
           return {
             content: [

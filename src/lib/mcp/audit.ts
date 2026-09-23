@@ -1,7 +1,7 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { Json } from "@/lib/types/database.types";
+import { db, runQuery } from "@/db/client";
+import { mcp_audit_log, type Json } from "@/db/schema";
 import { redactSecrets, truncateJson } from "@/lib/api/audit/redactPatterns";
 
 import { assertExhaustiveKind, type McpPrincipal } from "./auth/types";
@@ -69,9 +69,8 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
     const redacted = entry.args ? redactSecrets(entry.args) : null;
     const argsJson = redacted ? truncateJson(redacted) : null;
 
-    const { error: auditError } = await adminSupabase
-      .from("mcp_audit_log")
-      .insert({
+    const { error: auditError } = await runQuery(
+      db.insert(mcp_audit_log).values({
         principal_id: entry.principal?.principalId ?? null,
         oauth_client_id: entry.principal
           ? oauthClientIdFromPrincipal(entry.principal)
@@ -86,7 +85,8 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
         latency_ms: entry.latencyMs ?? null,
         ip_hash: entry.ipHash ?? null,
         user_agent: entry.userAgent ?? null,
-      });
+      }),
+    );
 
     if (auditError) {
       console.error(

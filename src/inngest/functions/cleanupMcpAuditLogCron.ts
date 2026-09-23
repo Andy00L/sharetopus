@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { mcp_audit_log } from "@/db/schema";
 
 import { inngest } from "../client";
 
@@ -9,9 +12,11 @@ const RETENTION_DAYS = 90;
 /**
  * Daily cleanup of mcp_audit_log rows older than 90 days.
  *
- * Runs at 04:00 UTC. Service-role DELETE bypasses the append-only
- * trigger (reject_mutation grants service_role bypass since the P4.4
- * migration). Other roles are still blocked.
+ * Runs at 04:00 UTC. The table's append-only trigger (reject_mutation)
+ * refuses a DELETE unless the transaction sets
+ * app.allow_append_only_delete = 'on'. Nothing sets it yet, so this job
+ * fails at the DELETE and no rows are removed; switching retention on is
+ * pending (docs/DATABASE.md, data lifecycle).
  *
  * Retention rationale:
  *   - 90 days covers most compliance / forensics windows
@@ -34,18 +39,18 @@ export const cleanupMcpAuditLogCron = inngest.createFunction(
     const cutoffIso = cutoff.toISOString();
 
     const result = await step.run("delete-old-audit-rows", async () => {
-      const { error, count } = await adminSupabase
-        .from("mcp_audit_log")
-        .delete({ count: "exact" })
-        .lt("created_at", cutoffIso);
+      const { data: deleteResult, error } = await runQuery(
+        db.delete(mcp_audit_log).where(lt(mcp_audit_log.created_at, cutoffIso)),
+      );
 
       if (error) {
+        // Thrown so Inngest records the step as failed.
         throw new Error(
           `[cleanupMcpAuditLogCron] DELETE failed: ${error.message}`,
         );
       }
 
-      return { deleted: count ?? 0 };
+      return { deleted: deleteResult.count };
     });
 
     console.log(

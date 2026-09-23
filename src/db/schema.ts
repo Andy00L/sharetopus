@@ -53,6 +53,15 @@ const timestamptz = customType<{ data: string; driverData: string }>({
   },
 });
 
+/** A jsonb value, typed like supabase-js typed it (src/lib/types/database.types.ts). */
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
 /** Case-insensitive text from the citext extension (installed in public). */
 const citext = customType<{ data: string }>({
   dataType() {
@@ -144,7 +153,7 @@ export const principals = pgTable("principals", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   deleted_at: timestamptz(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
 }, (table) => [
   index("idx_principals_kind_active").on(table.kind).where(sql`(deleted_at IS NULL)`),
   pgPolicy("principals_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
@@ -186,7 +195,7 @@ export const wallets = pgTable("wallets", {
   sanctions_checked_at: timestamptz(),
   registered_at: timestamptz().default(sql`now()`).notNull(),
   last_seen_at: timestamptz().default(sql`now()`).notNull(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
 }, (table) => [
   index("idx_wallets_sanctions").on(table.sanctions_status).where(sql`(sanctions_status <> 'clean'::text)`),
   foreignKey({
@@ -215,7 +224,7 @@ export const api_keys = pgTable("api_keys", {
   last_used_ip: text(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   revoked_at: timestamptz(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
 }, (table) => [
   index("idx_api_keys_kind_active").on(table.kind).where(sql`(revoked_at IS NULL)`),
   index("idx_api_keys_prefix").on(table.prefix).where(sql`(revoked_at IS NULL)`),
@@ -254,7 +263,7 @@ export const social_accounts = pgTable("social_accounts", {
   refresh_token: text(),
   token_expires_at: timestamptz(),
   connection_id: text(),
-  extra: jsonb().default({}).notNull(),
+  extra: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   deleted_at: timestamptz(),
@@ -298,7 +307,7 @@ export const social_connections = pgTable("social_connections", {
   poll_count: integer().default(0).notNull(),
   last_polled_at: timestamptz(),
   last_polled_ip_hash: text(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   share_link_id: uuid(),
@@ -374,7 +383,7 @@ export const scheduled_posts = pgTable("scheduled_posts", {
   scheduled_at_date: date().generatedAlwaysAs(sql`((scheduled_at AT TIME ZONE 'UTC'::text))::date`),
   post_title: text(),
   post_description: text(),
-  post_options: jsonb().default({}).notNull(),
+  post_options: jsonb().$type<Json>().default({}).notNull(),
   media_type: text({ enum: MEDIA_TYPES }).notNull(),
   media_storage_path: text().default("").notNull(),
   cover_image_timestamp: numeric({ mode: "number" }),
@@ -384,7 +393,7 @@ export const scheduled_posts = pgTable("scheduled_posts", {
   created_via: text({ enum: CREATED_VIA_CHANNELS }).default("web").notNull(),
   idempotency_key: text(),
   x402_charge_id: uuid(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   cancelled_by_sub_at: timestamptz(),
@@ -429,7 +438,7 @@ export const failed_posts = pgTable("failed_posts", {
   scheduled_at_date: date().generatedAlwaysAs(sql`((scheduled_at AT TIME ZONE 'UTC'::text))::date`),
   post_title: text(),
   post_description: text(),
-  post_options: jsonb().default({}).notNull(),
+  post_options: jsonb().$type<Json>().default({}).notNull(),
   media_type: text({ enum: MEDIA_TYPES }).notNull(),
   media_storage_path: text().default("").notNull(),
   cover_image_timestamp: numeric({ mode: "number" }),
@@ -439,7 +448,7 @@ export const failed_posts = pgTable("failed_posts", {
   created_via: text({ enum: CREATED_VIA_CHANNELS }).default("web").notNull(),
   idempotency_key: text(),
   x402_charge_id: uuid(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
@@ -547,7 +556,7 @@ export const content_history = pgTable("content_history", {
   status: text(),
   batch_id: text(),
   created_via: text({ enum: CREATED_VIA_CHANNELS }).default("web").notNull(),
-  extra: jsonb().default({}).notNull(),
+  extra: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   index("idx_content_history_batch").on(table.batch_id).where(sql`(batch_id IS NOT NULL)`),
@@ -583,7 +592,7 @@ export const analytics_metrics = pgTable("analytics_metrics", {
   likes: bigint({ mode: "number" }).default(0).notNull(),
   shares: bigint({ mode: "number" }).default(0).notNull(),
   subscribers: bigint({ mode: "number" }).default(0).notNull(),
-  extra: jsonb().default({}).notNull(),
+  extra: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
@@ -618,7 +627,7 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   end_date: timestamptz(),
   current_period_end: timestamptz(),
   cancel_reason: text(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
@@ -640,7 +649,7 @@ export const stripe_invoices = pgTable("stripe_invoices", {
   amount_paid_cents: integer(),
   currency: text(),
   status: text(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   foreignKey({
@@ -755,7 +764,7 @@ export const pricing_actions = pgTable("pricing_actions", {
   recurrence: text({ enum: PRICING_RECURRENCES }).default("one_time").notNull(),
   effective_from: timestamptz().default(sql`now()`).notNull(),
   effective_until: timestamptz(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
@@ -787,7 +796,7 @@ export const x402_charges = pgTable("x402_charges", {
   scheduled_post_id: uuid(),
   social_connection_id: text(),
   error_message: text(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   settled_at: timestamptz(),
 }, (table): PgTableExtraConfigValue[] => [
@@ -835,7 +844,7 @@ export const x402_refunds = pgTable("x402_refunds", {
   refunded_usdc: numeric({ precision: 18, scale: 6, mode: "number" }).notNull(),
   refund_tx_hash: text(),
   initiated_by: text(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   index("idx_refunds_charge").on(table.charge_id),
@@ -961,7 +970,7 @@ export const sanctions_screenings = pgTable("sanctions_screenings", {
   wallet_id: text().notNull(),
   result: text({ enum: SANCTIONS_RESULTS }).notNull(),
   source: text().notNull(),
-  raw_response: jsonb(),
+  raw_response: jsonb().$type<Json>(),
   checked_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   index("idx_sanctions_wallet_time").on(table.wallet_id, table.checked_at.desc().nullsFirst()),
@@ -997,7 +1006,7 @@ export const mcp_oauth_clients = pgTable("mcp_oauth_clients", {
   trust_level: text({ enum: OAUTH_CLIENT_TRUST_LEVELS }).default("unverified").notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   revoked_at: timestamptz(),
-  metadata: jsonb().default({}).notNull(),
+  metadata: jsonb().$type<Json>().default({}).notNull(),
 }, (table) => [
   index("idx_mcp_oauth_clients_trust").on(table.trust_level).where(sql`(revoked_at IS NULL)`),
   foreignKey({
@@ -1016,7 +1025,7 @@ export const mcp_audit_log = pgTable("mcp_audit_log", {
   api_key_id: uuid(),
   session_id: text(),
   tool_name: text().notNull(),
-  args_redacted: jsonb(),
+  args_redacted: jsonb().$type<Json>(),
   result_status: text({ enum: MCP_AUDIT_RESULT_STATUSES }).notNull(),
   latency_ms: integer(),
   ip_hash: text(),
@@ -1059,8 +1068,8 @@ export const rest_audit_log = pgTable("rest_audit_log", {
   outcome: text({ enum: REST_AUDIT_OUTCOMES }).notNull(),
   error_code: text(),
   latency_ms: integer(),
-  args_redacted: jsonb(),
-  response_summary: jsonb(),
+  args_redacted: jsonb().$type<Json>(),
+  response_summary: jsonb().$type<Json>(),
   created_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   index("rest_audit_log_principal_created_idx").on(table.principal_id, table.created_at.desc().nullsFirst()),
@@ -1117,7 +1126,7 @@ export const webhook_deliveries = pgTable("webhook_deliveries", {
   subscription_id: uuid().notNull(),
   event_type: text().notNull(),
   event_id: text().notNull(),
-  payload: jsonb().notNull(),
+  payload: jsonb().$type<Json>().notNull(),
   status_code: integer(),
   response_body: text(),
   attempt: integer().default(1).notNull(),

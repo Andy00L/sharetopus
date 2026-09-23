@@ -1,6 +1,8 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { usage_quotas } from "@/db/schema";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
+import { and, eq } from "drizzle-orm";
 import { tierLabel } from "@/lib/types/plans";
 import type { McpServer } from "@modelcontextprotocol/server";
 import "server-only";
@@ -39,11 +41,17 @@ export function registerListBillingSummary(server: McpServer): void {
       // Query filter uses YYYY-MM-DD (matches the date column in usage_quotas).
       // The display `period` field below stays YYYY-MM because it is user-facing.
       const periodFilter = currentQuotaPeriod();
-      const { data: usageQuotas } = await adminSupabase
-        .from("usage_quotas")
-        .select("action, count")
-        .eq("principal_id", ctx.principal.principalId)
-        .eq("period", periodFilter);
+      const { data: usageQuotas } = await runQuery(
+        db
+          .select({ action: usage_quotas.action, count: usage_quotas.count })
+          .from(usage_quotas)
+          .where(
+            and(
+              eq(usage_quotas.principal_id, ctx.principal.principalId),
+              eq(usage_quotas.period, periodFilter),
+            ),
+          ),
+      );
 
       const usageByAction = (usageQuotas ?? []).reduce(
         (accumulator, quotaRow) => {

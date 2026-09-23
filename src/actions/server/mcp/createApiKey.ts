@@ -1,8 +1,11 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { api_keys } from "@/db/schema";
 import { generateApiKey } from "@/lib/api/tokens";
 import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
@@ -75,12 +78,16 @@ export async function createApiKey(
     }
 
     // Check existing key count (limit to 10 active keys per user)
-    const { count } = await adminSupabase
-      .from("api_keys")
-      .select("id", { count: "exact", head: true })
-      .eq("principal_id", userId)
-      .eq("kind", "mcp")
-      .is("revoked_at", null);
+    const { data: count } = await runQuery(
+      db.$count(
+        api_keys,
+        and(
+          eq(api_keys.principal_id, userId),
+          eq(api_keys.kind, "mcp"),
+          isNull(api_keys.revoked_at),
+        ),
+      ),
+    );
 
     if ((count ?? 0) >= 10) {
       return {
@@ -96,25 +103,28 @@ export async function createApiKey(
       Date.now() + expiresInDays * millisecondsPerDay,
     ).toISOString();
 
-    const { data: newKey, error } = await adminSupabase
-      .from("api_keys")
-      .insert({
-        principal_id: userId,
-        name: name.trim(),
-        prefix,
-        token_hash: tokenHash,
-        kind: "mcp",
-        scopes: ["mcp:*"],
-        expires_at: apiKeyExpiresAtIso,
-      })
-      .select("id")
-      .single();
+    const { data: insertedKeys, error } = await runQuery(
+      db
+        .insert(api_keys)
+        .values({
+          principal_id: userId,
+          name: name.trim(),
+          prefix,
+          token_hash: tokenHash,
+          kind: "mcp",
+          scopes: ["mcp:*"],
+          expires_at: apiKeyExpiresAtIso,
+        })
+        .returning({ id: api_keys.id }),
+    );
 
-    if (error) {
-      console.error("[createApiKey] Insert failed:", error.message);
+    const newKey = insertedKeys?.[0];
+    if (error || !newKey) {
+      const failureMessage = error?.message ?? "no row returned";
+      console.error("[createApiKey] Insert failed:", failureMessage);
       return {
         success: false,
-        message: `Failed to create API key: ${error.message}`,
+        message: `Failed to create API key: ${failureMessage}`,
       };
     }
 

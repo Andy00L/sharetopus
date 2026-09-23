@@ -1,5 +1,9 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { and, eq, gt, inArray, lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { mcp_audit_log, mcp_oauth_clients } from "@/db/schema";
 
 export type SweepResult =
   | {
@@ -20,8 +24,6 @@ export type SweepResult =
  */
 const STALE_DAYS = 90;
 const MAX_DELETE_PER_RUN = 1000;
-/** Activity lookups in flight at once, to bound open connections. */
-const ACTIVITY_CHECK_BATCH_SIZE = 20;
 
 /**
  * Deletes OAuth client rows that are:
@@ -37,12 +39,18 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
       Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000
     ).toISOString();
 
-    const { data: candidates, error: queryErr } = await adminSupabase
-      .from("mcp_oauth_clients")
-      .select("client_id")
-      .eq("trust_level", "unverified")
-      .lt("created_at", cutoff)
-      .limit(MAX_DELETE_PER_RUN);
+    const { data: candidates, error: queryErr } = await runQuery(
+      db
+        .select({ client_id: mcp_oauth_clients.client_id })
+        .from(mcp_oauth_clients)
+        .where(
+          and(
+            eq(mcp_oauth_clients.trust_level, "unverified"),
+            lt(mcp_oauth_clients.created_at, cutoff),
+          ),
+        )
+        .limit(MAX_DELETE_PER_RUN),
+    );
 
     if (queryErr) {
       return {
@@ -51,22 +59,38 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
       };
     }
 
-    if (!candidates || candidates.length === 0) {
+    if (candidates.length === 0) {
       return { success: true, candidatesFound: 0, deleted: 0 };
     }
 
     const candidateIds = candidates.map((candidate) => candidate.client_id);
 
-    const activity = await findRecentlyActiveClientIds(candidateIds, cutoff);
-    if (!activity.success) {
+    // One DISTINCT query answers "which candidates made a call since the
+    // cutoff", whatever the number of calls per client.
+    const { data: activeRows, error: activityErr } = await runQuery(
+      db
+        .selectDistinct({ oauth_client_id: mcp_audit_log.oauth_client_id })
+        .from(mcp_audit_log)
+        .where(
+          and(
+            inArray(mcp_audit_log.oauth_client_id, candidateIds),
+            gt(mcp_audit_log.created_at, cutoff),
+          ),
+        ),
+    );
+
+    if (activityErr) {
       return {
         success: false,
-        message: `[sweepStaleOauthClients] ${activity.message}`,
+        message: `[sweepStaleOauthClients] Activity query failed: ${activityErr.message}`,
       };
     }
 
+    const activeIds = new Set(
+      activeRows.map((activeRow) => activeRow.oauth_client_id),
+    );
     const toDelete = candidateIds.filter(
-      (clientId) => !activity.activeIds.has(clientId)
+      (clientId) => !activeIds.has(clientId)
     );
 
     if (toDelete.length === 0) {
@@ -77,10 +101,11 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
       };
     }
 
-    const { error: deleteErr } = await adminSupabase
-      .from("mcp_oauth_clients")
-      .delete()
-      .in("client_id", toDelete);
+    const { error: deleteErr } = await runQuery(
+      db
+        .delete(mcp_oauth_clients)
+        .where(inArray(mcp_oauth_clients.client_id, toDelete)),
+    );
 
     if (deleteErr) {
       return {
@@ -104,58 +129,4 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
       message: `[sweepStaleOauthClients] Unexpected: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
-}
-
-/**
- * Returns the candidates with at least one mcp_audit_log row after the
- * cutoff. One limit(1) lookup per candidate: a single IN query returns a
- * row per tool call, and PostgREST caps each response (1000 rows by
- * default), so one busy client could push the others out of the page and
- * get them deleted while still in use.
- */
-async function findRecentlyActiveClientIds(
-  candidateIds: string[],
-  cutoff: string
-): Promise<
-  { success: true; activeIds: Set<string> } | { success: false; message: string }
-> {
-  const activeIds = new Set<string>();
-
-  for (
-    let batchStart = 0;
-    batchStart < candidateIds.length;
-    batchStart += ACTIVITY_CHECK_BATCH_SIZE
-  ) {
-    const batch = candidateIds.slice(
-      batchStart,
-      batchStart + ACTIVITY_CHECK_BATCH_SIZE
-    );
-    const lookups = await Promise.all(
-      batch.map(async (clientId) => {
-        const { data, error } = await adminSupabase
-          .from("mcp_audit_log")
-          .select("id")
-          .eq("oauth_client_id", clientId)
-          .gt("created_at", cutoff)
-          .limit(1);
-        return {
-          clientId,
-          hasRecentCall: (data?.length ?? 0) > 0,
-          errorMessage: error?.message ?? null,
-        };
-      })
-    );
-
-    for (const lookup of lookups) {
-      if (lookup.errorMessage !== null) {
-        return {
-          success: false,
-          message: `Activity query failed for ${lookup.clientId}: ${lookup.errorMessage}`,
-        };
-      }
-      if (lookup.hasRecentCall) activeIds.add(lookup.clientId);
-    }
-  }
-
-  return { success: true, activeIds };
 }
