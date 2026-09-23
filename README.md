@@ -69,10 +69,10 @@ Full dependency list: [package.json](./package.json).
 ```bash
 git clone <repo-url>
 cd sharetopus
-npm install
+bun install
 cp .env.example .env.local
 # Fill in all required values (see docs/DEVELOPMENT.md)
-npm run dev              # http://localhost:3000
+bun run dev              # http://localhost:3000
 ```
 
 Prerequisites: Node.js 20+, Supabase project, Clerk application, Stripe account, Inngest account, Upstash Redis instance, and OAuth apps for each platform you want to test.
@@ -190,7 +190,7 @@ Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 - i18n is declared (fr, en, es) but no translation files exist. UI is English only.
 - Studio/Analytics page shows "Coming Soon". The analytics_metrics table exists but has no data pipeline.
 - TikTok default privacy is SELF_ONLY (private). Users must select a public level.
-- `next.config.ts` sets `typescript.ignoreBuildErrors: true` for Vercel OOM mitigation. Type checking runs via `npx tsc --noEmit` in CI/pre-commit instead.
+- `next.config.ts` sets `typescript.ignoreBuildErrors: true` for Vercel OOM mitigation. Type checking runs via `bunx tsc --noEmit` in CI/pre-commit instead.
 
 ## 🤝 Contributing
 

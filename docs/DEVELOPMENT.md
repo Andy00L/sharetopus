@@ -46,7 +46,7 @@ graph LR
 
     subgraph LocalTools["Local Tooling"]
         StripeCLI["Stripe CLI<br/>stripe listen --forward-to"]
-        InngestDev["Inngest Dev Server<br/>npx inngest-cli dev"]
+        InngestDev["Inngest Dev Server<br/>bunx inngest-cli dev"]
     end
 
     App -->|"queries + storage"| Supabase
@@ -77,12 +77,12 @@ The Next.js dev server talks to remote Supabase, Clerk, and Upstash instances. S
 ```bash
 git clone <repo-url>
 cd sharetopus
-npm install
+bun install
 
 cp .env.example .env.local
 # Fill in all required values (see tables below and .env.example comments)
 
-npm run dev    # http://localhost:3000
+bun run dev    # http://localhost:3000
 ```
 
 ### Supabase
@@ -118,7 +118,7 @@ stripe listen --forward-to localhost:3000/api/webhooks/stripe
 2. For local development, start the dev server:
 
 ```bash
-npx inngest-cli@latest dev
+bunx inngest-cli@latest dev
 ```
 
 3. The Inngest serve endpoint is at `/api/inngest`.
@@ -232,10 +232,10 @@ All variables are documented in `.env.example`. The tables below group them by s
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start dev server with Turbopack (`next dev --turbopack`) |
-| `npm run build` | Production build (`next build`) |
-| `npm run start` | Start production server (`next start`) |
-| `npm run lint` | Run ESLint (`next lint`) |
+| `bun run dev` | Start dev server with Turbopack (`next dev --turbopack`) |
+| `bun run build` | Production build (`next build`) |
+| `bun run start` | Start production server (`next start`) |
+| `bun run lint` | Run ESLint (`next lint`) |
 
 ### REST API
 
@@ -251,12 +251,12 @@ Pages in `src/content/docs/*.mdx` are served at `/docs/<slug>`. The `@next/mdx` 
 
 ### Build-time type checking
 
-`typescript.ignoreBuildErrors: true` is set in `next.config.ts`. tsc runs in CI and pre-commit hooks, not during Vercel builds (OOM mitigation). Always run `npx tsc --noEmit` locally before pushing.
+`typescript.ignoreBuildErrors: true` is set in `next.config.ts`. tsc runs in CI and pre-commit hooks, not during Vercel builds (OOM mitigation). Always run `bunx tsc --noEmit` locally before pushing.
 
 ## Type checking
 
 ```bash
-npx tsc --noEmit
+bunx tsc --noEmit
 ```
 
 No test framework is configured. Type checking is the primary automated verification step.

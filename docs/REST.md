@@ -251,7 +251,7 @@ MCP tool code follows the same rule: Zod 4 and `z.guid()` for ids, since the v2 
 ## Tradeoffs and limitations
 
 - **`rest_audit_log` has no cleanup cron.** Unlike `mcp_audit_log` (90-day retention via `cleanup-mcp-audit-log`), REST audit logs grow indefinitely. A retention cron should be added.
-- **`typescript.ignoreBuildErrors: true` in next.config.ts.** Type checking runs via `npx tsc --noEmit` in CI/pre-commit, not during Vercel builds (OOM mitigation). Always run tsc locally before pushing.
+- **`typescript.ignoreBuildErrors: true` in next.config.ts.** Type checking runs via `bunx tsc --noEmit` in CI/pre-commit, not during Vercel builds (OOM mitigation). Always run tsc locally before pushing.
 - **No per-endpoint rate limit documentation in the spec.** Rate limits are enforced but not described in the OpenAPI document.
 - **Webhook secret stored raw.** See [docs/WEBHOOKS.md](./WEBHOOKS.md#tradeoffs-and-limitations) for details.
 
