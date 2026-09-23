@@ -1,11 +1,14 @@
 import "server-only";
 
+import {
+  MCP_ROUTE_RATE_LIMIT,
+  MCP_TOOL_CALL_RATE_LIMIT,
+} from "@/lib/mcp/rateLimits";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 import {
   MCP_CLIENT_CONFIG_JSON,
   MCP_ENDPOINTS,
   MCP_PROMPT_DOCS,
-  MCP_RATE_LIMIT,
   MCP_TOOL_GROUP_ORDER,
   listMcpToolsInGroup,
 } from "./mcpCatalog";
@@ -51,7 +54,8 @@ export async function buildMcpDocMarkdown(): Promise<string> {
     "## Plan requirement and limits",
     "",
     "- Every tool requires the Creator plan or higher.",
-    `- Per-IP rate limit on the endpoint: ${MCP_RATE_LIMIT.requests} requests per ${MCP_RATE_LIMIT.windowSeconds} seconds.`,
+    `- Tool calls: ${MCP_TOOL_CALL_RATE_LIMIT.calls} per ${MCP_TOOL_CALL_RATE_LIMIT.windowSeconds} seconds per user, across all tools. A call over the budget returns a tool error with the retry delay.`,
+    `- Requests: ${MCP_ROUTE_RATE_LIMIT.requests} per ${MCP_ROUTE_RATE_LIMIT.windowSeconds} seconds per IP. Above that the endpoint answers HTTP 429 with a Retry-After header.`,
     "- Some tools carry monthly quotas that scale with the plan tier; exceeding one returns an error naming the quota.",
     "",
     "## Client configuration",

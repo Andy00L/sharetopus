@@ -47,7 +47,7 @@ sequenceDiagram
     participant Trust as assertOAuthClientTrust
 
     Agent->>Route: POST with Bearer token
-    Route->>Route: Per-IP rate limit (100 req / 60s)
+    Route->>Route: Per-IP flood guard (1000 req / 60s)
     Route->>Route: Extract clientInfo (initialize only)
 
     alt Token starts with stp_mcp_
@@ -75,12 +75,12 @@ sequenceDiagram
 
 The subscription gate runs before the OAuth trust check. This means non-paying users never leave a row in `mcp_oauth_clients`.
 
-### Route-level rate limit
+### Rate limits
 
-Every request hits a per-IP rate limit before any token handling:
+Two limits, both in `src/lib/mcp/rateLimits.ts` (the public docs read the same constants):
 
-- **100 requests per 60 seconds** per IP (SHA-256 hashed, raw IP never stored)
-- Fires before bearer token check, so token-probing attackers cannot bypass the limiter
+- **1000 requests per 60 seconds per IP** (SHA-256 hashed, raw IP never stored), checked before any token handling, so token-probing attackers cannot bypass it. Hosted clients (Claude, ChatGPT) send every user's calls from a shared pool of egress IPs, so this is a flood guard, not a per-user budget. Over it the route answers 429 with `Retry-After` (503 when the limiter is down), never 401: a 401 tells an OAuth client its token is dead and starts a re-login.
+- **100 tool calls per 60 seconds per principal**, across all tools, enforced in `withMcpTool` (see below).
 - `MAX_INITIALIZE_BODY_BYTES`: 16 KB (bodies larger than this skip clientInfo extraction)
 
 ### Generating an API key
@@ -143,11 +143,12 @@ Every tool handler is wrapped by `withMcpTool`, a higher-order function that cen
 
 1. **Extract per-request context** (principal, sessionId, requestId, ipHash, userAgent, clientName, clientVersion, startedAt)
 2. **Compute audit args** via `auditArgsBuilder` if provided, otherwise fall back to `rawArgsAsAuditPayload` (coerces empty objects to null)
-3. **Run entitlement gate** (tier check via `ACTION_PLAN_GATE`, then monthly quota via `MONTHLY_CAPS`)
-4. **On deny:** emit audit row with status `denied` or `quota_exceeded`, return error to agent
-5. **On allow:** call the inner handler
-6. **On success or handler-returned isError:** emit audit row. Handler may override the result status via `auditStatus` (e.g., `rate_limited`) and the args via `auditArgs`
-7. **On thrown error:** emit an `error` audit row with the default audit args, then re-throw so the SDK surfaces a JSON-RPC error
+3. **Apply the per-user budget** (`MCP_TOOL_CALL_RATE_LIMIT`: 100 tool calls per 60 seconds per principal). Over budget: emit a `rate_limited` audit row and return a tool error with the retry delay, which the model can wait on. A limiter outage fails open, since the monthly quota still bounds usage.
+4. **Run entitlement gate** (tier check via `ACTION_PLAN_GATE`, then monthly quota via `MONTHLY_CAPS`)
+5. **On deny:** emit audit row with status `denied` or `quota_exceeded`, return error to agent
+6. **On allow:** call the inner handler
+7. **On success or handler-returned isError:** emit audit row. Handler may override the result status via `auditStatus` (e.g., `rate_limited`) and the args via `auditArgs`
+8. **On thrown error:** emit an `error` audit row with the default audit args, then re-throw so the SDK surfaces a JSON-RPC error
 
 ### McpToolContext
 
@@ -691,7 +692,7 @@ sequenceDiagram
     participant Audit as logToolCall
 
     A->>R: POST initialize {clientInfo}
-    R->>R: Per-IP rate limit (100/60s)
+    R->>R: Per-IP flood guard (1000/60s)
     R->>R: Extract clientName + clientVersion from body
     R->>Auth: Resolve principal (API key or OAuth)
     Auth-->>R: McpPrincipal
@@ -704,6 +705,7 @@ sequenceDiagram
     R->>HOF: withMcpTool(toolName, handler)
     HOF->>HOF: buildContext (principal, session, ip, ua, client)
     HOF->>HOF: Compute defaultAuditArgs (auditArgsBuilder or rawArgsAsAuditPayload)
+    HOF->>HOF: Per-user budget (100 tool calls / 60s), over it: rate_limited tool error
     HOF->>Ent: entitlementFor(principal, toolName)
     Ent->>Ent: checkTierGate (ACTION_PLAN_GATE)
     Ent->>Ent: checkAndIncrementQuota (atomic_increment_quota RPC)
@@ -847,13 +849,14 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 | File | Description |
 |------|-------------|
-| `src/app/api/mcp/[transport]/route.ts` | MCP route handler, rate limit, clientInfo extraction |
+| `src/app/api/mcp/[transport]/route.ts` | MCP route handler, per-IP flood guard, clientInfo extraction |
+| `src/lib/mcp/rateLimits.ts` | The two MCP rate limits, shared by enforcement and docs |
 | `src/lib/mcp/auth/resolve.ts` | `resolveMcpPrincipal()`, token dispatch to API key or OAuth path |
 | `src/lib/mcp/auth/resolvers/apiKey.ts` | API key resolution and validation |
 | `src/lib/mcp/auth/resolvers/oauth.ts` | Clerk OAuth token verification |
 | `src/lib/mcp/auth/resolvers/applySubscriptionGate.ts` | Subscription tier gate (blocks free/starter) |
 | `src/lib/mcp/auth/oauthClientTrust.ts` | `checkOAuthClientTrust()`, lazy population, block/revoke logic |
-| `src/lib/mcp/withMcpTool.ts` | `withMcpTool()` HOF, context extraction, entitlement gate, audit emit |
+| `src/lib/mcp/withMcpTool.ts` | `withMcpTool()` HOF, context extraction, per-user budget, entitlement gate, audit emit |
 | `src/lib/mcp/entitlement.ts` | `entitlementFor()`, `ACTION_PLAN_GATE`, `MONTHLY_CAPS`, atomic quota RPC |
 | `src/lib/mcp/audit.ts` | `logToolCall()`, argument redaction, session upsert via waitUntil |
 | `src/lib/mcp/context.ts` | Context extractors (principal, sessionId, requestId, ipHash, userAgent) |

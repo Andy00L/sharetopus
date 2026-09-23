@@ -6,6 +6,7 @@ import { assertExhaustiveKind, type McpPrincipal } from "@/lib/mcp/auth/types";
 import { hashClientIp } from "@/lib/mcp/ipHash";
 import { resolveClientIp } from "@/lib/net/clientIp";
 import { registerPrompts } from "@/lib/mcp/prompts";
+import { MCP_ROUTE_RATE_LIMIT } from "@/lib/mcp/rateLimits";
 import { registerTools } from "@/lib/mcp/tools";
 import {
   buildRateLimitJsonResponse,
@@ -15,16 +16,6 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-/**
- * Per-IP ceiling on the MCP endpoint, checked before any token work so
- * floods and token probing stay cheap to refuse: 1000 requests per 60 s.
- * Hosted clients (Claude, ChatGPT) send every user's calls from a shared
- * pool of egress IPs, so this is a flood guard, not a per-user budget; the
- * per-user tool-call budget lives in withMcpTool.
- */
-const MCP_ROUTE_RATE_LIMIT_REQUESTS = 1000;
-const MCP_ROUTE_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 /**
  * Upper bound on the body size we are willing to read to extract MCP
@@ -66,7 +57,7 @@ function sanitizeClientField(raw: string, maxLength: number): string {
  *   - SSE:             /api/mcp/sse
  *
  * Auth flow:
- *   1. Per-IP ceiling (1000 req / 60 s) fires first, before any token
+ *   1. Per-IP ceiling (MCP_ROUTE_RATE_LIMIT) fires first, before any token
  *      handling, so probes and floods get short-circuited cheaply. It
  *      answers 429 (or 503 when the limiter is down), never 401: a 401
  *      tells an OAuth client its token is dead and starts a re-login.
@@ -215,6 +206,7 @@ const authHandler = withMcpAuth(
  * Step 1 of the auth flow: the per-IP ceiling, applied before the request
  * reaches token verification. Requests with no resolvable IP (synthetic
  * load tests, internal calls) skip it, because checkRateLimit needs a key.
+ * The per-user tool-call budget is enforced later, in withMcpTool.
  */
 async function handleMcpRequest(req: Request): Promise<Response> {
   const clientIpHash = hashClientIp(resolveClientIp(req.headers));
@@ -223,8 +215,8 @@ async function handleMcpRequest(req: Request): Promise<Response> {
     const routeLimit = await checkRateLimit(
       "mcp_route",
       clientIpHash,
-      MCP_ROUTE_RATE_LIMIT_REQUESTS,
-      MCP_ROUTE_RATE_LIMIT_WINDOW_SECONDS,
+      MCP_ROUTE_RATE_LIMIT.requests,
+      MCP_ROUTE_RATE_LIMIT.windowSeconds,
     );
     if (!routeLimit.success) {
       const rejection = describeRateLimitRejection(routeLimit);

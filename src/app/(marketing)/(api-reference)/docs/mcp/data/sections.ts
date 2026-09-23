@@ -3,11 +3,14 @@ import {
   MCP_CLIENT_CONFIG_JSON,
   MCP_ENDPOINTS,
   MCP_PROMPT_DOCS,
-  MCP_RATE_LIMIT,
   MCP_TOOL_GROUP_ORDER,
   listMcpToolsInGroup,
   type McpToolGroup,
 } from "@/lib/docs/mcpCatalog";
+import {
+  MCP_ROUTE_RATE_LIMIT,
+  MCP_TOOL_CALL_RATE_LIMIT,
+} from "@/lib/mcp/rateLimits";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 
 /**
@@ -90,14 +93,18 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
     title: "Plan requirement and limits",
     summary: "What gates a tool call before any business logic runs.",
     sourceRef:
-      "src/lib/mcp/entitlement.ts (ACTION_PLAN_GATE), src/app/api/mcp/[transport]/route.ts (rate limit)",
+      "src/lib/mcp/entitlement.ts (ACTION_PLAN_GATE), src/lib/mcp/rateLimits.ts",
     table: {
       columns: ["Constraint", "Value"],
       rows: [
         ["Plan requirement", "Creator plan or higher, for every tool"],
         [
-          "Rate limit",
-          `${MCP_RATE_LIMIT.requests} requests per ${MCP_RATE_LIMIT.windowSeconds} seconds per IP`,
+          "Tool calls",
+          `${MCP_TOOL_CALL_RATE_LIMIT.calls} per ${MCP_TOOL_CALL_RATE_LIMIT.windowSeconds} seconds per user, across all tools; a call over the budget returns a tool error with the retry delay`,
+        ],
+        [
+          "Requests",
+          `${MCP_ROUTE_RATE_LIMIT.requests} per ${MCP_ROUTE_RATE_LIMIT.windowSeconds} seconds per IP; above that the endpoint answers HTTP 429 with Retry-After`,
         ],
         [
           "Monthly quotas",

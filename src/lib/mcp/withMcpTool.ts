@@ -13,16 +13,8 @@ import {
   extractSessionId,
 } from "./context";
 import { entitlementFor } from "./entitlement";
+import { MCP_TOOL_CALL_RATE_LIMIT } from "./rateLimits";
 import type { McpToolName } from "./toolNames";
-
-/**
- * Tool calls one principal may make per window, across all tools: 100 per
- * 60 s, about 10x a busy agent. Keyed on the principal, not the IP: hosted
- * clients (Claude, ChatGPT) share egress IPs, so a per-IP budget throttled
- * every user of the same client together.
- */
-const TOOL_CALLS_PER_WINDOW = 100;
-const TOOL_CALL_WINDOW_SECONDS = 60;
 
 /**
  * Resolved per-request context shared with every tool handler.
@@ -141,8 +133,8 @@ export function withMcpTool<TArgs>(
     const principalLimit = await checkRateLimit(
       "mcp_tool_call",
       ctx.principal.principalId,
-      TOOL_CALLS_PER_WINDOW,
-      TOOL_CALL_WINDOW_SECONDS,
+      MCP_TOOL_CALL_RATE_LIMIT.calls,
+      MCP_TOOL_CALL_RATE_LIMIT.windowSeconds,
     );
     if (!principalLimit.success && principalLimit.reason === "limited") {
       await emitAudit(ctx, toolName, defaultAuditArgs, "rate_limited");
@@ -153,7 +145,7 @@ export function withMcpTool<TArgs>(
         content: [
           {
             type: "text" as const,
-            text: `Rate limited: at most ${TOOL_CALLS_PER_WINDOW} tool calls per ${TOOL_CALL_WINDOW_SECONDS} s.${retryHint}`,
+            text: `Rate limited: at most ${MCP_TOOL_CALL_RATE_LIMIT.calls} tool calls per ${MCP_TOOL_CALL_RATE_LIMIT.windowSeconds} s.${retryHint}`,
           },
         ],
         isError: true,

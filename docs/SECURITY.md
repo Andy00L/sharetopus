@@ -42,7 +42,7 @@ flowchart LR
     style F fill:#e2d5f1,stroke:#74b
 ```
 
-MCP route-level rate limiting (100/60s per IP) runs before auth. All other rate limits run after auth, scoped to the authenticated principal.
+MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth and answers 429, never 401. All other rate limits run after auth, scoped to the authenticated principal, including the MCP tool-call budget (100/60s per principal).
 
 ## Threat Model
 
@@ -61,7 +61,7 @@ MCP route-level rate limiting (100/60s per IP) runs before auth. All other rate 
 | 11 | Monthly cap exhaustion | Per-tier quotas enforced atomically | `entitlement.ts` |
 | 12 | IP tracking privacy leak | SHA-256 hash with configurable salt | `ipHash.ts` |
 | 13 | Sensitive args in audit log | Regex redaction of 12 key patterns + JWT detection | `audit.ts` |
-| 14 | Unauthorized MCP access flood | Route-level rate limit: 100/60s per IP (before auth) | MCP route handler |
+| 14 | Unauthorized MCP access flood | Route-level rate limit: 1000/60s per IP (before auth) | MCP route handler |
 | 15 | XSS via MCP `clientInfo` | `sanitizeClientField` strips control chars + HTML injection chars | MCP server init |
 | 16 | Stripe webhook replay | Signature verification + `stripe_webhook_events` idempotency table | Stripe webhook handler |
 | 17 | TikTok webhook replay | HMAC-SHA256 + 300s tolerance + `tiktok_webhook_events` idempotency table | TikTok webhook handler |
@@ -124,7 +124,8 @@ All per-request rate limits use Upstash Redis sliding window (`@upstash/ratelimi
 
 | Path | Scope | Limit | Window | Storage |
 |------|-------|-------|--------|---------|
-| MCP route (pre-auth) | per IP | 100 | 60s | Upstash |
+| MCP route (pre-auth) | per IP | 1000 | 60s | Upstash |
+| MCP tool calls (all tools) | per principal | 100 | 60s | Upstash |
 | `attach_media_from_url` | per principal | 10 | 60s | Upstash |
 | `request_upload_url` | per principal | 20 | 60s | Upstash |
 | `handleSocialMediaPost` | per user | 30 | 60s | Upstash |

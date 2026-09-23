@@ -17,13 +17,6 @@ export const MCP_ENDPOINTS = {
   sse: `${SITE_ORIGIN}/api/mcp/sse`,
 } as const;
 
-/**
- * Per-IP rate limit on the MCP endpoint.
- * sourceRef: src/app/api/mcp/[transport]/route.ts
- * (MCP_ROUTE_RATE_LIMIT_REQUESTS / _WINDOW_SECONDS)
- */
-export const MCP_RATE_LIMIT = { requests: 100, windowSeconds: 60 } as const;
-
 export type McpToolGroup =
   | "Read tools"
   | "Write tools"
