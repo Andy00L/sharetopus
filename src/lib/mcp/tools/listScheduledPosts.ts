@@ -1,8 +1,8 @@
 import "server-only";
 
 import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
@@ -30,7 +30,7 @@ export function registerListScheduledPosts(server: McpServer): void {
       title: "List Scheduled Posts",
       description:
         "List your scheduled posts. Optional filter by platform or status.",
-      inputSchema: {
+      inputSchema: z.object({
         platform: z
           .enum(POSTING_PLATFORMS)
           .optional()
@@ -47,7 +47,7 @@ export function registerListScheduledPosts(server: McpServer): void {
           .optional()
           .default(20)
           .describe("Max results to return (1-100)"),
-      },
+      }),
       annotations: {
         title: "List Scheduled Posts",
         readOnlyHint: true,

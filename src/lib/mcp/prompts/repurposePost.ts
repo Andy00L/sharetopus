@@ -1,34 +1,48 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+
+/**
+ * `target_platforms` arrives as one comma-separated string: MCP prompt
+ * arguments are always strings on the wire, so an array schema can never
+ * match what a client sends. The schema splits the list and checks each
+ * entry against POSTING_PLATFORMS before the handler runs.
+ */
+const targetPlatformsArgument = z
+  .string()
+  .describe(
+    `Comma-separated target platforms, each one of ${POSTING_PLATFORMS.join(" / ")}.`,
+  )
+  .transform((platformList) =>
+    platformList
+      .split(",")
+      .map((platformName) => platformName.trim().toLowerCase())
+      .filter((platformName) => platformName.length > 0),
+  )
+  .pipe(z.array(z.enum(POSTING_PLATFORMS)).min(1));
+
 /**
  * Prompt: repurpose an existing post for other platforms.
  *
  * Takes a post ID and target platforms. The agent should fetch the
  * original post via list_scheduled_posts or list_content_history,
  * then adapt it for each target platform.
- *
- * `target_platforms` is a typed enum array so the client picker can
- * render a multi-select dropdown and the server rejects typos before
- * the handler runs.
  */
 export function registerRepurposePost(server: McpServer): void {
-  server.prompt(
+  server.registerPrompt(
     "repurpose_post",
-    "Repurpose an existing post for other social platforms with platform-specific adaptations",
     {
-      post_id: z
-        .string()
-        .describe(
-          "ID of the post to repurpose (from scheduled_posts or content_history)",
-        ),
-      target_platforms: z
-        .array(z.enum(POSTING_PLATFORMS))
-        .min(1)
-        .describe(
-          `Target platforms to repurpose for. Each entry must be one of ${POSTING_PLATFORMS.join(" / ")}.`,
-        ),
+      description:
+        "Repurpose an existing post for other social platforms with platform-specific adaptations",
+      argsSchema: z.object({
+        post_id: z
+          .string()
+          .describe(
+            "ID of the post to repurpose (from scheduled_posts or content_history)",
+          ),
+        target_platforms: targetPlatformsArgument,
+      }),
     },
     async ({ post_id, target_platforms }) => ({
       messages: [

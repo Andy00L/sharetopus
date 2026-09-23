@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
@@ -57,15 +57,15 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
       title: "Attach Media From URL",
       description:
         "Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with schedule_post.",
-      inputSchema: {
-        url: z.string().url().describe("Public HTTP(S) URL of the media file"),
+      inputSchema: z.object({
+        url: z.url().describe("Public HTTP(S) URL of the media file"),
         filename: z
           .string()
           .optional()
           .describe(
             "Optional label, retained for compatibility. The stored object name is always a random id; this value is not used to build the storage path.",
           ),
-      },
+      }),
       annotations: {
         title: "Attach Media From URL",
         readOnlyHint: false,

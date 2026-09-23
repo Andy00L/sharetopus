@@ -1,5 +1,5 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 
@@ -10,14 +10,17 @@ import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
  * 5-7 posts around a theme for the given platform.
  */
 export function registerPlanWeekForPlatform(server: McpServer): void {
-  server.prompt(
+  server.registerPrompt(
     "plan_week_for_platform",
-    "Plan a full week of content for a specific social platform around a chosen theme",
     {
-      platform: z
-        .enum(POSTING_PLATFORMS)
-        .describe("Which platform to plan for"),
-      theme: z.string().describe("The content theme or topic for the week"),
+      description:
+        "Plan a full week of content for a specific social platform around a chosen theme",
+      argsSchema: z.object({
+        platform: z
+          .enum(POSTING_PLATFORMS)
+          .describe("Which platform to plan for"),
+        theme: z.string().describe("The content theme or topic for the week"),
+      }),
     },
     async ({ platform, theme }) => ({
       messages: [

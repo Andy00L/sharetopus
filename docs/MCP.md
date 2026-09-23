@@ -2,13 +2,11 @@
 
 Sharetopus exposes an MCP server that lets AI agents (Claude Desktop, Cursor, ChatGPT) schedule posts, manage content, and query analytics on behalf of authenticated subscribers.
 
-One transport, stateless (mcp-handler 1.1.0 does not support persistent sessions):
+One URL, stateless:
 
 - **Streamable HTTP:** `https://sharetopus.com/api/mcp/mcp`
 
-The legacy SSE transport is disabled (`disableSse: true`): with a valid token, `/api/mcp/sse` answers 404. The MCP spec replaced it with Streamable HTTP in 2025-03-26, and mcp-handler's SSE mode needs a `redis://` URL this project does not configure.
-
-Built with mcp-handler 1.1.0 and @modelcontextprotocol/sdk 1.29.0.
+Built with mcp-handler 2.2.0 and @modelcontextprotocol/server 2.1.0. The same handler serves the 2026-07-28 protocol revision natively and 2025-era clients through the SDK's stateless fallback, so clients on either era use the same URL. The legacy HTTP+SSE transport no longer exists: `/api/mcp/sse` answers 404.
 
 > **Plan requirement:** MCP access requires the Creator plan or higher. All 18 tools require Creator tier minimum. Starter and free users have no MCP access.
 
@@ -42,14 +40,14 @@ Two auth paths, both resolving to a `McpPrincipal` (kind: `apikey` or `oauth`) w
 ```mermaid
 sequenceDiagram
     participant Agent as AI Agent
-    participant Route as /api/mcp/[transport]
+    participant Route as /api/mcp/mcp
     participant Auth as resolveMcpPrincipal
     participant Gate as applySubscriptionGate
     participant Trust as assertOAuthClientTrust
 
     Agent->>Route: POST with Bearer token
     Route->>Route: Per-IP flood guard (1000 req / 60s)
-    Route->>Route: Extract clientInfo (initialize only)
+    Route->>Route: Extract client name (initialize, or the 2026 _meta envelope)
 
     alt Token starts with stp_mcp_
         Auth->>Auth: resolveApiKey()
@@ -82,7 +80,7 @@ Two limits, both in `src/lib/mcp/rateLimits.ts` (the public docs read the same c
 
 - **1000 requests per 60 seconds per IP** (SHA-256 hashed, raw IP never stored), checked before any token handling, so token-probing attackers cannot bypass it. Hosted clients (Claude, ChatGPT) send every user's calls from a shared pool of egress IPs, so this is a flood guard, not a per-user budget. Over it the route answers 429 with `Retry-After` (503 when the limiter is down), never 401: a 401 tells an OAuth client its token is dead and starts a re-login.
 - **100 tool calls per 60 seconds per principal**, across all tools, enforced in `withMcpTool` (see below).
-- `MAX_INITIALIZE_BODY_BYTES`: 16 KB (bodies larger than this skip clientInfo extraction)
+- `MAX_CLIENT_INFO_BODY_BYTES`: 16 KB (bodies larger than this skip client name extraction)
 
 ### Generating an API key
 
@@ -354,7 +352,7 @@ limit       number (1-100)  optional  default: 20
 
 ### generate_post_draft
 
-Generate a draft post using the client's LLM. The tool returns a structured prompt; the client's model generates the draft. Zero API cost to the Sharetopus account. Requires a client with MCP sampling/createMessage support.
+Generate a draft post using the client's LLM. The tool returns a structured prompt; the client's model generates the draft. Zero API cost to the Sharetopus account, and no MCP sampling is involved.
 
 **Parameters:**
 ```
@@ -370,7 +368,7 @@ additional_context  string  optional
 
 **Monthly quota:** Creator 100/mo, Pro unlimited.
 
-**Returns:** Structured prompt object. Clients without MCP sampling support receive an error.
+**Returns:** Structured prompt object that the calling model runs itself.
 
 ---
 
@@ -700,7 +698,7 @@ The agent can use the `plan_week_for_platform` prompt:
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant R as /api/mcp/[transport]
+    participant R as /api/mcp/mcp
     participant Auth as resolveMcpPrincipal
     participant HOF as withMcpTool
     participant Ent as entitlementFor
@@ -708,9 +706,9 @@ sequenceDiagram
     participant DB as Supabase
     participant Audit as logToolCall
 
-    A->>R: POST initialize {clientInfo}
+    A->>R: POST initialize {clientInfo} (2025-era; 2026 clients skip it)
     R->>R: Per-IP flood guard (1000/60s)
-    R->>R: Extract clientName + clientVersion from body
+    R->>R: Extract clientName from body
     R->>Auth: Resolve principal (API key or OAuth)
     Auth-->>R: McpPrincipal
     R->>R: Generate requestId (UUID)
@@ -832,12 +830,11 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 ## Known limitations
 
-- **Stateless mode only.** mcp-handler 1.1.0 runs Streamable HTTP statelessly, and the SSE transport is disabled. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
-- **`generate_post_draft` requires sampling.** Clients without MCP sampling/createMessage support (some older clients) will get an error.
+- **Stateless only.** Neither protocol era keeps sessions, and no `subscriptions/listen` streams are served (`maxSubscriptions: 0`, `listChanged: false`: tools and prompts never change at runtime, and on Vercel each stream would hold a function open). Session IDs in the audit log are per-request UUIDs.
 - **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
 - **`bulk_schedule` and `bulk_post_now` have REST equivalents.** `POST /api/v1/posts/bulk` handles bulk scheduling via the REST API. See [docs/REST.md](./REST.md).
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
-- **Zod v3 compatibility.** All MCP tool files import from `zod/v3` (not `zod`) because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0`, which expects Zod 3 typings. REST API code uses Zod 4 (`from "zod"`). The two coexist in the same repo via Zod 4's v3 compatibility layer.
+- **Zod 4 only.** The v2 SDK converts tool schemas to JSON Schema with Zod 4.2 or later. Tool ids use `z.guid()`, as in the REST API, because Zod 4's strict UUID check rejects some Supabase-generated ids.
 
 ---
 
@@ -851,7 +848,7 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 | File | Description |
 |------|-------------|
-| `src/app/api/mcp/[transport]/route.ts` | MCP route handler, per-IP flood guard, clientInfo extraction |
+| `src/app/api/mcp/mcp/route.ts` | MCP route handler, per-IP flood guard, client name extraction |
 | `src/lib/mcp/rateLimits.ts` | The two MCP rate limits, shared by enforcement and docs |
 | `src/lib/mcp/auth/resolve.ts` | `resolveMcpPrincipal()`, token dispatch to API key or OAuth path |
 | `src/lib/mcp/auth/resolvers/apiKey.ts` | API key resolution and validation |

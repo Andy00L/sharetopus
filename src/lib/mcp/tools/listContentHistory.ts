@@ -1,8 +1,8 @@
 import "server-only";
 
 import { getContentHistory } from "@/actions/server/contentHistoryActions/getContentHistory";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { Platform } from "@/lib/types/database.types";
@@ -29,7 +29,7 @@ export function registerListContentHistory(server: McpServer): void {
       title: "List Content History",
       description:
         "View your posted content history. Optional filter by platform.",
-      inputSchema: {
+      inputSchema: z.object({
         platform: z
           .enum(POSTING_PLATFORMS)
           .optional()
@@ -42,7 +42,7 @@ export function registerListContentHistory(server: McpServer): void {
           .optional()
           .default(20)
           .describe("Max results to return (1-100)"),
-      },
+      }),
       annotations: {
         title: "List Content History",
         readOnlyHint: true,

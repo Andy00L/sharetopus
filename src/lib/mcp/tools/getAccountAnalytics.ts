@@ -1,8 +1,8 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
@@ -34,7 +34,7 @@ export function registerGetAccountAnalytics(server: McpServer): void {
       title: "Get Account Analytics",
       description:
         "Fetch performance metrics (views, likes, comments, shares) for your content. Data may be up to 24h old.",
-      inputSchema: {
+      inputSchema: z.object({
         platform: z
           .enum(POSTING_PLATFORMS)
           .optional()
@@ -59,7 +59,7 @@ export function registerGetAccountAnalytics(server: McpServer): void {
           .optional()
           .default(20)
           .describe("Max results to return"),
-      },
+      }),
       annotations: {
         title: "Get Account Analytics",
         readOnlyHint: true,

@@ -445,7 +445,7 @@ Token, password, secret, and JWT patterns are redacted before insert (see [Argum
 
 ### clientInfo sanitization
 
-MCP clients send a `clientInfo` object during initialization. Its `name` is stored as `mcp_oauth_clients.client_name` when an OAuth client is first seen, and rendered in the admin dashboard.
+MCP clients send a `clientInfo` object (in the 2025-era initialize handshake, or in the `_meta` envelope of every 2026-07-28 request). Its `name` is stored as `mcp_oauth_clients.client_name` when an OAuth client is first seen, and rendered in the admin dashboard.
 
 `sanitizeClientField` strips:
 - ASCII control characters (0x00-0x1f)

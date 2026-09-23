@@ -1,5 +1,11 @@
 import "server-only";
 
+import type {
+  AuthInfo,
+  CallToolResult,
+  ServerContext,
+} from "@modelcontextprotocol/server";
+
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 import { logToolCall } from "./audit";
@@ -61,14 +67,6 @@ type WithMcpToolOptions<TArgs> = {
   auditArgsBuilder?: (args: TArgs) => Record<string, unknown> | null;
 };
 
-type ToolHandlerCallback = (
-  args: unknown,
-  extra: Record<string, unknown>,
-) => Promise<{
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}>;
-
 /**
  * Wraps a tool's business logic with the shared boilerplate every MCP
  * tool needs:
@@ -90,10 +88,15 @@ type ToolHandlerCallback = (
  * The handler only writes its business logic. Audit consistency,
  * latency accounting, and deny semantics are guaranteed by this wrapper.
  *
+ * The returned callback has the SDK v2 tool-callback shape, (args, ctx),
+ * so every tool must declare an inputSchema (z.object({}) when it takes
+ * no arguments): without one the SDK passes the context as the only
+ * argument.
+ *
  * Usage:
  *   server.registerTool(
  *     "schedule_post",
- *     { ...config },
+ *     { ...config, inputSchema: z.object({ ... }) },
  *     withMcpTool("schedule_post", async (ctx, args) => { ... }),
  *   );
  *
@@ -108,16 +111,15 @@ export function withMcpTool<TArgs>(
   toolName: McpToolName,
   handler: (ctx: McpToolContext, args: TArgs) => Promise<McpHandlerResult>,
   options: WithMcpToolOptions<TArgs> = {},
-): ToolHandlerCallback {
-  return async (rawArgs, extra) => {
-    const ctx = await buildContext(extra);
-    const typedArgs = rawArgs as TArgs;
+): (args: TArgs, serverContext: ServerContext) => Promise<CallToolResult> {
+  return async (args, serverContext) => {
+    const ctx = await buildContext(serverContext.http?.authInfo);
 
     // Compute once: used on deny + thrown-error paths, and as the
     // fallback when the handler does not return its own auditArgs.
     const defaultAuditArgs = options.auditArgsBuilder
-      ? options.auditArgsBuilder(typedArgs)
-      : rawArgsAsAuditPayload(rawArgs);
+      ? options.auditArgsBuilder(args)
+      : rawArgsAsAuditPayload(args);
 
     // A limiter outage fails open: the monthly quota below still bounds
     // usage, and a Redis incident should not take every agent offline.
@@ -170,7 +172,7 @@ export function withMcpTool<TArgs>(
     }
 
     try {
-      const result = await handler(ctx, typedArgs);
+      const result = await handler(ctx, args);
 
       const finalAuditStatus: McpHandlerResult["auditStatus"] =
         result.auditStatus ?? (result.isError ? "error" : "ok");
@@ -198,10 +200,10 @@ export function withMcpTool<TArgs>(
  * handler does not re-do the same work.
  */
 async function buildContext(
-  extra: Record<string, unknown>,
+  authInfo: AuthInfo | undefined,
 ): Promise<McpToolContext> {
-  const principal = extractPrincipal(extra);
-  const requestId = extractRequestId(extra);
+  const principal = extractPrincipal(authInfo);
+  const requestId = extractRequestId(authInfo);
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
 
@@ -215,11 +217,10 @@ async function buildContext(
 }
 
 /**
- * Normalizes the raw args value (which is `unknown` from the SDK
- * callback signature) into the shape logToolCall accepts.
+ * Normalizes a tool's parsed args into the shape logToolCall accepts.
  *
- * Tools whose inputSchema is `{}` receive {} as args; we coerce to
- * null so the audit row stores null instead of an empty object.
+ * Tools whose inputSchema is `z.object({})` receive {} as args; we
+ * coerce to null so the audit row stores null instead of an empty object.
  *
  * Used as the default when the tool does not provide an
  * auditArgsBuilder. For tools with large or sensitive arg payloads,

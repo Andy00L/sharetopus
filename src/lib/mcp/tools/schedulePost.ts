@@ -3,8 +3,8 @@ import "server-only";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { MediaType, Platform } from "@/lib/types/database.types";
@@ -43,10 +43,9 @@ export function registerSchedulePost(server: McpServer): void {
       title: "Schedule Post",
       description:
         "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first to upload your media to Supabase Storage. For Pinterest, provide pinterest_board_id and optionally pinterest_link. Use list_connections to find available social account IDs.",
-      inputSchema: {
+      inputSchema: z.object({
         social_account_id: z
-          .string()
-          .uuid()
+          .guid()
           .describe(
             "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
           ),
@@ -103,7 +102,6 @@ export function registerSchedulePost(server: McpServer): void {
             "Optional Pinterest board display name. Cosmetic, used in confirmations. Only valid when platform='pinterest'.",
           ),
         pinterest_link: z
-          .string()
           .url()
           .max(2048)
           .optional()
@@ -118,7 +116,7 @@ export function registerSchedulePost(server: McpServer): void {
           .describe(
             "Optional client-supplied key for safe retries. Same key + same principal returns the existing post instead of inserting a duplicate. Strongly recommended for agent retries after network errors or timeouts.",
           ),
-      },
+      }),
       annotations: {
         title: "Schedule Post",
         readOnlyHint: false,

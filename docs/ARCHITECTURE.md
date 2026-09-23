@@ -171,7 +171,7 @@ src/
     api/
       auth/[clerk]/             # Clerk auth UI
       inngest/                  # Inngest serve() endpoint (12 functions)
-      mcp/[transport]/          # MCP server (Streamable HTTP; SSE disabled)
+      mcp/mcp/                  # MCP server (mcp-handler 2.x: protocol 2026-07-28 + 2025-era clients)
       v1/                       # REST API v1 (28 endpoints)
         posts/                  # CRUD + bulk schedule
         connections/            # List, get, initiate, reauth, boards
@@ -261,7 +261,7 @@ src/
       ipHash.ts                 # SHA-256 IP hashing with configurable salt
       withMcpTool.ts            # HOF wrapper: auth, entitlement, audit, error handling
       _shared/                  # safeUserFetch, enforceStorageQuota, currentQuotaPeriod
-      tools/                    # 18 tool definitions (one file per tool, import zod/v3)
+      tools/                    # 18 tool definitions (one file per tool, Zod 4 schemas)
       prompts/                  # 3 prompt definitions (auditCalendar, planWeekForPlatform, repurposePost)
     types/
       database.types.ts         # Generated Supabase types (34 tables)
@@ -500,7 +500,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 **TikTok dual-path resolution.** TikTok publishes are async (you get a `publish_id`, not a final status). Both webhook and polling paths exist because webhooks are faster but not 100% reliable. Both converge on `finalizeTikTokPostByPublishId`, which is idempotent. The second path to arrive is a no-op.
 
-**Stateless MCP (mcp-handler 1.1.0).** The MCP server runs in stateless Streamable HTTP mode. mcp-handler 1.1.0 does not support persistent sessions across requests. Each request resolves the principal independently, and each tool call is recorded in `mcp_audit_log` under a per-request ID; no table tracks sessions. This is fine for tool calls but limits features like long-running subscriptions or server-initiated notifications.
+**Stateless MCP (mcp-handler 2.x).** The server speaks the 2026-07-28 protocol revision, which is stateless by design, and serves 2025-era clients through the SDK's stateless Streamable HTTP fallback from the same handler. Each request resolves the principal independently, and each tool call is recorded in `mcp_audit_log` under a per-request ID; no table tracks sessions. No `subscriptions/listen` streams are served: tools and prompts never change at runtime, and on Vercel each stream would hold a function open.
 
 **Internal vs public actions.** MCP tools call `_internal` actions that skip Clerk auth (the MCP auth layer already verified the principal). Public server actions add Clerk auth + rate limiting and delegate to the same `_internal` functions. This avoids double-auth but means `_internal` functions must never be imported from client components. The `server-only` package enforces this at build time.
 
@@ -514,7 +514,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 **4 surfaces, 3 shipped.** The system is designed for 4 access surfaces: Web (shipped), MCP (shipped), REST API (shipped), x402 wallet-based access (deferred). The `created_via` enum and `principals` table accommodate all four. Web, MCP, and REST API have working code paths. The REST API uses a `withRestEndpoint` HOF similar to `withMcpTool`, centralizing auth, validation, audit logging, and rate limiting.
 
-**Zod 4 with v3 compatibility.** The codebase runs Zod 4 (`zod@^4.4.3`). REST API and OpenAPI code imports `from "zod"`. MCP tool files import `from "zod/v3"` because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0`, which expects Zod 3 typings. The two coexist via Zod 4's built-in v3 compatibility layer. `z.string().uuid()` was migrated to `z.guid()` in REST schemas because Zod 4's strict RFC 4122 validation rejected some Supabase-generated UUIDs.
+**Zod 4 everywhere.** The codebase runs Zod 4 (`zod@^4.4.3`), and REST, OpenAPI and MCP code all import `from "zod"`. The v2 MCP SDK needs Zod 4.2 or later to convert tool schemas to JSON Schema. Ids use `z.guid()` rather than `z.string().uuid()` in both surfaces, because Zod 4's strict RFC 4122 validation rejected some Supabase-generated UUIDs.
 
 **Webhook delivery via Inngest.** Outbound webhook delivery is handled by the `deliver-webhook` Inngest function, not inline in the HTTP request. This decouples delivery latency from the API response. Each delivery is HMAC-SHA256 signed with the subscription's secret. Retries use Inngest's backoff. Subscriptions auto-disable after 10 consecutive failures.
 
@@ -533,10 +533,10 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | Background Jobs | inngest | 4.3.0 |
 | Rate Limiting | @upstash/ratelimit | 2.0.8 |
 | Redis | @upstash/redis | 1.38.0 |
-| MCP SDK | @modelcontextprotocol/sdk | 1.29.0 |
-| MCP Handler | mcp-handler | 1.1.0 |
+| MCP SDK | @modelcontextprotocol/server | 2.1.0 |
+| MCP Handler | mcp-handler | 2.2.0 |
 | HTTP Client | axios | 1.16.0 |
-| Validation | zod (v4, with v3 compat for MCP) | 4.4.3 |
+| Validation | zod (v4) | 4.4.3 |
 | OpenAPI | zod-openapi | 5.4.6 |
 | API Docs | @scalar/nextjs-api-reference | 0.10.16 |
 | MDX | @next/mdx + @mdx-js/loader | 16.2.6 / 3.1.1 |

@@ -56,10 +56,10 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 | Payments | Stripe | 18.5.0 |
 | Background Jobs | Inngest | 4.3.0 |
 | Rate Limiting | Upstash Redis + `@upstash/ratelimit` | 1.38.0 / 2.0.8 |
-| Validation | Zod (v4 for REST, v3 compat for MCP) | 4.4.3 |
+| Validation | Zod 4 (REST and MCP) | 4.4.3 |
 | OpenAPI | zod-openapi + @scalar/nextjs-api-reference | 5.4.6 / 0.10.16 |
 | MDX | @next/mdx + @mdx-js/loader | 16.2.6 / 3.1.1 |
-| MCP | `@modelcontextprotocol/sdk` + `mcp-handler` | 1.29.0 / 1.1.0 |
+| MCP | `@modelcontextprotocol/server` + `mcp-handler` | 2.1.0 / 2.2.0 |
 | Deployment | Vercel | |
 
 Full dependency list: [package.json](./package.json).
@@ -92,7 +92,7 @@ Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
 
 ## 🤖 MCP Server
 
-Streamable HTTP at `/api/mcp/mcp`, stateless (mcp-handler 1.1.0). The legacy SSE transport is disabled. Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
+Streamable HTTP at `/api/mcp/mcp`, stateless: mcp-handler 2.x serves protocol 2026-07-28 and 2025-era clients from the same URL. Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
 
 18 tools, all requiring Creator plan ($18/mo) or above:
 

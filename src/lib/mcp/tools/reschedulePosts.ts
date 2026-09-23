@@ -1,8 +1,8 @@
 import "server-only";
 
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -26,9 +26,9 @@ export function registerReschedulePosts(server: McpServer): void {
       title: "Reschedule Posts",
       description:
         "Change the scheduled time for one or more posts (up to 50). Cancelled posts are automatically resumed (status returns to scheduled).",
-      inputSchema: {
+      inputSchema: z.object({
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe(
@@ -39,7 +39,7 @@ export function registerReschedulePosts(server: McpServer): void {
           .describe(
             "New ISO 8601 datetime for the posts (e.g. '2026-06-01T14:30:00Z'). Must be in the future. Past times are rejected.",
           ),
-      },
+      }),
       annotations: {
         title: "Reschedule Posts",
         readOnlyHint: false,

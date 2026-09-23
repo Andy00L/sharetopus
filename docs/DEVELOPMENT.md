@@ -241,9 +241,9 @@ All variables are documented in `.env.example`. The tables below group them by s
 
 REST API endpoints live in `src/app/api/v1/`. The OpenAPI spec is served at `/api/v1/openapi.json`. Interactive API docs (Scalar) are at `/docs/api`.
 
-### Zod 4 / v3 split
+### Zod 4
 
-REST API code uses `import { z } from "zod"` (Zod 4). MCP code uses `import { z } from "zod/v3"` because `@modelcontextprotocol/sdk` expects Zod 3 typings. Do not mix them.
+REST API and MCP code both use `import { z } from "zod"` (Zod 4). The v2 MCP SDK needs Zod 4.2 or later to convert tool schemas to JSON Schema. Ids use `z.guid()` (see [REST.md](./REST.md#zod-4-and-zguid)).
 
 ### MDX docs
 
@@ -308,7 +308,7 @@ Vercel function timeout is configured per route using Next.js route segment conf
 
 | Route | maxDuration |
 |---|---|
-| `src/app/api/mcp/[transport]/route.ts` | 300s |
+| `src/app/api/mcp/mcp/route.ts` | 300s |
 | `src/app/api/inngest/route.ts` | 300s |
 | `src/app/api/x402/register/route.ts` | 60s |
 | `src/app/api/x402/connect/route.ts` | 60s |
@@ -333,7 +333,7 @@ Production uses Vercel environment variables with production keys. `NODE_ENV=pro
 | `vercel.json` | Vercel deployment configuration |
 | `.env.example` | Full list of environment variables with documentation |
 | `src/lib/types/plans.ts` | Stripe product and price ID configuration |
-| `src/app/api/mcp/[transport]/route.ts` | MCP server route (maxDuration 300) |
+| `src/app/api/mcp/mcp/route.ts` | MCP server route (maxDuration 300) |
 | `src/app/api/inngest/route.ts` | Inngest serve endpoint (maxDuration 300) |
 | `src/app/api/webhooks/clerk/route.ts` | Clerk webhook handler |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |

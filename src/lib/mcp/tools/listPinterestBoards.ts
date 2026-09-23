@@ -4,8 +4,8 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
 import type { SocialAccount } from "@/lib/types/dbTypes";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -36,10 +36,9 @@ export function registerListPinterestBoards(server: McpServer): void {
       title: "List Pinterest Boards",
       description:
         "List Pinterest boards for a connected Pinterest account. Returns board id, name, description, privacy, and pin_count. Supports pagination via the bookmark cursor.",
-      inputSchema: {
+      inputSchema: z.object({
         social_account_id: z
-          .string()
-          .uuid()
+          .guid()
           .describe("ID of the Pinterest social_accounts row"),
         page_size: z
           .number()
@@ -53,7 +52,7 @@ export function registerListPinterestBoards(server: McpServer): void {
           .string()
           .optional()
           .describe("Pagination cursor from a previous response"),
-      },
+      }),
       annotations: {
         title: "List Pinterest Boards",
         readOnlyHint: true,

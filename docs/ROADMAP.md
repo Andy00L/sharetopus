@@ -116,7 +116,7 @@ All 18 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiv
 
 ### 13. clientInfo Capture
 
-The MCP route handler extracts `clientInfo.name` from the initialize handshake and stores it as `mcp_oauth_clients.client_name` when an OAuth client is first seen.
+The MCP route handler reads the client's name from the 2025-era initialize handshake or the 2026-07-28 `_meta` envelope, and stores it as `mcp_oauth_clients.client_name` when an OAuth client is first seen.
 
 ### 14. list_pinterest_boards MCP Tool
 
@@ -144,7 +144,11 @@ User-created webhook subscriptions with HMAC-SHA256 signing. 5 event types: `pos
 
 ### 20. Zod 4 Upgrade
 
-Upgraded from Zod 3 to Zod 4 (`zod@^4.4.3`). REST API and OpenAPI code imports `from "zod"`. MCP code imports `from "zod/v3"` because `mcp-handler@1.1.0` pins `@modelcontextprotocol/sdk@1.26.0` which expects Zod 3 typings. `z.string().uuid()` migrated to `z.guid()` in REST schemas (Zod 4's strict RFC 4122 rejected some UUIDs).
+Upgraded from Zod 3 to Zod 4 (`zod@^4.4.3`). REST, OpenAPI and MCP code all import `from "zod"`; MCP moved off the `zod/v3` compat layer with the MCP v2 upgrade (item 21). `z.string().uuid()` migrated to `z.guid()` in both surfaces (Zod 4's strict RFC 4122 rejected some UUIDs).
+
+### 21. MCP Protocol 2026-07-28 (mcp-handler 2.x)
+
+The MCP route moved to `mcp-handler@2.2.0` and `@modelcontextprotocol/server@2.1.0`. One handler at `/api/mcp/mcp` serves the 2026-07-28 revision natively and 2025-era clients through the SDK's stateless fallback. The HTTP+SSE transport is gone, and no `subscriptions/listen` streams are served.
 
 ## Mid-Term (1-3 Months)
 

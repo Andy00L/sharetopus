@@ -5,7 +5,7 @@ import "server-only";
  * that publish them, so the two cannot disagree. They live here because a
  * Next.js route file may only export route fields.
  *
- * Read by: src/app/api/mcp/[transport]/route.ts (per-IP flood guard),
+ * Read by: src/app/api/mcp/mcp/route.ts (per-IP flood guard),
  *          src/lib/mcp/withMcpTool.ts (per-user tool-call budget),
  *          src/lib/docs/buildMcpDocMarkdown.ts and
  *          src/app/(marketing)/(api-reference)/docs/mcp/data/sections.ts (docs)

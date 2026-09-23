@@ -2,8 +2,8 @@ import "server-only";
 
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { MediaType, Platform } from "@/lib/types/database.types";
@@ -39,10 +39,9 @@ export function registerPostNow(server: McpServer): void {
       title: "Post Now",
       description:
         "Publish ONE post to ONE platform immediately. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
-      inputSchema: {
+      inputSchema: z.object({
         social_account_id: z
-          .string()
-          .uuid()
+          .guid()
           .describe("ID of the social account to post to"),
         platform: z
           .enum(POSTING_PLATFORMS)
@@ -79,7 +78,6 @@ export function registerPostNow(server: McpServer): void {
             "Pinterest board display name. Optional, for content_history.",
           ),
         pinterest_link: z
-          .string()
           .url()
           .max(2048)
           .optional()
@@ -102,7 +100,7 @@ export function registerPostNow(server: McpServer): void {
           .describe(
             "Optional client-supplied key for safe retries. Same key + same principal returns the existing event_id instead of dispatching a duplicate. Recommended for agent retries on network errors.",
           ),
-      },
+      }),
       annotations: {
         title: "Post Now",
         readOnlyHint: false,

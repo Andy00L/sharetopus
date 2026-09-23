@@ -1,8 +1,8 @@
 import "server-only";
 
 import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancel/cancelScheduledPostBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -24,13 +24,13 @@ export function registerCancelScheduledPosts(server: McpServer): void {
       title: "Cancel Scheduled Posts",
       description:
         "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
-      inputSchema: {
+      inputSchema: z.object({
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to cancel"),
-      },
+      }),
       annotations: {
         title: "Cancel Scheduled Posts",
         readOnlyHint: false,

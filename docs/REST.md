@@ -244,7 +244,7 @@ MDX files live in `src/content/docs/`. Rendered via `@next/mdx` with `pageExtens
 
 REST API code uses Zod 4 (`import { z } from "zod"`). UUID fields use `z.guid()` instead of `z.string().uuid()` because Zod 4's `z.string().uuid()` enforces strict RFC 4122 validation, which rejects some Supabase-generated UUIDs.
 
-MCP tool code uses `import { z } from "zod/v3"` and retains `z.string().uuid()`. The two Zod versions coexist via Zod 4's built-in v3 compatibility layer. Do not mix imports.
+MCP tool code follows the same rule: Zod 4 and `z.guid()` for ids, since the v2 MCP SDK accepts only Zod 4 schemas.
 
 ---
 

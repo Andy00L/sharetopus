@@ -46,7 +46,7 @@ export async function buildMcpDocMarkdown(): Promise<string> {
     "",
     `- Streamable HTTP: \`${MCP_ENDPOINTS.streamableHttp}\``,
     "",
-    "Stateless: no persistent sessions. The legacy SSE transport is not served.",
+    "Stateless. Clients on MCP protocol 2026-07-28 and on the 2025 revisions use the same URL; the legacy SSE transport is not served.",
     "",
     "## Authentication",
     "",

@@ -3,8 +3,8 @@ import "server-only";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { withMcpTool } from "../withMcpTool";
@@ -13,8 +13,7 @@ const MAX_POSTS_PER_CALL = 30;
 
 const postSchema = z.object({
   social_account_id: z
-    .string()
-    .uuid()
+    .guid()
     .describe(
       "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
     ),
@@ -65,7 +64,6 @@ const postSchema = z.object({
       "Optional Pinterest board display name. Cosmetic. Only valid when platform='pinterest'.",
     ),
   pinterest_link: z
-    .string()
     .url()
     .max(2048)
     .optional()
@@ -110,7 +108,7 @@ export function registerBulkSchedule(server: McpServer): void {
     {
       title: "Bulk Schedule",
       description: `Schedule up to ${MAX_POSTS_PER_CALL} posts in a single call. Requires Creator plan or higher. Use this when cross-posting the same media to multiple accounts/platforms, or when scheduling a content series in one shot. For media posts, call attach_media_from_url first. For Pinterest entries, include pinterest_board_id per post. To make retries safe (recommended for agent flows), supply batch_id.`,
-      inputSchema: {
+      inputSchema: z.object({
         posts: z
           .array(postSchema)
           .min(1)
@@ -126,7 +124,7 @@ export function registerBulkSchedule(server: McpServer): void {
           .describe(
             "Optional batch_id to group all posts in this call. When supplied, each post gets idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id are no-ops (already-scheduled posts will not be duplicated). Strongly recommended for agent retries after network errors.",
           ),
-      },
+      }),
       annotations: {
         title: "Bulk Schedule",
         readOnlyHint: false,

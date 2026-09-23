@@ -1,8 +1,8 @@
 import "server-only";
 
 import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -29,13 +29,13 @@ export function registerDeleteScheduledPosts(server: McpServer): void {
       title: "Delete Scheduled Posts",
       description:
         "Permanently delete one or more scheduled posts. This action cannot be undone.",
-      inputSchema: {
+      inputSchema: z.object({
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to delete"),
-      },
+      }),
       annotations: {
         title: "Delete Scheduled Posts",
         readOnlyHint: false,

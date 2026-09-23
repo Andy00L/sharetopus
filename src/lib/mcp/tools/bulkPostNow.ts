@@ -2,8 +2,8 @@ import "server-only";
 
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { withMcpTool } from "../withMcpTool";
@@ -11,7 +11,7 @@ import { withMcpTool } from "../withMcpTool";
 const MAX_POSTS_PER_CALL = 30;
 
 const postNowItemSchema = z.object({
-  social_account_id: z.string().uuid().describe("UUID of the social account"),
+  social_account_id: z.guid().describe("UUID of the social account"),
   platform: z
     .enum(POSTING_PLATFORMS)
     .describe("Target platform"),
@@ -38,7 +38,6 @@ const postNowItemSchema = z.object({
     .optional()
     .describe("Pinterest board display name. Optional."),
   pinterest_link: z
-    .string()
     .url()
     .max(2048)
     .optional()
@@ -73,7 +72,7 @@ export function registerBulkPostNow(server: McpServer): void {
     {
       title: "Bulk Post Now",
       description: `Publish up to ${MAX_POSTS_PER_CALL} posts immediately across multiple platforms and accounts. Requires Creator plan or higher. Reuses one media upload across N posts (one entry in the array = one platform+account combo). For Pinterest entries, include pinterest_board_id. Returns event IDs; check list_content_history in 30-60s to confirm.`,
-      inputSchema: {
+      inputSchema: z.object({
         posts: z
           .array(postNowItemSchema)
           .min(1)
@@ -89,7 +88,7 @@ export function registerBulkPostNow(server: McpServer): void {
           .describe(
             "Optional batch_id. When supplied, each post gets idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id are no-ops.",
           ),
-      },
+      }),
       annotations: {
         title: "Bulk Post Now",
         readOnlyHint: false,

@@ -1,8 +1,8 @@
 import "server-only";
 
 import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatch";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -27,13 +27,13 @@ export function registerResumeScheduledPosts(server: McpServer): void {
       title: "Resume Scheduled Posts",
       description:
         "Resume one or more cancelled posts. Posts with past dates are rescheduled to 1 hour from now.",
-      inputSchema: {
+      inputSchema: z.object({
         post_ids: z
-          .array(z.string().uuid())
+          .array(z.guid())
           .min(1)
           .max(50)
           .describe("Array of post IDs to resume"),
-      },
+      }),
       annotations: {
         title: "Resume Scheduled Posts",
         readOnlyHint: false,

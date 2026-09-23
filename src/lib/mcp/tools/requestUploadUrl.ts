@@ -2,8 +2,8 @@ import "server-only";
 
 import { generateServerSignedUploadUrl } from "@/actions/server/data/generateServerSignedUploadUrl";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -37,7 +37,7 @@ export function registerRequestUploadUrl(server: McpServer): void {
       title: "Request Upload URL",
       description:
         "Get a signed upload URL for uploading media (image/video) directly to Sharetopus storage. Returns a URL + storage_path for use with post_now or schedule_post.",
-      inputSchema: {
+      inputSchema: z.object({
         filename: z
           .string()
           .min(1)
@@ -49,7 +49,7 @@ export function registerRequestUploadUrl(server: McpServer): void {
             "MIME type of the file. Allowed: image/jpeg, image/png, video/mp4, video/mov, video/quicktime",
           ),
         size_bytes: z.number().int().positive().describe("File size in bytes"),
-      },
+      }),
       annotations: {
         title: "Request Upload URL",
         readOnlyHint: false,

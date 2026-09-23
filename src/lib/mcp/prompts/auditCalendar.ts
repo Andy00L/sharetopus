@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 
 /**
  * Prompt: audit the next 14 days of scheduled posts.
@@ -8,9 +8,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
  * and potential gaps.
  */
 export function registerAuditCalendar(server: McpServer): void {
-  server.prompt(
+  server.registerPrompt(
     "audit_calendar",
-    "Review your next 14 days of scheduled posts. Checks for gaps, clustering, and platform balance.",
+    {
+      description:
+        "Review your next 14 days of scheduled posts. Checks for gaps, clustering, and platform balance.",
+    },
     async () => ({
       messages: [
         {
@@ -38,6 +41,6 @@ export function registerAuditCalendar(server: McpServer): void {
           },
         },
       ],
-    })
+    }),
   );
 }

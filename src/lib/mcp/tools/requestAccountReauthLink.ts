@@ -1,8 +1,8 @@
 import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod/v3";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -28,12 +28,11 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
       title: "Request Account Reauth Link",
       description:
         "Get a re-authentication link for a social account with an expired token. The user must open this link in their browser.",
-      inputSchema: {
+      inputSchema: z.object({
         social_account_id: z
-          .string()
-          .uuid()
+          .guid()
           .describe("ID of the social account to re-authenticate"),
-      },
+      }),
       annotations: {
         title: "Request Account Reauth Link",
         readOnlyHint: true,

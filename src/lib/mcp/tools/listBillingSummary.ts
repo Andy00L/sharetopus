@@ -2,8 +2,9 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
 import { tierLabel } from "@/lib/types/plans";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import "server-only";
+import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 
@@ -22,7 +23,7 @@ export function registerListBillingSummary(server: McpServer): void {
       title: "List Billing Summary",
       description:
         "View your current subscription plan, status, and usage quota counts for the current month.",
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: {
         title: "List Billing Summary",
         readOnlyHint: true,

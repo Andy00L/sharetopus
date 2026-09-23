@@ -11,8 +11,8 @@ import { SITE_ORIGIN } from "./markdownPrimitives";
  */
 
 export const MCP_ENDPOINTS = {
-  // sourceRef: src/app/api/mcp/[transport]/route.ts (basePath "/api/mcp",
-  //            SSE disabled), docs/MCP.md (transport URL)
+  // sourceRef: src/app/api/mcp/mcp/route.ts (the only MCP route),
+  //            docs/MCP.md (transport URL)
   streamableHttp: `${SITE_ORIGIN}/api/mcp/mcp`,
 } as const;
 

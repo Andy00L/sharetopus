@@ -6,7 +6,7 @@ import "server-only";
  * instead of telling an agent to slow down with a 429.
  *
  * Called by: every x402 route that rate limits, and the MCP route
- *            (src/app/api/mcp/[transport]/route.ts)
+ *            (src/app/api/mcp/mcp/route.ts)
  * Tables touched: none
  */
 

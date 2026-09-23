@@ -59,7 +59,7 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Connection",
     title: "Connection",
     summary:
-      "Streamable HTTP, stateless: no persistent sessions. The legacy SSE transport is not served.",
+      "Streamable HTTP, stateless. Clients on MCP protocol 2026-07-28 and on the 2025 revisions use the same URL; the legacy SSE transport is not served.",
     sourceRef: "src/lib/docs/mcpCatalog.ts (MCP_ENDPOINTS), docs/MCP.md",
     table: {
       columns: ["Transport", "URL"],
