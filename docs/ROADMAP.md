@@ -209,6 +209,12 @@ Internationalization is configured in `i18n-config.ts` (fr, en, es) and dependen
 
 The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analytics data pipeline).
 
+### 6. Teams and Channel Groups: Build or Delete
+
+Teams (shared workspaces with owner, admin, and member roles plus email invites) and channel groups (named sets of social accounts, for agencies) were designed but never shipped. Their SQL in `docs/DB_CHANGES_TEAMS.md` and `docs/DB_CHANGES_GROUPS.md` has not been run, so the five tables (`teams`, `team_members`, `team_invites`, `channel_groups`, `channel_group_members`) exist only in `src/lib/types/database.types.ts`. The code in `src/lib/teams/` (3 files) and `src/lib/groups/channelGroups.ts`, 934 lines in all, has no importers.
+
+Decision pending: build it (run the SQL, then add the UI and API) or delete the code, the five type blocks, and the two SQL docs.
+
 ## Won't Fix (For Now)
 
 ---
