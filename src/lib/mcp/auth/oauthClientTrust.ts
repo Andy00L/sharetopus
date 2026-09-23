@@ -15,12 +15,13 @@ export type OAuthTrustResult =
 const MAX_VERIFIED_CLIENTS_PER_USER = 5;
 
 /**
- * New OAuth clients one user may bring, per minute and per day. Keyed on
- * the user, not the IP: hosted clients (Claude, ChatGPT) call this route
- * from shared egress IPs, so a per-IP limit refused every user of the same
- * client after the first few. The first-sight insert only runs after Clerk
- * verified the token and the subscription gate passed, so the user is
- * always known here.
+ * New OAuth clients one user may bring, per minute and per day. A client
+ * id is the URL of the client's metadata document (CIMD), so one user can
+ * still point Sharetopus at many of them. Keyed on the user, not the IP:
+ * hosted clients (Claude, ChatGPT) call this route from shared egress IPs,
+ * so a per-IP limit refused every user of the same client after the first
+ * few. The first-sight insert only runs after Clerk verified the token and
+ * the subscription gate passed, so the user is always known here.
  */
 const NEW_CLIENTS_PER_USER_PER_MINUTE = 3;
 const NEW_CLIENTS_PER_USER_PER_DAY = 10;
@@ -140,8 +141,8 @@ async function firstSightInsert(
   hints: OAuthClientHints,
 ): Promise<OAuthTrustResult> {
   const newClientLimits = [
-    { scope: "dcr_register", limit: NEW_CLIENTS_PER_USER_PER_MINUTE, windowSeconds: 60 },
-    { scope: "dcr_register_daily", limit: NEW_CLIENTS_PER_USER_PER_DAY, windowSeconds: 86400 },
+    { scope: "oauth_client_first_sight", limit: NEW_CLIENTS_PER_USER_PER_MINUTE, windowSeconds: 60 },
+    { scope: "oauth_client_first_sight_daily", limit: NEW_CLIENTS_PER_USER_PER_DAY, windowSeconds: 86400 },
   ];
   for (const { scope, limit, windowSeconds } of newClientLimits) {
     const limitResult = await checkRateLimit(scope, principalId, limit, windowSeconds);

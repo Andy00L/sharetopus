@@ -99,7 +99,7 @@ Limits: 10 active MCP keys per user. Keys can be revoked from the UI. Requires C
 
 ### Claude (web and desktop)
 
-Open **Customize > Connectors > Add custom connector**, paste `https://sharetopus.com/api/mcp/mcp`, and click **Add**. Then click **Connect** and sign in to Sharetopus. Claude's default OAuth client option, **Use Claude's published identity**, works because Clerk publishes client ID metadata documents; **Register automatically** (dynamic client registration) works too.
+Open **Customize > Connectors > Add custom connector**, paste `https://sharetopus.com/api/mcp/mcp`, and click **Add**. Then click **Connect** and sign in to Sharetopus. Claude's default OAuth client option, **Use Claude's published identity**, works because Clerk publishes client ID metadata documents. Dynamic client registration is turned off, so the **Register automatically** option does not work.
 
 On Team and Enterprise plans an owner adds the connector under **Organization settings > Connectors**, and members click **Connect** under **Customize > Connectors**.
 
@@ -137,7 +137,7 @@ Add to `~/.cursor/mcp.json`:
 
 ### Other clients (RFC 9728 auto-discovery)
 
-For clients with OAuth discovery support, only the URL is needed:
+For clients that support OAuth discovery and sign in with a client ID metadata document, only the URL is needed. A client that only supports dynamic client registration cannot sign in with OAuth; give it an API key instead.
 
 ```json
 {

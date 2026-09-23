@@ -11,8 +11,8 @@ subscribers.
 
 2. **Clerk OAuth**: Bearer token verified by `@clerk/mcp-tools`. The client
    discovers the auth server via `/.well-known/oauth-protected-resource` (RFC
-   9728), goes through Clerk's OAuth 2.1 flow with Dynamic Client Registration,
-   and sends the access token on every request.
+   9728), goes through Clerk's OAuth 2.1 flow identified by its client ID
+   metadata document, and sends the access token on every request.
 
 Both paths resolve to an `McpPrincipal` that is passed to every tool handler.
 

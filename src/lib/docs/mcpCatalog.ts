@@ -184,8 +184,8 @@ export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
  * Claude web and desktop add the server as a custom connector. Claude's
  * default OAuth client option ("Use Claude's published identity") works
  * because Clerk publishes client ID metadata documents (enabled
- * 2026-09-23), and "Register automatically" (dynamic client registration)
- * still works too, so the steps need no OAuth client choice.
+ * 2026-09-23), so the steps need no OAuth client choice. Dynamic client
+ * registration is off, which rules out "Register automatically".
  */
 export const MCP_CLAUDE_CONNECT_STEPS =
   "Open Customize > Connectors > Add custom connector, paste the URL, and click Add. Then click Connect and sign in to Sharetopus.";

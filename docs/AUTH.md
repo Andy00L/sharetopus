@@ -264,7 +264,7 @@ stateDiagram-v2
 
 MCP clients that support OAuth discovery (Claude Desktop, Cursor) hit this endpoint to find the Clerk authorization server automatically. The route is handled by `@clerk/mcp-tools/next` and reads `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from the environment to construct the metadata response.
 
-Clerk publishes two ways for a client to identify itself: client ID metadata documents (CIMD, enabled 2026-09-23: the client's `client_id` is an HTTPS URL serving its metadata, which Claude uses by default) and dynamic client registration (DCR, deprecated by the MCP spec but kept on for clients that have not moved yet). A CIMD client gets one `mcp_oauth_clients` row shared by all its users; each DCR registration gets its own.
+Clients identify themselves with a client ID metadata document (CIMD, enabled in Clerk on 2026-09-23): the client's `client_id` is an HTTPS URL serving its metadata. Claude, Claude Code and ChatGPT use CIMD whenever the authorization server supports it. Dynamic client registration (DCR), which the MCP spec deprecates, is turned off in Clerk, so a client that only supports DCR cannot sign in with OAuth and needs an API key. A CIMD client gets one `mcp_oauth_clients` row shared by all its users.
 
 ---
 
@@ -292,11 +292,11 @@ The `mcp_oauth_clients` table tracks every OAuth client that has authenticated a
 
 ### New-client rate limits
 
-First-sight registration is rate-limited per user, not per IP: hosted clients such as Claude call the MCP route from shared egress IPs, so a per-IP limit would refuse every user of the same client after the first few. The insert only runs after Clerk and the subscription gate have vetted the user.
+First-sight registration is rate-limited per user, not per IP: hosted clients such as Claude call the MCP route from shared egress IPs, so a per-IP limit would refuse every user of the same client after the first few. The insert only runs after Clerk and the subscription gate have vetted the user. The limit still matters with CIMD, since one user can point Sharetopus at any number of metadata document URLs.
 - **3 new clients per minute per user**
 - **10 new clients per day per user**
 
-A limiter outage lets the request through. Limit hits are logged to the `rate_limit_events` table (with the user and hashed IP) under scopes `dcr_register` and `dcr_register_daily`.
+A limiter outage lets the request through. Limit hits are logged to the `rate_limit_events` table (with the user and hashed IP) under scopes `oauth_client_first_sight` and `oauth_client_first_sight_daily`.
 
 ---
 
@@ -395,7 +395,7 @@ EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Ba
 | `src/lib/mcp/auth/resolvers/apiKey.ts` | API key resolver (hash, lookup, verify, track) |
 | `src/lib/mcp/auth/resolvers/oauth.ts` | `verifyOAuthToken`, `assertOAuthClientTrust` |
 | `src/lib/mcp/auth/resolvers/applySubscriptionGate.ts` | Subscription check, plan enrichment |
-| `src/lib/mcp/auth/oauthClientTrust.ts` | Trust check, first-sight insert, DCR rate limiting |
+| `src/lib/mcp/auth/oauthClientTrust.ts` | Trust check, first-sight insert, new-client rate limiting |
 | `src/lib/mcp/entitlement.ts` | `entitlementFor()`, tier gate, monthly quota |
 | `src/lib/mcp/apiKeyExpiry.ts` | `API_KEY_EXPIRY_DAYS_OPTIONS`, expiry validation |
 | `src/lib/mcp/ipHash.ts` | `hashClientIp()`, salt handling |

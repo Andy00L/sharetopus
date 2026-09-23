@@ -82,7 +82,7 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
         ],
         [
           "OAuth 2.1",
-          "OAuth-capable clients discover the auth server automatically via the RFC 9728 metadata endpoint at /.well-known/oauth-protected-resource and sign in with dynamic client registration. No key needed.",
+          "OAuth-capable clients discover the auth server automatically via the RFC 9728 metadata endpoint at /.well-known/oauth-protected-resource and identify themselves with a client ID metadata document. No key needed.",
         ],
       ],
     },
@@ -131,7 +131,7 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
         ],
         [
           "Other clients",
-          "OAuth-capable clients need only the URL; the sign-in flow starts automatically. The rest send Authorization: Bearer stp_mcp_... on every request.",
+          "Clients that sign in with a client ID metadata document need only the URL; the sign-in flow starts automatically. The rest, including clients that only support dynamic client registration, send Authorization: Bearer stp_mcp_... on every request.",
         ],
       ],
     },

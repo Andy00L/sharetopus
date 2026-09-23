@@ -84,7 +84,7 @@ export async function verifyOAuthToken(
  * Returns false when:
  *   - The client_id is explicitly revoked
  *   - The client_id is trust_level='blocked'
- *   - The first-sight INSERT was refused by the DCR rate limiter
+ *   - The first-sight INSERT was refused by the new-client rate limiter
  *
  * Called by: src/lib/mcp/auth/resolve.ts after applySubscriptionGate
  *   accepts an OAuth-kind principal.
