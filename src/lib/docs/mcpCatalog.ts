@@ -181,14 +181,14 @@ export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
  */
 
 /**
- * Claude web and desktop add the server as a custom connector. "Register
- * automatically" is dynamic client registration: Claude's recommended
- * "published identity" option needs client ID metadata documents, which
- * the Clerk authorization server does not advertise. Drop that sentence
- * once they are enabled in Clerk.
+ * Claude web and desktop add the server as a custom connector. Claude's
+ * default OAuth client option ("Use Claude's published identity") works
+ * because Clerk publishes client ID metadata documents (enabled
+ * 2026-09-23), and "Register automatically" (dynamic client registration)
+ * still works too, so the steps need no OAuth client choice.
  */
 export const MCP_CLAUDE_CONNECT_STEPS =
-  "Open Customize > Connectors > Add custom connector, paste the URL, and click Add. If Claude asks for an OAuth client, choose Register automatically. Then click Connect and sign in to Sharetopus.";
+  "Open Customize > Connectors > Add custom connector, paste the URL, and click Add. Then click Connect and sign in to Sharetopus.";
 
 /** What follows the Claude Code add command: OAuth sign-in, or an API key. */
 export const MCP_CLAUDE_CODE_NEXT_STEP =

@@ -99,7 +99,7 @@ Limits: 10 active MCP keys per user. Keys can be revoked from the UI. Requires C
 
 ### Claude (web and desktop)
 
-Open **Customize > Connectors > Add custom connector**, paste `https://sharetopus.com/api/mcp/mcp`, and click **Add**. If Claude asks for an OAuth client, choose **Register automatically** (dynamic client registration): the recommended **Use Claude's published identity** option needs client ID metadata documents, which the Clerk authorization server does not advertise yet. Then click **Connect** and sign in to Sharetopus.
+Open **Customize > Connectors > Add custom connector**, paste `https://sharetopus.com/api/mcp/mcp`, and click **Add**. Then click **Connect** and sign in to Sharetopus. Claude's default OAuth client option, **Use Claude's published identity**, works because Clerk publishes client ID metadata documents; **Register automatically** (dynamic client registration) works too.
 
 On Team and Enterprise plans an owner adds the connector under **Organization settings > Connectors**, and members click **Connect** under **Customize > Connectors**.
 
