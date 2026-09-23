@@ -191,7 +191,7 @@ All enum-like values are enforced by CHECK constraints in Postgres (not Postgres
 | `principals.kind` | `clerk`, `wallet` |
 | `wallets.chain` | `base`, `base-sepolia`, `polygon`, `arbitrum`, `solana`, `solana-devnet` |
 | `wallets.sanctions_status` | `unchecked`, `clean`, `sanctioned` |
-| `social_accounts.platform` | `linkedin`, `tiktok`, `pinterest`, `instagram`, `facebook`, `threads`, `youtube`, `x` |
+| `social_accounts.platform`, `social_connections.platform`, `pending_direct_posts.platform` | The 28 ids the code writes: `POSTING_PLATFORMS` (`src/lib/platforms/capabilities.ts`) plus `REGISTRY_PLATFORM_IDS` (`src/lib/platforms/providers/catalog.ts`). A new platform needs these three constraints widened. |
 | `social_connections.initiated_via` | `web`, `mcp`, `api`, `x402` |
 | `social_connections.status` | `pending`, `connected`, `expired`, `failed`, `revoked` |
 | `scheduled_posts.status` | `scheduled`, `queued`, `processing`, `posted`, `failed`, `cancelled` |

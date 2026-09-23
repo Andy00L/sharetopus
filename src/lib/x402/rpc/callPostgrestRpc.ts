@@ -5,8 +5,9 @@ import "server-only";
  * (onboard_wallet_atomic). The typed adminSupabase client could not
  * historically call it (database.types.ts is hand-maintained and lagged the
  * live schema), so this wrapper centralizes the raw fetch, service-role auth
- * headers, timeout, and PostgREST error parsing. connect_wallet_atomic is no
- * longer called: /connect records its charge through charges/chargeLifecycle.ts.
+ * headers, timeout, and PostgREST error parsing. /connect records its charge
+ * through charges/chargeLifecycle.ts; the old connect_wallet_atomic and
+ * register_wallet_atomic functions were dropped from the database.
  *
  * Called by: auth/resolveOrOnboardWalletPrincipal.ts
  * Env: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE
