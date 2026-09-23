@@ -5,7 +5,8 @@ import "server-only";
  * sends. A limiter outage is ours, not the caller's, so it answers 503
  * instead of telling an agent to slow down with a 429.
  *
- * Called by: every x402 route that rate limits
+ * Called by: every x402 route that rate limits, and the MCP route
+ *            (src/app/api/mcp/[transport]/route.ts)
  * Tables touched: none
  */
 
@@ -48,7 +49,7 @@ export function describeRateLimitRejection(
 
 /**
  * The { error, retryAfter } JSON body the standalone x402 routes (status
- * polling, the public Arc facilitator) answer with.
+ * polling, the public Arc facilitator) and the MCP route answer with.
  */
 export function buildRateLimitJsonResponse(rejection: RateLimitRejection): NextResponse {
   return NextResponse.json(

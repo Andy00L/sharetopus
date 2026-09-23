@@ -1,5 +1,7 @@
 import "server-only";
 
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+
 import { logToolCall } from "./audit";
 import type { McpPrincipal } from "./auth/types";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
@@ -12,6 +14,15 @@ import {
 } from "./context";
 import { entitlementFor } from "./entitlement";
 import type { McpToolName } from "./toolNames";
+
+/**
+ * Tool calls one principal may make per window, across all tools: 100 per
+ * 60 s, about 10x a busy agent. Keyed on the principal, not the IP: hosted
+ * clients (Claude, ChatGPT) share egress IPs, so a per-IP budget throttled
+ * every user of the same client together.
+ */
+const TOOL_CALLS_PER_WINDOW = 100;
+const TOOL_CALL_WINDOW_SECONDS = 60;
 
 /**
  * Resolved per-request context shared with every tool handler.
@@ -81,7 +92,8 @@ type ToolHandlerCallback = (
  *   1. Extract per-request context (principal, session, ip, ua, client)
  *   2. Compute the default audit args payload (auditArgsBuilder if
  *      provided, else the raw args coerced via rawArgsAsAuditPayload)
- *   3. Run the entitlement gate (tier + monthly quota)
+ *   3. Apply the per-principal tool-call budget, then run the
+ *      entitlement gate (tier + monthly quota)
  *   4. On deny: emit the audit row with the right status + return the
  *      standard denied response
  *   5. On allow: call the inner handler
@@ -123,6 +135,35 @@ export function withMcpTool<TArgs>(
     const defaultAuditArgs = options.auditArgsBuilder
       ? options.auditArgsBuilder(typedArgs)
       : rawArgsAsAuditPayload(rawArgs);
+
+    // A limiter outage fails open: the monthly quota below still bounds
+    // usage, and a Redis incident should not take every agent offline.
+    const principalLimit = await checkRateLimit(
+      "mcp_tool_call",
+      ctx.principal.principalId,
+      TOOL_CALLS_PER_WINDOW,
+      TOOL_CALL_WINDOW_SECONDS,
+    );
+    if (!principalLimit.success && principalLimit.reason === "limited") {
+      await emitAudit(ctx, toolName, defaultAuditArgs, "rate_limited");
+      const retryHint = principalLimit.resetIn
+        ? ` Retry in ${principalLimit.resetIn} s.`
+        : "";
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Rate limited: at most ${TOOL_CALLS_PER_WINDOW} tool calls per ${TOOL_CALL_WINDOW_SECONDS} s.${retryHint}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    if (!principalLimit.success) {
+      console.warn(
+        `[withMcpTool] Rate limiter ${principalLimit.reason ?? "failed"} for ${toolName}; continuing without the per-principal budget.`,
+      );
+    }
 
     const entitlement = await entitlementFor(ctx.principal, toolName);
     if (entitlement.mode === "deny") {

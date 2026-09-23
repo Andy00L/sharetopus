@@ -7,22 +7,23 @@ import { hashClientIp } from "@/lib/mcp/ipHash";
 import { resolveClientIp } from "@/lib/net/clientIp";
 import { registerPrompts } from "@/lib/mcp/prompts";
 import { registerTools } from "@/lib/mcp/tools";
+import {
+  buildRateLimitJsonResponse,
+  describeRateLimitRejection,
+} from "@/lib/x402/http/rateLimitRejection";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 /**
- * Per-IP rate limit on the MCP endpoint. Applies to every request that
- * reaches the auth callback, including unauthenticated probes and
- * traffic from valid tokens. 100 requests per 60s window is roughly
- * 10x the burst expected from a legitimate agent (Claude Desktop /
- * Cursor rarely fire more than ~10 tool calls per minute).
- *
- * This sits BEFORE the bearer-token check so token-probing attackers
- * cannot use a missing token to skip the limiter.
+ * Per-IP ceiling on the MCP endpoint, checked before any token work so
+ * floods and token probing stay cheap to refuse: 1000 requests per 60 s.
+ * Hosted clients (Claude, ChatGPT) send every user's calls from a shared
+ * pool of egress IPs, so this is a flood guard, not a per-user budget; the
+ * per-user tool-call budget lives in withMcpTool.
  */
-const MCP_ROUTE_RATE_LIMIT_REQUESTS = 100;
+const MCP_ROUTE_RATE_LIMIT_REQUESTS = 1000;
 const MCP_ROUTE_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 /**
@@ -65,8 +66,10 @@ function sanitizeClientField(raw: string, maxLength: number): string {
  *   - SSE:             /api/mcp/sse
  *
  * Auth flow:
- *   1. Per-IP rate limit (100 req / 60s) fires first, before any token
- *      handling, so probes and floods get short-circuited cheaply.
+ *   1. Per-IP ceiling (1000 req / 60 s) fires first, before any token
+ *      handling, so probes and floods get short-circuited cheaply. It
+ *      answers 429 (or 503 when the limiter is down), never 401: a 401
+ *      tells an OAuth client its token is dead and starts a re-login.
  *   2. Bearer token arrives in the Authorization header.
  *   3. If it starts with stp_mcp_, we resolve it as an API key via
  *      resolveMcpPrincipal(). We return an AuthInfo object that the
@@ -82,8 +85,8 @@ function sanitizeClientField(raw: string, maxLength: number): string {
  * Called by: MCP clients (Claude Desktop, Cursor, ChatGPT, etc.)
  * Tables touched: api_keys (read, via resolveMcpPrincipal),
  *   mcp_sessions (UPSERT per request via logToolCall),
- *   mcp_audit_log (insert per tool call),
- *   rate_limit_events (insert via checkRateLimit)
+ *   mcp_audit_log (insert per tool call)
+ * Rate limits: Upstash Redis, via checkRateLimit
  */
 const handler = createMcpHandler(
   (server) => {
@@ -106,29 +109,6 @@ const handler = createMcpHandler(
 const authHandler = withMcpAuth(
   handler,
   async (req: Request, bearerToken?: string) => {
-    // Step 1: Per-IP rate limit. Runs BEFORE the bearer check so even
-    // unauthenticated probes are bounded. Requests with no resolvable
-    // IP (synthetic load tests, internal calls) bypass the limiter
-    // because checkRateLimit needs a scope key.
-    const rawClientIp = resolveClientIp(req.headers);
-    const clientIpHash = hashClientIp(rawClientIp);
-
-    if (clientIpHash) {
-      const routeLimit = await checkRateLimit(
-        "mcp_route",
-        clientIpHash,
-        MCP_ROUTE_RATE_LIMIT_REQUESTS,
-        MCP_ROUTE_RATE_LIMIT_WINDOW_SECONDS,
-      );
-      if (!routeLimit.success) {
-        console.warn(
-          `[mcp/route] Per-IP rate limit hit for ip_hash=${clientIpHash} ` +
-            `(reset in ${routeLimit.resetIn ?? "unknown"}s)`,
-        );
-        return undefined;
-      }
-    }
-
     if (!bearerToken) return undefined;
 
     // Step 2: Best-effort clientInfo extraction from MCP initialize
@@ -231,7 +211,35 @@ const authHandler = withMcpAuth(
   },
 );
 
-export { authHandler as GET, authHandler as POST };
+/**
+ * Step 1 of the auth flow: the per-IP ceiling, applied before the request
+ * reaches token verification. Requests with no resolvable IP (synthetic
+ * load tests, internal calls) skip it, because checkRateLimit needs a key.
+ */
+async function handleMcpRequest(req: Request): Promise<Response> {
+  const clientIpHash = hashClientIp(resolveClientIp(req.headers));
+
+  if (clientIpHash) {
+    const routeLimit = await checkRateLimit(
+      "mcp_route",
+      clientIpHash,
+      MCP_ROUTE_RATE_LIMIT_REQUESTS,
+      MCP_ROUTE_RATE_LIMIT_WINDOW_SECONDS,
+    );
+    if (!routeLimit.success) {
+      const rejection = describeRateLimitRejection(routeLimit);
+      console.warn(
+        `[handleMcpRequest] ${rejection.errorKind} for ip_hash=${clientIpHash} ` +
+          `(retry in ${rejection.retryAfterSeconds}s)`,
+      );
+      return buildRateLimitJsonResponse(rejection);
+    }
+  }
+
+  return authHandler(req);
+}
+
+export { handleMcpRequest as GET, handleMcpRequest as POST };
 
 function clientIdForAuthInfo(principal: McpPrincipal): string {
   switch (principal.kind) {
