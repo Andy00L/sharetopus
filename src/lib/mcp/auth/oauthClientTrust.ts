@@ -14,6 +14,17 @@ export type OAuthTrustResult =
 
 const MAX_VERIFIED_CLIENTS_PER_USER = 5;
 
+/**
+ * New OAuth clients one user may bring, per minute and per day. Keyed on
+ * the user, not the IP: hosted clients (Claude, ChatGPT) call this route
+ * from shared egress IPs, so a per-IP limit refused every user of the same
+ * client after the first few. The first-sight insert only runs after Clerk
+ * verified the token and the subscription gate passed, so the user is
+ * always known here.
+ */
+const NEW_CLIENTS_PER_USER_PER_MINUTE = 3;
+const NEW_CLIENTS_PER_USER_PER_DAY = 10;
+
 export type OAuthClientHints = {
   clientName?: string | null;
   softwareId?: string | null;
@@ -40,7 +51,8 @@ export type OAuthClientHints = {
  *
  * @param clientId   OAuth client ID from the Clerk-issued token
  * @param principalId User ID who is authenticating (consent giver)
- * @param hints      Optional metadata from MCP initialize handshake
+ * @param hints      Optional client name the route read from the request
+ *                   (2025-era initialize, or the 2026 _meta envelope)
  */
 export async function checkOAuthClientTrust(
   clientId: string,
@@ -116,8 +128,8 @@ export async function checkOAuthClientTrust(
 }
 
 /**
- * Handles first-sight INSERT: rate limit, count verified clients for
- * the registering user, decide trust_level, INSERT.
+ * Handles first-sight INSERT: per-user new-client limits, count verified
+ * clients for the registering user, decide trust_level, INSERT.
  *
  * Populates the cache with the freshly-inserted row so the next
  * request on this instance is a cache hit.
@@ -127,20 +139,25 @@ async function firstSightInsert(
   principalId: string,
   hints: OAuthClientHints,
 ): Promise<OAuthTrustResult> {
-  const minLimit = await checkRateLimit("dcr_register", null, 1, 60);
-  if (!minLimit.success) {
-    await logRateLimitEvent("dcr_register");
-    console.warn(
-      `[firstSightInsert] DCR minute rate limit hit for ${clientId}`,
-    );
-    return { allowed: false, reason: "rate_limited" };
-  }
-
-  const dayLimit = await checkRateLimit("dcr_register_daily", null, 10, 86400);
-  if (!dayLimit.success) {
-    await logRateLimitEvent("dcr_register_daily");
-    console.warn(`[firstSightInsert] DCR daily rate limit hit for ${clientId}`);
-    return { allowed: false, reason: "rate_limited" };
+  const newClientLimits = [
+    { scope: "dcr_register", limit: NEW_CLIENTS_PER_USER_PER_MINUTE, windowSeconds: 60 },
+    { scope: "dcr_register_daily", limit: NEW_CLIENTS_PER_USER_PER_DAY, windowSeconds: 86400 },
+  ];
+  for (const { scope, limit, windowSeconds } of newClientLimits) {
+    const limitResult = await checkRateLimit(scope, principalId, limit, windowSeconds);
+    if (!limitResult.success && limitResult.reason === "limited") {
+      await logRateLimitEvent(scope, principalId);
+      console.warn(`[firstSightInsert] ${scope} limit hit for ${clientId}`);
+      return { allowed: false, reason: "rate_limited" };
+    }
+    // A limiter outage fails open: Clerk and the subscription gate
+    // already vetted this user, and a Redis incident should not stop
+    // paying users from connecting a new client.
+    if (!limitResult.success) {
+      console.warn(
+        `[firstSightInsert] Rate limiter ${limitResult.reason ?? "failed"} for ${scope}; continuing.`,
+      );
+    }
   }
 
   const { count, error: countErr } = await adminSupabase
@@ -203,10 +220,13 @@ async function firstSightInsert(
 }
 
 /**
- * Logs a rate-limit event for forensic analysis. The `rate_limit_events`
- * table accepts NULL principal_id for anonymous DCR attempts.
+ * Logs a rate-limit event for forensic analysis, with the user who hit
+ * the limit and the hashed IP they came from.
  */
-async function logRateLimitEvent(scope: string): Promise<void> {
+async function logRateLimitEvent(
+  scope: string,
+  principalId: string,
+): Promise<void> {
   try {
     const { extractIpHash } = await import("@/lib/api/context");
     const ipHash = await extractIpHash();
@@ -214,7 +234,7 @@ async function logRateLimitEvent(scope: string): Promise<void> {
     await adminSupabase.from("rate_limit_events").insert({
       scope,
       ip_hash: ipHash,
-      principal_id: null,
+      principal_id: principalId,
     });
   } catch (err) {
     console.error(

@@ -264,6 +264,8 @@ stateDiagram-v2
 
 MCP clients that support OAuth discovery (Claude Desktop, Cursor) hit this endpoint to find the Clerk authorization server automatically. The route is handled by `@clerk/mcp-tools/next` and reads `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` from the environment to construct the metadata response.
 
+Clerk publishes two ways for a client to identify itself: client ID metadata documents (CIMD, enabled 2026-09-23: the client's `client_id` is an HTTPS URL serving its metadata, which Claude uses by default) and dynamic client registration (DCR, deprecated by the MCP spec but kept on for clients that have not moved yet). A CIMD client gets one `mcp_oauth_clients` row shared by all its users; each DCR registration gets its own.
+
 ---
 
 ## OAuth client trust enforcement
@@ -286,15 +288,15 @@ The `mcp_oauth_clients` table tracks every OAuth client that has authenticated a
 
 **Resubscribe:** Unverified clients are promoted back to `verified`, filling available slots up to the 5-client-per-user cap. Blocked clients are never auto-promoted (requires admin intervention). Revoked clients are excluded from promotion.
 
-**Stale cleanup:** Unverified clients older than 90 days with no recent sessions are purged by the `sweep-stale-oauth-clients` Inngest cron at 04:00 UTC daily.
+**Stale cleanup:** Unverified clients older than 90 days with no tool call in `mcp_audit_log` over the last 90 days are purged by the `sweep-stale-oauth-clients` Inngest cron at 04:00 UTC daily.
 
-### DCR rate limits
+### New-client rate limits
 
-First-sight registration is rate-limited per IP to prevent abuse:
-- **1 new client per minute per IP**
-- **10 new clients per day per IP**
+First-sight registration is rate-limited per user, not per IP: hosted clients such as Claude call the MCP route from shared egress IPs, so a per-IP limit would refuse every user of the same client after the first few. The insert only runs after Clerk and the subscription gate have vetted the user.
+- **3 new clients per minute per user**
+- **10 new clients per day per user**
 
-Rate-limit hits are logged to the `rate_limit_events` table with scopes `dcr_register` and `dcr_register_daily`.
+A limiter outage lets the request through. Limit hits are logged to the `rate_limit_events` table (with the user and hashed IP) under scopes `dcr_register` and `dcr_register_daily`.
 
 ---
 

@@ -134,7 +134,7 @@ All per-request rate limits use Upstash Redis sliding window (`@upstash/ratelimi
 | `directPostBatch` | per source | 20 | 60s | Upstash |
 | `schedulePostBatch` | per source | 10 | 60s | Upstash |
 | REST API endpoints | per principal | varies per endpoint | varies | Upstash |
-| DCR registration | per IP | 1/min, 10/day | | Supabase `rate_limit_events` |
+| New OAuth client (first sight) | per user | 3/min, 10/day | | Upstash, hits logged to `rate_limit_events` |
 | Pinterest board listing | per account | 15 | 60s | Upstash |
 
 ### Monthly caps (per-tier, atomic)
