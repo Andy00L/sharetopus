@@ -1,5 +1,6 @@
 // lib/api/auth/ensureValidToken.ts
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 import type { Platform } from "@/lib/types/database.types";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
 import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
@@ -8,6 +9,12 @@ import refreshPinterestToken from "./pinterest/data/refreshPinterestToken";
 import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
 import refreshXToken from "./x/data/refreshXToken";
 import refreshYouTubeToken from "./youtube/data/refreshYouTubeToken";
+
+type EnsureValidTokenResult = {
+  success: boolean;
+  token?: string;
+  error?: string;
+};
 
 /**
  * Returns a valid access token for any platform, refreshing it first when
@@ -21,13 +28,18 @@ import refreshYouTubeToken from "./youtube/data/refreshYouTubeToken";
  *   - facebook: Page tokens minted from a long-lived user token do not
  *     expire (token_expires_at is stored null, so this path is only reached
  *     if the token was revoked); the user must reconnect.
+ *
+ * When the platform refuses the stored credential, the account is flagged
+ * is_available = false so the x402 and MCP connection lists report it as
+ * needing re-authentication. A refresh that fails for a reason that may
+ * pass (network, 5xx, missing config) leaves the account untouched, and a
+ * successful refresh clears the flag.
  */
-export async function ensureValidToken(account: SocialAccount): Promise<{
-  success: boolean;
-  token?: string;
-  error?: string;
-}> {
-  if (!account.access_token) {
+export async function ensureValidToken(
+  account: SocialAccount,
+): Promise<EnsureValidTokenResult> {
+  const accessToken = account.access_token;
+  if (!accessToken) {
     console.error(
       `[ensureValidToken] No access token for ${account.platform}`,
     );
@@ -42,7 +54,7 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
   if (!isExpired) {
     return {
       success: true,
-      token: account.access_token,
+      token: accessToken,
     };
   }
 
@@ -52,8 +64,14 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
 
   try {
     const refreshResult = await refreshTokenForPlatform(account);
-    if (!refreshResult.success) {
-      return { success: false, error: refreshResult.error };
+    if (refreshResult.kind === "failed") {
+      return {
+        success: false,
+        error: `We could not refresh your ${account.platform} connection just now. Please try again in a few minutes.`,
+      };
+    }
+    if (refreshResult.kind === "rejected") {
+      return handleRejectedRefresh(account, accessToken);
     }
     const newTokens = refreshResult.tokens;
 
@@ -127,63 +145,104 @@ export async function ensureValidToken(account: SocialAccount): Promise<{
  */
 async function refreshTokenForPlatform(
   account: SocialAccount,
-): Promise<
-  | { success: true; tokens: TokenExchangeResponse }
-  | { success: false; error: string }
-> {
-  const reconnectError = `Your ${account.platform} account has expired and cannot be automatically renewed. Please reconnect your account.`;
-
-  let newTokens: TokenExchangeResponse | null = null;
+): Promise<TokenRefreshResult> {
+  const missingRefreshToken: TokenRefreshResult = {
+    kind: "rejected",
+    message: "No refresh token stored.",
+  };
 
   switch (account.platform) {
     case "tiktok":
-      if (!account.refresh_token) return { success: false, error: reconnectError };
-      newTokens = await refreshTikTokToken(account.refresh_token);
-      break;
+      return account.refresh_token
+        ? refreshTikTokToken(account.refresh_token)
+        : missingRefreshToken;
     case "pinterest":
-      if (!account.refresh_token) return { success: false, error: reconnectError };
-      newTokens = await refreshPinterestToken(account.refresh_token);
-      break;
+      return account.refresh_token
+        ? refreshPinterestToken(account.refresh_token)
+        : missingRefreshToken;
     case "linkedin":
-      if (!account.refresh_token) return { success: false, error: reconnectError };
-      newTokens = await refreshLinkedInToken(account.refresh_token);
-      break;
+      return account.refresh_token
+        ? refreshLinkedInToken(account.refresh_token)
+        : missingRefreshToken;
     case "youtube":
-      if (!account.refresh_token) return { success: false, error: reconnectError };
-      newTokens = await refreshYouTubeToken(account.refresh_token);
-      break;
+      return account.refresh_token
+        ? refreshYouTubeToken(account.refresh_token)
+        : missingRefreshToken;
     case "x":
-      if (!account.refresh_token) return { success: false, error: reconnectError };
-      newTokens = await refreshXToken(account.refresh_token);
-      break;
+      return account.refresh_token
+        ? refreshXToken(account.refresh_token)
+        : missingRefreshToken;
     case "instagram":
       // Instagram Login refreshes the long-lived access token itself; the
       // access_token null-check already ran in ensureValidToken.
-      newTokens = await refreshInstagramToken(account.access_token ?? "");
-      break;
+      return refreshInstagramToken(account.access_token ?? "");
     case "facebook":
       // Facebook Page tokens do not expire; reaching this branch means the
       // token was revoked on the platform side.
-      return { success: false, error: reconnectError };
+      return { kind: "rejected", message: "Facebook Page token expired or was revoked." };
     default:
       console.error(
-        `[ensureValidToken] Unsupported platform: ${account.platform}`,
+        `[refreshTokenForPlatform] Unsupported platform: ${account.platform}`,
       );
       return {
-        success: false,
-        error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
+        kind: "failed",
+        message: `No token refresh for ${account.platform}.`,
       };
   }
+}
 
-  if (!newTokens) {
-    console.error(`[ensureValidToken ${account.platform}] Refresh failed`);
-    return {
-      success: false,
-      error: `Unable to refresh your ${account.platform} connection. Please try reconnecting your account.`,
-    };
+/**
+ * The platform refused the stored credential. Another request may have
+ * refreshed this account in the meantime (X rotates its refresh token, so
+ * the second of two concurrent refreshes is always refused): if the row now
+ * holds a different, unexpired token, that token is used. Otherwise the
+ * account is flagged is_available = false and the caller is told to
+ * reconnect.
+ */
+async function handleRejectedRefresh(
+  account: SocialAccount,
+  staleAccessToken: string,
+): Promise<EnsureValidTokenResult> {
+  const { data: currentRow, error: readError } = await adminSupabase
+    .from("social_accounts")
+    .select("access_token, token_expires_at")
+    .eq("id", account.id)
+    .maybeSingle();
+
+  if (readError) {
+    console.error(
+      `[handleRejectedRefresh ${account.platform}] Re-read failed for account ${account.id}: ${readError.message}`,
+    );
+  } else if (
+    currentRow?.access_token &&
+    currentRow.access_token !== staleAccessToken &&
+    !isTokenExpired(currentRow.token_expires_at)
+  ) {
+    return { success: true, token: currentRow.access_token };
   }
 
-  return { success: true, tokens: newTokens };
+  // Guarded on the token this call started from, so a refresh that lands
+  // after the re-read is never overwritten with a stale flag.
+  const { error: flagError } = await adminSupabase
+    .from("social_accounts")
+    .update({ is_available: false, updated_at: new Date().toISOString() })
+    .eq("id", account.id)
+    .eq("access_token", staleAccessToken);
+
+  if (flagError) {
+    console.error(
+      `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
+    );
+  } else {
+    console.warn(
+      `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
+    );
+  }
+
+  return {
+    success: false,
+    error: `Your ${account.platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
+  };
 }
 
 /**
@@ -245,6 +304,9 @@ async function updateTokenInDatabase(
       // it; X rotates it and returns a fresh one, which takes precedence.
       refresh_token: tokenData.refresh_token || currentRefreshToken,
       token_expires_at: expiresAt.toISOString(),
+      // A refresh that worked proves the account is usable again, clearing
+      // any earlier "needs re-authentication" flag.
+      is_available: true,
       updated_at: new Date().toISOString(),
     };
 

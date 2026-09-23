@@ -1,66 +1,40 @@
-import { TokenExchangeResponse } from "@/lib/types/dbTypes";
 import "server-only";
 
+import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
+
 /**
- * Rafraîchit un token Pinterest expiré
+ * Refreshes a Pinterest access token with the stored refresh token.
+ *
+ * The app authenticates with HTTP Basic, the same way the working code
+ * exchange does (exchangePinterestCode). This function used to send the
+ * credentials in the form body instead, unlike every other call to the
+ * same endpoint.
+ *
+ * Called by: ensureValidToken (case "pinterest")
  */
 export default async function refreshPinterestToken(
-  refreshToken: string
-): Promise<TokenExchangeResponse | null> {
+  refreshToken: string,
+): Promise<TokenRefreshResult> {
   const clientId = process.env.PINTEREST_CLIENT_ID;
   const clientSecret = process.env.PINTEREST_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
-    console.error("[Pinterest  Refresh Token]  Configuration manquante");
-    return null;
+    console.error("[refreshPinterestToken] Pinterest configuration missing.");
+    return { kind: "failed", message: "Pinterest configuration missing." };
   }
 
-  try {
-    console.log(
-      "[Pinterest  Refresh Token]  Tentative de rafraîchissement du token"
-    );
-
-    const url = "https://api.pinterest.com/v5/oauth/token";
-
-    const params = new URLSearchParams();
-    params.append("grant_type", "refresh_token");
-    params.append("refresh_token", refreshToken);
-    params.append("client_id", clientId);
-    params.append("client_secret", clientSecret);
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(
-        `[Pinterest  Refresh Token] Échec du rafraîchissement (${response.status}): ${errorText}`
-      );
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (!data.access_token) {
-      console.error(
-        `[Pinterest  Refresh Token] Champs obligatoires manquants: ${JSON.stringify(
-          data
-        )}`
-      );
-    }
-
-    return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token || refreshToken, // Utiliser l'ancien si pas de nouveau
-      expires_in: data.expires_in, // 30 jours par défaut
-    } as TokenExchangeResponse;
-  } catch (error) {
-    console.error("[Pinterest  Refresh Token] Erreur:", error);
-    return null;
-  }
+  return requestTokenRefresh({
+    caller: "refreshPinterestToken",
+    url: "https://api.pinterest.com/v5/oauth/token",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+    currentRefreshToken: refreshToken,
+  });
 }
