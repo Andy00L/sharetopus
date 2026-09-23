@@ -24,7 +24,8 @@ export function extractPrincipal(extra: Record<string, unknown>): McpPrincipal {
  * Extracts session ID from the extra context if available.
  *
  * Priority:
- *   1. SDK-provided sessionId (real for SSE, null for stateless Streamable HTTP)
+ *   1. SDK-provided sessionId (only a stateful transport sets it; the
+ *      stateless Streamable HTTP endpoint never does)
  *   2. Synthetic per-request UUID stashed by withMcpAuth in stateless mode
  */
 export function extractSessionId(

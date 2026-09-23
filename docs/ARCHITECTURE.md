@@ -171,7 +171,7 @@ src/
     api/
       auth/[clerk]/             # Clerk auth UI
       inngest/                  # Inngest serve() endpoint (12 functions)
-      mcp/[transport]/          # MCP server (Streamable HTTP + SSE)
+      mcp/[transport]/          # MCP server (Streamable HTTP; SSE disabled)
       v1/                       # REST API v1 (28 endpoints)
         posts/                  # CRUD + bulk schedule
         connections/            # List, get, initiate, reauth, boards

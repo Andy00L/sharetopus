@@ -2,10 +2,11 @@
 
 Sharetopus exposes an MCP server that lets AI agents (Claude Desktop, Cursor, ChatGPT) schedule posts, manage content, and query analytics on behalf of authenticated subscribers.
 
-Two transports, both stateless (mcp-handler 1.1.0 does not support persistent sessions):
+One transport, stateless (mcp-handler 1.1.0 does not support persistent sessions):
 
 - **Streamable HTTP:** `https://sharetopus.com/api/mcp/mcp`
-- **SSE:** `https://sharetopus.com/api/mcp/sse`
+
+The legacy SSE transport is disabled (`disableSse: true`): with a valid token, `/api/mcp/sse` answers 404. The MCP spec replaced it with Streamable HTTP in 2025-03-26, and mcp-handler's SSE mode needs a `redis://` URL this project does not configure.
 
 Built with mcp-handler 1.1.0 and @modelcontextprotocol/sdk 1.29.0.
 
@@ -157,7 +158,7 @@ The context object passed to every handler:
 | Field | Type | Description |
 |-------|------|-------------|
 | `principal` | `McpPrincipal` | Authenticated user with kind, principalId, scopes, plan |
-| `sessionId` | `string \| null` | SDK session ID (real for SSE, synthetic UUID for stateless) |
+| `sessionId` | `string \| null` | Synthetic per-request UUID (the stateless transport has no SDK session) |
 | `requestId` | `string \| null` | Per-request correlation ID for cross-layer log tracing |
 | `ipHash` | `string \| null` | SHA-256 of client IP + salt |
 | `userAgent` | `string \| null` | Truncated to 512 chars |
@@ -757,7 +758,7 @@ Every tool call is logged to `mcp_audit_log` with these fields:
 |-------|-------------|
 | `principal_id` | User who made the call |
 | `api_key_id` / `oauth_client_id` | Which credential was used |
-| `session_id` | SDK session ID (stateful) or synthetic UUID (stateless) |
+| `session_id` | Synthetic per-request UUID (the transport is stateless) |
 | `tool_name` | Name of the tool invoked |
 | `args_redacted` | Tool arguments with sensitive keys replaced |
 | `result_status` | `ok`, `error`, `denied`, `rate_limited`, or `quota_exceeded` |
@@ -830,7 +831,7 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 ## Known limitations
 
-- **Stateless mode only.** mcp-handler 1.1.0 forces stateless mode on both Streamable HTTP and SSE transports. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
+- **Stateless mode only.** mcp-handler 1.1.0 runs Streamable HTTP statelessly, and the SSE transport is disabled. No persistent sessions, no server-initiated notifications, no subscriptions. Session IDs are synthetic per-request UUIDs.
 - **`generate_post_draft` requires sampling.** Clients without MCP sampling/createMessage support (some older clients) will get an error.
 - **TikTok posts are async.** After `post_now` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
 - **`bulk_schedule` and `bulk_post_now` have REST equivalents.** `POST /api/v1/posts/bulk` handles bulk scheduling via the REST API. See [docs/REST.md](./REST.md).

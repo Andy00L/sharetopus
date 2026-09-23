@@ -18,7 +18,7 @@ export function buildLlmsTxt(): string {
     "Facts agents need up front:",
     "",
     `- REST API base URL: ${SITE_ORIGIN}/api/v1. Auth: \`Authorization: Bearer stp_rest_...\`, key created at ${SITE_ORIGIN}/integrations.`,
-    `- MCP endpoint: ${SITE_ORIGIN}/api/mcp/mcp (streamable HTTP) or ${SITE_ORIGIN}/api/mcp/sse (SSE). Auth: \`stp_mcp_...\` API key or OAuth 2.1. Requires the Creator plan or higher.`,
+    `- MCP endpoint: ${SITE_ORIGIN}/api/mcp/mcp (Streamable HTTP). Auth: \`stp_mcp_...\` API key or OAuth 2.1. Requires the Creator plan or higher.`,
     `- x402 base URL: ${SITE_ORIGIN}/api/x402. No account: each call is paid in USDC on base, polygon, arbitrum, celo, or solana, and the wallet signature identifies the caller.`,
     "",
     "## Docs",

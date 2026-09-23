@@ -49,12 +49,14 @@ function sanitizeClientField(raw: string, maxLength: number): string {
 }
 
 /**
- * MCP Streamable HTTP + SSE endpoint.
+ * MCP Streamable HTTP endpoint, /api/mcp/mcp: mcp-handler derives it from
+ * basePath "/api/mcp" through the [transport] segment.
  *
- * The [transport] dynamic segment routes both transports to this file.
- * mcp-handler derives endpoints from basePath "/api/mcp":
- *   - Streamable HTTP: /api/mcp/mcp
- *   - SSE:             /api/mcp/sse
+ * SSE is disabled: with a valid token, /api/mcp/sse and /api/mcp/message
+ * answer 404 (auth runs first, so a request without one gets 401). The MCP
+ * spec replaced SSE with Streamable HTTP in 2025-03-26, and mcp-handler's
+ * SSE mode needs a redis:// URL, which this config never passes (Upstash is
+ * reached over REST): without one, an SSE connect never answers.
  *
  * Auth flow:
  *   1. Per-IP ceiling (MCP_ROUTE_RATE_LIMIT) fires first, before any token
@@ -92,7 +94,7 @@ const handler = createMcpHandler(
   },
   {
     basePath: "/api/mcp",
-    maxDuration: 300,
+    disableSse: true,
     verboseLogs: process.env.NODE_ENV === "development",
   },
 );

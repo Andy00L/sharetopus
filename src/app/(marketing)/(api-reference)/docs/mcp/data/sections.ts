@@ -56,14 +56,11 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Connection",
     title: "Connection",
     summary:
-      "Two transports, both stateless: no persistent sessions. Streamable HTTP is the recommended transport for current MCP clients.",
+      "Streamable HTTP, stateless: no persistent sessions. The legacy SSE transport is not served.",
     sourceRef: "src/lib/docs/mcpCatalog.ts (MCP_ENDPOINTS), docs/MCP.md",
     table: {
       columns: ["Transport", "URL"],
-      rows: [
-        ["Streamable HTTP", MCP_ENDPOINTS.streamableHttp],
-        ["SSE", MCP_ENDPOINTS.sse],
-      ],
+      rows: [["Streamable HTTP", MCP_ENDPOINTS.streamableHttp]],
     },
   },
   {

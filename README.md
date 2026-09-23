@@ -38,7 +38,7 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 
 **Web App.** Clerk authentication, Stripe billing, post creation with per-platform customization, scheduling calendar, content history. See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
-**MCP Server.** Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Requires Creator plan or above ($18/mo). 18 tools across read (list connections, posts, analytics) and write (schedule, post now, bulk operations, media upload). See [docs/MCP.md](./docs/MCP.md).
+**MCP Server.** Streamable HTTP at `/api/mcp/mcp`. Requires Creator plan or above ($18/mo). 18 tools across read (list connections, posts, analytics) and write (schedule, post now, bulk operations, media upload). See [docs/MCP.md](./docs/MCP.md).
 
 **REST API.** 28 endpoints under `/api/v1/` with Bearer auth via `stp_rest_*` keys. Every request audited to `rest_audit_log`. Rate-limited per principal. Webhook subscriptions with HMAC-SHA256 signing (5 event types, auto-disable after 10 failures). OpenAPI spec at `/api/v1/openapi.json`, interactive docs at `/docs/api` (Scalar). See [docs/REST.md](./docs/REST.md).
 
@@ -92,7 +92,7 @@ Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
 
 ## 🤖 MCP Server
 
-Two transports: Streamable HTTP at `/api/mcp/mcp` and SSE at `/api/mcp/sse`. Both stateless (mcp-handler 1.1.0). Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
+Streamable HTTP at `/api/mcp/mcp`, stateless (mcp-handler 1.1.0). The legacy SSE transport is disabled. Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
 
 18 tools, all requiring Creator plan ($18/mo) or above:
 

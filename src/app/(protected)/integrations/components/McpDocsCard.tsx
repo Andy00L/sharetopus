@@ -86,12 +86,6 @@ Auth: Bearer stp_mcp_YOUR_KEY_HERE`}
                 </td>
               </tr>
               <tr>
-                <td className="py-1 pr-3 text-muted-foreground">SSE URL</td>
-                <td>
-                  <code>{baseUrl}/api/mcp/sse</code>
-                </td>
-              </tr>
-              <tr>
                 <td className="py-1 pr-3 text-muted-foreground">
                   OAuth Metadata
                 </td>

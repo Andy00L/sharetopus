@@ -43,9 +43,6 @@ export default function McpReferencePage() {
             <span className="rounded-full bg-[var(--cream-2)] px-3 py-1.5 font-mono text-xs text-foreground">
               streamable http
             </span>
-            <span className="rounded-full bg-[var(--cream-2)] px-3 py-1.5 font-mono text-xs text-foreground">
-              sse
-            </span>
           </div>
           <Callout tone="blue">{MCP_OVERVIEW.planNote}</Callout>
         </>
