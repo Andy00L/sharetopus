@@ -171,17 +171,44 @@ export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
   },
 ];
 
-/**
- * The Claude Desktop / Cursor configuration block, shared verbatim by
- * both doc surfaces. sourceRef: docs/MCP.md (client configuration)
+/*
+ * Client setup, shared by both doc surfaces and the integrations card
+ * (src/app/(protected)/integrations/components/McpDocsCard.tsx), which
+ * passes its own origin to the builders.
+ * sourceRef: https://claude.com/docs/connectors/custom/remote-mcp (Claude
+ *            menu labels, OAuth client options),
+ *            https://code.claude.com/docs/en/mcp (claude mcp add flags)
  */
-export const MCP_CLIENT_CONFIG_JSON = `{
+
+/**
+ * Claude web and desktop add the server as a custom connector. "Register
+ * automatically" is dynamic client registration: Claude's recommended
+ * "published identity" option needs client ID metadata documents, which
+ * the Clerk authorization server does not advertise. Drop that sentence
+ * once they are enabled in Clerk.
+ */
+export const MCP_CLAUDE_CONNECT_STEPS =
+  "Open Customize > Connectors > Add custom connector, paste the URL, and click Add. If Claude asks for an OAuth client, choose Register automatically. Then click Connect and sign in to Sharetopus.";
+
+/** What follows the Claude Code add command: OAuth sign-in, or an API key. */
+export const MCP_CLAUDE_CODE_NEXT_STEP =
+  'Then run /mcp and choose Authenticate. With an API key, add --header "Authorization: Bearer stp_mcp_YOUR_KEY" to the command instead.';
+
+/** The Claude Code command that adds the server over Streamable HTTP. */
+export function buildClaudeCodeAddCommand(endpointUrl: string): string {
+  return `claude mcp add --transport http sharetopus ${endpointUrl}`;
+}
+
+/** The Cursor configuration block (~/.cursor/mcp.json) for an API key. */
+export function buildMcpClientConfigJson(endpointUrl: string): string {
+  return `{
   "mcpServers": {
     "sharetopus": {
-      "url": "${MCP_ENDPOINTS.streamableHttp}",
+      "url": "${endpointUrl}",
       "headers": {
         "Authorization": "Bearer stp_mcp_YOUR_KEY"
       }
     }
   }
 }`;
+}

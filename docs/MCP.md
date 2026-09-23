@@ -97,9 +97,32 @@ Limits: 10 active MCP keys per user. Keys can be revoked from the UI. Requires C
 
 ## Connecting from AI clients
 
-### Claude Desktop
+`/docs/mcp`, `/docs/mcp.md`, and the integrations card render these steps from `src/lib/docs/mcpCatalog.ts`. Change them there and here together.
 
-Add to `claude_desktop_config.json`:
+### Claude (web and desktop)
+
+Open **Customize > Connectors > Add custom connector**, paste `https://sharetopus.com/api/mcp/mcp`, and click **Add**. If Claude asks for an OAuth client, choose **Register automatically** (dynamic client registration): the recommended **Use Claude's published identity** option needs client ID metadata documents, which the Clerk authorization server does not advertise yet. Then click **Connect** and sign in to Sharetopus.
+
+On Team and Enterprise plans an owner adds the connector under **Organization settings > Connectors**, and members click **Connect** under **Customize > Connectors**.
+
+Claude picks the transport from the URL, and a URL ending in `/sse` selects the old SSE transport, which this server does not serve. Source: [Claude custom connectors](https://claude.com/docs/connectors/custom/remote-mcp).
+
+### Claude Code
+
+```bash
+claude mcp add --transport http sharetopus https://sharetopus.com/api/mcp/mcp
+```
+
+Then run `/mcp` and choose **Authenticate**. With an API key instead:
+
+```bash
+claude mcp add --transport http sharetopus https://sharetopus.com/api/mcp/mcp \
+  --header "Authorization: Bearer stp_mcp_YOUR_KEY"
+```
+
+### Cursor
+
+Add to `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -107,18 +130,14 @@ Add to `claude_desktop_config.json`:
     "sharetopus": {
       "url": "https://sharetopus.com/api/mcp/mcp",
       "headers": {
-        "Authorization": "Bearer stp_mcp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "Authorization": "Bearer stp_mcp_YOUR_KEY"
       }
     }
   }
 }
 ```
 
-### Cursor
-
-Same configuration format. Place the URL and Authorization header in Cursor's MCP server settings.
-
-### Generic OAuth (RFC 9728 auto-discovery)
+### Other clients (RFC 9728 auto-discovery)
 
 For clients with OAuth discovery support, only the URL is needed:
 

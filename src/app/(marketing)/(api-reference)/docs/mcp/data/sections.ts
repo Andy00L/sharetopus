@@ -1,9 +1,12 @@
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 import {
-  MCP_CLIENT_CONFIG_JSON,
+  MCP_CLAUDE_CODE_NEXT_STEP,
+  MCP_CLAUDE_CONNECT_STEPS,
   MCP_ENDPOINTS,
   MCP_PROMPT_DOCS,
   MCP_TOOL_GROUP_ORDER,
+  buildClaudeCodeAddCommand,
+  buildMcpClientConfigJson,
   listMcpToolsInGroup,
   type McpToolGroup,
 } from "@/lib/docs/mcpCatalog";
@@ -115,12 +118,31 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Client configuration",
     title: "Client configuration",
     summary:
-      "Paste-ready configuration for API-key clients. OAuth-capable clients configure only the URL; the sign-in flow starts automatically.",
-    sourceRef: "src/lib/docs/mcpCatalog.ts (MCP_CLIENT_CONFIG_JSON)",
+      "Claude and other OAuth-capable clients need only the URL and a sign-in. API-key clients send the key as a bearer token.",
+    sourceRef: "src/lib/docs/mcpCatalog.ts (client setup)",
+    table: {
+      columns: ["Client", "How to connect"],
+      rows: [
+        ["Claude (web and desktop)", MCP_CLAUDE_CONNECT_STEPS],
+        ["Claude Code", `Run the command below. ${MCP_CLAUDE_CODE_NEXT_STEP}`],
+        [
+          "Cursor",
+          "Add the JSON below to ~/.cursor/mcp.json, with a key created at /integrations.",
+        ],
+        [
+          "Other clients",
+          "OAuth-capable clients need only the URL; the sign-in flow starts automatically. The rest send Authorization: Bearer stp_mcp_... on every request.",
+        ],
+      ],
+    },
     codeSamples: [
       {
-        label: "Claude Desktop / Cursor · API key",
-        code: MCP_CLIENT_CONFIG_JSON,
+        label: "Claude Code · OAuth",
+        code: buildClaudeCodeAddCommand(MCP_ENDPOINTS.streamableHttp),
+      },
+      {
+        label: "Cursor · API key",
+        code: buildMcpClientConfigJson(MCP_ENDPOINTS.streamableHttp),
         // featured: this page's single signature stamp card
         // (placement rule in docs/UI_DESIGN_SYSTEM.md).
         featured: true,

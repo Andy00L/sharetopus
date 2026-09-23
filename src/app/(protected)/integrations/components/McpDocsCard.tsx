@@ -5,12 +5,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  MCP_CLAUDE_CODE_NEXT_STEP,
+  MCP_CLAUDE_CONNECT_STEPS,
+  buildClaudeCodeAddCommand,
+  buildMcpClientConfigJson,
+} from "@/lib/docs/mcpCatalog";
 
 /**
- * Static instructions for connecting an MCP client to Sharetopus.
- *
- * Shows the endpoint URL and auth configuration for Claude Desktop,
- * Cursor, and generic MCP clients.
+ * Static instructions for connecting an MCP client to Sharetopus: Claude
+ * (custom connector), Claude Code, Cursor, and other MCP clients. The steps
+ * come from the shared MCP catalog, so they match /docs/mcp; this card
+ * passes its own origin for the URLs.
  *
  * Called by: src/app/(protected)/integrations/page.tsx
  */
@@ -21,62 +27,55 @@ export function McpDocsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Connect an AI Client</CardTitle>
+        <CardTitle>Connect an AI client</CardTitle>
         <CardDescription>
           Use the Model Context Protocol to let AI assistants manage your social
           media.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Claude Desktop */}
         <div>
-          <h3 className="mb-2 text-sm font-medium">Claude Desktop</h3>
+          <h3 className="mb-2 text-sm font-medium">Claude (web and desktop)</h3>
           <p className="mb-2 text-xs text-muted-foreground">
-            Add this to your Claude Desktop MCP settings (Settings &gt;
-            Developer &gt; MCP Servers):
+            {MCP_CLAUDE_CONNECT_STEPS}
           </p>
           <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-            {`{
-  "mcpServers": {
-    "sharetopus": {
-      "url": "${mcpUrl}",
-      "headers": {
-        "Authorization": "Bearer stp_mcp_YOUR_KEY_HERE"
-      }
-    }
-  }
-}`}
+            {mcpUrl}
           </pre>
         </div>
 
-        {/* Cursor */}
+        <div>
+          <h3 className="mb-2 text-sm font-medium">Claude Code</h3>
+          <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
+            {buildClaudeCodeAddCommand(mcpUrl)}
+          </pre>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {MCP_CLAUDE_CODE_NEXT_STEP}
+          </p>
+        </div>
+
         <div>
           <h3 className="mb-2 text-sm font-medium">Cursor</h3>
           <p className="mb-2 text-xs text-muted-foreground">
-            Add a new MCP server in Cursor settings:
+            Add this to ~/.cursor/mcp.json, with a key from MCP API Keys above:
           </p>
           <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">
-            {`URL: ${mcpUrl}
-Auth: Bearer stp_mcp_YOUR_KEY_HERE`}
+            {buildMcpClientConfigJson(mcpUrl)}
           </pre>
         </div>
 
-        {/* OAuth flow */}
         <div>
-          <h3 className="mb-2 text-sm font-medium">
-            OAuth (no API key needed)
-          </h3>
+          <h3 className="mb-2 text-sm font-medium">Other MCP clients</h3>
           <p className="text-xs text-muted-foreground">
-            Clients that support MCP OAuth discovery (RFC 9728) can connect
-            without an API key. Point the client at <code>{mcpUrl}</code> and it
-            will discover the Clerk authorization server automatically. You will
-            see a consent screen in your browser.
+            Point the client at <code>{mcpUrl}</code>. Clients with MCP OAuth
+            discovery (RFC 9728) open the sign-in page on their own; the rest
+            send <code>Authorization: Bearer stp_mcp_YOUR_KEY</code> on every
+            request.
           </p>
         </div>
 
-        {/* Endpoint reference */}
         <div className="rounded-md border p-3">
-          <h3 className="mb-1 text-sm font-medium">Endpoint Reference</h3>
+          <h3 className="mb-1 text-sm font-medium">Endpoint reference</h3>
           <table className="w-full text-xs">
             <tbody>
               <tr>
@@ -87,7 +86,7 @@ Auth: Bearer stp_mcp_YOUR_KEY_HERE`}
               </tr>
               <tr>
                 <td className="py-1 pr-3 text-muted-foreground">
-                  OAuth Metadata
+                  OAuth metadata
                 </td>
                 <td>
                   <code>{baseUrl}/.well-known/oauth-protected-resource</code>
