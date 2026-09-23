@@ -28,7 +28,7 @@ Built with mcp-handler 1.1.0 and @modelcontextprotocol/sdk 1.29.0.
 - [Usage examples](#usage-examples)
 - [MCP request lifecycle](#mcp-request-lifecycle)
 - [Idempotency](#idempotency)
-- [Audit and session tracking](#audit-and-session-tracking)
+- [Audit logging](#audit-logging)
 - [OAuth client management](#oauth-client-management)
 - [Known limitations](#known-limitations)
 - [Source files referenced](#source-files-referenced)
@@ -70,7 +70,7 @@ sequenceDiagram
         Trust-->>Route: McpPrincipal (kind=oauth)
     end
 
-    Route->>Route: Stash principal + requestSessionId in authInfo.extra
+    Route->>Route: Stash principal + requestId in authInfo.extra
     Route-->>Agent: Server capabilities
 ```
 
@@ -161,7 +161,7 @@ Every tool handler is wrapped by `withMcpTool`, a higher-order function that cen
 
 **Execution steps:**
 
-1. **Extract per-request context** (principal, sessionId, requestId, ipHash, userAgent, clientName, clientVersion, startedAt)
+1. **Extract per-request context** (principal, requestId, ipHash, userAgent, startedAt)
 2. **Compute audit args** via `auditArgsBuilder` if provided, otherwise fall back to `rawArgsAsAuditPayload` (coerces empty objects to null)
 3. **Apply the per-user budget** (`MCP_TOOL_CALL_RATE_LIMIT`: 100 tool calls per 60 seconds per principal). Over budget: emit a `rate_limited` audit row and return a tool error with the retry delay, which the model can wait on. A limiter outage fails open, since the monthly quota still bounds usage.
 4. **Run entitlement gate** (tier check via `ACTION_PLAN_GATE`, then monthly quota via `MONTHLY_CAPS`)
@@ -177,12 +177,9 @@ The context object passed to every handler:
 | Field | Type | Description |
 |-------|------|-------------|
 | `principal` | `McpPrincipal` | Authenticated user with kind, principalId, scopes, plan |
-| `sessionId` | `string \| null` | Synthetic per-request UUID (the stateless transport has no SDK session) |
-| `requestId` | `string \| null` | Per-request correlation ID for cross-layer log tracing |
+| `requestId` | `string \| null` | Per-request correlation ID for cross-layer log tracing, also stored as `mcp_audit_log.session_id` |
 | `ipHash` | `string \| null` | SHA-256 of client IP + salt |
 | `userAgent` | `string \| null` | Truncated to 512 chars |
-| `clientName` | `string \| null` | From initialize handshake only (null on tool calls) |
-| `clientVersion` | `string \| null` | From initialize handshake only (null on tool calls) |
 | `startedAt` | `number` | `Date.now()` at context build time, used for latency computation |
 
 ### McpHandlerResult
@@ -716,14 +713,14 @@ sequenceDiagram
     R->>R: Extract clientName + clientVersion from body
     R->>Auth: Resolve principal (API key or OAuth)
     Auth-->>R: McpPrincipal
-    R->>R: Generate synthetic requestSessionId (UUID)
+    R->>R: Generate requestId (UUID)
     R-->>A: Server capabilities
 
     A->>R: POST tools/call {name, arguments}
     R->>Auth: Resolve principal
     Auth-->>R: McpPrincipal
     R->>HOF: withMcpTool(toolName, handler)
-    HOF->>HOF: buildContext (principal, session, ip, ua, client)
+    HOF->>HOF: buildContext (principal, requestId, ip, ua)
     HOF->>HOF: Compute defaultAuditArgs (auditArgsBuilder or rawArgsAsAuditPayload)
     HOF->>HOF: Per-user budget (100 tool calls / 60s), over it: rate_limited tool error
     HOF->>Ent: entitlementFor(principal, toolName)
@@ -747,7 +744,6 @@ sequenceDiagram
     end
 
     Note over Audit,DB: Audit INSERT awaited (compliance)
-    Note over Audit,DB: Session UPSERT via waitUntil (background)
 ```
 
 ---
@@ -767,7 +763,7 @@ All four use `INSERT ... ON CONFLICT DO NOTHING`. If the insert conflicts, the h
 
 ---
 
-## Audit and session tracking
+## Audit logging
 
 ### mcp_audit_log
 
@@ -795,25 +791,11 @@ Before persisting, args pass through `redactSecrets()`:
 - **JWT detector:** any value matching three base64url segments separated by dots is replaced with `[REDACTED_JWT]`
 - **Truncation:** args are capped at 4,096 characters. Oversized payloads are replaced with `{ _truncated: true, _preview: "..." }`
 
-### Session tracking
-
-The `mcp_sessions` table tracks session metadata via best-effort upserts:
-
-| Field | Description |
-|-------|-------------|
-| `id` | Session UUID (synthetic per-request in stateless mode) |
-| `principal_id` | User who owns the session |
-| `oauth_client_id` / `api_key_id` | Credential used |
-| `client_name` | From `clientInfo.name` on initialize (max 200 chars) |
-| `client_version` | From `clientInfo.version` on initialize (max 50 chars) |
-| `ip_hash` | SHA-256 of client IP |
-| `last_activity_at` | Updated on each upsert |
-
-The session upsert runs in the background via `waitUntil` so it never adds latency to the response. The audit INSERT is awaited synchronously because it is compliance-critical.
+No table tracks sessions: the transport is stateless, so `session_id` is the per-request ID. The `mcp_sessions` table held one row per tool call, a copy of this log, and nothing writes it anymore.
 
 ### clientInfo sanitization
 
-`sanitizeClientField()` strips control characters (0x00-0x1f) and HTML injection characters (`< > ' " &`) from `clientName` and `clientVersion` before storage. This prevents stored-XSS in the admin dashboard.
+`sanitizeClientField()` strips control characters (0x00-0x1f) and HTML injection characters (`< > ' " &`) from `clientName` before it is stored in `mcp_oauth_clients`. This prevents stored-XSS in the admin dashboard.
 
 ---
 
@@ -878,8 +860,8 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 | `src/lib/mcp/auth/oauthClientTrust.ts` | `checkOAuthClientTrust()`, lazy population, block/revoke logic |
 | `src/lib/mcp/withMcpTool.ts` | `withMcpTool()` HOF, context extraction, per-user budget, entitlement gate, audit emit |
 | `src/lib/mcp/entitlement.ts` | `entitlementFor()`, `ACTION_PLAN_GATE`, `MONTHLY_CAPS`, atomic quota RPC |
-| `src/lib/mcp/audit.ts` | `logToolCall()`, argument redaction, session upsert via waitUntil |
-| `src/lib/mcp/context.ts` | Context extractors (principal, sessionId, requestId, ipHash, userAgent) |
+| `src/lib/mcp/audit.ts` | `logToolCall()`, argument redaction |
+| `src/lib/mcp/context.ts` | Context extractors (principal, requestId) |
 | `src/lib/mcp/toolNames.ts` | `MCP_TOOL_NAMES` array and `McpToolName` type |
 | `src/lib/mcp/tools/index.ts` | Tool registration orchestrator |
 | `src/lib/mcp/prompts/index.ts` | Prompt registration |

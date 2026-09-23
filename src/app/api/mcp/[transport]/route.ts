@@ -31,12 +31,12 @@ const MAX_INITIALIZE_BODY_BYTES = 16 * 1024;
 
 /**
  * Strips control characters and HTML/JS injection characters from MCP
- * client-supplied strings before they reach the DB. clientName and
- * clientVersion arrive raw from the MCP initialize handshake and end
- * up in mcp_oauth_clients and mcp_audit_log, both of which are read
- * back by the admin dashboard. Without this guard, a malicious client
- * could store HTML/script payloads that fire as stored-XSS the moment
- * the dashboard renders these fields as HTML.
+ * client-supplied strings before they reach the DB. clientName arrives
+ * raw from the MCP initialize handshake and ends up in
+ * mcp_oauth_clients.client_name (first-sight INSERT), which the admin
+ * dashboard reads back. Without this guard, a malicious client could
+ * store HTML/script payloads that fire as stored-XSS the moment the
+ * dashboard renders the field as HTML.
  *
  * Removed character classes:
  *   - 0x00-0x1f: ASCII control chars (null bytes, tabs, escape)
@@ -71,14 +71,13 @@ function sanitizeClientField(raw: string, maxLength: number): string {
  *      Clerk userId becomes the principalId.
  *   5. If neither works, the request gets a 401.
  *
- * The principal (including cached plan tier) and a synthetic
- * requestSessionId are stashed in authInfo.extra so tool handlers
- * can retrieve them without re-resolving on every call.
+ * The principal (including cached plan tier) and a per-request
+ * requestId are stashed in authInfo.extra so tool handlers can
+ * retrieve them without re-resolving on every call.
  *
- * Called by: MCP clients (Claude Desktop, Cursor, ChatGPT, etc.)
+ * Called by: MCP clients (Claude, Cursor, ChatGPT, etc.)
  * Tables touched: api_keys (read, via resolveMcpPrincipal),
- *   mcp_sessions (UPSERT per request via logToolCall),
- *   mcp_audit_log (insert per tool call)
+ *   mcp_audit_log (insert per tool call, via withMcpTool)
  * Rate limits: Upstash Redis, via checkRateLimit
  */
 const handler = createMcpHandler(
@@ -117,16 +116,15 @@ const authHandler = withMcpAuth(
     //      either tool-call traffic or hostile.
     //   3. Content-Type not JSON: image uploads, multipart, etc.
     //
-    // When any guard fails we skip extraction and continue auth with
-    // null clientName/clientVersion. The principal still resolves; we
-    // just lose the optional analytics enrichment for that request.
+    // When any guard fails we skip extraction and continue auth with a
+    // null clientName. The principal still resolves; the first-sight
+    // row just gets the default client name.
     //
-    // Extracted values are sanitized via sanitizeClientField() before
-    // they leave this scope. Both fields end up in mcp_oauth_clients
-    // and mcp_audit_log, which may be rendered as HTML in the admin
-    // dashboard; raw strings would be a stored-XSS vector.
+    // The extracted name is sanitized via sanitizeClientField() before
+    // it leaves this scope. It ends up in mcp_oauth_clients, which may
+    // be rendered as HTML in the admin dashboard; a raw string would be
+    // a stored-XSS vector.
     let clientName: string | null = null;
-    let clientVersion: string | null = null;
 
     try {
       if (req.method === "POST") {
@@ -150,14 +148,13 @@ const authHandler = withMcpAuth(
           ) {
             const parsed = JSON.parse(bodyText);
             if (parsed?.method === "initialize") {
-              const ci = parsed?.params?.clientInfo;
-              if (ci && typeof ci === "object") {
-                if (typeof ci.name === "string") {
-                  clientName = sanitizeClientField(ci.name, 200);
-                }
-                if (typeof ci.version === "string") {
-                  clientVersion = sanitizeClientField(ci.version, 50);
-                }
+              const clientInfo = parsed?.params?.clientInfo;
+              if (
+                clientInfo &&
+                typeof clientInfo === "object" &&
+                typeof clientInfo.name === "string"
+              ) {
+                clientName = sanitizeClientField(clientInfo.name, 200);
               }
             }
           }
@@ -172,19 +169,16 @@ const authHandler = withMcpAuth(
 
     // Step 3: resolveMcpPrincipal handles both API key and Clerk OAuth
     // paths, including the subscription gate and (for OAuth) the
-    // first-sight trust check on mcp_oauth_clients. Hints carry
-    // clientInfo for that INSERT.
-    const principal = await resolveMcpPrincipal(bearerToken, {
-      clientName,
-      clientVersion,
-    });
+    // first-sight trust check on mcp_oauth_clients. The hint carries the
+    // client name for that INSERT.
+    const principal = await resolveMcpPrincipal(bearerToken, { clientName });
     if (!principal) return undefined;
 
-    // Synthetic per-request session ID. mcp-handler v1.1.0 forces stateless
-    // Streamable HTTP (sessionIdGenerator is typed undefined), so the SDK
-    // never produces a real session ID. This UUID serves as the session
-    // identity until mcp-handler exposes real session lifecycle.
-    const requestSessionId = randomUUID();
+    // Per-request correlation ID for logs and mcp_audit_log.session_id.
+    // mcp-handler v1.1.0 forces stateless Streamable HTTP
+    // (sessionIdGenerator is typed undefined), so the SDK never produces
+    // a session ID of its own.
+    const requestId = randomUUID();
 
     return {
       token: bearerToken,
@@ -192,9 +186,7 @@ const authHandler = withMcpAuth(
       clientId: clientIdForAuthInfo(principal),
       extra: {
         principal: principal satisfies McpPrincipal,
-        requestSessionId,
-        clientName,
-        clientVersion,
+        requestId,
       },
     };
   },

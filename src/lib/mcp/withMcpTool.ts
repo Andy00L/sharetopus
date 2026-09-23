@@ -5,13 +5,7 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { logToolCall } from "./audit";
 import type { McpPrincipal } from "./auth/types";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
-import {
-  extractClientName,
-  extractClientVersion,
-  extractPrincipal,
-  extractRequestId,
-  extractSessionId,
-} from "./context";
+import { extractPrincipal, extractRequestId } from "./context";
 import { entitlementFor } from "./entitlement";
 import { MCP_TOOL_CALL_RATE_LIMIT } from "./rateLimits";
 import type { McpToolName } from "./toolNames";
@@ -24,12 +18,9 @@ import type { McpToolName } from "./toolNames";
  */
 export type McpToolContext = {
   principal: McpPrincipal;
-  sessionId: string | null;
   requestId: string | null;
   ipHash: string | null;
   userAgent: string | null;
-  clientName: string | null;
-  clientVersion: string | null;
   startedAt: number;
 };
 
@@ -81,7 +72,7 @@ type ToolHandlerCallback = (
 /**
  * Wraps a tool's business logic with the shared boilerplate every MCP
  * tool needs:
- *   1. Extract per-request context (principal, session, ip, ua, client)
+ *   1. Extract per-request context (principal, request id, ip, ua)
  *   2. Compute the default audit args payload (auditArgsBuilder if
  *      provided, else the raw args coerced via rawArgsAsAuditPayload)
  *   3. Apply the per-principal tool-call budget, then run the
@@ -203,28 +194,22 @@ export function withMcpTool<TArgs>(
 }
 
 /**
- * Bundles the six extract* calls into one context object so each
+ * Bundles the four extract* calls into one context object so each
  * handler does not re-do the same work.
  */
 async function buildContext(
   extra: Record<string, unknown>,
 ): Promise<McpToolContext> {
   const principal = extractPrincipal(extra);
-  const sessionId = extractSessionId(extra);
   const requestId = extractRequestId(extra);
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
-  const clientName = extractClientName(extra);
-  const clientVersion = extractClientVersion(extra);
 
   return {
     principal,
-    sessionId,
     requestId,
     ipHash,
     userAgent,
-    clientName,
-    clientVersion,
     startedAt: Date.now(),
   };
 }
@@ -258,7 +243,6 @@ async function emitAudit(
 ): Promise<void> {
   await logToolCall({
     principal: ctx.principal,
-    sessionId: ctx.sessionId,
     requestId: ctx.requestId,
     toolName,
     args,
@@ -266,7 +250,5 @@ async function emitAudit(
     latencyMs: Date.now() - ctx.startedAt,
     ipHash: ctx.ipHash,
     userAgent: ctx.userAgent,
-    clientName: ctx.clientName,
-    clientVersion: ctx.clientVersion,
   });
 }

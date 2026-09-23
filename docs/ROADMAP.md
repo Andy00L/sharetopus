@@ -73,7 +73,7 @@ All 18 MCP tools require Creator tier or above. Starter users have web UI access
 
 ### 3. withMcpTool Higher-Order Function
 
-A 240-line wrapper (`withMcpTool`) handles auth, entitlement checks, audit logging, and error handling for every MCP tool. Injects `McpToolContext` containing principal, sessionId, requestId, ipHash, and userAgent. Logs automatically on deny, error, and success paths.
+A 240-line wrapper (`withMcpTool`) handles auth, entitlement checks, audit logging, and error handling for every MCP tool. Injects `McpToolContext` containing principal, requestId, ipHash, and userAgent. Logs automatically on deny, error, and success paths.
 
 ### 4. API Key Expiry
 
@@ -116,7 +116,7 @@ All 18 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiv
 
 ### 13. clientInfo Capture
 
-The MCP route handler extracts `clientInfo.name` and `clientInfo.version` from the initialize handshake. Stored in `mcp_sessions.client_name` and `mcp_sessions.client_version`.
+The MCP route handler extracts `clientInfo.name` from the initialize handshake and stores it as `mcp_oauth_clients.client_name` when an OAuth client is first seen.
 
 ### 14. list_pinterest_boards MCP Tool
 

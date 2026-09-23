@@ -408,7 +408,7 @@ Nine tables are append-only (`Update: never` in database types, enforced at the 
 
 ### Argument redaction
 
-The `mcp_audit_log` insert happens in `logToolCall`, which runs fire-and-forget after every tool call. Arguments are redacted before insert:
+The `mcp_audit_log` insert happens in `logToolCall`, which is awaited after every tool call. Arguments are redacted before insert:
 
 - **12 key patterns** replaced with `[REDACTED]`: token, password, secret, authorization, bearer, api_key, apikey, access_token, refresh_token, credential, private_key, jwt.
 - **JWT detector** replaces strings matching the three-segment base64url pattern (`xxx.yyy.zzz`) with `[REDACTED_JWT]`.
@@ -445,13 +445,13 @@ Token, password, secret, and JWT patterns are redacted before insert (see [Argum
 
 ### clientInfo sanitization
 
-MCP clients send a `clientInfo` object containing `clientName` and `clientVersion` during session initialization. These values are stored and rendered in the admin dashboard.
+MCP clients send a `clientInfo` object during initialization. Its `name` is stored as `mcp_oauth_clients.client_name` when an OAuth client is first seen, and rendered in the admin dashboard.
 
 `sanitizeClientField` strips:
 - ASCII control characters (0x00-0x1f)
 - HTML injection characters: `<`, `>`, `'`, `"`, `&`
 
-This prevents stored-XSS when rendering client names in the dashboard. Field length limits: `clientName` max 200 chars, `clientVersion` max 50 chars.
+This prevents stored-XSS when rendering client names in the dashboard. Field length limit: `clientName` max 200 chars.
 
 ## Known Gaps
 

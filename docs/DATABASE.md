@@ -135,7 +135,7 @@ erDiagram
 | Table | Purpose | Columns |
 |-------|---------|---------|
 | `api_keys` | API keys for MCP, REST, and wallet access. | id, principal_id, name, prefix, token_hash, kind (`rest` &#124; `mcp` &#124; `wallet`), scopes, expires_at, last_used_at, last_used_ip, created_at, revoked_at, metadata |
-| `mcp_sessions` | Session tracking for MCP connections. | id, principal_id, oauth_client_id, api_key_id, protocol_version, started_at, last_activity_at, ended_at, client_name, client_version, ip_hash |
+| `mcp_sessions` | Unused, safe to drop: nothing reads or writes it since 2026-09-23. The stateless transport created one row per tool call, a copy of `mcp_audit_log`. | id, principal_id, oauth_client_id, api_key_id, protocol_version, started_at, last_activity_at, ended_at, client_name, client_version, ip_hash |
 | `mcp_audit_log` | Append-only log of every MCP tool call. | id, principal_id, oauth_client_id, api_key_id, session_id, tool_name, args_redacted, result_status (`ok` &#124; `error` &#124; `denied` &#124; `rate_limited` &#124; `quota_exceeded`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
 | `mcp_oauth_clients` | Registered OAuth clients for MCP. | client_id (PK), client_name, redirect_uris, software_id, software_version, registered_by_user_id, trust_level (`unverified` &#124; `verified` &#124; `blocked`), revoked_at, metadata, created_at, updated_at |
 
@@ -217,7 +217,7 @@ Nine tables set `Update: never` in the generated types. Rows can be inserted but
 
 | Table | What it logs |
 |-------|-------------|
-| `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency). Insert happens fire-and-forget in `logToolCall` (`src/lib/mcp/audit.ts`). |
+| `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency). The insert in `logToolCall` (`src/lib/mcp/audit.ts`) is awaited. |
 | `rest_audit_log` | Every REST API request (endpoint, method, status code, latency). Insert via `writeRestAuditLog` (`src/lib/api/rest/audit/writeRestAuditLog.ts`). |
 | `stripe_invoices` | Stripe payment records. |
 | `wallet_credits_ledger` | Credit transaction history for x402 wallets. |
@@ -319,7 +319,7 @@ stateDiagram-v2
 |------|-------------|
 | `src/lib/types/database.types.ts` | Generated Supabase types (34 tables, 2 RPC functions, type aliases) |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client that bypasses RLS |
-| `src/lib/mcp/audit.ts` | Fire-and-forget `logToolCall` insert into `mcp_audit_log` |
+| `src/lib/mcp/audit.ts` | `logToolCall`, the awaited insert into `mcp_audit_log` |
 | `src/lib/api/rest/audit/writeRestAuditLog.ts` | Audit log writer for REST API requests |
 | `src/lib/api/rest/webhooks/dispatch.ts` | Dispatches webhook events to Inngest for delivery |
 

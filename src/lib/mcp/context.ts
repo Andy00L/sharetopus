@@ -21,74 +21,19 @@ export function extractPrincipal(extra: Record<string, unknown>): McpPrincipal {
 }
 
 /**
- * Extracts session ID from the extra context if available.
- *
- * Priority:
- *   1. SDK-provided sessionId (only a stateful transport sets it; the
- *      stateless Streamable HTTP endpoint never does)
- *   2. Synthetic per-request UUID stashed by withMcpAuth in stateless mode
- */
-export function extractSessionId(
-  extra: Record<string, unknown>,
-): string | null {
-  // SDK-provided session ID (populated when the transport supports sessions)
-  const sdkSessionId =
-    typeof extra.sessionId === "string" ? extra.sessionId : null;
-  if (sdkSessionId) return sdkSessionId;
-
-  // Synthetic per-request UUID from withMcpAuth (stateless Streamable HTTP)
-  const authInfo = extra.authInfo as
-    | { extra?: { requestSessionId?: unknown } }
-    | undefined;
-  const stashed = authInfo?.extra?.requestSessionId;
-  return typeof stashed === "string" ? stashed : null;
-}
-
-/**
- * Extracts client_name from the extra context. Only present on initialize
- * requests; tool-call requests will return null (MCP protocol limitation).
- */
-export function extractClientName(
-  extra: Record<string, unknown>,
-): string | null {
-  const authInfo = extra.authInfo as
-    | { extra?: { clientName?: unknown } }
-    | undefined;
-  const value = authInfo?.extra?.clientName;
-  return typeof value === "string" ? value : null;
-}
-
-/**
- * Extracts client_version from the extra context. Only present on initialize
- * requests; tool-call requests will return null (MCP protocol limitation).
- */
-export function extractClientVersion(
-  extra: Record<string, unknown>,
-): string | null {
-  const authInfo = extra.authInfo as
-    | { extra?: { clientVersion?: unknown } }
-    | undefined;
-  const value = authInfo?.extra?.clientVersion;
-  return typeof value === "string" ? value : null;
-}
-
-/**
- * Extracts the per-request correlation ID. Same value as
- * extractSessionId in stateless mode (one synthetic UUID per request,
- * stashed by route.ts as requestSessionId), but exposed under a
- * separate name to reflect its purpose: log correlation across all
- * layers (route -> resolve -> HOF -> tool -> core actions -> Inngest).
- *
- * If mcp-handler later exposes real multi-call session lifecycle,
- * extractSessionId will return the SDK session ID while this stays
- * one-per-request. Keep them semantically distinct in callers.
+ * Extracts the per-request correlation ID, one synthetic UUID per request
+ * stashed by the route (src/app/api/mcp/[transport]/route.ts) as
+ * `authInfo.extra.requestId`. It ties together the log lines of every
+ * layer (route -> resolve -> HOF -> tool -> core actions -> Inngest) and
+ * fills mcp_audit_log.session_id, since the stateless transport has no
+ * longer-lived session.
  */
 export function extractRequestId(
   extra: Record<string, unknown>,
 ): string | null {
   const authInfo = extra.authInfo as
-    | { extra?: { requestSessionId?: unknown } }
+    | { extra?: { requestId?: unknown } }
     | undefined;
-  const value = authInfo?.extra?.requestSessionId;
+  const value = authInfo?.extra?.requestId;
   return typeof value === "string" ? value : null;
 }

@@ -145,7 +145,7 @@ src/
       connections/              # checkAccountLimits (plan-gated)
       contentHistoryActions/    # storeContentHistory, storeFailedPost, getContentHistory
       data/                     # generateServerSignedUploadUrl, pendingDirectPosts,
-                                # pendingTikTokPulls, mcpSessions, orphanStorageSweep,
+                                # pendingTikTokPulls, orphanStorageSweep,
                                 # sweepStaleOauthClients, cleanupCancelledPostsAfterGrace,
                                 # finalizeTikTokPostByPublishId,
                                 # getServerSignedViewUrl, getSupabaseVideoFile
@@ -255,8 +255,8 @@ src/
       runtimeConfig.ts          # Runtime tuning (concurrency, timeouts, batch sizes)
     mcp/
       auth.ts                   # resolveMcpPrincipal (API key + OAuth paths)
-      audit.ts                  # logToolCall, arg redaction, session upsert
-      context.ts                # extractPrincipal, extractSessionId, extractIpHash
+      audit.ts                  # logToolCall, arg redaction
+      context.ts                # extractPrincipal, extractRequestId
       entitlement.ts            # Plan gating (Creator+ minimum) + monthly quota enforcement
       ipHash.ts                 # SHA-256 IP hashing with configurable salt
       withMcpTool.ts            # HOF wrapper: auth, entitlement, audit, error handling
@@ -327,7 +327,7 @@ sequenceDiagram
     MCP->>Auth: Bearer token
     Auth-->>MCP: McpPrincipal (principalId, plan)
     MCP->>HOF: withMcpTool("schedule_post", handler)
-    HOF->>HOF: buildContext (principal, session, ipHash, ua, client)
+    HOF->>HOF: buildContext (principal, requestId, ipHash, ua)
     HOF->>Entitle: entitlementFor(principal, "schedule_post")
     Entitle->>Entitle: checkTierGate (Creator+ required)
     Entitle->>DB: atomic_increment_quota (500/mo Creator, unlimited Pro)
@@ -494,13 +494,13 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 **created_via enum.** Every post-related table stores `created_via: web | mcp | x402 | api`. This was threaded through all scheduling and posting paths so analytics can distinguish origin. The cost is an extra parameter passed through several layers.
 
-**withMcpTool HOF.** Every MCP tool handler is wrapped by `withMcpTool`, which handles: (1) extract per-request context (principal, session, ipHash, user agent, client info), (2) run entitlement gate (tier check + monthly quota via atomic RPC), (3) call business logic, (4) emit audit row with latency. Tool handlers only contain business logic. The HOF also supports per-tool `auditArgsBuilder` for scrubbing large or sensitive args before they reach `mcp_audit_log`.
+**withMcpTool HOF.** Every MCP tool handler is wrapped by `withMcpTool`, which handles: (1) extract per-request context (principal, request id, ipHash, user agent), (2) apply the per-user budget of 100 tool calls per 60 s, (3) run entitlement gate (tier check + monthly quota via atomic RPC), (4) call business logic, (5) emit audit row with latency. Tool handlers only contain business logic. The HOF also supports per-tool `auditArgsBuilder` for scrubbing large or sensitive args before they reach `mcp_audit_log`.
 
 **Generic adapter pattern.** `directPostForAccountsGeneric.ts` provides a single code path for direct posting across all 4 platforms. Platform-specific logic is injected via callbacks. Same pattern in `processAccountsGeneric.ts` and `scheduleForAccountGeneric.ts`. This avoids 4x duplication at the cost of an abstraction layer.
 
 **TikTok dual-path resolution.** TikTok publishes are async (you get a `publish_id`, not a final status). Both webhook and polling paths exist because webhooks are faster but not 100% reliable. Both converge on `finalizeTikTokPostByPublishId`, which is idempotent. The second path to arrive is a no-op.
 
-**Stateless MCP (mcp-handler 1.1.0).** The MCP server runs in stateless Streamable HTTP mode. mcp-handler 1.1.0 does not support persistent sessions across requests. Each request resolves the principal independently. The `mcp_sessions` table tracks session activity but cannot enforce session continuity. This is fine for tool calls but limits features like long-running subscriptions or server-initiated notifications.
+**Stateless MCP (mcp-handler 1.1.0).** The MCP server runs in stateless Streamable HTTP mode. mcp-handler 1.1.0 does not support persistent sessions across requests. Each request resolves the principal independently, and each tool call is recorded in `mcp_audit_log` under a per-request ID; no table tracks sessions. This is fine for tool calls but limits features like long-running subscriptions or server-initiated notifications.
 
 **Internal vs public actions.** MCP tools call `_internal` actions that skip Clerk auth (the MCP auth layer already verified the principal). Public server actions add Clerk auth + rate limiting and delegate to the same `_internal` functions. This avoids double-auth but means `_internal` functions must never be imported from client components. The `server-only` package enforces this at build time.
 
@@ -570,8 +570,8 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/lib/mcp/withMcpTool.ts` | HOF: auth, entitlement, audit, error handling for MCP tools |
 | `src/lib/mcp/entitlement.ts` | Plan gating (Creator+ minimum) + monthly quota enforcement |
 | `src/lib/mcp/auth/resolve.ts` | resolveMcpPrincipal (API key + OAuth paths) |
-| `src/lib/mcp/audit.ts` | logToolCall, arg redaction, session upsert |
-| `src/lib/mcp/context.ts` | Extract principal, sessionId, ipHash from MCP request |
+| `src/lib/mcp/audit.ts` | logToolCall, arg redaction |
+| `src/lib/mcp/context.ts` | Extract principal and requestId from MCP request |
 | `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic direct-post adapter for all 4 platforms |
 | `src/lib/api/_shared/processAccountsGeneric.ts` | Generic multi-account processor |
 | `src/lib/api/_shared/scheduleForAccountGeneric.ts` | Generic scheduler |

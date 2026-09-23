@@ -7,7 +7,6 @@ import { checkOAuthClientTrust } from "../oauthClientTrust";
 
 export type ResolveHints = {
   clientName?: string | null;
-  clientVersion?: string | null;
 };
 
 /**
