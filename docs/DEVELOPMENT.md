@@ -88,9 +88,9 @@ bun run dev    # http://localhost:3000
 ### Supabase
 
 1. Create a Supabase project.
-2. Apply the database schema (tables, RLS policies, functions). If a `Supabase_db_schema` file exists in the repo root, use it as reference.
+2. Create the tables, indexes and RLS policies declared in `src/db/schema.ts` (`bunx drizzle-kit push` against the new database). The Postgres functions and triggers listed in [DATABASE.md](./DATABASE.md#functions-and-triggers) are not in that file yet and exist only in the production database.
 3. Create a storage bucket named `scheduled-videos` (or set `SUPABASE_BUCKET_NAME` to your chosen name).
-4. Copy the project URL, anon key, and service role key into `.env.local`.
+4. Copy the project URL, anon key, service role key, and the transaction and session pooler connection strings (dashboard, Connect) into `.env.local`.
 
 ### Clerk
 
@@ -154,6 +154,8 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Anon/public key |
 | `SUPABASE_SERVICE_ROLE` | Yes | Service role key (server-only) |
+| `DATABASE_URL` | Yes | Transaction pooler connection string (port 6543), used by the Drizzle client in `src/db/client.ts`. Server-only |
+| `SUPABASE_DB_URL` | For `db:*` scripts | Session pooler connection string (port 5432), used by drizzle-kit (`drizzle.config.ts`) |
 | `SUPABASE_BUCKET_NAME` | No | Default: `scheduled-videos` |
 | `SUPABASE_CUSTOM_STORAGE_DOMAIN` | No | For TikTok `supabase_direct` media mode |
 
@@ -236,6 +238,9 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `bun run build` | Production build (`next build`) |
 | `bun run start` | Start production server (`next start`) |
 | `bun run lint` | Run ESLint (`next lint`) |
+| `bun run db:generate` | Write a SQL migration into `drizzle/` from edits to `src/db/schema.ts` |
+| `bun run db:migrate` | Apply pending migrations (see [DATABASE.md](./DATABASE.md#schema-changes)) |
+| `bun run db:pull` | Read the live schema into `drizzle/`, to check for drift |
 
 ### REST API
 
@@ -288,7 +293,7 @@ All server actions and core functions prefix log messages with the function name
 
 ### Server-only imports
 
-`adminSupabase` and other privileged modules use the `server-only` package. Importing them from a client component triggers a build error, preventing accidental exposure of the service role key.
+`adminSupabase`, the Drizzle client (`src/db/client.ts`) and other privileged modules use the `server-only` package. Importing them from a client component triggers a build error, preventing accidental exposure of the service role key and the database connection string.
 
 ### created_via tracking
 
@@ -331,6 +336,8 @@ Production uses Vercel environment variables with production keys. `NODE_ENV=pro
 | `package.json` | Scripts, dependencies |
 | `tsconfig.json` | Path aliases, compiler options |
 | `vercel.json` | Vercel deployment configuration |
+| `drizzle.config.ts` | drizzle-kit settings for the `db:*` scripts |
+| `src/db/schema.ts`, `src/db/client.ts` | Database schema and Drizzle client |
 | `.env.example` | Full list of environment variables with documentation |
 | `src/lib/types/plans.ts` | Stripe product and price ID configuration |
 | `src/app/api/mcp/mcp/route.ts` | MCP server route (maxDuration 300) |

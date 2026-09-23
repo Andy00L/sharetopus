@@ -1,0 +1,5 @@
+-- Baseline: the public schema as it stood on 2026-09-23, when Drizzle was
+-- adopted. src/db/schema.ts declares all of it and meta/0000_snapshot.json
+-- records it, so later migrations are diffed against this point. The live
+-- database already has every object, so this file runs nothing:
+-- `bun run db:migrate` only marks it as applied.

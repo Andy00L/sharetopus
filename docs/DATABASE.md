@@ -1,8 +1,8 @@
 # Database
 
-34 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
+37 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
 
-Generated types live in `src/lib/types/database.types.ts` (2 168 lines). Regenerate after schema changes with `supabase gen types typescript --linked > src/lib/types/database.types.ts`.
+`src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. Server code queries through the Drizzle client in `src/db/client.ts`. Code that has not moved to Drizzle yet still uses supabase-js (`adminSupabase`) with the hand-maintained types in `src/lib/types/database.types.ts`, which is never regenerated.
 
 [Back to README](../README.md)
 
@@ -10,25 +10,47 @@ Generated types live in `src/lib/types/database.types.ts` (2 168 lines). Regener
 
 ## Table of contents
 
-1. [Entity relationships](#entity-relationships)
-2. [Table inventory](#table-inventory)
+1. [Schema changes](#schema-changes)
+2. [Entity relationships](#entity-relationships)
+3. [Table inventory](#table-inventory)
    - [Core identity (3)](#core-identity)
-   - [Social (2)](#social)
+   - [Social (3)](#social)
    - [Posts (5)](#posts)
-   - [Billing (4)](#billing)
-   - [MCP (4)](#mcp)
+   - [Billing (7)](#billing)
+   - [MCP (3)](#mcp)
    - [REST API (1)](#rest-api)
    - [Webhooks (2)](#webhooks)
    - [Analytics (1)](#analytics)
    - [x402 / Wallet (9)](#x402--wallet)
    - [Infrastructure (3)](#infrastructure)
-3. [Status CHECK constraints](#status-check-constraints)
-4. [Append-only tables](#append-only-tables)
-5. [RPC functions](#rpc-functions)
-6. [Data lifecycle and retention](#data-lifecycle-and-retention)
-7. [RLS posture](#rls-posture)
-8. [State diagrams](#state-diagrams)
-9. [Source files referenced](#source-files-referenced)
+4. [Status CHECK constraints](#status-check-constraints)
+5. [Append-only tables](#append-only-tables)
+6. [Functions and triggers](#functions-and-triggers)
+7. [Data lifecycle and retention](#data-lifecycle-and-retention)
+8. [RLS posture](#rls-posture)
+9. [State diagrams](#state-diagrams)
+10. [Source files referenced](#source-files-referenced)
+
+---
+
+## Schema changes
+
+| Command | What it does |
+|---------|--------------|
+| `bun run db:generate` | Compares `src/db/schema.ts` with the last migration snapshot and writes the SQL for the difference into `drizzle/`. |
+| `bun run db:migrate` | Applies the pending migrations in `drizzle/` and records each one in `drizzle.__drizzle_migrations`. |
+| `bun run db:pull` | Reads the live database into `drizzle/`. Only for checking drift: `src/db/schema.ts` is edited by hand. |
+
+To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object.
+
+| Variable | Pooler | Used by |
+|----------|--------|---------|
+| `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`. Prepared statements are off because this pooler does not keep them between transactions. |
+| `SUPABASE_DB_URL` | Session pooler, port 5432 | drizzle-kit, through `drizzle.config.ts`. |
+
+Both connect as the database owner, which bypasses RLS the way the service-role key does.
+
+Rows read through Drizzle have the shape supabase-js rows had: snake_case keys, timestamps as ISO strings (`2026-09-23T20:26:45.1234+00:00`), and numeric and bigint columns as numbers. The `timestamptz` column type in `src/db/schema.ts` converts Postgres' own text form to the ISO one.
 
 ---
 
@@ -55,6 +77,11 @@ erDiagram
     users ||--o{ stripe_subscriptions : "subscribes"
     users ||--o{ stripe_invoices : "invoiced"
     users ||--o{ mcp_oauth_clients : "registers"
+    users ||--o| referral_codes : "code"
+    users ||--o{ referrals : "referrer or referred"
+    users ||--o{ referral_reward_grants : "rewarded"
+    users ||--o{ share_links : "owns"
+    share_links ||--o{ social_connections : "share_link_id"
 
     wallets ||--o| wallet_credits : "balance"
     wallets ||--o{ wallet_credits_ledger : "ledger"
@@ -99,15 +126,16 @@ erDiagram
 | Table | Purpose | Columns |
 |-------|---------|---------|
 | `principals` | Unified identity root. Every user-scoped table FKs here. | id, kind (`clerk` &#124; `wallet`), created_at, updated_at, deleted_at, metadata |
-| `users` | Clerk user profile. FK `id` to `principals`. | id, email, first_name, last_name, stripe_customer_id, locale, timezone, created_at, updated_at |
-| `wallets` | Blockchain wallet identity. FK `id` to `principals`. | id, address, chain (`base` &#124; `base-sepolia` &#124; `polygon` &#124; `arbitrum` &#124; `solana` &#124; `solana-devnet`), display_name, ens_name, sanctions_status (`unchecked` &#124; `clean` &#124; `sanctioned`), sanctions_checked_at, registered_at, last_seen_at, metadata |
+| `users` | Clerk user profile. FK `id` to `principals`. | id, email (citext), first_name, last_name, stripe_customer_id, locale, timezone, creator_access_until, created_at, updated_at |
+| `wallets` | Blockchain wallet identity. FK `id` to `principals`. | id, address, chain (`base` &#124; `base-sepolia` &#124; `polygon` &#124; `arbitrum` &#124; `solana` &#124; `solana-devnet` &#124; `celo` &#124; `arc`), display_name, ens_name, sanctions_status (`unchecked` &#124; `clean` &#124; `sanctioned`), sanctions_checked_at, registered_at, last_seen_at, metadata |
 
 ### Social
 
 | Table | Purpose | Columns |
 |-------|---------|---------|
-| `social_accounts` | Connected OAuth accounts for each principal. | id, principal_id, platform, account_identifier, display_name, username, email_address, avatar_url, is_verified, follower_count, following_count, bio_description, is_available, access_token, refresh_token, token_expires_at, connection_id, extra, created_at, updated_at |
-| `social_connections` | OAuth connection lifecycle records. | id, principal_id, initiated_via (`web` &#124; `mcp` &#124; `api` &#124; `x402`), initiated_x402_charge_id, platform, oauth_state, oauth_code_verifier, redirect_uri, status (`pending` &#124; `connected` &#124; `expired` &#124; `failed` &#124; `revoked`), expires_at, connected_at, failed_at, error_code, error_message, social_account_id, poll_count, last_polled_at, last_polled_ip_hash, metadata, created_at, updated_at |
+| `social_accounts` | Connected OAuth accounts for each principal. | id, principal_id, platform, account_identifier, display_name, username, email_address (citext), avatar_url, is_verified, follower_count, following_count, bio_description, is_available, access_token, refresh_token, token_expires_at, connection_id, extra, created_at, updated_at, deleted_at |
+| `social_connections` | OAuth connection lifecycle records. | id, principal_id, initiated_via (`web` &#124; `mcp` &#124; `api` &#124; `x402` &#124; `share_link`), initiated_x402_charge_id, platform, oauth_state, oauth_code_verifier, redirect_uri, status (`pending` &#124; `connected` &#124; `expired` &#124; `failed` &#124; `revoked`), expires_at, connected_at, failed_at, error_code, error_message, social_account_id, share_link_id, poll_count, last_polled_at, last_polled_ip_hash, metadata, created_at, updated_at |
+| `share_links` | Links a user sends to someone else so that person can connect an account for them. | id, owner_principal_id, platform, token, expires_at, max_uses, used_count, revoked_at, last_used_at, created_at |
 
 ### Posts
 
@@ -115,7 +143,7 @@ erDiagram
 |-------|---------|---------|
 | `scheduled_posts` | Posts awaiting or in-process publication. | id, principal_id, social_account_id, platform, status (`scheduled` &#124; `queued` &#124; `processing` &#124; `posted` &#124; `failed` &#124; `cancelled`), scheduled_at, posted_at, scheduled_at_date (GENERATED), post_title, post_description, post_options, media_type (`text` &#124; `image` &#124; `video`), media_storage_path, cover_image_timestamp, batch_id, error_message, retry_count, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), idempotency_key, x402_charge_id, metadata, cancelled_by_sub_at, created_at, updated_at |
 | `failed_posts` | Archive of terminal post failures. Same structure as `scheduled_posts`. | (mirrors `scheduled_posts`) |
-| `content_history` | Record of published content, written after successful posting. | id, principal_id, social_account_id, scheduled_post_id, platform, content_id, title, description, media_url, media_type, status, batch_id, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), extra, created_at, updated_at |
+| `content_history` | Record of published content, written after successful posting. | id, principal_id, social_account_id, scheduled_post_id, platform, content_id, title, description, media_url, media_type, status, batch_id, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), extra, created_at |
 | `pending_direct_posts` | Lock table for "post now" operations. Prevents duplicate direct posts. | event_id (PK), batch_id, principal_id, social_account_id, platform, media_storage_path, status (`processing` &#124; `completed` &#124; `failed`), failure_reason, idempotency_key, finished_at, created_at |
 | `pending_tiktok_pulls` | Lock table for TikTok async publish polling. | publish_id (PK), principal_id, social_account_id, scheduled_post_id, content_history_id, media_storage_path, status (`pending` &#124; `completed` &#124; `failed`), attempt_count, last_polled_at, finalized_at, failure_reason, tiktok_post_id, creator_username, created_at |
 
@@ -126,7 +154,10 @@ erDiagram
 | `stripe_subscriptions` | Active and cancelled subscriptions. | id, user_id, stripe_subscription_id, stripe_customer_id, stripe_price_id, plan, status, start_date, end_date, current_period_end, cancel_reason, metadata, created_at, updated_at |
 | `stripe_invoices` | Payment records (append-only). | id, user_id, stripe_invoice_id, amount_paid_cents, currency, status, metadata, created_at |
 | `usage_quotas` | Monthly action counts for quota enforcement. | principal_id, period, action, count |
-| `platform_quotas` | Per-platform daily and burst rate caps. | platform, daily_cap, burst_cap_60s, notes |
+| `platform_quotas` | Per-platform daily and burst rate caps. | platform, daily_cap, burst_cap_60s, notes, updated_at |
+| `referral_codes` | One referral code per user. | user_id (PK), code, created_at |
+| `referrals` | Who referred whom. | id, referrer_id, referred_id, status (Postgres enum `referral_status`: `pending` &#124; `verified` &#124; `redeemed` &#124; `void`), created_at, verified_at, redeemed_at, reward_batch_id |
+| `referral_reward_grants` | Free weeks granted to a referrer, with the access window before and after. | id, user_id, weeks_granted, granted_at, creator_access_until_before, creator_access_until_after, referral_ids |
 
 ### MCP
 
@@ -134,7 +165,7 @@ erDiagram
 |-------|---------|---------|
 | `api_keys` | API keys for MCP, REST, and wallet access. | id, principal_id, name, prefix, token_hash, kind (`rest` &#124; `mcp` &#124; `wallet`), scopes, expires_at, last_used_at, last_used_ip, created_at, revoked_at, metadata |
 | `mcp_audit_log` | Append-only log of every MCP tool call. | id, principal_id, oauth_client_id, api_key_id, session_id, tool_name, args_redacted, result_status (`ok` &#124; `error` &#124; `denied` &#124; `rate_limited` &#124; `quota_exceeded`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
-| `mcp_oauth_clients` | Registered OAuth clients for MCP. | client_id (PK), client_name, redirect_uris, software_id, software_version, registered_by_user_id, trust_level (`unverified` &#124; `verified` &#124; `blocked`), revoked_at, metadata, created_at, updated_at |
+| `mcp_oauth_clients` | Registered OAuth clients for MCP. | client_id (PK), client_name, redirect_uris, software_id, software_version, registered_by_user_id, trust_level (`unverified` &#124; `verified` &#124; `blocked`), revoked_at, metadata, created_at |
 
 ### REST API
 
@@ -164,8 +195,8 @@ erDiagram
 | `x402_charges` | x402 payment charge records. | id, principal_id, wallet_id, action, amount_usdc, amount_usd_at_receipt, network, asset, nonce, request_id, payer_address, recipient_address, status (`pending` &#124; `settled` &#124; `failed` &#124; `refunded`), facilitator, facilitator_fee_usdc, tx_hash, block_number, scheduled_post_id, social_connection_id, error_message, metadata, created_at, settled_at |
 | `x402_refunds` | Refund records (append-only). | id, charge_id, reason, refunded_usdc, refund_tx_hash, initiated_by, metadata, created_at |
 | `x402_access_log` | Access audit trail (append-only). | id, principal_id, wallet_id, endpoint, action, charge_id, result_status (`ok` &#124; `402_required` &#124; `sanctioned` &#124; `rate_limited` &#124; `error`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
-| `pricing_actions` | Action pricing definitions. | action (PK), display_name, usdc_price, description, recurrence (`one_time` &#124; `monthly`), effective_from, effective_until, metadata |
-| `siwe_nonces` | Sign-In With Ethereum nonce tracking. | nonce, wallet, expires_at, used_at |
+| `pricing_actions` | Action pricing definitions. | action (PK), display_name, usdc_price, description, recurrence (`one_time` &#124; `monthly`), effective_from, effective_until, metadata, created_at, updated_at |
+| `x402_reconciliation` | Payments that need a manual look: settled on chain but not recorded, or a refund that failed. | id, charge_id, tx_hash, kind (`settle_unrecorded` &#124; `settle_indeterminate` &#124; `refund_failed`), payer_address, amount_atomic, network, created_at |
 | `usdc_fmv_daily` | Daily USDC fair market value snapshots. | fmv_date, usd_per_usdc, source, fetched_at |
 | `sanctions_screenings` | Wallet sanctions check results (append-only). | id, wallet_id, result (`clean` &#124; `sanctioned` &#124; `error`), source, raw_response, checked_at |
 
@@ -181,19 +212,19 @@ erDiagram
 
 ## Status CHECK constraints
 
-All enum-like values are enforced by CHECK constraints in Postgres (not Postgres ENUM types). Corresponding TypeScript unions are exported from `database.types.ts`.
+Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENUM types (the one exception is `referrals.status`). In `src/db/schema.ts` each list is one constant, such as `POST_STATUSES`, that builds both the CHECK constraint and the column's TypeScript union, so the two cannot drift.
 
 | Column | Values |
 |--------|--------|
 | `principals.kind` | `clerk`, `wallet` |
-| `wallets.chain` | `base`, `base-sepolia`, `polygon`, `arbitrum`, `solana`, `solana-devnet` |
+| `wallets.chain` | `base`, `base-sepolia`, `polygon`, `arbitrum`, `solana`, `solana-devnet`, `celo`, `arc` |
 | `wallets.sanctions_status` | `unchecked`, `clean`, `sanctioned` |
-| `social_accounts.platform`, `social_connections.platform`, `pending_direct_posts.platform` | The 28 ids the code writes: `POSTING_PLATFORMS` (`src/lib/platforms/capabilities.ts`) plus `REGISTRY_PLATFORM_IDS` (`src/lib/platforms/providers/catalog.ts`). A new platform needs these three constraints widened. |
-| `social_connections.initiated_via` | `web`, `mcp`, `api`, `x402` |
+| `social_accounts.platform`, `social_connections.platform`, `pending_direct_posts.platform` | `SOCIAL_PLATFORMS`: the 28 ids the code writes, `POSTING_PLATFORMS` (`src/lib/platforms/capabilities.ts`) plus `REGISTRY_PLATFORM_IDS` (`src/lib/platforms/providers/catalog.ts`). A new platform is added to that list. |
+| `social_connections.initiated_via` | `web`, `mcp`, `api`, `x402`, `share_link` |
 | `social_connections.status` | `pending`, `connected`, `expired`, `failed`, `revoked` |
-| `scheduled_posts.status` | `scheduled`, `queued`, `processing`, `posted`, `failed`, `cancelled` |
-| `scheduled_posts.media_type` | `text`, `image`, `video` |
-| `scheduled_posts.created_via` | `web`, `mcp`, `x402`, `api` |
+| `scheduled_posts.status`, `failed_posts.status` | `scheduled`, `queued`, `processing`, `posted`, `failed`, `cancelled` |
+| `scheduled_posts.media_type`, `failed_posts.media_type` | `text`, `image`, `video` |
+| `scheduled_posts.created_via`, `failed_posts.created_via`, `content_history.created_via` | `web`, `mcp`, `x402`, `api` |
 | `pending_direct_posts.status` | `processing`, `completed`, `failed` |
 | `pending_tiktok_pulls.status` | `pending`, `completed`, `failed` |
 | `api_keys.kind` | `rest`, `mcp`, `wallet` |
@@ -205,12 +236,13 @@ All enum-like values are enforced by CHECK constraints in Postgres (not Postgres
 | `pricing_actions.recurrence` | `one_time`, `monthly` |
 | `sanctions_screenings.result` | `clean`, `sanctioned`, `error` |
 | `rest_audit_log.outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `internal_error` |
+| `x402_reconciliation.kind` | `settle_unrecorded`, `settle_indeterminate`, `refund_failed` |
 
 ---
 
 ## Append-only tables
 
-Nine tables set `Update: never` in the generated types. Rows can be inserted but never modified via application code, ensuring audit and financial records stay tamper-proof.
+Nine tables are append-only. Six of them (`mcp_audit_log`, `stripe_invoices`, `wallet_credits_ledger`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
 
 | Table | What it logs |
 |-------|-------------|
@@ -228,14 +260,32 @@ See [SECURITY.md](./SECURITY.md) for details on argument redaction and PII handl
 
 ---
 
-## RPC functions
+## Functions and triggers
 
-Two server-side Postgres functions, called via `adminSupabase.rpc()`:
+Drizzle does not manage Postgres functions or triggers, so they live only in the database. To change one, write the SQL in a hand-written migration: `bun run db:generate --custom --name <change>` creates an empty file in `drizzle/` for it.
 
-| Function | Signature | Returns | Purpose |
+Functions the app calls:
+
+| Function | Arguments | Returns | Purpose |
 |----------|-----------|---------|---------|
 | `atomic_increment_quota` | `(_principal_id, _period, _action, _cap)` | `number` or `null` | Atomically increments `usage_quotas.count`. Returns the new count if under the cap, `null` if the cap would be exceeded. Prevents race conditions in concurrent MCP requests. |
 | `get_user_storage_bytes` | `(_bucket, _prefix)` | `number` | Returns total storage bytes for a principal in a given Supabase Storage bucket. Reads `storage.objects` directly (no pagination). Used by `enforceStorageQuota`. |
+| `consume_share_link` | `(p_share_link_id)` | `(success, reason)` | Locks the share link, checks revoked, expiry and `max_uses`, then counts one use. Called when a share-link OAuth flow succeeds. |
+| `grant_referral_rewards` | `(p_referrer_id)` | weeks granted | Turns each 3 verified referrals into 1 free week (at most 15 redeemed referrals per referrer) and extends `users.creator_access_until`. |
+| `onboard_wallet_atomic` | `(p_principal_id, p_address, p_chain, p_sanctions_source)` | `{ principal_id, wallet_id, is_new }` | Creates a wallet principal with its `wallets`, `sanctions_screenings` and `wallet_credits` rows in one transaction, or returns the existing wallet for that address. |
+
+Triggers:
+
+| Trigger function | Fires on | Effect |
+|------------------|----------|--------|
+| `handle_updated_at` | UPDATE on `analytics_metrics`, `pricing_actions`, `principals`, `scheduled_posts`, `social_accounts`, `social_connections`, `stripe_subscriptions`, `users`, `wallet_credits` | Sets `updated_at`, so code never writes it. |
+| `reject_mutation` | UPDATE or DELETE on the six trigger-protected append-only tables | Raises an error. |
+| `enforce_principal_kind` | INSERT, or UPDATE of `principal_id`, on `mcp_audit_log` and `x402_charges` | Refuses a principal that is not `clerk` (audit log) or not `wallet` (charges). |
+| `enforce_api_key_kind_matrix` | INSERT, or UPDATE of `principal_id` or `kind`, on `api_keys` | `rest` and `mcp` keys need a `clerk` principal, `wallet` keys a `wallet` principal. |
+| `social_connections_status_guard` | UPDATE on `social_connections` | `connected`, `expired`, `failed` and `revoked` are terminal statuses. |
+| `x402_status_guard` | UPDATE on `x402_charges` | A settled charge can only become refunded; `failed` and `refunded` are terminal. |
+| `delete_principal_on_user_delete` | After DELETE on `users` | Deletes the matching `principals` row. |
+| `rls_auto_enable` | Event trigger `ensure_rls`, after any CREATE TABLE | Turns RLS on for every new table in `public`. |
 
 ---
 
@@ -255,14 +305,15 @@ Two server-side Postgres functions, called via `adminSupabase.rpc()`:
 
 ## RLS posture
 
-All 34 tables have Row Level Security (RLS) enabled at the Supabase level. The application uses a service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) that bypasses RLS entirely. Access control is enforced in application code by filtering on `principal_id` in every query.
+All 37 tables have Row Level Security (RLS) enabled, and the `rls_auto_enable` event trigger enables it on any new table. The application reads and writes only on the server, through the Drizzle client (`src/db/client.ts`) or the service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`), and both bypass RLS. Access control is enforced in application code by filtering on `principal_id` in every query.
 
 What this means in practice:
 
-- The anon key (used client-side) cannot access any table directly.
+- No browser code queries the database; the anon key is not shipped to the browser.
 - All data access goes through server actions or API routes.
 - Every server action manually verifies `principal_id` ownership before returning data.
-- The admin client has full read/write access, used only server-side, guarded by the `server-only` import.
+- Both clients have full read/write access and are guarded by the `server-only` import.
+- The `*_self_*` and `*_public_read` policies for the `authenticated` and `anon` roles are not used by the app.
 
 Tradeoff: simpler than managing per-table RLS policies, but the application layer is the only access control boundary. A bug in a server action could expose data across principals.
 
@@ -314,7 +365,11 @@ stateDiagram-v2
 
 | File | Description |
 |------|-------------|
-| `src/lib/types/database.types.ts` | Generated Supabase types (34 tables, 2 RPC functions, type aliases) |
+| `src/db/schema.ts` | The schema: tables, indexes, foreign keys, CHECK value lists, RLS policies |
+| `src/db/client.ts` | Drizzle client (`db`) and `runQuery`, which returns `{ data, error }` instead of throwing |
+| `drizzle.config.ts` | drizzle-kit settings for `db:pull`, `db:generate`, `db:migrate` |
+| `drizzle/` | Migrations and their snapshots, starting with `0000_baseline.sql` |
+| `src/lib/types/database.types.ts` | Hand-maintained supabase-js types for code not yet on Drizzle |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client that bypasses RLS |
 | `src/lib/mcp/audit.ts` | `logToolCall`, the awaited insert into `mcp_audit_log` |
 | `src/lib/api/rest/audit/writeRestAuditLog.ts` | Audit log writer for REST API requests |
