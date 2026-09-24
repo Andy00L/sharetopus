@@ -40,7 +40,7 @@ Token resolution:
 6. Update `last_used_at` and `last_used_ip`
 7. Resolve `principal_id` for downstream queries
 
-Keys are created at [/integrations](https://sharetopus.com/integrations). Key format: `stp_rest_` followed by 64 hex characters. Shown once at creation time. Expiry options: 7, 30, 90, or 365 days.
+Keys are created at [/integrations](https://sharetopus.com/integrations). Key format: `stp_rest_` followed by 64 hex characters. Shown once at creation time. Expiry options: 7, 30, 90, or 365 days. At most 10 unrevoked REST keys per user; revoke one to create another.
 
 ---
 

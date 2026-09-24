@@ -3,8 +3,10 @@
 import "server-only";
 
 import { auth } from "@clerk/nextjs/server";
+import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
+import { checkActiveApiKeyCap } from "@/lib/api/checkActiveApiKeyCap";
 import { generateApiKey } from "@/lib/api/tokens";
 import {
   DEFAULT_API_KEY_EXPIRY_DAYS,
@@ -33,11 +35,13 @@ export type CreateRestApiKeyResult =
  * Creates a REST API key for the authenticated user.
  *
  * Mirrors src/actions/server/mcp/createApiKey.ts but with kind='rest'
- * and prefix 'stp_rest_'. Raw key returned ONCE; later reads only see
- * the prefix.
+ * and prefix 'stp_rest_': the same creation rate limit and the same cap on
+ * unrevoked keys (checkActiveApiKeyCap). Raw key returned ONCE; later reads
+ * only see the prefix.
  *
- * Requires an active Clerk session. Subscription gating happens at
- * resolveRestApiKey time, not creation time (matches MCP).
+ * Requires an active Clerk session. Unlike MCP, creation does not check the
+ * subscription: resolveRestApiKey gates every request made with the key, and
+ * the integrations page that calls this is gated too.
  */
 export async function createRestApiKey(
   input: CreateRestApiKeyInput,
@@ -63,6 +67,21 @@ export async function createRestApiKey(
       input.expiresInDays ?? DEFAULT_API_KEY_EXPIRY_DAYS;
     if (!isValidApiKeyExpiryDays(expiresInDays)) {
       return { success: false, message: "Invalid expiry duration" };
+    }
+
+    const rateCheck = await checkRateLimit(
+      "rest.createApiKey",
+      clerkUserId,
+      10,
+      60,
+    );
+    if (!rateCheck.success) {
+      return { success: false, message: rateCheck.message ?? "Rate limited." };
+    }
+
+    const keyCap = await checkActiveApiKeyCap(clerkUserId, "rest");
+    if (!keyCap.ok) {
+      return { success: false, message: keyCap.message };
     }
 
     const { rawKey, prefix, tokenHash } = generateApiKey("rest");

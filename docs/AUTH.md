@@ -258,8 +258,9 @@ stateDiagram-v2
 
 ### Constraints
 
-- Maximum **10 active MCP keys** per user
-- Creating a key requires an **active Stripe subscription**
+- Maximum **10 active keys per kind** per user: 10 MCP and 10 REST (`checkActiveApiKeyCap`, `src/lib/api/checkActiveApiKeyCap.ts`). A failed count refuses with a retry message.
+- Creating a key is rate limited to 10 per minute per user, for both kinds
+- Creating an MCP key requires an **active Stripe subscription**. A REST key is gated when it is used (`resolveRestApiKey`), and the integrations page that creates it is gated too
 - Revocation is a soft delete (`revoked_at` set, row kept for audit). REST and MCP keys both go through `revokeApiKeyForPrincipal`, one UPDATE that checks ownership and revokes. When the database fails, the answer says the key may still work and asks for a retry; it never claims the key is already revoked
 - `last_used_at` and `last_used_ip` are updated via `waitUntil` (fire-and-forget, does not block the auth response)
 

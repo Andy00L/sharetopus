@@ -1,17 +1,13 @@
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
-
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
+import { checkActiveApiKeyCap } from "@/lib/api/checkActiveApiKeyCap";
 import { generateApiKey } from "@/lib/api/tokens";
 import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
-
-/** Unrevoked MCP keys one user may hold at a time (docs/AUTH.md, API key lifecycle). */
-const MAX_ACTIVE_MCP_KEYS = 10;
 
 /**
  * Creates a new MCP API key for the authenticated user.
@@ -86,31 +82,9 @@ export async function createApiKey(
       };
     }
 
-    const { data: activeKeyCount, error: countError } = await runQuery(
-      db.$count(
-        api_keys,
-        and(
-          eq(api_keys.principal_id, userId),
-          eq(api_keys.kind, "mcp"),
-          isNull(api_keys.revoked_at),
-        ),
-      ),
-    );
-
-    // A failed count used to read as zero and let the key past the limit.
-    if (countError) {
-      console.error("[createApiKey] Active key count failed:", countError.message);
-      return {
-        success: false,
-        message: "Could not check how many keys you have. Please try again.",
-      };
-    }
-
-    if (activeKeyCount >= MAX_ACTIVE_MCP_KEYS) {
-      return {
-        success: false,
-        message: `Maximum ${MAX_ACTIVE_MCP_KEYS} active MCP keys allowed. Revoke an existing key first.`,
-      };
+    const keyCap = await checkActiveApiKeyCap(userId, "mcp");
+    if (!keyCap.ok) {
+      return { success: false, message: keyCap.message };
     }
 
     const { rawKey, prefix, tokenHash } = generateApiKey("mcp");
