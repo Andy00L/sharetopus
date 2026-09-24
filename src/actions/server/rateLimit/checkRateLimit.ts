@@ -22,6 +22,27 @@ async function getIpAddress(): Promise<string | null> {
 }
 
 /**
+ * A refused check says why, with a message fit to show a person:
+ *   - "limited": the caller hit the limit. resetIn is the wait in seconds.
+ *   - "unidentified": there was no user id or IP to key the limit on.
+ *   - "unavailable": the limiter itself failed (Redis unreachable). The
+ *     caller did nothing wrong, so no surface may answer it with 429 or
+ *     "too many requests".
+ * Callers pass message on instead of writing their own, which is how an
+ * outage stays an outage all the way to the person or agent.
+ */
+export type RateLimitRefusal =
+  | { success: false; reason: "limited"; message: string; resetIn: number }
+  | {
+      success: false;
+      reason: "unidentified" | "unavailable";
+      message: string;
+      resetIn?: never;
+    };
+
+export type RateLimitCheck = { success: true } | RateLimitRefusal;
+
+/**
  * Apply rate limiting to any operation
  *
  * @param operationName - Name of operation (e.g., 'fetchData', 'submitForm')
@@ -29,10 +50,7 @@ async function getIpAddress(): Promise<string | null> {
  * @param limit - Number of requests allowed (default: 20)
  * @param window - Time window in seconds (default: 60)
  * @param bypassSecret - Optional secret to bypass rate limiting (for internal/cron use)
- * @returns Object with success status, optional reset time, and on failure a
- *   reason: "limited" (the caller hit the limit), "unidentified" (no IP or
- *   user id to key on) or "unavailable" (the limiter itself failed, so the
- *   caller did nothing wrong and should not be told to slow down).
+ * @returns { success: true }, or a RateLimitRefusal naming the reason.
  */
 export async function checkRateLimit(
   operationName: string,
@@ -40,12 +58,7 @@ export async function checkRateLimit(
   limit: number = 20,
   window: number = 60,
   bypassSecret?: string | undefined
-): Promise<{
-  success: boolean;
-  message?: string;
-  resetIn?: number;
-  reason?: "limited" | "unidentified" | "unavailable";
-}> {
+): Promise<RateLimitCheck> {
   try {
     // Check for valid bypass secret. Compared in constant time: a plain
     // === leaks the shared cron secret's prefix through response timing.
@@ -58,10 +71,7 @@ export async function checkRateLimit(
       console.log(
         `[checkRateLimit] Rate limiting bypassed for operation: ${operationName}`
       );
-      return {
-        success: true,
-        message: "Rate limiting bypassed",
-      };
+      return { success: true };
     }
 
     // Create a rate limiter for this operation
@@ -96,8 +106,10 @@ export async function checkRateLimit(
       };
     }
 
-    // Calculate reset time
-    const resetInSeconds = Math.ceil((reset - Date.now()) / 1000);
+    // Retry-After takes a whole number of seconds that is not negative (RFC
+    // 9110 section 10.2.3). A window that reset between the check and this
+    // line would give 0 or less, so the wait is at least 1 s.
+    const resetInSeconds = Math.max(1, Math.ceil((reset - Date.now()) / 1000));
     console.warn(
       `[checkRateLimit] Rate limit exceeded for operation: ${operationName}, reset in: ${resetInSeconds}s`
     );
@@ -116,7 +128,7 @@ export async function checkRateLimit(
 
     return {
       success: false,
-      message: "Rate limit check failed",
+      message: "Could not check the rate limit. Please try again.",
       reason: "unavailable",
     };
   }

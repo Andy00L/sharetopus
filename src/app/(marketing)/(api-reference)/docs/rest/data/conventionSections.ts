@@ -158,9 +158,9 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
     navLabel: "Rate limits",
     title: "Rate limits",
     summary:
-      "Limits are enforced per API key and per action (for example rest.posts.create). A 429 carries retry_after_seconds in the error details when the window is known.",
+      "Limits are enforced per account and per action (for example rest.posts.create); every key on one account shares them. A 429 carries retry_after_seconds in the error details. When the limiter itself cannot answer, the API returns 503 service_unavailable with retry_after_seconds instead: the request did not run, so retry rather than slow down.",
     sourceRef:
-      "src/lib/api/rest/middleware/withRestEndpoint.ts (checkRateLimit call)",
+      "src/lib/api/rest/middleware/withRestEndpoint.ts (checkRateLimit call), src/actions/server/rateLimit/checkRateLimit.ts",
     codeSamples: [{ label: "Response · 429", code: RATE_LIMITED_429 }],
   },
 ];

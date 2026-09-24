@@ -121,13 +121,10 @@ export async function schedulePostBatch(
       RATE_WINDOW_SECONDS,
     );
     if (!rateCheck.success) {
-      const isLimited = rateCheck.reason === "limited";
       return {
         success: false,
-        failure: isLimited ? "rate_limited" : "unavailable",
-        message: isLimited
-          ? "Too many schedule requests. Please try again later."
-          : "Could not check the rate limit. Please try again.",
+        failure: rateCheck.reason === "limited" ? "rate_limited" : "unavailable",
+        message: rateCheck.message,
         batchId,
         resetIn: rateCheck.resetIn,
         details: { ...emptyDetails, total: posts.length },

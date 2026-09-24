@@ -77,7 +77,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
-        message: "Too many checkout attempts. Please try again later.",
+        message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }

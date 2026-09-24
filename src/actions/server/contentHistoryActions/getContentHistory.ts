@@ -63,7 +63,7 @@ export async function getContentHistory(
     );
     return {
       success: false,
-      message: `Too many requests. Try again in ${rateLimitResult.resetIn} seconds.`,
+      message: rateLimitResult.message,
       resetIn: rateLimitResult.resetIn,
     };
   }

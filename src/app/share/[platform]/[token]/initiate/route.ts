@@ -42,7 +42,8 @@ export async function POST(
     return redirectToError(platform, "unsupported_platform");
   }
 
-  // 1. Rate limit: 5/min per IP (userId=null falls back to IP)
+  // 1. Rate limit: 5/min per IP (userId=null falls back to IP). Only a limit
+  // hit is the friend's doing; a limiter that could not answer is ours.
   const rateLimitResult = await checkRateLimit(
     "shareLink.use",
     null,
@@ -50,7 +51,10 @@ export async function POST(
     60,
   );
   if (!rateLimitResult.success) {
-    return redirectToError(platform, "rate_limited");
+    return redirectToError(
+      platform,
+      rateLimitResult.reason === "limited" ? "rate_limited" : "internal_error",
+    );
   }
 
   // 2. Re-validate the token

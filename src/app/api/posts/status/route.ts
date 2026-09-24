@@ -60,9 +60,12 @@ export async function GET(request: Request): Promise<NextResponse> {
   if (!rateCheck.success) {
     const body: PostStatusResponse = {
       success: false,
-      message: "Too many status checks. Please slow down.",
+      message: rateCheck.message,
     };
-    return NextResponse.json(body, { status: 429 });
+    // A limiter outage is ours: 503, not a 429 that says "slow down".
+    return NextResponse.json(body, {
+      status: rateCheck.reason === "limited" ? 429 : 503,
+    });
   }
 
   const url = new URL(request.url);

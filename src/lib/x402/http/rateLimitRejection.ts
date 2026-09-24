@@ -12,7 +12,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-import type { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import type { RateLimitRefusal } from "@/actions/server/rateLimit/checkRateLimit";
 
 /** Retry hint when the limiter reports no reset time, in seconds. */
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
@@ -27,7 +27,7 @@ export interface RateLimitRejection {
 }
 
 export function describeRateLimitRejection(
-  result: Awaited<ReturnType<typeof checkRateLimit>>,
+  result: RateLimitRefusal,
 ): RateLimitRejection {
   if (result.reason === "unavailable") {
     return {
@@ -41,7 +41,7 @@ export function describeRateLimitRejection(
   return {
     httpStatus: 429,
     errorKind: "rate_limited",
-    message: result.message ?? "Rate limit exceeded.",
+    message: result.message,
     retryAfterSeconds: result.resetIn ?? DEFAULT_RETRY_AFTER_SECONDS,
     auditStatus: "rate_limited",
   };

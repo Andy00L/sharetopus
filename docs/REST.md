@@ -122,6 +122,7 @@ flowchart TD
     C -->|Could not check| D2[503 service_unavailable]
     C -->|Yes| E[Rate limit check]
     E -->|Exceeded| F[429 Too Many Requests + audit log]
+    E -->|Could not check| F2[503 service_unavailable + audit log]
     E -->|OK| G[Validate request body/query/params]
     G -->|Invalid| H[400 Validation Error + audit log]
     G -->|Valid| I[Execute handler]
@@ -167,7 +168,7 @@ When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected`
 
 ## Rate limiting
 
-Per-principal rate limits via Upstash Redis sliding window. Limits vary by endpoint. When exceeded, the API returns 429 with `retry_after_seconds`.
+Per-principal rate limits via Upstash Redis sliding window. Limits vary by endpoint. When exceeded, the API returns 429 with `retry_after_seconds`. When the limiter itself cannot answer (Redis unreachable), the API returns 503 `service_unavailable` with `retry_after_seconds: 30` instead: the request did not run, and the client should retry, not slow down.
 
 Rate limit state is tracked per `principal_id`, not per API key. Multiple keys for the same principal share the same rate limit pool.
 

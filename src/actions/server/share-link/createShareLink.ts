@@ -70,10 +70,7 @@ export async function createShareLink(
     60,
   );
   if (!rateLimitResult.success) {
-    return {
-      success: false,
-      message: rateLimitResult.message ?? "Rate limit exceeded.",
-    };
+    return { success: false, message: rateLimitResult.message };
   }
 
   // 4. Validate inputs

@@ -28,7 +28,7 @@ curl https://sharetopus.com/api/v1/posts \
 
 ## Rate limits
 
-Each endpoint has per-principal rate limits. When exceeded, the API returns `429 Too Many Requests` with a `retry_after_seconds` field.
+Each endpoint has per-principal rate limits. When exceeded, the API returns `429 Too Many Requests` with a `retry_after_seconds` field. When the rate limiter itself cannot answer, the API returns `503` with the code `service_unavailable` and a `retry_after_seconds` field: the request did not run, so retry it after that delay.
 
 ## Error responses
 
@@ -44,4 +44,4 @@ All errors follow a consistent shape:
 }
 ```
 
-Error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `rate_limited`, `internal_error`.
+Error codes: `unauthorized`, `forbidden`, `not_found`, `validation_error`, `rate_limited`, `internal_error`, `service_unavailable`.

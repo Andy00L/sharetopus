@@ -76,7 +76,7 @@ export async function createRestApiKey(
       60,
     );
     if (!rateCheck.success) {
-      return { success: false, message: rateCheck.message ?? "Rate limited." };
+      return { success: false, message: rateCheck.message };
     }
 
     const keyCap = await checkActiveApiKeyCap(clerkUserId, "rest");

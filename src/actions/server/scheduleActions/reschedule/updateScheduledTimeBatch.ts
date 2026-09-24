@@ -77,7 +77,7 @@ export async function updateScheduledTimeBatch(
     if (!rateCheck.success) {
       return {
         success: false,
-        message: "Too many reschedule requests. Please try again later.",
+        message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }

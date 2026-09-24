@@ -546,7 +546,7 @@ filename  string  optional
 
 **Size limits:** 8 MB (image), 250 MB (video). Enforced by stream-based byte counter (Content-Length header is not trusted).
 
-**Rate limit:** 10 requests per 60 seconds per principal.
+**Rate limit:** 10 requests per 60 seconds per principal. If the limiter is down, the call fails with a retry message, audited as `error`, not `rate_limited`.
 
 **Monthly quota:** Creator 500/mo, Pro unlimited.
 
@@ -572,7 +572,7 @@ size_bytes    number (positive integer)  required
   File size in bytes
 ```
 
-**Rate limit:** 20 requests per 60 seconds (hard limit).
+**Rate limit:** 20 requests per 60 seconds (hard limit). If the limiter is down, the call fails with a retry message, audited as `error`, not `rate_limited`.
 
 **Monthly quota:** Creator 500/mo, Pro unlimited.
 

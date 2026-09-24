@@ -90,7 +90,7 @@ export async function directPostForLinkedInAccounts(
           return {
             success: false,
             count: 0,
-            message: "Too many posts. Please try again later.",
+            message: rateCheck.message,
           };
         }
         return null;

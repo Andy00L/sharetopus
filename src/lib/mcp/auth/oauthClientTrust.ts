@@ -166,7 +166,7 @@ async function firstSightInsert(
     // paying users from connecting a new client.
     if (!limitResult.success) {
       console.warn(
-        `[firstSightInsert] Rate limiter ${limitResult.reason ?? "failed"} for ${scope}; continuing.`,
+        `[firstSightInsert] Rate limiter ${limitResult.reason} for ${scope}; continuing.`,
       );
     }
   }

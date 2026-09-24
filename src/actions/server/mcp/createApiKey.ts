@@ -62,10 +62,7 @@ export async function createApiKey(
 
     const rateCheck = await checkRateLimit("mcp.createApiKey", userId, 10, 60);
     if (!rateCheck.success) {
-      return {
-        success: false,
-        message: rateCheck.message ?? "Rate limited.",
-      };
+      return { success: false, message: rateCheck.message };
     }
 
     if (!name || name.trim().length === 0) {

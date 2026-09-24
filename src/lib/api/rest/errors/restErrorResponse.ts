@@ -11,7 +11,8 @@ export type RestErrorCode =
 
 /**
  * Seconds a caller waits before retrying a 503: something the request
- * needed (an API key lookup, an ownership read) could not be checked.
+ * needed (an API key lookup, an ownership read, the rate limiter) could
+ * not be checked.
  */
 export const SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
 

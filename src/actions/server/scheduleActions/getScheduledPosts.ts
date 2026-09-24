@@ -50,7 +50,7 @@ export async function getScheduledPosts(
     if (!rateCheck.success) {
       return {
         success: false,
-        message: "Too many requests. Please try again later.",
+        message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }

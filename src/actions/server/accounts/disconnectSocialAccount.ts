@@ -54,7 +54,7 @@ export async function disconnectSocialAccount(
       );
       return {
         success: false,
-        message: "Too many requests. Please try again later.",
+        message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }

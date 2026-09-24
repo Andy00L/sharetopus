@@ -69,16 +69,10 @@ export function registerRequestUploadUrl(server: McpServer): void {
         );
         if (!rateLimitResult.success) {
           return {
-            content: [
-              {
-                type: "text",
-                text:
-                  rateLimitResult.message ??
-                  "Rate limit exceeded. Please slow down and retry.",
-              },
-            ],
+            content: [{ type: "text", text: rateLimitResult.message }],
             isError: true,
-            auditStatus: "rate_limited",
+            auditStatus:
+              rateLimitResult.reason === "limited" ? "rate_limited" : "error",
           };
         }
 

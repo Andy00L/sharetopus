@@ -76,7 +76,7 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
       return {
         success: false,
         reason: "failed",
-        message: "Too many requests. Please try again later.",
+        message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }

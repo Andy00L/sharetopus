@@ -144,10 +144,7 @@ export async function createPinterestBoardForAccount(
     CREATE_BOARD_RATE_WINDOW_SECONDS,
   );
   if (!rateCheck.success) {
-    return {
-      success: false,
-      message: "Too many board creations. Please try again shortly.",
-    };
+    return { success: false, message: rateCheck.message };
   }
 
   const board = await createPinterestBoard(

@@ -86,16 +86,10 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
         );
         if (!rateLimitResult.success) {
           return {
-            content: [
-              {
-                type: "text",
-                text:
-                  rateLimitResult.message ??
-                  `Rate limit exceeded. Try again in ${rateLimitResult.resetIn ?? 60}s.`,
-              },
-            ],
+            content: [{ type: "text", text: rateLimitResult.message }],
             isError: true,
-            auditStatus: "rate_limited",
+            auditStatus:
+              rateLimitResult.reason === "limited" ? "rate_limited" : "error",
           };
         }
 

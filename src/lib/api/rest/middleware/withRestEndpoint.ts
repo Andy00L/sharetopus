@@ -144,30 +144,37 @@ export function withRestEndpoint(
       );
     }
 
-    // Step 5: per-principal rate limit.
+    // Step 5: per-principal rate limit. A limiter outage answers 503: the
+    // caller did nothing wrong, and a 429 would tell it to slow down.
     const rateLimitResult = await checkRateLimit(
       config.rateLimitAction,
       principal.principalId,
     );
     if (!rateLimitResult.success) {
+      const isLimitHit = rateLimitResult.reason === "limited";
+      const retryAfterSeconds = isLimitHit
+        ? rateLimitResult.resetIn
+        : SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS;
       await writeRestAuditLog({
         context: restRequestContext,
-        statusCode: 429,
-        outcome: "rate_limited",
-        errorCode: "rate_limit_exceeded",
+        statusCode: isLimitHit ? 429 : 503,
+        outcome: isLimitHit ? "rate_limited" : "internal_error",
+        errorCode: isLimitHit
+          ? "rate_limit_exceeded"
+          : "rate_limiter_unavailable",
         argsPayload: { action: config.rateLimitAction },
-        responseSummary: {
-          retry_after_seconds: rateLimitResult.resetIn ?? null,
-        },
+        responseSummary: { retry_after_seconds: retryAfterSeconds },
       });
-      return restErrorResponse(
-        "rate_limited",
-        "Too many requests",
-        requestId,
-        {
-          retry_after_seconds: rateLimitResult.resetIn ?? null,
-        },
-      );
+      return isLimitHit
+        ? restErrorResponse("rate_limited", "Too many requests", requestId, {
+            retry_after_seconds: retryAfterSeconds,
+          })
+        : restErrorResponse(
+            "service_unavailable",
+            "Could not check the rate limit right now. Retry shortly.",
+            requestId,
+            { retry_after_seconds: retryAfterSeconds },
+          );
     }
 
     // Step 6: call handler. Handler returns RestHandlerResult. If it

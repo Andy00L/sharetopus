@@ -131,14 +131,11 @@ export function withMcpTool<TArgs>(
     );
     if (!principalLimit.success && principalLimit.reason === "limited") {
       await emitAudit(ctx, toolName, defaultAuditArgs, "rate_limited");
-      const retryHint = principalLimit.resetIn
-        ? ` Retry in ${principalLimit.resetIn} s.`
-        : "";
       return {
         content: [
           {
             type: "text" as const,
-            text: `Rate limited: at most ${MCP_TOOL_CALL_RATE_LIMIT.calls} tool calls per ${MCP_TOOL_CALL_RATE_LIMIT.windowSeconds} s.${retryHint}`,
+            text: `Rate limited: at most ${MCP_TOOL_CALL_RATE_LIMIT.calls} tool calls per ${MCP_TOOL_CALL_RATE_LIMIT.windowSeconds} s. Retry in ${principalLimit.resetIn} s.`,
           },
         ],
         isError: true,
@@ -146,7 +143,7 @@ export function withMcpTool<TArgs>(
     }
     if (!principalLimit.success) {
       console.warn(
-        `[withMcpTool] Rate limiter ${principalLimit.reason ?? "failed"} for ${toolName}; continuing without the per-principal budget.`,
+        `[withMcpTool] Rate limiter ${principalLimit.reason} for ${toolName}; continuing without the per-principal budget.`,
       );
     }
 
