@@ -107,7 +107,9 @@ sequenceDiagram
     end
 ```
 
-**Fail-closed behavior.** If `checkActiveSubscription` returns `isActive: false`, errors, or the plan is below Creator, the request is blocked. No principal is returned.
+**Fail-closed behavior.** If `checkActiveSubscription` returns `isActive: false` (no subscription, or a read that failed) or the plan is below Creator, the request is blocked. No principal is returned. A failed read (status `unavailable`) is not cached, so the next request reads again instead of staying locked out for the cache's 60 seconds.
+
+`checkActiveSubscription` is server-only: it trusts the user id it is given, so it is never exposed as a server action. Browser code asks about the current user's subscription through `createCustomerPortal`, which reads the id from the Clerk session.
 
 **McpPrincipal type** (discriminated union):
 - `kind: "apikey"` carries `apiKeyId`, `scopes`

@@ -11,7 +11,9 @@ import {
 /**
  * Enriches a resolved principal with plan and priceId from the active
  * Stripe subscription. Returns null when no active subscription exists
- * or the DB query throws (fails closed in both cases).
+ * or it could not be read (fails closed in both cases). Only a completed
+ * read is cached: a transient DB blip must not lock a paying user out for
+ * the whole TTL.
  *
  * Generic over any principal type that satisfies GatablePrincipal, so
  * both McpPrincipal and RestPrincipal pass through without casting.
@@ -35,40 +37,38 @@ export async function applySubscriptionGate<T extends GatablePrincipal>(
     return candidate;
   }
 
-  try {
-    const sub = await checkActiveSubscription(candidate.principalId);
+  const sub = await checkActiveSubscription(candidate.principalId);
 
-    if (!sub.isActive) {
-      // Cache the negative result too so probes from non-subscribers
-      // do not hammer the DB. Invalidated by the Stripe webhook on
-      // subscription.created.
-      setCachedSubscription(candidate.principalId, {
-        isActive: false,
-        plan: null,
-        priceId: null,
-      });
-      console.log(
-        `[applySubscriptionGate] Principal ${candidate.principalId} has no active subscription`,
-      );
-      return null;
-    }
-
-    setCachedSubscription(candidate.principalId, {
-      isActive: true,
-      plan: sub.tier,
-      priceId: sub.priceId,
-    });
-
-    candidate.priceId = sub.priceId;
-    candidate.plan = sub.tier;
-    return candidate;
-  } catch (err) {
-    // Errors are NOT cached. A transient DB blip should retry next
-    // request, not lock the user out of access for 60 seconds.
+  if (sub.status === "unavailable") {
+    // Not cached, so the next request reads again.
     console.error(
-      "[applySubscriptionGate] Subscription check failed:",
-      err instanceof Error ? err.message : err,
+      `[applySubscriptionGate] Subscription check failed for ${candidate.principalId}`,
     );
     return null;
   }
+
+  if (!sub.isActive) {
+    // Cache the negative result too so probes from non-subscribers
+    // do not hammer the DB. Invalidated by the Stripe webhook on
+    // subscription.created.
+    setCachedSubscription(candidate.principalId, {
+      isActive: false,
+      plan: null,
+      priceId: null,
+    });
+    console.log(
+      `[applySubscriptionGate] Principal ${candidate.principalId} has no active subscription`,
+    );
+    return null;
+  }
+
+  setCachedSubscription(candidate.principalId, {
+    isActive: true,
+    plan: sub.tier,
+    priceId: sub.priceId,
+  });
+
+  candidate.priceId = sub.priceId;
+  candidate.plan = sub.tier;
+  return candidate;
 }

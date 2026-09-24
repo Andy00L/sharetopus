@@ -79,12 +79,16 @@ Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to g
 
 ## Subscription status
 
-`checkActiveSubscription` returns `isActive=true` if the most recent subscription has any of these statuses:
+`checkActiveSubscription` (`src/actions/checkActiveSubscription.ts`) returns `isActive=true` if the most recent subscription has any of these statuses:
 
 - `active`
 - `trialing`
 
-Returns `false` for `past_due`, `cancelled`, or no subscription. Defaults to `false` on error (fail-closed).
+Without one, banked referral weeks (`users.creator_access_until` in the future) count as Creator access with status `referral_grant`. Otherwise it returns `isActive=false` with status `none`.
+
+A failed database read returns `isActive=false` with status `unavailable`. Gates stay closed (fail-closed), while billing code tells "could not check" apart from "not subscribed": the customer portal and MCP key creation ask for a retry, `list_billing_summary` returns a tool error, `GET /v1/usage` answers 500, and the MCP subscription gate does not cache the failure.
+
+It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code asks through `createCustomerPortal`, which reads the id from the Clerk session.
 
 ## Plan gating
 
@@ -151,6 +155,8 @@ All plans share the same per-file size caps:
 ## Customer portal
 
 `createCustomerPortal` creates a Stripe Billing Portal session. Rate limited at 20 requests per 60 seconds. Requires an active subscription. Return URL: `/create`.
+
+A failure carries a `reason`: `no_subscription` when the user has nothing to manage, `failed` otherwise (a subscription it could not check included). The pricing buttons open checkout, and the sidebar billing entry opens the pricing section, only on `no_subscription`, so a paying user is never sent to a second checkout.
 
 ## Usage tracking
 
@@ -251,7 +257,7 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
 | `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by both the webhook and the `ensureUserExists` sync |
-| `src/actions/server/stripe/checkUserSubscription.ts` | `checkActiveSubscription`, subscription status checks |
+| `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, the server-only subscription reader |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
 | `src/lib/mcp/_shared/entitlement.ts` | `MONTHLY_CAPS`, `ACCESS_PLAN_GATE`, MCP tier gating |

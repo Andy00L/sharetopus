@@ -195,6 +195,8 @@ The `plan` field starts as `null` and is populated by `applySubscriptionGate` fr
 
 `resolveMcpPrincipal` returns `null` on any failure. Callers treat `null` as a 401. There is no fallback or degraded-access mode.
 
+`applySubscriptionGate` caches each completed subscription read for 60 seconds, a "no subscription" answer included. A read that fails (`checkActiveSubscription` status `unavailable`) is not cached, so a database blip denies one request instead of locking a paying user out for the whole window.
+
 ---
 
 ## REST API authentication

@@ -1,6 +1,5 @@
 "use client";
 
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -18,7 +17,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useAuth, useClerk, useUser } from "@clerk/nextjs";
+import { useClerk, useUser } from "@clerk/nextjs";
 import {
   CreditCardIcon,
   LogOutIcon,
@@ -34,7 +33,6 @@ import { toast } from "sonner";
 export function NavUser() {
   const router = useRouter();
   const { user, isLoaded, isSignedIn } = useUser();
-  const { userId } = useAuth();
   const { isMobile } = useSidebar();
   const { signOut } = useClerk();
   const [isLoading, setIsLoading] = useState(false); // Add loading state
@@ -61,30 +59,25 @@ export function NavUser() {
     return null;
   }
 
+  /* Opens the Stripe billing portal. The portal action checks the
+     subscription from the Clerk session: users with nothing to manage go to
+     the pricing section, and any other failure shows its own message. */
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
-      const hasActiveSubscription = (await checkActiveSubscription(userId!)).isActive;
-      if (!hasActiveSubscription) {
-        router.push("/#pricing"); // This is the correct way to redirect client-side
+      const portal = await createCustomerPortal();
+      if (portal.success) {
+        window.location.href = portal.data;
         return;
       }
-      const fetchedPortalUrl = await createCustomerPortal();
-
-      // Check the success property first
-      if (!fetchedPortalUrl.success) {
-        toast.error("Too many requests. Please try again in a minute.");
+      if (portal.reason === "no_subscription") {
+        router.push("/#pricing");
         return;
       }
-      const portalUrl = fetchedPortalUrl.data;
-      if (typeof portalUrl === "string" && portalUrl.startsWith("http")) {
-        window.location.href = portalUrl;
-      } else {
-        toast("An error occured with the portal url");
-      }
+      toast.error(portal.message);
     } catch (error) {
-      console.error("Error opening billing portal:", error);
-      // Optionally show an error toast/notification here
+      console.error("[NavUser] Error opening billing portal:", error);
+      toast.error("Could not open billing. Please try again.");
     } finally {
       setIsLoading(false);
     }

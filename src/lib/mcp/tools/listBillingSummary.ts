@@ -8,7 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import "server-only";
 import { z } from "zod";
 
-import { withMcpTool } from "../withMcpTool";
+import { withMcpTool, type McpHandlerResult } from "../withMcpTool";
 
 /**
  * Returns the user's current subscription status and usage quotas.
@@ -33,15 +33,19 @@ export function registerListBillingSummary(server: McpServer): void {
       },
     },
     withMcpTool("list_billing_summary", async (ctx) => {
+      // A failed read is an error, never "no subscription" or zero usage.
       const subscription = await checkActiveSubscription(
         ctx.principal.principalId,
       );
+      if (subscription.status === "unavailable") {
+        return billingReadFailure("subscription");
+      }
 
       // Fetch current month usage.
       // Query filter uses YYYY-MM-DD (matches the date column in usage_quotas).
       // The display `period` field below stays YYYY-MM because it is user-facing.
       const periodFilter = currentQuotaPeriod();
-      const { data: usageQuotas } = await runQuery(
+      const { data: usageQuotas, error: usageError } = await runQuery(
         db
           .select({ action: usage_quotas.action, count: usage_quotas.count })
           .from(usage_quotas)
@@ -52,8 +56,15 @@ export function registerListBillingSummary(server: McpServer): void {
             ),
           ),
       );
+      if (usageError) {
+        console.error(
+          "[listBillingSummary] usage_quotas read failed:",
+          usageError.message,
+        );
+        return billingReadFailure("usage");
+      }
 
-      const usageByAction = (usageQuotas ?? []).reduce(
+      const usageByAction = usageQuotas.reduce(
         (accumulator, quotaRow) => {
           accumulator[quotaRow.action] = quotaRow.count;
           return accumulator;
@@ -91,4 +102,18 @@ export function registerListBillingSummary(server: McpServer): void {
       };
     }),
   );
+}
+
+function billingReadFailure(
+  whatFailed: "subscription" | "usage",
+): McpHandlerResult {
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Could not read your ${whatFailed}. Please try again.`,
+      },
+    ],
+    isError: true,
+  };
 }

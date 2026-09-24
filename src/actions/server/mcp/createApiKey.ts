@@ -51,6 +51,12 @@ export async function createApiKey(
 
     // MCP is a paid feature. Block key creation for users without an active subscription.
     const sub = await checkActiveSubscription(userId);
+    if (sub.status === "unavailable") {
+      return {
+        success: false,
+        message: "Could not check your subscription. Please try again.",
+      };
+    }
     if (!sub.isActive) {
       return {
         success: false,

@@ -12,7 +12,6 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type Plan, planPrices } from "@/lib/types/plans";
 import { checkOutSession } from "@/actions/server/stripe/checkOutSession";
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 
 /* Renders feature text, handling **bold** wrapping used in planPrices.
@@ -40,7 +39,7 @@ function savingsPct(plan: Plan): number {
 export default function PricingSection() {
   const [isYearly, setIsYearly] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const { userId, isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
 
   /* The SAVE badge displays the featured tier's savings percentage.
@@ -51,7 +50,10 @@ export default function PricingSection() {
   /* CTA handler. Routes through existing Stripe server actions.
      Unauthenticated users go to /create (Clerk redirects to sign-in).
      Already-subscribed users go to the Stripe customer portal.
-     New subscribers go to Stripe checkout. */
+     New subscribers go to Stripe checkout. The portal action answers
+     "no_subscription" for users with nothing to manage; any other failure,
+     a subscription it could not check included, stops here, so a paying
+     user is never sent to a second checkout. */
   const handleSubscribe = async (plan: Plan) => {
     try {
       setLoadingPlan(plan.title);
@@ -63,17 +65,14 @@ export default function PricingSection() {
         return;
       }
 
-      const sub = await checkActiveSubscription(userId);
-      if (sub.isActive) {
-        const portal = await createCustomerPortal();
-        if (!portal.success) {
-          toast.error(portal.message);
-          setLoadingPlan(null);
-          return;
-        }
-        if (portal.data) {
-          window.location.href = portal.data;
-        }
+      const portal = await createCustomerPortal();
+      if (portal.success) {
+        window.location.href = portal.data;
+        return;
+      }
+      if (portal.reason !== "no_subscription") {
+        toast.error(portal.message);
+        setLoadingPlan(null);
         return;
       }
 

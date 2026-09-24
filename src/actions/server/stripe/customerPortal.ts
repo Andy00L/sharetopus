@@ -11,6 +11,21 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 
 /**
+ * success carries the portal URL in data. A failure with reason
+ * "no_subscription" means the user has nothing to manage (the billing
+ * buttons then offer a plan); "failed" covers everything else, with a
+ * message to show.
+ */
+export type CustomerPortalResult =
+  | { success: true; message: string; data: string }
+  | {
+      success: false;
+      reason: "no_subscription" | "failed";
+      message: string;
+      resetIn?: number;
+    };
+
+/**
  * Creates a Stripe customer portal session for the authenticated user
  *
  * This function handles the entire process of creating a Stripe customer portal session:
@@ -20,16 +35,11 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
  * 4. Creates a Stripe customer portal session with proper return URL
  * 5. Returns the session URL for client-side redirect
  *
- * @returns {Promise<{success: boolean; message: string; data?: string; resetIn?: number}>}
- *   Success response contains the portal URL in the data field
- *   Error response includes descriptive message and optional resetIn time for rate limits
+ * It is also the browser's only way to ask about the user's subscription:
+ * checkActiveSubscription is server-only, and this action reads the user id
+ * from the Clerk session.
  */
-export async function createCustomerPortal(): Promise<{
-  success: boolean;
-  message: string;
-  data?: string;
-  resetIn?: number;
-}> {
+export async function createCustomerPortal(): Promise<CustomerPortalResult> {
   try {
     console.log(
       "[CreateCustomerPortal]: Starting portal session creation process"
@@ -43,6 +53,7 @@ export async function createCustomerPortal(): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Authentication validation failed. Please sign in again.",
       };
     }
@@ -64,6 +75,7 @@ export async function createCustomerPortal(): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Too many requests. Please try again later.",
         resetIn: rateCheck.resetIn,
       };
@@ -73,15 +85,26 @@ export async function createCustomerPortal(): Promise<{
     console.log(
       `[CreateCustomerPortal]: Checking subscription status for user: ${userId}`
     );
-    const hasActiveSubscription = (await checkActiveSubscription(userId)).isActive;
+    const subscription = await checkActiveSubscription(userId);
 
-    if (!hasActiveSubscription) {
+    // Unknown is not "unsubscribed": sending a paying user to checkout
+    // could start a second subscription.
+    if (subscription.status === "unavailable") {
+      return {
+        success: false,
+        reason: "failed",
+        message: "Could not check your subscription. Please try again.",
+      };
+    }
+
+    if (!subscription.isActive) {
       console.error(
         `[CreateCustomerPortal]: User ${userId} does not have an active subscription`
       );
 
       return {
         success: false,
+        reason: "no_subscription",
         message: "No active subscription found. Please subscribe first.",
       };
     }
@@ -112,7 +135,8 @@ export async function createCustomerPortal(): Promise<{
       );
       return {
         success: false,
-        message: "Unable to retrieve your billing information .",
+        reason: "failed",
+        message: "Unable to retrieve your billing information.",
       };
     }
 
@@ -123,6 +147,7 @@ export async function createCustomerPortal(): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Your billing profile is incomplete. Please contact support.",
       };
     }
@@ -155,6 +180,7 @@ export async function createCustomerPortal(): Promise<{
     );
     return {
       success: false,
+      reason: "failed",
       message:
         "An unexpected error occurred. Please try again or contact support.",
     };
