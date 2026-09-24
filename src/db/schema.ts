@@ -637,7 +637,8 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
 
 export const stripe_invoices = pgTable("stripe_invoices", {
   id: uuid().defaultRandom().primaryKey(),
-  user_id: text().notNull(),
+  // Null once the user is deleted: the invoice record outlives the account.
+  user_id: text(),
   stripe_invoice_id: text(),
   amount_paid_cents: integer(),
   currency: text(),

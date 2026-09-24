@@ -148,7 +148,7 @@ erDiagram
 | Table | Purpose | Columns |
 |-------|---------|---------|
 | `stripe_subscriptions` | Active and cancelled subscriptions. | id, user_id, stripe_subscription_id, stripe_customer_id, stripe_price_id, plan, status, start_date, end_date, current_period_end, cancel_reason, metadata, created_at, updated_at |
-| `stripe_invoices` | Payment records (append-only). | id, user_id, stripe_invoice_id, amount_paid_cents, currency, status, metadata, created_at |
+| `stripe_invoices` | Payment outcome per invoice (append-only except failed to succeeded). | id, user_id (null once the user is deleted), stripe_invoice_id, amount_paid_cents, currency, status, metadata, created_at |
 | `usage_quotas` | Monthly action counts for quota enforcement. | principal_id, period, action, count |
 | `platform_quotas` | Per-platform daily and burst rate caps. | platform, daily_cap, burst_cap_60s, notes, updated_at |
 | `referral_codes` | One referral code per user. | user_id (PK), code, created_at |
@@ -235,13 +235,19 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 
 ## Append-only tables
 
-Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
+Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a trigger, so Postgres itself refuses an UPDATE or DELETE, with three exceptions:
+
+- a retention DELETE in a transaction that set `app.allow_append_only_delete = 'on'`;
+- an ON DELETE SET NULL foreign key detaching rows from a deleted user, principal, API key, OAuth client, wallet or charge (it may null only that foreign key column);
+- on `stripe_invoices`, a failed invoice turning succeeded once it is paid.
+
+Before migration 0002 (2026-09-24) the trigger also refused the ON DELETE SET NULL updates, so deleting a user who had an invoice or an MCP audit row failed. The other three tables are append-only by convention: no code updates them.
 
 | Table | What it logs |
 |-------|-------------|
 | `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency). The insert in `logToolCall` (`src/lib/mcp/audit.ts`) is awaited. |
 | `rest_audit_log` | Every REST API request (endpoint, method, status code, latency). Insert via `writeRestAuditLog` (`src/lib/api/rest/audit/writeRestAuditLog.ts`). |
-| `stripe_invoices` | Stripe payment records. |
+| `stripe_invoices` | The payment outcome of each Stripe invoice. `failed` becomes `succeeded` when the invoice is paid later; nothing else changes. `user_id` is nulled when the user is deleted. |
 | `x402_access_log` | x402 endpoint access audit trail. |
 | `x402_refunds` | x402 refund records. |
 | `sanctions_screenings` | Wallet sanctions check results. |
@@ -271,7 +277,8 @@ Triggers:
 | Trigger function | Fires on | Effect |
 |------------------|----------|--------|
 | `handle_updated_at` | UPDATE on `analytics_metrics`, `pricing_actions`, `principals`, `scheduled_posts`, `social_accounts`, `social_connections`, `stripe_subscriptions`, `users`, `wallet_credits` | Sets `updated_at`, so code never writes it. |
-| `reject_mutation` | UPDATE or DELETE on the five trigger-protected append-only tables | Raises an error, except for a DELETE in a transaction that set `app.allow_append_only_delete = 'on'` (the retention crons do). |
+| `reject_mutation` | UPDATE or DELETE on `mcp_audit_log`, `x402_access_log`, `x402_refunds` and `sanctions_screenings`; DELETE on `stripe_invoices` | Raises an error, except for a DELETE in a transaction that set `app.allow_append_only_delete = 'on'` (the retention crons do), and an update by an ON DELETE SET NULL foreign key. The trigger's arguments name the columns such an update may null; it must run inside the foreign key's trigger (`pg_trigger_depth() > 1`) and change nothing else. |
+| `stripe_invoices_guard` | UPDATE on `stripe_invoices` | Allows `failed` to become `succeeded` (status, amount and currency may change) and ON DELETE SET NULL of `user_id`; raises on anything else. |
 | `enforce_principal_kind` | INSERT, or UPDATE of `principal_id`, on `mcp_audit_log` and `x402_charges` | Refuses a principal that is not `clerk` (audit log) or not `wallet` (charges). |
 | `enforce_api_key_kind_matrix` | INSERT, or UPDATE of `principal_id` or `kind`, on `api_keys` | `rest` and `mcp` keys need a `clerk` principal, `wallet` keys a `wallet` principal. |
 | `social_connections_status_guard` | UPDATE on `social_connections` | `connected`, `expired`, `failed` and `revoked` are terminal statuses. |

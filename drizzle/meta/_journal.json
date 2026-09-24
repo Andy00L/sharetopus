@@ -15,6 +15,13 @@
       "when": 1790236510310,
       "tag": "0001_drop_unused_access",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790262587910,
+      "tag": "0002_append_only_detach_and_invoice_payment",
+      "breakpoints": true
     }
   ]
 }

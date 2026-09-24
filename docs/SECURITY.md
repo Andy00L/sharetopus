@@ -56,7 +56,7 @@ MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth 
 | 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/storage/generate-view-url`, `/api/media` |
 | 7 | TikTok media URL forgery | HMAC-SHA256 + 30-min expiry | `buildProxiedTikTokMediaUrl.ts` |
 | 8 | Media proxy path traversal | Block `..`, `//`, leading `/` | `/api/media/route.ts` |
-| 9 | Audit log tampering | Append-only table (`reject_mutation` DB trigger refuses UPDATE and DELETE) | `mcp_audit_log` table |
+| 9 | Audit log tampering | Append-only table (`reject_mutation` DB trigger refuses UPDATE and DELETE, except retention deletes and ON DELETE SET NULL detaching a deleted principal) | `mcp_audit_log` table |
 | 10 | Concurrent quota race condition | `atomic_increment_quota` Postgres function | `entitlement.ts` |
 | 11 | Monthly cap exhaustion | Per-tier quotas enforced atomically | `entitlement.ts` |
 | 12 | IP tracking privacy leak | SHA-256 hash with configurable salt | `ipHash.ts` |
@@ -393,7 +393,13 @@ Verification: recipients should compute `HMAC-SHA256(rawBody, subscription_secre
 
 ## Append-Only Audit
 
-Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
+Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a trigger, so Postgres itself refuses an UPDATE or DELETE. It makes three exceptions:
+
+- a retention DELETE that opts in;
+- a foreign key's ON DELETE SET NULL, which may only null that key, so deleting a user detaches their rows instead of failing;
+- on `stripe_invoices`, a failed invoice turning succeeded once paid.
+
+The trigger functions are listed in [DATABASE.md](./DATABASE.md#functions-and-triggers). The other three tables are append-only by convention: no code updates them.
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
@@ -471,7 +477,7 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 
 - **PII redaction in audit logs.** Token, password, secret, JWT patterns are redacted before insert.
 - **IP hashing.** Raw client IPs are never stored. SHA-256 hashed with configurable salt.
-- **Append-only financial tables.** `stripe_invoices` cannot be updated or deleted at the DB layer.
+- **Append-only financial tables.** At the DB layer, `stripe_invoices` rows cannot be deleted. The only allowed updates are a failed invoice turning succeeded and `user_id` being nulled when its user is deleted.
 - **90-day log retention.** Daily crons delete `stripe_webhook_events`, `mcp_audit_log`, `x402_access_log` and `rest_audit_log` rows older than 90 days. The append-only trigger still refuses any other UPDATE or DELETE on its tables.
 
 ### Deferred (until x402 ships)
