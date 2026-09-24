@@ -31,7 +31,7 @@ export async function disconnectSocialAccount(
     );
 
     // Verify user is properly authenticated
-    if (!(await authCheck(userId))) {
+    if (!userId || !(await authCheck(userId))) {
       return {
         success: false,
         message: "Authentication validation failed. Please sign in again.",
@@ -70,13 +70,21 @@ export async function disconnectSocialAccount(
         .where(eq(social_accounts.id, accountId))
         .limit(1),
     );
-    const account = accountRows?.[0];
-
-    if (fetchError || !account) {
+    // A failed read is not a missing account: "already disconnected" would
+    // tell the user their account is gone while it is still connected.
+    if (fetchError) {
       console.error(
         `[disconnectSocialAccount]: Account fetch error:`,
-        fetchError?.message || "Account not found",
+        fetchError.message,
       );
+      return {
+        success: false,
+        message: "Could not load the account. Please try again.",
+      };
+    }
+
+    const account = accountRows[0];
+    if (!account) {
       return {
         success: false,
         message:
@@ -148,7 +156,7 @@ export async function disconnectSocialAccount(
 
     const deleteResults = await Promise.allSettled(
       filesToCheck.map((filePath) =>
-        deleteSupabaseFile(userId!, filePath, false),
+        deleteSupabaseFile(userId, filePath, false),
       ),
     );
 

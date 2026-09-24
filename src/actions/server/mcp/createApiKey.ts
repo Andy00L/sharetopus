@@ -10,6 +10,9 @@ import { generateApiKey } from "@/lib/api/tokens";
 import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
+/** Unrevoked MCP keys one user may hold at a time (docs/AUTH.md, API key lifecycle). */
+const MAX_ACTIVE_MCP_KEYS = 10;
+
 /**
  * Creates a new MCP API key for the authenticated user.
  *
@@ -77,8 +80,7 @@ export async function createApiKey(
       };
     }
 
-    // Check existing key count (limit to 10 active keys per user)
-    const { data: count } = await runQuery(
+    const { data: activeKeyCount, error: countError } = await runQuery(
       db.$count(
         api_keys,
         and(
@@ -89,10 +91,19 @@ export async function createApiKey(
       ),
     );
 
-    if ((count ?? 0) >= 10) {
+    // A failed count used to read as zero and let the key past the limit.
+    if (countError) {
+      console.error("[createApiKey] Active key count failed:", countError.message);
       return {
         success: false,
-        message: "Maximum 10 active MCP keys allowed. Revoke an existing key first.",
+        message: "Could not check how many keys you have. Please try again.",
+      };
+    }
+
+    if (activeKeyCount >= MAX_ACTIVE_MCP_KEYS) {
+      return {
+        success: false,
+        message: `Maximum ${MAX_ACTIVE_MCP_KEYS} active MCP keys allowed. Revoke an existing key first.`,
       };
     }
 

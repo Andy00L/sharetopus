@@ -253,7 +253,7 @@ stateDiagram-v2
 
 - Maximum **10 active MCP keys** per user
 - Creating a key requires an **active Stripe subscription**
-- Revocation is a soft delete (`revoked_at` set, row kept for audit)
+- Revocation is a soft delete (`revoked_at` set, row kept for audit). REST and MCP keys both go through `revokeApiKeyForPrincipal`, one UPDATE that checks ownership and revokes. When the database fails, the answer says the key may still work and asks for a retry; it never claims the key is already revoked
 - `last_used_at` and `last_used_ip` are updated via `waitUntil` (fire-and-forget, does not block the auth response)
 
 ---
@@ -401,6 +401,7 @@ EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Ba
 | `src/lib/mcp/ipHash.ts` | `hashClientIp()`, salt handling |
 | `src/lib/mcp/tokens.ts` | `isMcpApiKeyToken()`, `hashToken()`, `generateMcpApiKey()` |
 | `src/actions/server/mcp/createApiKey.ts` | API key creation server action |
+| `src/lib/api/revokeApiKeyForPrincipal.ts` | Key revocation shared by `revokeApiKey` (MCP) and `revokeRestApiKey` |
 | `src/actions/server/data/demoteOauthClientsOnCancel.ts` | Demote verified clients on subscription cancel |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | Daily stale OAuth client cleanup |
 | `src/app/.well-known/oauth-protected-resource/route.ts` | RFC 9728 OAuth discovery |

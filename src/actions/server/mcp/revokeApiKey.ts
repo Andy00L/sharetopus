@@ -1,20 +1,15 @@
 "use server";
 
-import { and, eq, isNull } from "drizzle-orm";
-
 import { authCheck } from "@/actions/server/authCheck";
-import { db, runQuery } from "@/db/client";
-import { api_keys } from "@/db/schema";
+import { revokeApiKeyForPrincipal } from "@/lib/api/revokeApiKeyForPrincipal";
 
 /**
- * Revokes an MCP API key by setting revoked_at.
+ * Revokes one of the caller's MCP API keys. The key row stays for audit
+ * purposes; resolveMcpPrincipal filters on revoked_at IS NULL, so the key
+ * stops authenticating at once.
  *
- * The key row stays in the table for audit purposes but will no longer
- * pass the auth check in resolveMcpPrincipal because we filter on
- * revoked_at IS NULL.
- *
- * Called by: src/app/(protected)/integrations/page.tsx
- * Tables touched: api_keys (update)
+ * Called by: src/app/(protected)/integrations/components/ApiKeysCard.tsx
+ * Tables touched: api_keys (update, through revokeApiKeyForPrincipal)
  */
 export async function revokeApiKey(
   userId: string | null,
@@ -30,44 +25,7 @@ export async function revokeApiKey(
       return { success: false, message: "Key ID is required." };
     }
 
-    // Verify ownership before revoking
-    const { data: existingKeys, error: fetchError } = await runQuery(
-      db
-        .select({ id: api_keys.id })
-        .from(api_keys)
-        .where(
-          and(
-            eq(api_keys.id, keyId),
-            eq(api_keys.principal_id, userId),
-            eq(api_keys.kind, "mcp"),
-            isNull(api_keys.revoked_at),
-          ),
-        )
-        .limit(1),
-    );
-
-    if (fetchError || !existingKeys[0]) {
-      return {
-        success: false,
-        message: "Key not found, already revoked, or does not belong to you.",
-      };
-    }
-
-    const { error: updateError } = await runQuery(
-      db
-        .update(api_keys)
-        .set({ revoked_at: new Date().toISOString() })
-        .where(eq(api_keys.id, keyId)),
-    );
-
-    if (updateError) {
-      return {
-        success: false,
-        message: `Failed to revoke key: ${updateError.message}`,
-      };
-    }
-
-    return { success: true, message: "API key revoked." };
+    return await revokeApiKeyForPrincipal(userId, keyId, "mcp");
   } catch (err) {
     console.error(
       "[revokeApiKey] Unexpected error:",
