@@ -6,7 +6,13 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
+import {
+  REGISTRY_POST_OPTION_FIELDS,
+  buildRegistryPostOptions,
+  refinePostTarget,
+  type RegistryPostOptionInput,
+} from "@/lib/platforms/postTargetOptions";
 import type { MediaType, Platform } from "@/db/schema";
 import { withMcpTool } from "../withMcpTool";
 
@@ -23,7 +29,7 @@ type SchedulePostArgs = {
   pinterest_board_name?: string;
   pinterest_link?: string;
   idempotency_key?: string;
-};
+} & RegistryPostOptionInput;
 
 /**
  * MCP tool: schedule a single post for future publishing.
@@ -42,7 +48,7 @@ export function registerSchedulePost(server: McpServer): void {
     {
       title: "Schedule Post",
       description:
-        "Schedule a post for publishing at a future time. For media posts, use attach_media_from_url first to upload your media to Supabase Storage. For Pinterest, provide pinterest_board_id and optionally pinterest_link. Use list_connections to find available social account IDs.",
+        "Schedule a post for publishing at a future time, on any connected platform. For media posts, use attach_media_from_url first to upload your media to Supabase Storage. For Pinterest, provide pinterest_board_id and optionally pinterest_link; reddit needs subreddit, lemmy community_id, gmb location_name. Use list_connections to find available social account IDs.",
       inputSchema: z.object({
         social_account_id: z
           .guid()
@@ -50,7 +56,7 @@ export function registerSchedulePost(server: McpServer): void {
             "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
           ),
         platform: z
-          .enum(POSTING_PLATFORMS)
+          .enum(SCHEDULABLE_PLATFORMS)
           .describe(
             "Target social media platform. Must match the platform of the provided social_account_id.",
           ),
@@ -62,13 +68,13 @@ export function registerSchedulePost(server: McpServer): void {
         post_type: z
           .enum(["text", "image", "video"])
           .describe(
-            "Type of post. Text posts are supported on LinkedIn, X, and Facebook. Pinterest/TikTok/Instagram require image or video. YouTube requires video.",
+            "Type of post. Platforms accept different types (YouTube takes video only; Pinterest, TikTok, Instagram and Dribbble need media; Twitch and Kick take text only). An unsupported type is rejected.",
           ),
         title: z
           .string()
           .optional()
           .describe(
-            "Optional post title. Used by Pinterest (pin title) and YouTube. Ignored by LinkedIn/TikTok/Instagram which only use description.",
+            "Post title. Used by Pinterest, YouTube and the blog platforms. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
           ),
         description: z
           .string()
@@ -116,7 +122,8 @@ export function registerSchedulePost(server: McpServer): void {
           .describe(
             "Optional client-supplied key for safe retries. Same key + same principal returns the existing post instead of inserting a duplicate. Strongly recommended for agent retries after network errors or timeouts.",
           ),
-      }),
+        ...REGISTRY_POST_OPTION_FIELDS,
+      }).superRefine(refinePostTarget),
       annotations: {
         title: "Schedule Post",
         readOnlyHint: false,
@@ -144,7 +151,7 @@ export function registerSchedulePost(server: McpServer): void {
         title: args.title ?? null,
         description: args.description,
         mediaStoragePath: args.media_storage_path,
-        postOptions: pinterestOptions,
+        postOptions: pinterestOptions ?? buildRegistryPostOptions(args),
         batch_id: args.batch_id ?? generateBatchId(),
         idempotency_key: args.idempotency_key,
       };

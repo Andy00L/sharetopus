@@ -1,11 +1,15 @@
 // src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
 import "server-only";
 
-import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 
+import {
+  describeAccountMismatch,
+  loadOwnedAccountPlatforms,
+} from "@/actions/server/data/loadOwnedAccountPlatforms";
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
-import { platform_quotas, scheduled_posts, social_accounts } from "@/db/schema";
+import { platform_quotas, scheduled_posts } from "@/db/schema";
 import type { CreatedVia, Json } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type { PreflightResult } from "@/lib/types/preflight";
@@ -39,13 +43,15 @@ export type SchedulePostBatchResult = {
  *
  * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
  * **Rate limiting:** 10 calls per 60s per source (anti-spam). N posts = 1 call.
- * **Tables:** social_accounts (ownership), platform_quotas (daily cap),
- *             scheduled_posts (bulk insert).
+ * **Tables:** social_accounts (ownership + platform match), platform_quotas
+ *             (daily cap), scheduled_posts (bulk insert).
  *
  * Flow:
  *   1. Size + per-post field validation. Partial success accepted.
  *   2. Rate limit (anti-spam button mash, not anti-batch).
- *   3. Ownership check: 1 query for all unique social_account_ids.
+ *   3. Ownership + platform match: 1 query for all unique
+ *      social_account_ids; a post whose account is on another platform is
+ *      rejected, as directPostBatch does.
  *   4. Platform daily quota: existing posts in next 24h + new <= daily_cap.
  *   5. Build rows with idempotency_key = `${batchId}:${index}`.
  *   6. Bulk insert, ON CONFLICT (principal_id, idempotency_key) DO NOTHING.
@@ -143,8 +149,8 @@ export async function schedulePostBatch(
       };
     }
 
-    // Step 3: ownership check (1 query, IN(...))
-    const ownershipResult = await checkOwnership(
+    // Step 3: ownership + platform match (1 query, IN(...))
+    const ownershipResult = await loadOwnedAccountPlatforms(
       validPosts.map((post) => post.socialAccountId),
       principalId,
     );
@@ -169,13 +175,14 @@ export async function schedulePostBatch(
 
     const ownedPosts: SchedulePostData[] = [];
     for (const post of validPosts) {
-      if (ownershipResult.ownedIds.has(post.socialAccountId)) {
-        ownedPosts.push(post);
+      const mismatch = describeAccountMismatch(
+        ownershipResult.platformByAccountId,
+        post,
+      );
+      if (mismatch) {
+        rejectedPosts.push({ socialAccountId: post.socialAccountId, reason: mismatch });
       } else {
-        rejectedPosts.push({
-          socialAccountId: post.socialAccountId,
-          reason: "You do not own this social account.",
-        });
+        ownedPosts.push(post);
       }
     }
 
@@ -353,11 +360,12 @@ export async function schedulePostBatch(
 }
 
 /**
- * Pre-payment check for one post: the field, media-path, ownership and
- * daily-quota rules schedulePostBatch applies, plus a duplicate idempotency
- * key, without the rate limit or the insert. A paid caller (x402 schedule)
- * runs it before settlement so a post that cannot be scheduled costs
- * nothing. schedulePostBatch still enforces the same rules when it runs.
+ * Pre-payment check for one post: the field, media-path, ownership,
+ * platform-match and daily-quota rules schedulePostBatch applies, plus a
+ * duplicate idempotency key, without the rate limit or the insert. A paid
+ * caller (x402 schedule) runs it before settlement so a post that cannot be
+ * scheduled costs nothing. schedulePostBatch still enforces the same rules
+ * when it runs.
  */
 export async function preflightSchedulePost(
   post: SchedulePostData,
@@ -383,16 +391,25 @@ export async function preflightSchedulePost(
     }
   }
 
-  const ownershipResult = await checkOwnership([post.socialAccountId], principalId);
+  const ownershipResult = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
   if (!ownershipResult.success) {
     return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: ownershipResult.message };
   }
-  if (!ownershipResult.ownedIds.has(post.socialAccountId)) {
+  const accountPlatform = ownershipResult.platformByAccountId.get(post.socialAccountId);
+  if (!accountPlatform) {
     return {
       ok: false,
       httpStatus: 403,
       errorKind: "account_not_owned",
       message: "This social account does not belong to the paying wallet.",
+    };
+  }
+  if (accountPlatform !== post.platform) {
+    return {
+      ok: false,
+      httpStatus: 400,
+      errorKind: "platform_mismatch",
+      message: `Account platform is ${accountPlatform}, post declared ${post.platform}.`,
     };
   }
 
@@ -484,44 +501,6 @@ function validatePostFields(
   }
 
   return null;
-}
-
-/**
- * Single query: returns the set of social_account_ids owned by principalId.
- */
-async function checkOwnership(
-  socialAccountIds: string[],
-  principalId: string,
-): Promise<
-  { success: true; ownedIds: Set<string> } | { success: false; message: string }
-> {
-  const uniqueIds = [...new Set(socialAccountIds)];
-
-  // Deleted accounts cannot publish; directPostBatch filters them the same way.
-  const { data: ownedRows, error } = await runQuery(
-    db
-      .select({ id: social_accounts.id })
-      .from(social_accounts)
-      .where(
-        and(
-          eq(social_accounts.principal_id, principalId),
-          isNull(social_accounts.deleted_at),
-          inArray(social_accounts.id, uniqueIds),
-        ),
-      ),
-  );
-
-  if (error) {
-    return {
-      success: false,
-      message: `Ownership check failed: ${error.message}`,
-    };
-  }
-
-  return {
-    success: true,
-    ownedIds: new Set(ownedRows.map((row) => row.id)),
-  };
 }
 
 /**

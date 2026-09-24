@@ -5,7 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 import type { Platform, PostStatus } from "@/db/schema";
 
 type ListScheduledPostsArgs = {
@@ -32,7 +32,7 @@ export function registerListScheduledPosts(server: McpServer): void {
         "List your scheduled posts. Optional filter by platform or status.",
       inputSchema: z.object({
         platform: z
-          .enum(POSTING_PLATFORMS)
+          .enum(SCHEDULABLE_PLATFORMS)
           .optional()
           .describe("Filter by platform"),
         status: z

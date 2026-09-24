@@ -5,7 +5,13 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
+import {
+  REGISTRY_POST_OPTION_FIELDS,
+  buildRegistryPostOptions,
+  refinePostTarget,
+  type RegistryPostOptionInput,
+} from "@/lib/platforms/postTargetOptions";
 import type { MediaType, Platform } from "@/db/schema";
 import { withMcpTool } from "../withMcpTool";
 
@@ -22,7 +28,7 @@ type PostNowArgs = {
   pinterest_link?: string;
   batch_id?: string;
   idempotency_key?: string;
-};
+} & RegistryPostOptionInput;
 
 /**
  * MCP tool: publish ONE post immediately. Wraps the single post into a
@@ -38,19 +44,25 @@ export function registerPostNow(server: McpServer): void {
     {
       title: "Post Now",
       description:
-        "Publish ONE post to ONE platform immediately. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
+        "Publish ONE post to ONE platform immediately, on any connected platform. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. reddit needs subreddit, lemmy community_id, gmb location_name. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
       inputSchema: z.object({
         social_account_id: z
           .guid()
           .describe("ID of the social account to post to"),
         platform: z
-          .enum(POSTING_PLATFORMS)
+          .enum(SCHEDULABLE_PLATFORMS)
           .describe("Target platform"),
-        post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
+        post_type: z
+          .enum(["text", "image", "video"])
+          .describe(
+            "Type of post. An unsupported type for the platform is rejected.",
+          ),
         title: z
           .string()
           .optional()
-          .describe("Post title (used by some platforms)"),
+          .describe(
+            "Post title. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+          ),
         description: z.string().nullable().describe("Post body text / caption"),
         media_storage_path: z
           .string()
@@ -100,7 +112,8 @@ export function registerPostNow(server: McpServer): void {
           .describe(
             "Optional client-supplied key for safe retries. Same key + same principal returns the existing event_id instead of dispatching a duplicate. Recommended for agent retries on network errors.",
           ),
-      }),
+        ...REGISTRY_POST_OPTION_FIELDS,
+      }).superRefine(refinePostTarget),
       annotations: {
         title: "Post Now",
         readOnlyHint: false,
@@ -122,6 +135,7 @@ export function registerPostNow(server: McpServer): void {
         pinterestBoardName: args.pinterest_board_name,
         pinterestLink: args.pinterest_link,
         idempotency_key: args.idempotency_key,
+        postOptions: buildRegistryPostOptions(args),
       };
 
       const postBatchResult = await directPostBatch(

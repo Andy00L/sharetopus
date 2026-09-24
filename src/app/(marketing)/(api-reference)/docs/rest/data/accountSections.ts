@@ -154,7 +154,7 @@ export const REST_ACCOUNT_SECTION: DocsSection = {
               type: "string",
               required: false,
               description:
-                "Any of linkedin, tiktok, pinterest, instagram, facebook, threads, youtube, x.",
+                "Any platform a post can target: linkedin, tiktok, pinterest, instagram, youtube, x, facebook, or a registry provider id (reddit, bluesky, threads, and the rest).",
             },
             {
               name: "limit",

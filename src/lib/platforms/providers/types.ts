@@ -75,6 +75,12 @@ export type ProviderPostingRules = {
    * bytes, so the short-lived URL and normal cleanup are safe.
    */
   hotlinksMedia?: true;
+  /**
+   * True when publish refuses a post without a title. The REST and MCP
+   * post schemas reject such a post when it is submitted
+   * (findPostTargetIssues); the provider's publish keeps its own check.
+   */
+  titleRequired?: true;
 };
 
 /**

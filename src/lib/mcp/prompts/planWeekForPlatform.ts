@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 
 /**
  * Prompt: plan a week of content for a specific platform.
@@ -17,7 +17,7 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
         "Plan a full week of content for a specific social platform around a chosen theme",
       argsSchema: z.object({
         platform: z
-          .enum(POSTING_PLATFORMS)
+          .enum(SCHEDULABLE_PLATFORMS)
           .describe("Which platform to plan for"),
         theme: z.string().describe("The content theme or topic for the week"),
       }),

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import {
+  POSTING_PLATFORMS,
+  SCHEDULABLE_PLATFORMS,
+} from "@/lib/platforms/capabilities";
 import {
   CreatedAtCursorSchema,
   MetricDateCursorSchema,
@@ -23,16 +26,8 @@ export const AnalyticsQuerySchema = z.object({
 
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuerySchema>;
 
-const ContentHistoryPlatformEnum = z.enum([
-  "linkedin",
-  "tiktok",
-  "pinterest",
-  "instagram",
-  "facebook",
-  "threads",
-  "youtube",
-  "x",
-]);
+/** content_history holds posts from every platform the worker publishes to. */
+const ContentHistoryPlatformEnum = z.enum(SCHEDULABLE_PLATFORMS);
 
 /**
  * Query schema for GET /v1/content-history.

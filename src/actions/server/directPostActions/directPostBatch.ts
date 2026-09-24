@@ -1,14 +1,15 @@
 import "server-only";
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import {
-  CAPTION_LIMITS,
-  type CaptionPlatform,
-} from "@/components/core/create/constants/captionLimits";
+  describeAccountMismatch,
+  loadOwnedAccountPlatforms,
+} from "@/actions/server/data/loadOwnedAccountPlatforms";
+import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
-import { pending_direct_posts, social_accounts } from "@/db/schema";
+import { pending_direct_posts } from "@/db/schema";
 import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
@@ -167,8 +168,8 @@ export async function directPostBatch(
     }
 
     // Step 3: ownership + platform match
-    const ownership = await checkOwnershipAndPlatformMatch(
-      validPosts,
+    const ownership = await loadOwnedAccountPlatforms(
+      validPosts.map((post) => post.socialAccountId),
       principalId,
     );
     if (!ownership.success) {
@@ -188,23 +189,11 @@ export async function directPostBatch(
 
     const ownedPosts: DirectPostData[] = [];
     for (const post of validPosts) {
-      if (ownership.ownedIds.has(post.socialAccountId)) {
-        const expectedPlatform = ownership.platformByAccountId.get(
-          post.socialAccountId,
-        );
-        if (expectedPlatform && expectedPlatform !== post.platform) {
-          rejected.push({
-            socialAccountId: post.socialAccountId,
-            reason: `Account platform is ${expectedPlatform}, post declared ${post.platform}.`,
-          });
-        } else {
-          ownedPosts.push(post);
-        }
+      const mismatch = describeAccountMismatch(ownership.platformByAccountId, post);
+      if (mismatch) {
+        rejected.push({ socialAccountId: post.socialAccountId, reason: mismatch });
       } else {
-        rejected.push({
-          socialAccountId: post.socialAccountId,
-          reason: "You do not own this social account.",
-        });
+        ownedPosts.push(post);
       }
     }
 
@@ -318,11 +307,12 @@ export async function preflightDirectPost(
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
   }
 
-  const ownership = await checkOwnershipAndPlatformMatch([post], principalId);
+  const ownership = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
   if (!ownership.success) {
     return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: ownership.message };
   }
-  if (!ownership.ownedIds.has(post.socialAccountId)) {
+  const accountPlatform = ownership.platformByAccountId.get(post.socialAccountId);
+  if (!accountPlatform) {
     return {
       ok: false,
       httpStatus: 403,
@@ -330,8 +320,7 @@ export async function preflightDirectPost(
       message: "This social account does not belong to the paying wallet.",
     };
   }
-  const accountPlatform = ownership.platformByAccountId.get(post.socialAccountId);
-  if (accountPlatform && accountPlatform !== post.platform) {
+  if (accountPlatform !== post.platform) {
     return {
       ok: false,
       httpStatus: 400,
@@ -408,59 +397,16 @@ function validatePostFields(
     return "Pinterest-specific fields are only valid when platform='pinterest'.";
   }
 
-  // Caption length
+  // Caption length. Registry platforms answer from their catalog rules; the
+  // legacy map alone gave every one of them the 2200 default.
   if (post.description) {
-    const limit =
-      CAPTION_LIMITS[post.platform as CaptionPlatform] ??
-      CAPTION_LIMITS.default;
+    const limit = resolvePlatformTextLimit(post.platform);
     if (post.description.length > limit) {
       return `Caption exceeds ${post.platform} limit of ${limit} chars (got ${post.description.length}).`;
     }
   }
 
   return null;
-}
-
-async function checkOwnershipAndPlatformMatch(
-  posts: DirectPostData[],
-  principalId: string,
-): Promise<
-  | {
-      success: true;
-      ownedIds: Set<string>;
-      platformByAccountId: Map<string, string>;
-    }
-  | { success: false; message: string }
-> {
-  const uniqueIds = [...new Set(posts.map((post) => post.socialAccountId))];
-
-  const { data: ownedRows, error } = await runQuery(
-    db
-      .select({ id: social_accounts.id, platform: social_accounts.platform })
-      .from(social_accounts)
-      .where(
-        and(
-          eq(social_accounts.principal_id, principalId),
-          isNull(social_accounts.deleted_at),
-          inArray(social_accounts.id, uniqueIds),
-        ),
-      ),
-  );
-
-  if (error) {
-    return {
-      success: false,
-      message: `Ownership check failed: ${error.message}`,
-    };
-  }
-
-  const ownedIds = new Set(ownedRows.map((row) => row.id));
-  const platformByAccountId = new Map<string, string>();
-  for (const row of ownedRows) {
-    platformByAccountId.set(row.id, row.platform);
-  }
-
-  return { success: true, ownedIds, platformByAccountId };
 }
 
 async function buildMediaUrlsCached(

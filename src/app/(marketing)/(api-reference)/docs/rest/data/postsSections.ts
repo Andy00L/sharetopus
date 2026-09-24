@@ -92,7 +92,7 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       type: "string",
       required: true,
       description:
-        "linkedin, tiktok, pinterest, instagram, youtube, x, or facebook. Must match the account.",
+        "linkedin, tiktok, pinterest, instagram, youtube, x, facebook, or a registry provider id (reddit, bluesky, mastodon, threads, lemmy, gmb, and the rest). Must match the account.",
     },
     {
       name: "post_type",
@@ -112,7 +112,8 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       name: "title",
       type: "string",
       required: false,
-      description: "Max 500 characters, where the platform supports one.",
+      description:
+        "Max 500 characters, where the platform supports one. Required on reddit, lemmy, devto, hashnode, medium, wordpress, and dribbble.",
     },
     {
       name: "media_storage_path",
@@ -158,6 +159,60 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       required: false,
       description: "Outbound link for the pin, max 2048 characters.",
     },
+    {
+      name: "subreddit",
+      type: "string",
+      required: false,
+      description: "Required when platform is reddit. 2 to 50 characters.",
+    },
+    {
+      name: "flair_id",
+      type: "string",
+      required: false,
+      description: "Reddit flair id.",
+    },
+    {
+      name: "community_id",
+      type: "integer",
+      required: false,
+      description: "Required when platform is lemmy.",
+    },
+    {
+      name: "publication_id",
+      type: "string",
+      required: false,
+      description: "Hashnode publication; defaults to the account's first publication.",
+    },
+    {
+      name: "blog",
+      type: "string",
+      required: false,
+      description: "Tumblr blog name; defaults to the blog stored when the account connected.",
+    },
+    {
+      name: "location_name",
+      type: "string",
+      required: false,
+      description: 'Required when platform is gmb. Shaped "locations/<id>".',
+    },
+    {
+      name: "organization_id",
+      type: "string",
+      required: false,
+      description: "LinkedIn Page organization; defaults to the connected organization.",
+    },
+    {
+      name: "canonical_url",
+      type: "string (url)",
+      required: false,
+      description: "dev.to canonical URL, max 2048 characters.",
+    },
+    {
+      name: "tags",
+      type: "string[]",
+      required: false,
+      description: "dev.to tags, at most 4, each 1 to 50 characters.",
+    },
   ],
 };
 
@@ -176,7 +231,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts",
       title: "Create a post",
       description:
-        "Schedules a post (scheduled_at in the future) or publishes immediately (scheduled_at omitted). Validation is platform-aware: unsupported media types and missing Pinterest boards are rejected with 400 validation_error.",
+        "Schedules a post (scheduled_at in the future) or publishes immediately (scheduled_at omitted). Validation is platform-aware: unsupported media types, a missing title where the platform requires one, and a missing required target (Pinterest board, subreddit, Lemmy community, Google Business location) are rejected with 400 validation_error. A post whose account is on another platform than platform is refused before anything is scheduled.",
       sourceRef:
         "src/app/api/v1/posts/route.ts (POST), src/lib/api/rest/validation/schemas.ts (PostCreateInputSchema)",
       paramTables: [CREATE_BODY_FIELDS, POST_DTO_FIELDS],

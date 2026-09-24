@@ -5,7 +5,12 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
+import {
+  REGISTRY_POST_OPTION_FIELDS,
+  buildRegistryPostOptions,
+  refinePostTarget,
+} from "@/lib/platforms/postTargetOptions";
 import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
@@ -13,10 +18,17 @@ const MAX_POSTS_PER_CALL = 30;
 const postNowItemSchema = z.object({
   social_account_id: z.guid().describe("UUID of the social account"),
   platform: z
-    .enum(POSTING_PLATFORMS)
+    .enum(SCHEDULABLE_PLATFORMS)
     .describe("Target platform"),
-  post_type: z.enum(["text", "image", "video"]).describe("Type of post"),
-  title: z.string().optional().describe("Post title (used by some platforms)"),
+  post_type: z
+    .enum(["text", "image", "video"])
+    .describe("Type of post. An unsupported type for the platform is rejected."),
+  title: z
+    .string()
+    .optional()
+    .describe(
+      "Post title. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+    ),
   description: z.string().nullable().describe("Post body text / caption"),
   media_storage_path: z
     .string()
@@ -42,7 +54,8 @@ const postNowItemSchema = z.object({
     .max(2048)
     .optional()
     .describe("Pinterest pin destination URL. Max 2048 chars."),
-});
+  ...REGISTRY_POST_OPTION_FIELDS,
+}).superRefine(refinePostTarget);
 
 type BulkPostNowItemInput = z.infer<typeof postNowItemSchema>;
 
@@ -71,7 +84,7 @@ export function registerBulkPostNow(server: McpServer): void {
     "bulk_post_now",
     {
       title: "Bulk Post Now",
-      description: `Publish up to ${MAX_POSTS_PER_CALL} posts immediately across multiple platforms and accounts. Requires Creator plan or higher. Reuses one media upload across N posts (one entry in the array = one platform+account combo). For Pinterest entries, include pinterest_board_id. Returns event IDs; check list_content_history in 30-60s to confirm.`,
+      description: `Publish up to ${MAX_POSTS_PER_CALL} posts immediately across multiple platforms and accounts, on any connected platforms. Requires Creator plan or higher. Reuses one media upload across N posts (one entry in the array = one platform+account combo). Per post: Pinterest needs pinterest_board_id, reddit subreddit, lemmy community_id, gmb location_name. Returns event IDs; check list_content_history in 30-60s to confirm.`,
       inputSchema: z.object({
         posts: z
           .array(postNowItemSchema)
@@ -112,6 +125,7 @@ export function registerBulkPostNow(server: McpServer): void {
             pinterestBoardId: inputPost.pinterest_board_id,
             pinterestBoardName: inputPost.pinterest_board_name,
             pinterestLink: inputPost.pinterest_link,
+            postOptions: buildRegistryPostOptions(inputPost),
           }),
         );
 

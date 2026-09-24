@@ -140,6 +140,15 @@ export function platformHotlinksMedia(platform: string): boolean {
   return registryMetadata?.rules.hotlinksMedia === true;
 }
 
+/**
+ * True when the platform's publish refuses a post without a title. Only
+ * registry providers declare it (catalog rules.titleRequired); the legacy
+ * platforms all publish without one.
+ */
+export function platformRequiresTitle(platform: string): boolean {
+  return getProviderMetadata(platform)?.rules.titleRequired === true;
+}
+
 /** Platforms that accept the given media type, in POSTING_PLATFORMS order. */
 export function listPlatformsSupportingMediaType(
   mediaType: MediaType,

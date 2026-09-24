@@ -1,17 +1,17 @@
 import { z } from "zod";
 
 import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 import {
-  SCHEDULABLE_PLATFORMS,
-  platformSupportsMediaType,
-} from "@/lib/platforms/capabilities";
+  REGISTRY_POST_OPTION_FIELDS,
+  refinePostTarget,
+} from "@/lib/platforms/postTargetOptions";
 
 /**
  * Supported social platforms for REST API. Sourced from the shared
  * capability registry (src/lib/platforms/capabilities.ts): the seven
  * legacy adapters plus every registry provider, all of which the worker
- * can now publish to. The media-type superRefine below answers from the
- * same registry rules.
+ * can now publish to.
  */
 export const SocialPlatformEnum = z.enum(SCHEDULABLE_PLATFORMS);
 
@@ -43,68 +43,21 @@ export const PostCreateInputSchema = z
     pinterest_board_name: z.string().optional(),
     pinterest_link: z.string().url().max(2048).optional(),
 
-    // Registry-provider options. Each is meaningful only for its platform;
-    // the superRefine below enforces the ones that are mandatory there.
-    subreddit: z.string().min(2).max(50).optional(),
-    flair_id: z.string().max(100).optional(),
-    community_id: z.number().int().positive().optional(),
-    publication_id: z.string().max(100).optional(),
-    blog: z.string().max(100).optional(),
-    location_name: z
-      .string()
-      .regex(/^locations\/[0-9]+$/, 'shaped "locations/<id>"')
-      .optional(),
-    organization_id: z.string().max(50).optional(),
-    canonical_url: z.string().url().max(2048).optional(),
-    tags: z.array(z.string().min(1).max(50)).max(4).optional(),
+    // Registry-provider options, shared with the MCP posting tools.
+    ...REGISTRY_POST_OPTION_FIELDS,
   })
   .superRefine((data, ctx) => {
-    // Pinterest requires pinterest_board_id.
-    if (data.platform === "pinterest" && !data.pinterest_board_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["pinterest_board_id"],
-        message: "pinterest_board_id is required when platform is pinterest",
-      });
-    }
-    // Registry platforms whose publish cannot run without a target.
-    if (data.platform === "reddit" && !data.subreddit) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["subreddit"],
-        message: "subreddit is required when platform is reddit",
-      });
-    }
-    if (data.platform === "lemmy" && !data.community_id) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["community_id"],
-        message: "community_id is required when platform is lemmy",
-      });
-    }
-    if (data.platform === "gmb" && !data.location_name) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["location_name"],
-        message: "location_name is required when platform is gmb",
-      });
-    }
-    // Media-type support per platform comes from the shared capability map
-    // (rejects text on pinterest/tiktok/instagram, image/text on youtube).
-    if (!platformSupportsMediaType(data.platform, data.post_type)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["post_type"],
-        message: `${data.post_type} posts are not supported on ${data.platform}`,
-      });
-    }
+    // Media type, required title, and required targets (Pinterest board,
+    // subreddit, Lemmy community, Google Business location): the same
+    // checks the MCP posting tools run.
+    refinePostTarget(data, ctx);
     // Image / video posts require media_storage_path.
     if (
       (data.post_type === "image" || data.post_type === "video") &&
       !data.media_storage_path
     ) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["media_storage_path"],
         message: "media_storage_path is required for image and video posts",
       });
@@ -113,7 +66,7 @@ export const PostCreateInputSchema = z
     // Vuln 1 fix: basic format guard. Server-side enforces principal ownership.
     if (data.media_storage_path && !data.media_storage_path.includes("/")) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["media_storage_path"],
         message:
           "media_storage_path must include a principal prefix (format: {principal_id}/filename)",
@@ -124,7 +77,7 @@ export const PostCreateInputSchema = z
       const scheduledTime = Date.parse(data.scheduled_at);
       if (Number.isNaN(scheduledTime) || scheduledTime <= Date.now()) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           path: ["scheduled_at"],
           message: "scheduled_at must be a future ISO 8601 timestamp",
         });

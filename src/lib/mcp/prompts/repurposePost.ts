@@ -1,18 +1,18 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 
 /**
  * `target_platforms` arrives as one comma-separated string: MCP prompt
  * arguments are always strings on the wire, so an array schema can never
  * match what a client sends. The schema splits the list and checks each
- * entry against POSTING_PLATFORMS before the handler runs.
+ * entry against SCHEDULABLE_PLATFORMS before the handler runs.
  */
 const targetPlatformsArgument = z
   .string()
   .describe(
-    `Comma-separated target platforms, each one of ${POSTING_PLATFORMS.join(" / ")}.`,
+    `Comma-separated target platforms, each one of ${SCHEDULABLE_PLATFORMS.join(" / ")}.`,
   )
   .transform((platformList) =>
     platformList
@@ -20,7 +20,7 @@ const targetPlatformsArgument = z
       .map((platformName) => platformName.trim().toLowerCase())
       .filter((platformName) => platformName.length > 0),
   )
-  .pipe(z.array(z.enum(POSTING_PLATFORMS)).min(1));
+  .pipe(z.array(z.enum(SCHEDULABLE_PLATFORMS)).min(1));
 
 /**
  * Prompt: repurpose an existing post for other platforms.

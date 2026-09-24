@@ -243,6 +243,7 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -271,6 +272,7 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
     },
     credentialFields: [
       {
@@ -317,6 +319,7 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
       hotlinksMedia: true,
     },
     tools: [
@@ -414,6 +417,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -447,6 +451,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -474,6 +479,7 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
+      titleRequired: true,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -634,6 +640,7 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["image"],
       maxMediaPerPost: 1,
       mediaRequired: true,
+      titleRequired: true,
     },
     tools: [],
   },

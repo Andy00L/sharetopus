@@ -6,7 +6,12 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
+import {
+  REGISTRY_POST_OPTION_FIELDS,
+  buildRegistryPostOptions,
+  refinePostTarget,
+} from "@/lib/platforms/postTargetOptions";
 import { withMcpTool } from "../withMcpTool";
 
 const MAX_POSTS_PER_CALL = 30;
@@ -18,7 +23,7 @@ const postSchema = z.object({
       "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns.",
     ),
   platform: z
-    .enum(POSTING_PLATFORMS)
+    .enum(SCHEDULABLE_PLATFORMS)
     .describe(
       "Target social media platform. Must match the platform of the provided social_account_id.",
     ),
@@ -30,13 +35,13 @@ const postSchema = z.object({
   post_type: z
     .enum(["text", "image", "video"])
     .describe(
-      "Type of post. Text posts are supported on LinkedIn, X, and Facebook. Pinterest/TikTok/Instagram require image or video. YouTube requires video.",
+      "Type of post. Platforms accept different types (YouTube takes video only; Pinterest, TikTok, Instagram and Dribbble need media; Twitch and Kick take text only). An unsupported type is rejected.",
     ),
   title: z
     .string()
     .optional()
     .describe(
-      "Optional post title. Used by Pinterest and YouTube. Ignored by LinkedIn/TikTok/Instagram.",
+      "Post title. Used by Pinterest, YouTube and the blog platforms. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
     ),
   description: z
     .string()
@@ -70,7 +75,8 @@ const postSchema = z.object({
     .describe(
       "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Only valid when platform='pinterest'.",
     ),
-});
+  ...REGISTRY_POST_OPTION_FIELDS,
+}).superRefine(refinePostTarget);
 
 type BulkSchedulePostInput = z.infer<typeof postSchema>;
 
@@ -107,7 +113,7 @@ export function registerBulkSchedule(server: McpServer): void {
     "bulk_schedule",
     {
       title: "Bulk Schedule",
-      description: `Schedule up to ${MAX_POSTS_PER_CALL} posts in a single call. Requires Creator plan or higher. Use this when cross-posting the same media to multiple accounts/platforms, or when scheduling a content series in one shot. For media posts, call attach_media_from_url first. For Pinterest entries, include pinterest_board_id per post. To make retries safe (recommended for agent flows), supply batch_id.`,
+      description: `Schedule up to ${MAX_POSTS_PER_CALL} posts in a single call, on any connected platforms. Requires Creator plan or higher. Use this when cross-posting the same media to multiple accounts/platforms, or when scheduling a content series in one shot. For media posts, call attach_media_from_url first. Per post: Pinterest needs pinterest_board_id, reddit subreddit, lemmy community_id, gmb location_name. To make retries safe (recommended for agent flows), supply batch_id.`,
       inputSchema: z.object({
         posts: z
           .array(postSchema)
@@ -161,7 +167,7 @@ export function registerBulkSchedule(server: McpServer): void {
               title: inputPost.title ?? null,
               description: inputPost.description,
               mediaStoragePath: inputPost.media_storage_path,
-              postOptions: pinterestOptions,
+              postOptions: pinterestOptions ?? buildRegistryPostOptions(inputPost),
               batch_id: sharedBatchId,
               // Derive per-post idempotency_key from agent batch_id
               // for retry safety. If agent did not supply batch_id,

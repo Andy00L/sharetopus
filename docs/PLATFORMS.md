@@ -432,7 +432,9 @@ Checklist for implementing a new platform, matching how youtube/x/facebook were 
 9. UI: a section in the connections page using `ConnectPlatformButton`, and an icon in `allPlatformsIcons.tsx` / `SocialAvatarWrapper`.
 10. Docs: x402 reference strings in `docs/x402/data/endpoints.ts`, this file, and `.env.example`.
 
-The zod platform enums (MCP tools, REST schemas, x402 body schema) derive from `POSTING_PLATFORMS`, so step 2 updates them automatically.
+The zod platform enums derive from `src/lib/platforms/capabilities.ts`, so step 2 updates them automatically: the MCP posting tools, the REST post body and the content-history filters use `SCHEDULABLE_PLATFORMS` (the dedicated platforms plus every registry id); the x402 surface and the analytics filters use `POSTING_PLATFORMS`.
+
+A registry provider declares its posting rules in its catalog entry (`rules`): text limit, media types, and `titleRequired` when its publish refuses a post without a title. Per-post options it reads (a subreddit, a community) go in `REGISTRY_POST_OPTION_FIELDS` (`src/lib/platforms/postTargetOptions.ts`), and a required one gets a line in `findPostTargetIssues`, so the REST and MCP schemas reject a post that lacks it.
 
 ---
 

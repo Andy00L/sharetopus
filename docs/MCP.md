@@ -245,6 +245,26 @@ Monthly quota format below: Creator cap / Pro cap.
 
 ## Tool details
 
+### Platforms and options
+
+The posting tools (`schedule_post`, `post_now`, `bulk_schedule`, `bulk_post_now`), the list filters (`list_scheduled_posts`, `list_content_history`), `generate_post_draft`, and both prompts accept every platform `POST /v1/posts` accepts: `SCHEDULABLE_PLATFORMS` in `src/lib/platforms/capabilities.ts`. That is the 7 dedicated platforms (linkedin, tiktok, pinterest, instagram, youtube, x, facebook) plus the 21 registry providers (bluesky, mastodon, telegram, discord, slack, devto, wordpress, reddit, threads, tumblr, twitch, kick, hashnode, medium, lemmy, farcaster, listmonk, nostr, linkedin_page, dribbble, gmb). `get_account_analytics` stays on the 7 dedicated platforms, like `GET /v1/analytics`.
+
+Registry options, shared with the REST post body (`src/lib/platforms/postTargetOptions.ts`):
+
+| Field | Platform | Required |
+|---|---|---|
+| `subreddit` | reddit | yes |
+| `flair_id` | reddit | no |
+| `community_id` | lemmy | yes |
+| `publication_id` | hashnode | no, defaults to the first publication |
+| `blog` | tumblr | no, defaults to the blog stored at connect |
+| `location_name` | gmb, shaped `locations/<id>` | yes |
+| `organization_id` | linkedin_page | no, defaults to the connected organization |
+| `canonical_url` | devto | no |
+| `tags` | devto, at most 4 | no |
+
+Before anything is scheduled or dispatched, the schemas reject a post type the platform does not take (catalog `supportedMediaTypes`), a missing `title` on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble (catalog `titleRequired`), a missing required option above, and a Pinterest post without `pinterest_board_id`. The batch cores then reject a post whose account is on another platform than the post declares.
+
 ### list_connections
 
 List connected social accounts. Returns platform, display name, and availability status. Tokens are stripped from the response.
@@ -283,7 +303,7 @@ List scheduled posts with optional filters.
 
 **Parameters:**
 ```
-platform  "linkedin" | "tiktok" | "pinterest" | "instagram"  optional
+platform  any schedulable platform (see Platforms and options)  optional
   Filter by platform
 status    "scheduled" | "processing" | "posted" | "failed" | "cancelled"  optional
   Filter by post status
@@ -301,7 +321,7 @@ View posted content history.
 
 **Parameters:**
 ```
-platform  "linkedin" | "tiktok" | "pinterest" | "instagram"  optional
+platform  any schedulable platform (see Platforms and options)  optional
   Filter by platform
 limit     number (1-100)  optional  default: 20
   Max results to return
@@ -339,7 +359,7 @@ Fetch performance metrics for posted content. Data may be up to 24 hours old.
 
 **Parameters:**
 ```
-platform    "linkedin" | "tiktok" | "pinterest" | "instagram"  optional
+platform    "linkedin" | "tiktok" | "pinterest" | "instagram" | "youtube" | "x" | "facebook"  optional
 content_id  string  optional
   Filter by specific content ID
 days        number (1-90)  optional  default: 30
@@ -357,19 +377,20 @@ Generate a draft post using the client's LLM. The tool returns a structured prom
 
 **Parameters:**
 ```
-platform            "linkedin" | "tiktok" | "pinterest" | "instagram"  required
+platform            any schedulable platform (see Platforms and options)  required
 topic               string  required
   Topic or theme for the post
 tone                "professional" | "casual" | "humorous" | "educational" | "promotional"
                     optional  default: "professional"
 max_length          number (50-3000)  optional  default: 500
+  Capped at the platform's text limit (X drafts ask for ~280, not 500)
 additional_context  string  optional
   Extra instructions or brand guidelines
 ```
 
 **Monthly quota:** Creator 100/mo, Pro unlimited.
 
-**Returns:** Structured prompt object that the calling model runs itself.
+**Returns:** Structured prompt object that the calling model runs itself. The 7 dedicated platforms have hand-written guidance; registry platforms get their catalog text limit and, where the platform requires one, a title instruction.
 
 ---
 
@@ -381,14 +402,15 @@ Schedule a post for future publishing. For media posts, call `attach_media_from_
 ```
 social_account_id    string (UUID)  required
   ID of the social account to post to
-platform             "linkedin" | "tiktok" | "pinterest" | "instagram"  required
+platform             any schedulable platform (see Platforms and options)  required
   Target platform
 scheduled_at         string (ISO 8601)  required
   When to publish (must be in the future)
 post_type            "text" | "image" | "video"  required
-  Type of post
+  Type of post; a type the platform does not take is rejected
 title                string  optional
-  Post title (used by some platforms)
+  Post title. Required on reddit, lemmy, devto, hashnode, medium,
+  wordpress and dribbble.
 description          string | null  required
   Post body text / caption
 media_storage_path   string  optional  default: ""
@@ -401,6 +423,9 @@ pinterest_board_name string  optional
   Display name for content_history records
 pinterest_link       string (URL, max 2048)  optional
   Destination URL for Pinterest pin
+subreddit, flair_id, community_id, publication_id, blog,
+location_name, organization_id, canonical_url, tags  optional
+  Registry options (see Platforms and options)
 idempotency_key      string (1-200 chars)  optional
   Client-supplied key for safe retries. Same key + same principal
   returns the existing scheduleId instead of inserting a duplicate.
@@ -411,7 +436,7 @@ idempotency_key      string (1-200 chars)  optional
 
 **Returns:** `{ success, message, scheduleId }`. The post enters `scheduled` status and will be dispatched by the `scheduled-posts-tick` cron when its time arrives. If the idempotency_key already exists for this principal, returns the existing scheduleId with a message indicating it was already created.
 
-**Failure modes:** quota exceeded (monthly cap), account not found, account not owned by principal, invalid scheduled_at, missing media for image/video post.
+**Failure modes:** quota exceeded (monthly cap), account not found, account not owned by principal, account on another platform than `platform`, invalid scheduled_at, missing media for image/video post, a post type, title or required option the platform needs (see Platforms and options).
 
 ---
 
@@ -422,7 +447,7 @@ Publish a post immediately. Dispatches an Inngest `post.now` event. The post is 
 **Parameters:**
 ```
 social_account_id    string (UUID)  required
-platform             "linkedin" | "tiktok" | "pinterest" | "instagram"  required
+platform             any schedulable platform (see Platforms and options)  required
 post_type            "text" | "image" | "video"  required
 title                string  optional
 description          string | null  required
@@ -435,6 +460,9 @@ pinterest_board_name string  optional
   Display name for content_history
 pinterest_link       string (URL, max 2048)  optional
   Destination URL for Pinterest pin
+subreddit, flair_id, community_id, publication_id, blog,
+location_name, organization_id, canonical_url, tags  optional
+  Registry options (see Platforms and options)
 idempotency_key      string (1-200 chars)  optional
   Client-supplied key for safe retries. Same key + same principal
   returns the existing event_id instead of dispatching a duplicate.
@@ -446,7 +474,7 @@ idempotency_key      string (1-200 chars)  optional
 
 **Returns:** `{ success, event_id, batch_id, message }`. Use the event_id to poll status. If the idempotency_key already exists, returns the existing event_id with a message indicating it was already dispatched.
 
-**Failure modes:** same as schedule_post, plus caption validation per platform.
+**Failure modes:** same as schedule_post, plus caption length per platform (registry platforms use their catalog `maxTextLength`, Bluesky 300 for example).
 
 ---
 
@@ -561,12 +589,16 @@ Schedule up to 30 posts at once. Each post gets an `idempotency_key` of `${batch
 posts  Array (1-30 items)  required
   Each item:
     social_account_id  string (UUID)
-    platform           "linkedin" | "tiktok" | "pinterest" | "instagram"
+    platform           any schedulable platform (see Platforms and options)
     scheduled_at       string (ISO 8601)
     post_type          "text" | "image" | "video"
-    title              string  optional
+    title              string  optional (required where schedule_post requires it)
     description        string | null
     media_storage_path string  optional  default: ""
+    pinterest_board_id, pinterest_board_name, pinterest_link  optional
+    registry options   optional (see Platforms and options)
+  Each item is checked like schedule_post; a bad item fails the call
+  with its index in the error path (posts.1.subreddit).
 
 batch_id  string  optional
   Group all posts under this batch ID
@@ -574,7 +606,7 @@ batch_id  string  optional
 
 **Monthly quota:** Creator 200/mo, Pro unlimited.
 
-**Preflight checks:** entitlement verification, platform daily quota enforcement (next 24h), social account ownership (single bulk query).
+**Preflight checks:** entitlement verification, platform daily quota enforcement (next 24h), social account ownership and platform match (single bulk query).
 
 **Returns:** `{ batch_id, total, succeeded, failed, results: [...] }`.
 
@@ -589,7 +621,7 @@ Publish up to 30 posts immediately in one call. Each post dispatches a separate 
 posts  Array (1-30 items)  required
   Each item:
     social_account_id   string (UUID)
-    platform            "linkedin" | "tiktok" | "pinterest" | "instagram"
+    platform            any schedulable platform (see Platforms and options)
     post_type           "text" | "image" | "video"
     title               string  optional
     description         string | null
@@ -598,6 +630,7 @@ posts  Array (1-30 items)  required
     pinterest_board_id  string  optional
     pinterest_board_name string  optional
     pinterest_link      string (URL, max 2048)  optional
+    registry options    optional (see Platforms and options)
 
 batch_id  string (1-200 chars)  optional
   When supplied, each post gets idempotency_key = "${batch_id}:${index}",
@@ -606,7 +639,7 @@ batch_id  string (1-200 chars)  optional
 
 **Monthly quota:** Creator 500/mo, Pro unlimited.
 
-**Preflight checks:** entitlement verification, social account ownership (single bulk query), caption length validation per platform, Pinterest board requirement.
+**Preflight checks:** entitlement verification, social account ownership and platform match (single bulk query), caption length validation per platform, the post type, title and required options each platform needs.
 
 **Returns:** `{ success, batch_id, dispatched, total, results: [{ index, platform, social_account_id, event_id }] }`.
 
@@ -863,3 +896,4 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 | `src/lib/mcp/toolNames.ts` | `MCP_TOOL_NAMES` array and `McpToolName` type |
 | `src/lib/mcp/tools/index.ts` | Tool registration orchestrator |
 | `src/lib/mcp/prompts/index.ts` | Prompt registration |
+| `src/lib/platforms/postTargetOptions.ts` | Registry option fields, their post_options mapping, and the per-platform target checks shared with the REST post body |
