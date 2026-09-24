@@ -1,3 +1,4 @@
+import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -6,7 +7,8 @@ import { toWebhookSubscriptionDTO } from "@/lib/api/rest/dto/toWebhookSubscripti
 import { WebhookCreateInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { generateWebhookSecret } from "@/lib/api/rest/webhooks/secretGenerator";
 import { verifyWebhookUrl } from "@/lib/api/rest/webhooks/verifyWebhookConfig";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { webhook_subscriptions } from "@/db/schema";
 
 /**
  * POST /v1/webhooks -- create a webhook subscription.
@@ -54,17 +56,19 @@ export const POST = withRestEndpoint({
 
     // Step 4: generate secret and insert.
     const webhookSecret = generateWebhookSecret();
-    const { data: subscriptionRow, error: insertError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .insert({
-        principal_id: ctx.principal.principalId,
-        url: validatedInput.url,
-        events: validatedInput.events,
-        secret: webhookSecret,
-      })
-      .select("*")
-      .single();
+    const { data: subscriptionRows, error: insertError } = await runQuery(
+      db
+        .insert(webhook_subscriptions)
+        .values({
+          principal_id: ctx.principal.principalId,
+          url: validatedInput.url,
+          events: validatedInput.events,
+          secret: webhookSecret,
+        })
+        .returning(),
+    );
 
+    const subscriptionRow = subscriptionRows?.[0];
     if (insertError || !subscriptionRow) {
       console.error(
         `[v1/webhooks POST] insert failed (request_id=${ctx.requestId}):`,
@@ -100,11 +104,13 @@ export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.list",
   handler: async (ctx) => {
-    const { data: rows, error: queryError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .select("*")
-      .eq("principal_id", ctx.principal.principalId)
-      .order("created_at", { ascending: false });
+    const { data: rows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(webhook_subscriptions)
+        .where(eq(webhook_subscriptions.principal_id, ctx.principal.principalId))
+        .orderBy(desc(webhook_subscriptions.created_at)),
+    );
 
     if (queryError) {
       console.error(
@@ -118,7 +124,7 @@ export const GET = withRestEndpoint({
       );
     }
 
-    const subscriptionDtos = (rows ?? []).map(toWebhookSubscriptionDTO);
+    const subscriptionDtos = rows.map(toWebhookSubscriptionDTO);
     const activeCount = subscriptionDtos.filter(
       (subscription) => subscription.active,
     ).length;

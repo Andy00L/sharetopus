@@ -1,10 +1,12 @@
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 
 const ConnectionIdSchema = z.guid();
 
@@ -32,13 +34,19 @@ export const GET = withRestEndpoint({
     const connectionId = idParseResult.data;
 
     // Step 2: fetch row scoped to calling principal.
-    const { data: accountRow, error: lookupError } = await adminSupabase
-      .from("social_accounts")
-      .select("*")
-      .eq("id", connectionId)
-      .eq("principal_id", ctx.principal.principalId)
-      .is("deleted_at", null)
-      .maybeSingle();
+    const { data: accountRows, error: lookupError } = await runQuery(
+      db
+        .select()
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.id, connectionId),
+            eq(social_accounts.principal_id, ctx.principal.principalId),
+            isNull(social_accounts.deleted_at),
+          ),
+        )
+        .limit(1),
+    );
 
     if (lookupError) {
       console.error(
@@ -51,6 +59,7 @@ export const GET = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const accountRow = accountRows[0];
     if (!accountRow) {
       return restErrorResponse(
         "not_found",

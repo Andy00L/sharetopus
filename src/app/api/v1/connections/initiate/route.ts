@@ -7,7 +7,8 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { ConnectionInitiateInputSchema } from "@/lib/api/rest/validation/connectionSchemas";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_connections } from "@/db/schema";
 import type { Platform } from "@/lib/x402/connect/types";
 
 const OAUTH_EXPIRY_MINUTES = 15;
@@ -82,27 +83,29 @@ export const POST = withRestEndpoint({
 
     const connectionId = randomUUID();
 
-    const { data: connectionRow, error: insertError } = await adminSupabase
-      .from("social_connections")
-      .insert({
-        id: connectionId,
-        principal_id: ctx.principal.principalId,
-        initiated_via: "api",
-        platform,
-        oauth_state: oauthState,
-        // Non-null only for PKCE platforms (X); the shared callback reads it.
-        oauth_code_verifier: oauthResult.codeVerifier,
-        redirect_uri: redirectUri,
-        status: "pending",
-        expires_at: expiresAt,
-        metadata: {
-          source: "rest_api",
-          request_id: ctx.requestId,
-        },
-      })
-      .select("id")
-      .single();
+    const { data: connectionRows, error: insertError } = await runQuery(
+      db
+        .insert(social_connections)
+        .values({
+          id: connectionId,
+          principal_id: ctx.principal.principalId,
+          initiated_via: "api",
+          platform,
+          oauth_state: oauthState,
+          // Non-null only for PKCE platforms (X); the shared callback reads it.
+          oauth_code_verifier: oauthResult.codeVerifier,
+          redirect_uri: redirectUri,
+          status: "pending",
+          expires_at: expiresAt,
+          metadata: {
+            source: "rest_api",
+            request_id: ctx.requestId,
+          },
+        })
+        .returning({ id: social_connections.id }),
+    );
 
+    const connectionRow = connectionRows?.[0];
     if (insertError || !connectionRow) {
       console.error(
         `[v1/connections/initiate POST] social_connections insert failed (request_id=${ctx.requestId}):`,

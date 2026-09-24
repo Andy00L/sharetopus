@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { api_keys } from "@/db/schema";
 import { hashToken, isApiKeyToken } from "@/lib/api/tokens";
 import { applySubscriptionGate } from "@/lib/mcp/auth/resolvers/applySubscriptionGate";
 import { extractIpHash } from "@/lib/api/context";
@@ -42,13 +45,26 @@ export async function resolveRestApiKey(
     const restApiKeyHashed = hashToken(bearerToken);
 
     // Step 2: DB lookup. Filters on kind='rest' and not revoked.
-    const { data: apiKeyRow, error: lookupError } = await adminSupabase
-      .from("api_keys")
-      .select("id, principal_id, scopes, expires_at, prefix")
-      .eq("token_hash", restApiKeyHashed)
-      .eq("kind", "rest")
-      .is("revoked_at", null)
-      .maybeSingle();
+    // token_hash is unique, so one row is the most there can be.
+    const { data: apiKeyRows, error: lookupError } = await runQuery(
+      db
+        .select({
+          id: api_keys.id,
+          principal_id: api_keys.principal_id,
+          scopes: api_keys.scopes,
+          expires_at: api_keys.expires_at,
+          prefix: api_keys.prefix,
+        })
+        .from(api_keys)
+        .where(
+          and(
+            eq(api_keys.token_hash, restApiKeyHashed),
+            eq(api_keys.kind, "rest"),
+            isNull(api_keys.revoked_at),
+          ),
+        )
+        .limit(1),
+    );
 
     if (lookupError) {
       console.error(
@@ -58,6 +74,7 @@ export async function resolveRestApiKey(
       return null;
     }
 
+    const apiKeyRow = apiKeyRows[0];
     if (!apiKeyRow) {
       return null;
     }
@@ -126,10 +143,9 @@ async function updateLastUsedFields(apiKeyId: string): Promise<void> {
       updatePayload.last_used_ip = clientIpHash;
     }
 
-    const { error: updateError } = await adminSupabase
-      .from("api_keys")
-      .update(updatePayload)
-      .eq("id", apiKeyId);
+    const { error: updateError } = await runQuery(
+      db.update(api_keys).set(updatePayload).where(eq(api_keys.id, apiKeyId)),
+    );
 
     if (updateError) {
       console.warn(

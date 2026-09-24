@@ -1,8 +1,8 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { rest_audit_log, type Json } from "@/db/schema";
 import { redactSecrets } from "@/lib/api/audit/redactPatterns";
-import type { Json } from "@/lib/types/database.types";
 import type { RestApiKeyContext } from "../auth/types";
 
 export type RestAuditOutcome =
@@ -62,9 +62,9 @@ export async function writeRestAuditLog(
       response_summary: responseSummary as Json,
     };
 
-    const { error: insertError } = await adminSupabase
-      .from("rest_audit_log")
-      .insert(auditRowPayload);
+    const { error: insertError } = await runQuery(
+      db.insert(rest_audit_log).values(auditRowPayload),
+    );
 
     if (insertError) {
       console.warn(

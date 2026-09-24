@@ -1,10 +1,12 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
 import { cancelScheduledPostBatch } from "@/actions/server/scheduleActions/cancel/cancelScheduledPostBatch";
 import { deleteScheduledPostBatch } from "@/actions/server/scheduleActions/delete/deleteScheduledPostBatch";
@@ -40,13 +42,19 @@ export const GET = withRestEndpoint({
     const postId = idParseResult.data;
 
     // Step 2: fetch row scoped to calling principal. Other users' posts
-    // are filtered out by principal_id, so surface as null -> 404.
-    const { data: postRow, error: rowLookupError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("*")
-      .eq("id", postId)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    // are filtered out by principal_id, so surface as no row -> 404.
+    const { data: postRows, error: rowLookupError } = await runQuery(
+      db
+        .select()
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.id, postId),
+            eq(scheduled_posts.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
     if (rowLookupError) {
       console.error(
         `[v1/posts/[id] GET] lookup failed (request_id=${ctx.requestId}):`,
@@ -58,6 +66,7 @@ export const GET = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const postRow = postRows[0];
     if (!postRow) {
       return restErrorResponse(
         "not_found",
@@ -126,12 +135,18 @@ export const PATCH = withRestEndpoint({
     const validatedPatchInput = bodyParseResult.data;
 
     // Step 3: verify ownership before calling batch function.
-    const { data: existingPost, error: ownershipError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, status")
-      .eq("id", postId)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    const { data: existingPosts, error: ownershipError } = await runQuery(
+      db
+        .select({ id: scheduled_posts.id })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.id, postId),
+            eq(scheduled_posts.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
     if (ownershipError) {
       console.error(
@@ -144,7 +159,7 @@ export const PATCH = withRestEndpoint({
         ctx.requestId,
       );
     }
-    if (!existingPost) {
+    if (!existingPosts[0]) {
       return restErrorResponse(
         "not_found",
         "Post not found",
@@ -170,13 +185,20 @@ export const PATCH = withRestEndpoint({
     }
 
     // Step 5: fetch updated row for response DTO.
-    const { data: updatedRow, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("*")
-      .eq("id", postId)
-      .eq("principal_id", ctx.principal.principalId)
-      .single();
+    const { data: updatedRows, error: fetchError } = await runQuery(
+      db
+        .select()
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.id, postId),
+            eq(scheduled_posts.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
+    const updatedRow = updatedRows?.[0];
     if (fetchError || !updatedRow) {
       return restErrorResponse(
         "internal_error",
@@ -237,12 +259,18 @@ export const DELETE = withRestEndpoint({
       : false;
 
     // Step 3: verify ownership.
-    const { data: existingPost, error: ownershipError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id")
-      .eq("id", postId)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    const { data: existingPosts, error: ownershipError } = await runQuery(
+      db
+        .select({ id: scheduled_posts.id })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.id, postId),
+            eq(scheduled_posts.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
     if (ownershipError) {
       console.error(
@@ -255,7 +283,7 @@ export const DELETE = withRestEndpoint({
         ctx.requestId,
       );
     }
-    if (!existingPost) {
+    if (!existingPosts[0]) {
       return restErrorResponse(
         "not_found",
         "Post not found",

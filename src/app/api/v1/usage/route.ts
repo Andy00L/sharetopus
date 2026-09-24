@@ -1,3 +1,4 @@
+import { and, eq, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -5,14 +6,15 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { buildUsageDTO } from "@/lib/api/rest/dto/toUsageDTO";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { usage_quotas } from "@/db/schema";
 
 /**
  * GET /v1/usage -- current month quotas + storage usage.
  *
  * Mirrors the MCP list_billing_summary output minus Stripe-internal
- * fields. Combines checkActiveSubscription, usage_quotas, and
- * get_user_storage_bytes RPC.
+ * fields. Combines checkActiveSubscription, usage_quotas, and the
+ * get_user_storage_bytes Postgres function.
  */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -25,11 +27,17 @@ export const GET = withRestEndpoint({
 
     // Step 2: fetch current month usage quotas.
     const periodFilter = currentQuotaPeriod();
-    const { data: usageRows, error: usageError } = await adminSupabase
-      .from("usage_quotas")
-      .select("action, count")
-      .eq("principal_id", ctx.principal.principalId)
-      .eq("period", periodFilter);
+    const { data: usageRows, error: usageError } = await runQuery(
+      db
+        .select({ action: usage_quotas.action, count: usage_quotas.count })
+        .from(usage_quotas)
+        .where(
+          and(
+            eq(usage_quotas.principal_id, ctx.principal.principalId),
+            eq(usage_quotas.period, periodFilter),
+          ),
+        ),
+    );
 
     if (usageError) {
       console.error(
@@ -45,18 +53,20 @@ export const GET = withRestEndpoint({
 
     // Build action -> count map.
     const actionCounts: Record<string, number> = {};
-    for (const row of usageRows ?? []) {
+    for (const row of usageRows) {
       actionCounts[row.action] = row.count;
     }
 
-    // Step 3: get storage usage via RPC.
+    // Step 3: get storage usage from the get_user_storage_bytes Postgres
+    // function.
     const storageBucket =
       process.env.SUPABASE_BUCKET_NAME ?? "scheduled-videos";
-    const { data: storageBytes, error: storageError } =
-      await adminSupabase.rpc("get_user_storage_bytes", {
-        _bucket: storageBucket,
-        _prefix: `${ctx.principal.principalId}/`,
-      });
+    const storagePrefix = `${ctx.principal.principalId}/`;
+    const { data: storageRows, error: storageError } = await runQuery(
+      db.execute(
+        sql`select public.get_user_storage_bytes(_bucket => ${storageBucket}, _prefix => ${storagePrefix}) as storage_bytes`,
+      ),
+    );
 
     if (storageError) {
       console.error(
@@ -66,8 +76,17 @@ export const GET = withRestEndpoint({
       // Non-fatal: default to 0 bytes if RPC fails.
     }
 
-    const storageUsedBytes =
-      typeof storageBytes === "number" ? storageBytes : 0;
+    // The function returns bigint, which raw SQL hands back as a string.
+    // A failed call, a NULL total, or an unparsable value counts as 0 bytes.
+    const storageBytesValue: unknown = storageRows?.[0]?.storage_bytes;
+    const parsedStorageBytes =
+      typeof storageBytesValue === "string" ||
+      typeof storageBytesValue === "number"
+        ? Number(storageBytesValue)
+        : Number.NaN;
+    const storageUsedBytes = Number.isFinite(parsedStorageBytes)
+      ? parsedStorageBytes
+      : 0;
 
     // Step 4: build DTO.
     const usageDto = buildUsageDTO({

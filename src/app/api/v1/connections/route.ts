@@ -1,10 +1,12 @@
+import { and, desc, eq, isNull, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
 import { ConnectionListQuerySchema } from "@/lib/api/rest/validation/connectionSchemas";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 
 /**
  * GET /v1/connections -- list connected social accounts.
@@ -31,27 +33,30 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: build Supabase query scoped to calling principal.
-    let baseQuery = adminSupabase
-      .from("social_accounts")
-      .select("*")
-      .eq("principal_id", ctx.principal.principalId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false })
-      .limit(query.limit + 1);
-
-    // Only show available accounts by default.
-    if (!query.include_unavailable) {
-      baseQuery = baseQuery.eq("is_available", true);
-    }
-    if (query.platform) {
-      baseQuery = baseQuery.eq("platform", query.platform);
-    }
-    if (query.cursor) {
-      baseQuery = baseQuery.lt("created_at", query.cursor);
-    }
-
-    const { data: rows, error: queryError } = await baseQuery;
+    // Step 2: query scoped to calling principal. and() skips the optional
+    // filters left undefined; unavailable accounts are hidden by default.
+    const { data: fetchedRows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.principal_id, ctx.principal.principalId),
+            isNull(social_accounts.deleted_at),
+            query.include_unavailable
+              ? undefined
+              : eq(social_accounts.is_available, true),
+            query.platform
+              ? eq(social_accounts.platform, query.platform)
+              : undefined,
+            query.cursor
+              ? lt(social_accounts.created_at, query.cursor)
+              : undefined,
+          ),
+        )
+        .orderBy(desc(social_accounts.created_at))
+        .limit(query.limit + 1),
+    );
     if (queryError) {
       console.error(
         `[v1/connections GET] list query failed (request_id=${ctx.requestId}):`,
@@ -65,7 +70,6 @@ export const GET = withRestEndpoint({
     }
 
     // Step 3: compute pagination cursor.
-    const fetchedRows = rows ?? [];
     const hasMore = fetchedRows.length > query.limit;
     const pagedRows = hasMore
       ? fetchedRows.slice(0, query.limit)

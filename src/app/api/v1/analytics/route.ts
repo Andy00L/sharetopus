@@ -1,10 +1,12 @@
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toAnalyticsDTO } from "@/lib/api/rest/dto/toAnalyticsDTO";
 import { AnalyticsQuerySchema } from "@/lib/api/rest/validation/analyticsSchemas";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { analytics_metrics } from "@/db/schema";
 
 /**
  * GET /v1/analytics -- account-wide analytics metrics.
@@ -41,26 +43,30 @@ export const GET = withRestEndpoint({
     sinceDate.setDate(sinceDate.getDate() - query.days);
     const sinceIsoDate = sinceDate.toISOString().split("T")[0];
 
-    // Step 3: build Supabase query scoped to principal.
-    let analyticsQuery = adminSupabase
-      .from("analytics_metrics")
-      .select("*")
-      .eq("principal_id", ctx.principal.principalId)
-      .gte("metric_date", sinceIsoDate)
-      .order("metric_date", { ascending: false })
-      .limit(query.limit + 1);
-
-    if (query.platform) {
-      analyticsQuery = analyticsQuery.eq("platform", query.platform);
-    }
-    if (query.content_id) {
-      analyticsQuery = analyticsQuery.eq("content_id", query.content_id);
-    }
-    if (query.cursor) {
-      analyticsQuery = analyticsQuery.lt("metric_date", query.cursor);
-    }
-
-    const { data: rows, error: queryError } = await analyticsQuery;
+    // Step 3: query scoped to principal. and() skips the optional filters
+    // left undefined.
+    const { data: fetchedRows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(analytics_metrics)
+        .where(
+          and(
+            eq(analytics_metrics.principal_id, ctx.principal.principalId),
+            gte(analytics_metrics.metric_date, sinceIsoDate),
+            query.platform
+              ? eq(analytics_metrics.platform, query.platform)
+              : undefined,
+            query.content_id
+              ? eq(analytics_metrics.content_id, query.content_id)
+              : undefined,
+            query.cursor
+              ? lt(analytics_metrics.metric_date, query.cursor)
+              : undefined,
+          ),
+        )
+        .orderBy(desc(analytics_metrics.metric_date))
+        .limit(query.limit + 1),
+    );
     if (queryError) {
       console.error(
         `[v1/analytics GET] query failed (request_id=${ctx.requestId}):`,
@@ -74,7 +80,6 @@ export const GET = withRestEndpoint({
     }
 
     // Step 4: compute pagination.
-    const fetchedRows = rows ?? [];
     const hasMore = fetchedRows.length > query.limit;
     const pagedRows = hasMore
       ? fetchedRows.slice(0, query.limit)

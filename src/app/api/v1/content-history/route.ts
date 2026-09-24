@@ -1,10 +1,12 @@
+import { and, desc, eq, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toContentHistoryDTO } from "@/lib/api/rest/dto/toContentHistoryDTO";
 import { ContentHistoryQuerySchema } from "@/lib/api/rest/validation/analyticsSchemas";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { content_history } from "@/db/schema";
 
 /**
  * GET /v1/content-history -- list published content history.
@@ -35,22 +37,26 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: build query scoped to principal.
-    let contentQuery = adminSupabase
-      .from("content_history")
-      .select("*")
-      .eq("principal_id", ctx.principal.principalId)
-      .order("created_at", { ascending: false })
-      .limit(query.limit + 1);
-
-    if (query.platform) {
-      contentQuery = contentQuery.eq("platform", query.platform);
-    }
-    if (query.cursor) {
-      contentQuery = contentQuery.lt("created_at", query.cursor);
-    }
-
-    const { data: rows, error: queryError } = await contentQuery;
+    // Step 2: query scoped to principal. and() skips the optional filters
+    // left undefined.
+    const { data: fetchedRows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(content_history)
+        .where(
+          and(
+            eq(content_history.principal_id, ctx.principal.principalId),
+            query.platform
+              ? eq(content_history.platform, query.platform)
+              : undefined,
+            query.cursor
+              ? lt(content_history.created_at, query.cursor)
+              : undefined,
+          ),
+        )
+        .orderBy(desc(content_history.created_at))
+        .limit(query.limit + 1),
+    );
     if (queryError) {
       console.error(
         `[v1/content-history GET] query failed (request_id=${ctx.requestId}):`,
@@ -64,7 +70,6 @@ export const GET = withRestEndpoint({
     }
 
     // Step 3: compute pagination.
-    const fetchedRows = rows ?? [];
     const hasMore = fetchedRows.length > query.limit;
     const pagedRows = hasMore
       ? fetchedRows.slice(0, query.limit)

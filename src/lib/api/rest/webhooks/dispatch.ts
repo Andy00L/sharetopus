@@ -2,7 +2,10 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, arrayContains, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { webhook_subscriptions } from "@/db/schema";
 import { inngest } from "@/inngest/client";
 
 /**
@@ -24,13 +27,18 @@ export async function dispatchWebhook(
   payload: Record<string, unknown>,
 ): Promise<void> {
   try {
-    const { data: matchingSubscriptions, error: lookupError } =
-      await adminSupabase
-        .from("webhook_subscriptions")
-        .select("id, url, events")
-        .eq("principal_id", principalId)
-        .eq("active", true)
-        .contains("events", [eventType]);
+    const { data: matchingSubscriptions, error: lookupError } = await runQuery(
+      db
+        .select({ id: webhook_subscriptions.id })
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.principal_id, principalId),
+            eq(webhook_subscriptions.active, true),
+            arrayContains(webhook_subscriptions.events, [eventType]),
+          ),
+        ),
+    );
 
     if (lookupError) {
       console.warn(
@@ -40,7 +48,7 @@ export async function dispatchWebhook(
       return;
     }
 
-    if (!matchingSubscriptions || matchingSubscriptions.length === 0) {
+    if (matchingSubscriptions.length === 0) {
       return;
     }
 
@@ -48,7 +56,7 @@ export async function dispatchWebhook(
     // worker can retry, rate-limit, and record per-subscription.
     const eventIdBase = randomUUID();
     const dispatchPromises = matchingSubscriptions.map(
-      (subscription, index) =>
+      (subscription) =>
         inngest.send({
           name: "webhook.dispatch.v1",
           data: {

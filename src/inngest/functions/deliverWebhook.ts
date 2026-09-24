@@ -1,8 +1,14 @@
+import { and, eq } from "drizzle-orm";
+
 import { inngest } from "../client";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import {
+  webhook_deliveries,
+  webhook_subscriptions,
+  type Json,
+} from "@/db/schema";
 import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
-import type { Json } from "@/lib/types/database.types";
 
 const DELIVERY_TIMEOUT_MS = 10_000;
 const AUTO_DISABLE_THRESHOLD = 10;
@@ -53,13 +59,24 @@ export const deliverWebhook = inngest.createFunction(
     const { subscription_id, event_type, event_id, payload } = eventData;
 
     // Step 1: load subscription (skip if disabled or deleted).
-    const { data: subscriptionRow, error: loadError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .select("id, principal_id, url, secret, active, failure_count")
-      .eq("id", subscription_id)
-      .eq("active", true)
-      .maybeSingle();
+    const { data: subscriptionRows, error: loadError } = await runQuery(
+      db
+        .select({
+          url: webhook_subscriptions.url,
+          secret: webhook_subscriptions.secret,
+          failure_count: webhook_subscriptions.failure_count,
+        })
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscription_id),
+            eq(webhook_subscriptions.active, true),
+          ),
+        )
+        .limit(1),
+    );
 
+    const subscriptionRow = subscriptionRows?.[0];
     if (loadError || !subscriptionRow) {
       return { skipped: true, reason: "subscription_inactive_or_deleted" };
     }
@@ -98,34 +115,38 @@ export const deliverWebhook = inngest.createFunction(
       statusCode !== null && statusCode >= 200 && statusCode < 300;
 
     // Step 4: persist delivery record.
-    await adminSupabase.from("webhook_deliveries").insert({
-      id: deliveryId,
-      subscription_id,
-      event_type,
-      event_id,
-      payload: payload as Json,
-      status_code: statusCode,
-      response_body: responseBody,
-      // Real attempt number. `attempt` is zero-indexed, the column is
-      // 1-indexed. This used to be hardcoded to 1, so every retry row
-      // claimed to be the first try.
-      attempt: attempt + 1,
-      latency_ms: latencyMs,
-      delivered_at: wasSuccess ? new Date().toISOString() : null,
-      failed_at: wasSuccess ? null : new Date().toISOString(),
-      error_message: errorMessage,
-    });
+    await runQuery(
+      db.insert(webhook_deliveries).values({
+        id: deliveryId,
+        subscription_id,
+        event_type,
+        event_id,
+        payload: payload as Json,
+        status_code: statusCode,
+        response_body: responseBody,
+        // Real attempt number. `attempt` is zero-indexed, the column is
+        // 1-indexed. This used to be hardcoded to 1, so every retry row
+        // claimed to be the first try.
+        attempt: attempt + 1,
+        latency_ms: latencyMs,
+        delivered_at: wasSuccess ? new Date().toISOString() : null,
+        failed_at: wasSuccess ? null : new Date().toISOString(),
+        error_message: errorMessage,
+      }),
+    );
 
     // Step 5: update subscription stats on success.
     if (wasSuccess) {
-      await adminSupabase
-        .from("webhook_subscriptions")
-        .update({
-          failure_count: 0,
-          last_delivery_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", subscription_id);
+      await runQuery(
+        db
+          .update(webhook_subscriptions)
+          .set({
+            failure_count: 0,
+            last_delivery_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .where(eq(webhook_subscriptions.id, subscription_id)),
+      );
 
       return { delivered: true, status_code: statusCode };
     }
@@ -145,17 +166,19 @@ export const deliverWebhook = inngest.createFunction(
       const newFailureCount = subscriptionRow.failure_count + 1;
       const shouldAutoDisable = newFailureCount >= AUTO_DISABLE_THRESHOLD;
 
-      await adminSupabase
-        .from("webhook_subscriptions")
-        .update({
-          failure_count: newFailureCount,
-          active: !shouldAutoDisable,
-          ...(shouldAutoDisable
-            ? { last_disabled_at: new Date().toISOString() }
-            : {}),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", subscription_id);
+      await runQuery(
+        db
+          .update(webhook_subscriptions)
+          .set({
+            failure_count: newFailureCount,
+            active: !shouldAutoDisable,
+            ...(shouldAutoDisable
+              ? { last_disabled_at: new Date().toISOString() }
+              : {}),
+            updated_at: new Date().toISOString(),
+          })
+          .where(eq(webhook_subscriptions.id, subscription_id)),
+      );
     }
 
     // Step 7: retryable failures throw for Inngest backoff. Terminal

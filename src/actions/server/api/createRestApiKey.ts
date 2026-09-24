@@ -3,7 +3,8 @@
 import "server-only";
 
 import { auth } from "@clerk/nextjs/server";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { api_keys } from "@/db/schema";
 import { generateApiKey } from "@/lib/api/tokens";
 import {
   DEFAULT_API_KEY_EXPIRY_DAYS,
@@ -69,20 +70,22 @@ export async function createRestApiKey(
     expiresAtDate.setDate(expiresAtDate.getDate() + expiresInDays);
     const expiresAtIso = expiresAtDate.toISOString();
 
-    const { data: insertedRow, error: insertError } = await adminSupabase
-      .from("api_keys")
-      .insert({
-        principal_id: clerkUserId,
-        name: trimmedName,
-        prefix,
-        token_hash: tokenHash,
-        kind: "rest",
-        scopes: ["api:full"],
-        expires_at: expiresAtIso,
-      })
-      .select("id")
-      .single();
+    const { data: insertedRows, error: insertError } = await runQuery(
+      db
+        .insert(api_keys)
+        .values({
+          principal_id: clerkUserId,
+          name: trimmedName,
+          prefix,
+          token_hash: tokenHash,
+          kind: "rest",
+          scopes: ["api:full"],
+          expires_at: expiresAtIso,
+        })
+        .returning({ id: api_keys.id }),
+    );
 
+    const insertedRow = insertedRows?.[0];
     if (insertError || !insertedRow) {
       console.error(
         "[createRestApiKey] insert failed:",

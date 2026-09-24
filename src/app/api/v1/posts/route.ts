@@ -1,3 +1,4 @@
+import { and, desc, eq, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -13,7 +14,8 @@ import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 
 /**
  * POST /v1/posts -- create a single post.
@@ -85,15 +87,21 @@ export const POST = withRestEndpoint({
 
       // directPostBatch returns eventIds, not post IDs. Look up the
       // created row by batch_id + principal_id.
-      const { data: postRow, error: rowLookupError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("*")
-        .eq("batch_id", batchResult.batchId)
-        .eq("principal_id", ctx.principal.principalId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const { data: postRows, error: rowLookupError } = await runQuery(
+        db
+          .select()
+          .from(scheduled_posts)
+          .where(
+            and(
+              eq(scheduled_posts.batch_id, batchResult.batchId),
+              eq(scheduled_posts.principal_id, ctx.principal.principalId),
+            ),
+          )
+          .orderBy(desc(scheduled_posts.created_at))
+          .limit(1),
+      );
 
+      const postRow = postRows?.[0];
       if (rowLookupError || !postRow) {
         console.error(
           `[v1/posts POST] direct post row lookup failed for batch_id=${batchResult.batchId}:`,
@@ -151,11 +159,14 @@ export const POST = withRestEndpoint({
       );
     }
 
-    const { data: postRow, error: rowLookupError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("*")
-      .eq("id", createdPostId)
-      .single();
+    const { data: postRows, error: rowLookupError } = await runQuery(
+      db
+        .select()
+        .from(scheduled_posts)
+        .where(eq(scheduled_posts.id, createdPostId))
+        .limit(1),
+    );
+    const postRow = postRows?.[0];
     if (rowLookupError || !postRow) {
       console.error(
         `[v1/posts POST] created row lookup failed for id=${createdPostId}:`,
@@ -209,23 +220,30 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: build Supabase query scoped to calling principal.
-    let baseQuery = adminSupabase
-      .from("scheduled_posts")
-      .select("*")
-      .eq("principal_id", ctx.principal.principalId)
-      .order("created_at", { ascending: false })
-      .limit(query.limit + 1);
-
-    if (query.status) baseQuery = baseQuery.eq("status", query.status);
-    if (query.platform)
-      baseQuery = baseQuery.eq("platform", query.platform);
-    if (query.batch_id)
-      baseQuery = baseQuery.eq("batch_id", query.batch_id);
-    if (query.cursor)
-      baseQuery = baseQuery.lt("created_at", query.cursor);
-
-    const { data: rows, error: queryError } = await baseQuery;
+    // Step 2: query scoped to calling principal. and() skips the optional
+    // filters left undefined.
+    const { data: fetchedRows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.principal_id, ctx.principal.principalId),
+            query.status ? eq(scheduled_posts.status, query.status) : undefined,
+            query.platform
+              ? eq(scheduled_posts.platform, query.platform)
+              : undefined,
+            query.batch_id
+              ? eq(scheduled_posts.batch_id, query.batch_id)
+              : undefined,
+            query.cursor
+              ? lt(scheduled_posts.created_at, query.cursor)
+              : undefined,
+          ),
+        )
+        .orderBy(desc(scheduled_posts.created_at))
+        .limit(query.limit + 1),
+    );
     if (queryError) {
       console.error(
         `[v1/posts GET] list query failed (request_id=${ctx.requestId}):`,
@@ -240,7 +258,6 @@ export const GET = withRestEndpoint({
 
     // Step 3: compute pagination cursor. Over-fetch by 1 to detect
     // more pages; the extra row never appears in the response payload.
-    const fetchedRows = rows ?? [];
     const hasMore = fetchedRows.length > query.limit;
     const pagedRows = hasMore
       ? fetchedRows.slice(0, query.limit)

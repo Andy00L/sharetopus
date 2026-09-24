@@ -1,7 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { api_keys } from "@/db/schema";
 
 /**
  * Revokes a REST API key by setting revoked_at.
@@ -27,17 +30,24 @@ export async function revokeRestApiKey(
       return { success: false, message: "Key ID is required." };
     }
 
-    // Verify ownership before revoking.
-    const { data: existing, error: fetchError } = await adminSupabase
-      .from("api_keys")
-      .select("id, principal_id")
-      .eq("id", keyId)
-      .eq("principal_id", userId)
-      .eq("kind", "rest")
-      .is("revoked_at", null)
-      .single();
+    // Verify ownership before revoking. A malformed keyId fails the uuid
+    // cast in Postgres and lands in the same not-found answer.
+    const { data: existingKeys, error: fetchError } = await runQuery(
+      db
+        .select({ id: api_keys.id })
+        .from(api_keys)
+        .where(
+          and(
+            eq(api_keys.id, keyId),
+            eq(api_keys.principal_id, userId),
+            eq(api_keys.kind, "rest"),
+            isNull(api_keys.revoked_at),
+          ),
+        )
+        .limit(1),
+    );
 
-    if (fetchError || !existing) {
+    if (fetchError || !existingKeys[0]) {
       return {
         success: false,
         message:
@@ -45,10 +55,12 @@ export async function revokeRestApiKey(
       };
     }
 
-    const { error: updateError } = await adminSupabase
-      .from("api_keys")
-      .update({ revoked_at: new Date().toISOString() })
-      .eq("id", keyId);
+    const { error: updateError } = await runQuery(
+      db
+        .update(api_keys)
+        .set({ revoked_at: new Date().toISOString() })
+        .where(eq(api_keys.id, keyId)),
+    );
 
     if (updateError) {
       return {

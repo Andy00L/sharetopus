@@ -3,13 +3,13 @@ import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import {
   listAvailableProviders,
   resolveConfiguredProvider,
 } from "@/lib/platforms/providers/registry";
 import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJson";
-import type { Database } from "@/lib/types/database.types";
 
 /**
  * Credentials-based connect surface.
@@ -29,9 +29,8 @@ import type { Database } from "@/lib/types/database.types";
  * credentials.
  */
 
-/** Column type for social_accounts.platform, sourced from the DB types. */
-type SocialAccountPlatform =
-  Database["public"]["Tables"]["social_accounts"]["Insert"]["platform"];
+/** Column type for social_accounts.platform, from the schema the insert below writes through. */
+type SocialAccountPlatform = (typeof social_accounts.$inferInsert)["platform"];
 
 /**
  * Credentials providers currently servable, as DB platform values. The
@@ -179,30 +178,39 @@ export const POST = withRestEndpoint({
         ? null
         : new Date(Date.now() + connectResult.expiresIn * 1000).toISOString();
 
+    const accountValues = {
+      principal_id: ctx.principal.principalId,
+      platform: platformId,
+      account_identifier: connectResult.identity.accountIdentifier,
+      is_available: true,
+      display_name: connectResult.identity.displayName,
+      username: connectResult.identity.username,
+      avatar_url: connectResult.identity.avatarUrl,
+      access_token: connectResult.accessToken,
+      refresh_token: connectResult.refreshToken,
+      token_expires_at: tokenExpiresAt,
+      extra: providerConfigToJson(connectResult.config),
+      updated_at: new Date().toISOString(),
+    } satisfies typeof social_accounts.$inferInsert;
+
     // Same conflict target the OAuth callback uses, so reconnecting the
     // same account updates it instead of duplicating it.
-    const { data: accountRow, error: upsertError } = await adminSupabase
-      .from("social_accounts")
-      .upsert(
-        {
-          principal_id: ctx.principal.principalId,
-          platform: platformId,
-          account_identifier: connectResult.identity.accountIdentifier,
-          is_available: true,
-          display_name: connectResult.identity.displayName,
-          username: connectResult.identity.username,
-          avatar_url: connectResult.identity.avatarUrl,
-          access_token: connectResult.accessToken,
-          refresh_token: connectResult.refreshToken,
-          token_expires_at: tokenExpiresAt,
-          extra: providerConfigToJson(connectResult.config),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "principal_id, platform, account_identifier" },
-      )
-      .select("id")
-      .single();
+    const { data: accountRows, error: upsertError } = await runQuery(
+      db
+        .insert(social_accounts)
+        .values(accountValues)
+        .onConflictDoUpdate({
+          target: [
+            social_accounts.principal_id,
+            social_accounts.platform,
+            social_accounts.account_identifier,
+          ],
+          set: accountValues,
+        })
+        .returning({ id: social_accounts.id }),
+    );
 
+    const accountRow = accountRows?.[0];
     if (upsertError || !accountRow) {
       console.error(
         `[v1/connections/credentials POST] Upsert failed (request_id=${ctx.requestId}):`,

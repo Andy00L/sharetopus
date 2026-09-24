@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -6,7 +7,8 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { WebhookTestInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
 const SubscriptionIdSchema = z.guid();
 const DELIVERY_TIMEOUT_MS = 10_000;
@@ -50,13 +52,23 @@ export const POST = withRestEndpoint({
       : "webhook.test";
 
     // Step 3: load subscription.
-    const { data: subscriptionRow, error: loadError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .select("id, url, secret, active")
-      .eq("id", subscriptionId)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    const { data: subscriptionRows, error: loadError } = await runQuery(
+      db
+        .select({
+          url: webhook_subscriptions.url,
+          secret: webhook_subscriptions.secret,
+        })
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscriptionId),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
+    const subscriptionRow = subscriptionRows?.[0];
     if (loadError || !subscriptionRow) {
       return restErrorResponse(
         "not_found",
@@ -99,23 +111,25 @@ export const POST = withRestEndpoint({
       statusCode !== null && statusCode >= 200 && statusCode < 300;
 
     // Step 6: persist delivery record.
-    await adminSupabase.from("webhook_deliveries").insert({
-      id: deliveryId,
-      subscription_id: subscriptionId,
-      event_type: eventType,
-      event_id: `test_${ctx.requestId}`,
-      payload: {
-        test: true,
-        message: "This is a test event from Sharetopus",
-      },
-      status_code: statusCode,
-      response_body: responseBody,
-      attempt: 1,
-      latency_ms: latencyMs,
-      delivered_at: wasSuccess ? new Date().toISOString() : null,
-      failed_at: wasSuccess ? null : new Date().toISOString(),
-      error_message: errorMessage,
-    });
+    await runQuery(
+      db.insert(webhook_deliveries).values({
+        id: deliveryId,
+        subscription_id: subscriptionId,
+        event_type: eventType,
+        event_id: `test_${ctx.requestId}`,
+        payload: {
+          test: true,
+          message: "This is a test event from Sharetopus",
+        },
+        status_code: statusCode,
+        response_body: responseBody,
+        attempt: 1,
+        latency_ms: latencyMs,
+        delivered_at: wasSuccess ? new Date().toISOString() : null,
+        failed_at: wasSuccess ? null : new Date().toISOString(),
+        error_message: errorMessage,
+      }),
+    );
 
     return {
       response: NextResponse.json(

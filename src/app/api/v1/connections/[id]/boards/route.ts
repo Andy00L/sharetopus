@@ -1,3 +1,4 @@
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -7,7 +8,8 @@ import { toPinterestBoardDTO } from "@/lib/api/rest/dto/toPinterestBoardDTO";
 import { PinterestBoardsQuerySchema } from "@/lib/api/rest/validation/connectionSchemas";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 const ConnectionIdSchema = z.guid();
@@ -55,16 +57,26 @@ export const GET = withRestEndpoint({
     const query = queryParseResult.data;
 
     // Step 3: fetch account scoped to principal + platform=pinterest.
-    const { data: pinterestAccount, error: lookupError } =
-      await adminSupabase
-        .from("social_accounts")
-        .select(
-          "id, platform, principal_id, access_token, refresh_token, token_expires_at",
+    const { data: pinterestAccounts, error: lookupError } = await runQuery(
+      db
+        .select({
+          id: social_accounts.id,
+          platform: social_accounts.platform,
+          principal_id: social_accounts.principal_id,
+          access_token: social_accounts.access_token,
+          refresh_token: social_accounts.refresh_token,
+          token_expires_at: social_accounts.token_expires_at,
+        })
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.id, connectionId),
+            eq(social_accounts.principal_id, ctx.principal.principalId),
+            isNull(social_accounts.deleted_at),
+          ),
         )
-        .eq("id", connectionId)
-        .eq("principal_id", ctx.principal.principalId)
-        .is("deleted_at", null)
-        .maybeSingle();
+        .limit(1),
+    );
 
     if (lookupError) {
       console.error(
@@ -77,6 +89,7 @@ export const GET = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const pinterestAccount = pinterestAccounts[0];
     if (!pinterestAccount) {
       return restErrorResponse(
         "not_found",

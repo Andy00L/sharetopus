@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -8,7 +9,8 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts, social_connections } from "@/db/schema";
 import type { Platform } from "@/lib/x402/connect/types";
 
 const ConnectionIdSchema = z.guid();
@@ -42,13 +44,19 @@ export const POST = withRestEndpoint({
     const connectionId = idParseResult.data;
 
     // Step 2: fetch account scoped to principal.
-    const { data: accountRow, error: lookupError } = await adminSupabase
-      .from("social_accounts")
-      .select("*")
-      .eq("id", connectionId)
-      .eq("principal_id", ctx.principal.principalId)
-      .is("deleted_at", null)
-      .maybeSingle();
+    const { data: accountRows, error: lookupError } = await runQuery(
+      db
+        .select()
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.id, connectionId),
+            eq(social_accounts.principal_id, ctx.principal.principalId),
+            isNull(social_accounts.deleted_at),
+          ),
+        )
+        .limit(1),
+    );
 
     if (lookupError) {
       console.error(
@@ -61,6 +69,7 @@ export const POST = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const accountRow = accountRows[0];
     if (!accountRow) {
       return restErrorResponse(
         "not_found",
@@ -100,9 +109,8 @@ export const POST = withRestEndpoint({
       Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000,
     ).toISOString();
 
-    const { error: insertError } = await adminSupabase
-      .from("social_connections")
-      .insert({
+    const { error: insertError } = await runQuery(
+      db.insert(social_connections).values({
         id: randomUUID(),
         principal_id: ctx.principal.principalId,
         initiated_via: "api",
@@ -118,7 +126,8 @@ export const POST = withRestEndpoint({
           request_id: ctx.requestId,
           reauth_for_account_id: connectionId,
         },
-      });
+      }),
+    );
 
     if (insertError) {
       console.error(

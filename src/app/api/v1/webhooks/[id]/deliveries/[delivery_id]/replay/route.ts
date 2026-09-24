@@ -1,10 +1,12 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
 const UuidSchema = z.guid();
 
@@ -42,13 +44,20 @@ export const POST = withRestEndpoint({
     const deliveryId = deliveryIdResult.data;
 
     // Step 2: verify subscription exists and is owned by principal.
-    const { data: subscriptionRow, error: subError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .select("id, principal_id, active")
-      .eq("id", subscriptionId)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    const { data: subscriptionRows, error: subError } = await runQuery(
+      db
+        .select({ active: webhook_subscriptions.active })
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscriptionId),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
+    const subscriptionRow = subscriptionRows?.[0];
     if (subError || !subscriptionRow) {
       return restErrorResponse(
         "not_found",
@@ -66,14 +75,23 @@ export const POST = withRestEndpoint({
     }
 
     // Step 3: load original delivery row.
-    const { data: originalDeliveryRow, error: deliveryError } =
-      await adminSupabase
-        .from("webhook_deliveries")
-        .select("id, subscription_id, event_type, payload")
-        .eq("id", deliveryId)
-        .eq("subscription_id", subscriptionId)
-        .maybeSingle();
+    const { data: deliveryRows, error: deliveryError } = await runQuery(
+      db
+        .select({
+          event_type: webhook_deliveries.event_type,
+          payload: webhook_deliveries.payload,
+        })
+        .from(webhook_deliveries)
+        .where(
+          and(
+            eq(webhook_deliveries.id, deliveryId),
+            eq(webhook_deliveries.subscription_id, subscriptionId),
+          ),
+        )
+        .limit(1),
+    );
 
+    const originalDeliveryRow = deliveryRows?.[0];
     if (deliveryError || !originalDeliveryRow) {
       return restErrorResponse(
         "not_found",

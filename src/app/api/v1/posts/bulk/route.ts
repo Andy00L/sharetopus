@@ -1,3 +1,4 @@
+import { asc, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -6,7 +7,8 @@ import { restInputToSchedulePostData } from "@/lib/api/rest/adapters/restInputTo
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { PostBulkInputSchema } from "@/lib/api/rest/validation/postPatchSchemas";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
 /**
@@ -82,11 +84,13 @@ export const POST = withRestEndpoint({
     let postDtos: ReturnType<typeof toPostDTO>[] = [];
 
     if (insertedIds.length > 0) {
-      const { data: insertedRows, error: fetchError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("*")
-        .in("id", insertedIds)
-        .order("created_at", { ascending: true });
+      const { data: insertedRows, error: fetchError } = await runQuery(
+        db
+          .select()
+          .from(scheduled_posts)
+          .where(inArray(scheduled_posts.id, insertedIds))
+          .orderBy(asc(scheduled_posts.created_at)),
+      );
 
       if (fetchError) {
         console.error(
@@ -94,7 +98,7 @@ export const POST = withRestEndpoint({
           fetchError.message,
         );
       } else {
-        postDtos = (insertedRows ?? []).map(toPostDTO);
+        postDtos = insertedRows.map(toPostDTO);
       }
     }
 

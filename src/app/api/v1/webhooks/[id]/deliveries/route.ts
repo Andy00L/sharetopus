@@ -1,3 +1,4 @@
+import { and, desc, eq, lt } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -5,7 +6,8 @@ import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toWebhookDeliveryDTO } from "@/lib/api/rest/dto/toWebhookDeliveryDTO";
 import { WebhookDeliveryListQuerySchema } from "@/lib/api/rest/validation/webhookSchemas";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
 const SubscriptionIdSchema = z.guid();
 
@@ -34,15 +36,20 @@ export const GET = withRestEndpoint({
     const subscriptionId = idParseResult.data;
 
     // Step 2: verify subscription ownership.
-    const { data: subscriptionRow, error: ownershipError } =
-      await adminSupabase
-        .from("webhook_subscriptions")
-        .select("id")
-        .eq("id", subscriptionId)
-        .eq("principal_id", ctx.principal.principalId)
-        .maybeSingle();
+    const { data: subscriptionRows, error: ownershipError } = await runQuery(
+      db
+        .select({ id: webhook_subscriptions.id })
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscriptionId),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
-    if (ownershipError || !subscriptionRow) {
+    if (ownershipError || !subscriptionRows[0]) {
       return restErrorResponse(
         "not_found",
         "Webhook subscription not found",
@@ -67,18 +74,21 @@ export const GET = withRestEndpoint({
     const query = queryParseResult.data;
 
     // Step 4: query deliveries with cursor pagination.
-    let deliveriesQuery = adminSupabase
-      .from("webhook_deliveries")
-      .select("*")
-      .eq("subscription_id", subscriptionId)
-      .order("created_at", { ascending: false })
-      .limit(query.limit + 1);
-
-    if (query.cursor) {
-      deliveriesQuery = deliveriesQuery.lt("created_at", query.cursor);
-    }
-
-    const { data: rows, error: queryError } = await deliveriesQuery;
+    const { data: fetchedRows, error: queryError } = await runQuery(
+      db
+        .select()
+        .from(webhook_deliveries)
+        .where(
+          and(
+            eq(webhook_deliveries.subscription_id, subscriptionId),
+            query.cursor
+              ? lt(webhook_deliveries.created_at, query.cursor)
+              : undefined,
+          ),
+        )
+        .orderBy(desc(webhook_deliveries.created_at))
+        .limit(query.limit + 1),
+    );
     if (queryError) {
       return restErrorResponse(
         "internal_error",
@@ -88,7 +98,6 @@ export const GET = withRestEndpoint({
     }
 
     // Step 5: compute pagination.
-    const fetchedRows = rows ?? [];
     const hasMore = fetchedRows.length > query.limit;
     const pagedRows = hasMore
       ? fetchedRows.slice(0, query.limit)

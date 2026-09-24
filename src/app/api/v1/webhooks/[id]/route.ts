@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -6,11 +7,12 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toWebhookSubscriptionDTO } from "@/lib/api/rest/dto/toWebhookSubscriptionDTO";
 import { WebhookPatchInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { verifyWebhookUrl } from "@/lib/api/rest/webhooks/verifyWebhookConfig";
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { Database } from "@/lib/types/database.types";
+import { db, runQuery } from "@/db/client";
+import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
-type WebhookSubscriptionUpdate =
-  Database["public"]["Tables"]["webhook_subscriptions"]["Update"];
+type WebhookSubscriptionUpdate = Partial<
+  typeof webhook_subscriptions.$inferInsert
+>;
 
 const SubscriptionIdSchema = z.guid();
 
@@ -33,12 +35,18 @@ export const GET = withRestEndpoint({
       );
     }
 
-    const { data: subscriptionRow, error: lookupError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .select("*")
-      .eq("id", idParseResult.data)
-      .eq("principal_id", ctx.principal.principalId)
-      .maybeSingle();
+    const { data: subscriptionRows, error: lookupError } = await runQuery(
+      db
+        .select()
+        .from(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, idParseResult.data),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .limit(1),
+    );
 
     if (lookupError) {
       return restErrorResponse(
@@ -47,6 +55,7 @@ export const GET = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const subscriptionRow = subscriptionRows[0];
     if (!subscriptionRow) {
       return restErrorResponse(
         "not_found",
@@ -125,7 +134,7 @@ export const PATCH = withRestEndpoint({
       }
     }
 
-    // Build update payload with proper Supabase type.
+    // Build the update payload, typed from the table schema.
     const updatePayload: WebhookSubscriptionUpdate = {
       updated_at: new Date().toISOString(),
     };
@@ -148,13 +157,18 @@ export const PATCH = withRestEndpoint({
       }
     }
 
-    const { data: updatedRow, error: updateError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .update(updatePayload)
-      .eq("id", subscriptionId)
-      .eq("principal_id", ctx.principal.principalId)
-      .select("*")
-      .maybeSingle();
+    const { data: updatedRows, error: updateError } = await runQuery(
+      db
+        .update(webhook_subscriptions)
+        .set(updatePayload)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscriptionId),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        )
+        .returning(),
+    );
 
     if (updateError) {
       return restErrorResponse(
@@ -163,6 +177,7 @@ export const PATCH = withRestEndpoint({
         ctx.requestId,
       );
     }
+    const updatedRow = updatedRows[0];
     if (!updatedRow) {
       return restErrorResponse(
         "not_found",
@@ -204,18 +219,26 @@ export const DELETE = withRestEndpoint({
     }
     const subscriptionId = idParseResult.data;
 
-    // Count deliveries before deletion (for audit summary).
-    const { count: deliveryCount } = await adminSupabase
-      .from("webhook_deliveries")
-      .select("id", { count: "exact", head: true })
-      .eq("subscription_id", subscriptionId);
+    // Count deliveries before deletion (for audit summary). A failed count
+    // leaves deliveryCount null and the summary reports 0, as before.
+    const { data: deliveryCount } = await runQuery(
+      db.$count(
+        webhook_deliveries,
+        eq(webhook_deliveries.subscription_id, subscriptionId),
+      ),
+    );
 
     // Delete subscription (FK cascade removes deliveries).
-    const { error: deleteError } = await adminSupabase
-      .from("webhook_subscriptions")
-      .delete()
-      .eq("id", subscriptionId)
-      .eq("principal_id", ctx.principal.principalId);
+    const { error: deleteError } = await runQuery(
+      db
+        .delete(webhook_subscriptions)
+        .where(
+          and(
+            eq(webhook_subscriptions.id, subscriptionId),
+            eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
+          ),
+        ),
+    );
 
     if (deleteError) {
       return restErrorResponse(
