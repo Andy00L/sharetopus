@@ -53,7 +53,7 @@ const timestamptz = customType<{ data: string; driverData: string }>({
   },
 });
 
-/** A jsonb value, typed like supabase-js typed it (src/lib/types/database.types.ts). */
+/** A jsonb value, the shape supabase-js typed jsonb with. database.types.ts re-exports it. */
 export type Json =
   | string
   | number

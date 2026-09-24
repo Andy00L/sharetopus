@@ -1,13 +1,12 @@
-import type { Tables, Json } from "./database.types";
+import type { Tables, Json, MediaType } from "./database.types";
 
-// Re-export Json for consumers
-export type { Json };
+// Re-export for consumers
+export type { Json, MediaType };
 
 // ─────────────────────────────────────────────────────────────────────
-// Table type aliases (canonical contract lives in database.types.ts)
+// Table type aliases (row shapes come from src/db/schema.ts through
+// database.types.ts)
 // ─────────────────────────────────────────────────────────────────────
-
-export type User = Tables<"users">;
 
 export type SocialAccount = Tables<"social_accounts">;
 
@@ -29,16 +28,6 @@ export type ClientSocialAccount = Pick<
   | "account_identifier"
   | "is_verified"
 >;
-
-export type AnalyticsMetric = Tables<"analytics_metrics">;
-
-export type StripeSubscription = Tables<"stripe_subscriptions">;
-
-export type Wallet = Tables<"wallets">;
-
-export type ScheduledPost = Tables<"scheduled_posts"> & {
-  social_accounts?: SocialAccountAccessible | null;
-};
 
 /**
  * The exact projection getScheduledPosts selects for list surfaces (web
@@ -73,36 +62,6 @@ export type ContentHistory = Tables<"content_history"> & {
 };
 
 export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;
-
-// ─────────────────────────────────────────────────────────────────────
-// Enum types
-// ─────────────────────────────────────────────────────────────────────
-
-export type Platform =
-  | "linkedin"
-  | "tiktok"
-  | "pinterest"
-  | "instagram"
-  | "facebook"
-  | "threads"
-  | "youtube"
-  | "x";
-
-export type PostStatus =
-  | "scheduled"
-  | "processing"
-  | "posted"
-  | "failed"
-  | "cancelled";
-
-export type MediaType = "video" | "image" | "text";
-
-export type SubscriptionStatus =
-  | "active"
-  | "canceled"
-  | "past_due"
-  | "trialing"
-  | "incomplete";
 
 // ─────────────────────────────────────────────────────────────────────
 // Platform-specific option types
@@ -154,45 +113,6 @@ export interface PlatformOptions {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Social account helpers
-// ─────────────────────────────────────────────────────────────────────
-
-export interface SocialProfile {
-  id?: string;
-  username?: string;
-  display_name?: string;
-  avatar_url?: string;
-  is_verified?: boolean;
-  follower_count?: number;
-  following_count?: number;
-  bio_description?: string;
-}
-
-export interface TokenInfo {
-  scope?: string;
-  token_type?: string;
-  refresh_expires_in?: number;
-}
-
-export interface ConnectionStatus {
-  connected_at?: string;
-  profile_fetch_successful?: boolean;
-}
-
-export interface SocialAccountExtra {
-  profile?: SocialProfile;
-  token_info?: TokenInfo;
-  connection_status?: ConnectionStatus;
-}
-
-export interface SocialAccountAccessible {
-  length?: number;
-  [index: number]: { avatar_url?: string; display_name?: string };
-  avatar_url?: string;
-  display_name?: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────
 // API Request/Response types
 // ─────────────────────────────────────────────────────────────────────
 
@@ -220,11 +140,4 @@ export interface InstagramProfile {
   profile_picture_url: string;
   followers_count: number | null;
   follows_count: number | null;
-}
-
-export interface ApiResponse<T> {
-  success: boolean;
-  message: string;
-  data?: T;
-  error?: string;
 }

@@ -3,8 +3,8 @@ import "server-only";
 /**
  * Integer-safe conversion from human USDC amounts to atomic base units.
  *
- * pricing_actions.usdc_price arrives as a JS number (PostgREST serializes
- * numeric to a JSON number). Settlement math must never multiply floats, so
+ * pricing_actions.usdc_price arrives as a JS number (src/db/schema.ts reads
+ * numeric columns in number mode). Settlement math must never multiply floats, so
  * the conversion goes through a fixed-decimal string: format to exactly
  * `decimals` fraction digits, then shift the decimal point textually and
  * validate via BigInt.
