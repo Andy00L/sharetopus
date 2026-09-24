@@ -98,8 +98,10 @@ sequenceDiagram
     A->>DB: checkActiveSubscription (stripe_subscriptions)
     DB-->>A: { isActive, plan, priceId }
 
-    alt not active OR plan below Creator
-        A-->>R: null (401 invalid_token, fail-closed)
+    alt a database read failed
+        A-->>R: unavailable (503 with Retry-After, token not dropped)
+    else not active OR plan below Creator
+        A-->>R: rejected (401 invalid_token, fail-closed)
     else active with Creator+ plan
         A->>A: priceIdToTier(priceId)
         A-->>R: McpPrincipal { principalId, kind, plan, priceId, scopes }
@@ -107,7 +109,7 @@ sequenceDiagram
     end
 ```
 
-**Fail-closed behavior.** If `checkActiveSubscription` returns `isActive: false` (no subscription, or a read that failed) or the plan is below Creator, the request is blocked. No principal is returned. A failed read (status `unavailable`) is not cached, so the next request reads again instead of staying locked out for the cache's 60 seconds.
+**Fail-closed behavior.** If `checkActiveSubscription` returns `isActive: false` (no subscription, or a read that failed) or the plan is below Creator, the request is blocked. No principal is returned. A failed read (status `unavailable`), like any failed database read while resolving the token, answers 503 instead of 401, so a client keeps its valid token and retries. It is not cached, so the next request reads again instead of staying locked out for the cache's 60 seconds.
 
 `checkActiveSubscription` is server-only: it trusts the user id it is given, so it is never exposed as a server action. Browser code asks about the current user's subscription through `createCustomerPortal`, which reads the id from the Clerk session.
 
@@ -370,7 +372,7 @@ Stripe webhooks are verified using the Stripe SDK's built-in signature check aga
 
 ### TikTok
 
-TikTok webhooks are verified with HMAC-SHA256. The signed payload is `${timestamp}.${rawBody}`, where the timestamp comes from the request header. Verification enforces a 300-second tolerance window to reject stale or replayed requests. Processed events are recorded in the `tiktok_webhook_events` table (append-only) for idempotency.
+TikTok webhooks are verified with HMAC-SHA256. The signed payload is `${timestamp}.${rawBody}`, where the timestamp comes from the request header. Verification enforces a 300-second tolerance window to reject stale or replayed requests. An event is recorded in the `tiktok_webhook_events` table (append-only) only after it reached Inngest, and it is sent with its derived event id as the Inngest event `id`. A failed dispatch answers 500, so TikTok redelivers it instead of the event being dropped, and a redelivery never starts a second run.
 
 ### Clerk
 
@@ -407,7 +409,7 @@ The trigger functions are listed in [DATABASE.md](./DATABASE.md#functions-and-tr
 | `rest_audit_log` | Every REST API request with endpoint, method, status code, latency | 90 days (daily cron) |
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
-| `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
+| `tiktok_webhook_events` | TikTok webhook idempotency | 90 days (daily cron) |
 | `x402_access_log` | Access audit trail (x402, deferred) | 90 days (daily cron; its DELETE opts in through `app.allow_append_only_delete`) |
 | `x402_refunds` | Refund records (x402, deferred) | Indefinite |
 | `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |

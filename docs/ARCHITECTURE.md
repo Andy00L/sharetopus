@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-35 database tables. 18 MCP tools. 28 REST API endpoints. 16 Inngest functions.
+35 database tables. 18 MCP tools. 28 REST API endpoints. 17 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -61,7 +61,7 @@ graph TD
         end
     end
 
-    subgraph Background["Background (Inngest, 16 functions)"]
+    subgraph Background["Background (Inngest, 17 functions)"]
         subgraph EventHandlers["Event-driven (5)"]
             Worker["process-single-post (post.due, retries 3)"]
             DirectWorker["process-direct-post (post.now, retries 0)"]
@@ -69,7 +69,7 @@ graph TD
             TikTokWebhook["process-tiktok-publish-webhook (tiktok.publish.webhook.received, retries 3)"]
             WebhookDeliver["deliver-webhook (webhook.dispatch.v1, retries 3)"]
         end
-        subgraph Crons["Cron jobs (11)"]
+        subgraph Crons["Cron jobs (12)"]
             Dispatcher["scheduled-posts-tick (*/5 min)"]
             StuckSweep["sweep-stuck-direct-posts (*/5 min)"]
             ReconSweep["sweep-x402-reconciliation (hourly :20)"]
@@ -81,6 +81,7 @@ graph TD
             GraceSweep["cleanup-cancelled-posts-after-grace (daily 05:00)"]
             X402LogSweep["cleanup-x402-access-log (daily 06:00)"]
             RestLogSweep["cleanup-rest-audit-log (daily 07:00)"]
+            TikTokEventSweep["cleanup-tiktok-webhook-events (daily 08:00)"]
         end
     end
 
@@ -129,6 +130,7 @@ graph TD
     ConnectionSweep --> Supabase
     X402LogSweep --> Supabase
     RestLogSweep --> Supabase
+    TikTokEventSweep --> Supabase
     Clerk -->|webhooks| WebhookRoutes
     Stripe -->|webhooks| WebhookRoutes
     TK -->|webhooks| WebhookRoutes
@@ -180,7 +182,7 @@ src/
       oauth-protected-resource/ # RFC 9728 OAuth discovery for MCP clients
     api/
       auth/[clerk]/             # Clerk auth UI
-      inngest/                  # Inngest serve() endpoint (16 functions)
+      inngest/                  # Inngest serve() endpoint (17 functions)
       mcp/mcp/                  # MCP server (mcp-handler 2.x: protocol 2026-07-28 + 2025-era clients)
       v1/                       # REST API v1 (28 endpoints)
         posts/                  # CRUD + bulk schedule
@@ -570,7 +572,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 | File | What it does |
 |------|-------------|
-| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 16 functions |
+| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 17 functions |
 | `src/inngest/client.ts` | Inngest client instance (id: "sharetopus") |
 | `src/inngest/functions/scheduledPostsTick.ts` | Cron: dispatch due scheduled posts every 5 min |
 | `src/inngest/functions/processSinglePost.ts` | Event worker: process one scheduled post |

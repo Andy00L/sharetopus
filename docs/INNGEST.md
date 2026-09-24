@@ -22,6 +22,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 - [cleanup-mcp-audit-log](#cleanup-mcp-audit-log)
 - [cleanup-x402-access-log](#cleanup-x402-access-log)
 - [cleanup-rest-audit-log](#cleanup-rest-audit-log)
+- [cleanup-tiktok-webhook-events](#cleanup-tiktok-webhook-events)
 - [deliver-webhook](#deliver-webhook)
 - [Event vocabulary](#event-vocabulary)
 - [Runtime configuration](#runtime-configuration)
@@ -46,6 +47,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | cleanup-mcp-audit-log | Cron `0 4 * * *` | default | 0 | Delete MCP audit log rows (>90 days) |
 | cleanup-x402-access-log | Cron `0 6 * * *` | default | 0 | Delete x402 access log rows (>90 days) |
 | cleanup-rest-audit-log | Cron `0 7 * * *` | default | 0 | Delete REST audit log rows (>90 days) |
+| cleanup-tiktok-webhook-events | Cron `0 8 * * *` | default | 0 | Purge logged TikTok webhook events (>90 days) |
 | cleanup-social-connections | Cron `0 2 * * *` | default | 0 | Delete pending, failed and expired OAuth connection rows (>30 days) |
 | sweep-x402-reconciliation | Cron `20 * * * *` | default | 0 | Resolve or report x402 payments that need a manual look |
 | deliver-webhook | Event `webhook.dispatch.v1` | default | 3 | Deliver one webhook event to a subscriber (HMAC signed) |
@@ -145,7 +147,7 @@ flowchart TD
 **Trigger:** Event `tiktok.publish.webhook.received`
 **Retries:** 3
 
-Handles TikTok publish lifecycle webhooks sent to `/api/webhooks/tiktok/publish`. Only processes `DIRECT_POST` events (`INBOX_SHARE` is filtered out). Finalization is idempotent via `finalizeTikTokPostByPublishId`, so both the webhook and the poll worker can attempt to finalize without conflict.
+Handles TikTok publish lifecycle webhooks sent to `/api/webhooks/tiktok/publish`. The route sends each event with its derived event id as the Inngest event `id`, then logs it in `tiktok_webhook_events`; a failed send answers 500 so TikTok redelivers, and a redelivery before the log is written starts no second run. Only processes `DIRECT_POST` events (`INBOX_SHARE` is filtered out). Finalization is idempotent via `finalizeTikTokPostByPublishId`, so both the webhook and the poll worker can attempt to finalize without conflict.
 
 **Events handled:**
 
@@ -253,6 +255,15 @@ Deletes x402 access log rows older than 90 days, through the same trigger except
 
 Deletes REST audit log rows older than 90 days, added on 2026-09-24 (the table had no cleanup). `rest_audit_log` is append-only by convention and has no `reject_mutation` trigger, so a plain DELETE goes through.
 
+## cleanup-tiktok-webhook-events
+
+**File:** `src/inngest/functions/cleanupTikTokWebhookEventsCron.ts`
+**Schedule:** Daily at 08:00 UTC
+**Retries:** 0
+**Retention:** `RETENTION_DAYS` = 90
+
+Deletes `tiktok_webhook_events` rows older than 90 days, added on 2026-09-24 (the table had no cleanup). TikTok redelivers an event for 72 hours at most, so the log only has to outlive that window. A plain DELETE: the table has no `reject_mutation` trigger.
+
 ## deliver-webhook
 
 **File:** `src/inngest/functions/deliverWebhook.ts` (232 lines)
@@ -329,6 +340,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 | `0 5 * * *` (05:00) | cleanup-cancelled-posts-after-grace |
 | `0 6 * * *` (06:00) | cleanup-x402-access-log |
 | `0 7 * * *` (07:00) | cleanup-rest-audit-log |
+| `0 8 * * *` (08:00) | cleanup-tiktok-webhook-events |
 
 ## Error classification
 
@@ -346,7 +358,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 ## Source files referenced
 
 - `src/inngest/client.ts` (Inngest client, ID: "sharetopus")
-- `src/app/api/inngest/route.ts` (function registration, 16 functions)
+- `src/app/api/inngest/route.ts` (function registration, 17 functions)
 - `src/lib/jobs/runtimeConfig.ts` (RUNTIME config object)
 - `src/inngest/functions/scheduledPostsTick.ts`
 - `src/inngest/functions/processSinglePost.ts`

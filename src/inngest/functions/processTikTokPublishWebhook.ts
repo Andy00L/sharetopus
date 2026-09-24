@@ -1,19 +1,28 @@
+import { z } from "zod";
+
 import { inngest } from "@/inngest/client";
 import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 
-type WebhookContent = {
-  publish_id?: string;
-  post_id?: string | number;
-  publish_type?: string;
-  reason?: string;
-};
+/** The event data /api/webhooks/tiktok/publish sends (content as TikTok sent it). */
+const WebhookEventDataSchema = z.object({
+  event: z.string(),
+  content: z.string().optional(),
+});
+
+/** The fields read from TikTok's JSON-stringified content; any may be absent. */
+const WebhookContentSchema = z.object({
+  publish_id: z.string().nullish(),
+  post_id: z.union([z.string(), z.number()]).nullish(),
+  publish_type: z.string().nullish(),
+  reason: z.string().nullish(),
+});
 
 /**
  * Inngest worker that processes TikTok Content Posting API webhooks.
  *
  * Triggered by the "tiktok.publish.webhook.received" event dispatched
- * by /api/webhooks/tiktok/publish after signature verification and
- * idempotency claim.
+ * by /api/webhooks/tiktok/publish after signature verification and the
+ * processed-event check (src/actions/server/data/tiktokEventLog.ts).
  *
  * Per TikTok doc, the inner content is a JSON-stringified string.
  * Event types handled:
@@ -34,14 +43,16 @@ export const processTikTokPublishWebhook = inngest.createFunction(
     triggers: [{ event: "tiktok.publish.webhook.received" }],
   },
   async ({ event }) => {
-    const { event: eventName, content } = event.data as {
-      event: string;
-      content: string;
-    };
+    const eventData = WebhookEventDataSchema.safeParse(event.data);
+    if (!eventData.success || eventData.data.content === undefined) {
+      console.error("[processTikTokPublishWebhook] Event data has no content");
+      return { outcome: "skipped", reason: "content_parse_failed" };
+    }
+    const { event: eventName, content } = eventData.data;
 
-    let parsed: WebhookContent;
+    let contentJson: unknown;
     try {
-      parsed = JSON.parse(content) as WebhookContent;
+      contentJson = JSON.parse(content);
     } catch (parseErr) {
       console.error(
         "[processTikTokPublishWebhook] Failed to parse content:",
@@ -49,6 +60,15 @@ export const processTikTokPublishWebhook = inngest.createFunction(
       );
       return { outcome: "skipped", reason: "content_parse_failed" };
     }
+
+    const contentParse = WebhookContentSchema.safeParse(contentJson);
+    if (!contentParse.success) {
+      console.error(
+        "[processTikTokPublishWebhook] Content is not a publish status object",
+      );
+      return { outcome: "skipped", reason: "content_parse_failed" };
+    }
+    const parsed = contentParse.data;
 
     if (!parsed.publish_id) {
       console.log(

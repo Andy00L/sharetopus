@@ -1,7 +1,11 @@
-import { claimTikTokWebhookEvent } from "@/actions/server/data/claimTikTokWebhookEvent";
+import {
+  isTikTokEventProcessed,
+  markTikTokEventProcessed,
+} from "@/actions/server/data/tiktokEventLog";
 import { inngest } from "@/inngest/client";
 import { NextRequest, NextResponse } from "next/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 
@@ -77,13 +81,20 @@ function verifyTikTokSignature(input: {
   return { valid: true };
 }
 
-type TikTokWebhookPayload = {
-  client_key: string;
-  event: string;
-  create_time: number;
-  user_openid: string;
-  content: string;
-};
+/**
+ * The fields this route reads from a TikTok webhook body. client_key, event
+ * and create_time are required, as the route always demanded; user_openid and
+ * content are passed on to the worker as sent.
+ */
+const TikTokWebhookPayloadSchema = z.object({
+  client_key: z.string().min(1),
+  event: z.string().min(1),
+  create_time: z.number().int().positive(),
+  user_openid: z.string().optional(),
+  content: z.string().optional(),
+});
+
+type TikTokWebhookPayload = z.infer<typeof TikTokWebhookPayloadSchema>;
 
 function computeEventId(payload: TikTokWebhookPayload): string {
   return createHash("sha256")
@@ -121,9 +132,9 @@ export async function POST(req: NextRequest) {
     return err("Invalid signature", 400);
   }
 
-  let payload: TikTokWebhookPayload;
+  let parsedBody: unknown;
   try {
-    payload = JSON.parse(rawBody) as TikTokWebhookPayload;
+    parsedBody = JSON.parse(rawBody);
   } catch (parseErr) {
     console.error(
       "[TikTok webhook] Body JSON parse failed:",
@@ -132,35 +143,33 @@ export async function POST(req: NextRequest) {
     return err("Invalid JSON body", 400);
   }
 
-  if (!payload.event || !payload.client_key || !payload.create_time) {
+  const payloadParse = TikTokWebhookPayloadSchema.safeParse(parsedBody);
+  if (!payloadParse.success) {
     console.error("[TikTok webhook] Payload missing required fields");
     return err("Malformed payload", 400);
   }
+  const payload = payloadParse.data;
 
   const eventId = computeEventId(payload);
 
-  const claim = await claimTikTokWebhookEvent({
-    event_id: eventId,
-    event_type: payload.event,
-  });
-
-  if (!claim.claimed && claim.reason === "duplicate") {
+  // An event is logged only once it reached Inngest; see tiktokEventLog.ts.
+  const processedCheck = await isTikTokEventProcessed(eventId);
+  if (!processedCheck.ok) {
+    return err("Could not read the event log", 500);
+  }
+  if (processedCheck.isProcessed) {
     console.log(
       `[TikTok webhook] Duplicate event ${eventId} (${payload.event}), returning 200`,
     );
     return ok({ duplicate: true, event_id: eventId });
   }
 
-  if (!claim.claimed && claim.reason === "error") {
-    // DB transient error. Return 500 so TikTok retries.
-    return err(claim.message, 500);
-  }
-
-  // Dispatch to Inngest for async processing. Return 200 immediately so
-  // TikTok stops retrying. The Inngest worker handles failures with its
-  // own retry policy.
+  // A failed dispatch answers 500 so TikTok redelivers. The event id makes
+  // Inngest drop a second send of the same event, so a redelivery that
+  // arrives before the log below is written starts no second run.
   try {
     await inngest.send({
+      id: eventId,
       name: "tiktok.publish.webhook.received",
       data: {
         event_id: eventId,
@@ -176,10 +185,15 @@ export async function POST(req: NextRequest) {
       "[TikTok webhook] Inngest dispatch failed:",
       dispatchErr instanceof Error ? dispatchErr.message : dispatchErr,
     );
-    // Claim is already inserted. Returning 500 would cause TikTok retry
-    // but the duplicate claim would reject it. Better to log and
-    // return 200; the post can be re-finalized by polling safety net.
-    return ok({ dispatched: false, event_id: eventId });
+    return err("Dispatch failed", 500);
+  }
+
+  const logged = await markTikTokEventProcessed({
+    event_id: eventId,
+    event_type: payload.event,
+  });
+  if (!logged.ok) {
+    return err("Could not log the event", 500);
   }
 
   console.log(

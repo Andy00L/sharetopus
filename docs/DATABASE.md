@@ -252,7 +252,7 @@ Before migration 0002 (2026-09-24) the trigger also refused the ON DELETE SET NU
 | `x402_refunds` | x402 refund records. |
 | `sanctions_screenings` | Wallet sanctions check results. |
 | `stripe_webhook_events` | Stripe webhook idempotency log. Prevents duplicate event processing. |
-| `tiktok_webhook_events` | TikTok webhook idempotency log. Prevents duplicate event processing. |
+| `tiktok_webhook_events` | TikTok webhook idempotency log. An event is logged once it reached Inngest, so a failed dispatch is redelivered. |
 
 See [SECURITY.md](./SECURITY.md) for details on argument redaction and PII handling in audit logs.
 
@@ -295,7 +295,7 @@ Triggers:
 | `mcp_audit_log`, `x402_access_log` | 90 days | Daily crons (`cleanup-mcp-audit-log` 04:00 UTC, `cleanup-x402-access-log` 06:00 UTC) delete older rows. Each DELETE runs in a transaction that first sets `app.allow_append_only_delete = 'on'` with `set_config(..., true)`, the one exception the append-only trigger allows. Enforced since 2026-09-24; before that every run failed at the trigger. |
 | `rest_audit_log` | 90 days | Daily cron `cleanup-rest-audit-log` at 07:00 UTC, since 2026-09-24. A plain DELETE: the table has no `reject_mutation` trigger. |
 | `stripe_webhook_events` | 90 days | Daily cron `cleanup-stripe-webhook-events` at 03:00 UTC. |
-| `tiktok_webhook_events` | Indefinite | No cleanup job exists. |
+| `tiktok_webhook_events` | 90 days | Daily cron `cleanup-tiktok-webhook-events` at 08:00 UTC, since 2026-09-24. A plain DELETE: the table has no `reject_mutation` trigger. |
 | Posts cancelled by a subscription lapse (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | Deleted by `cleanup-cancelled-posts-after-grace` 7 days after the lapse unless the user resubscribes. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
 | `content_history` | Indefinite | Published content records are kept for analytics and history display. |
 | `x402_charges`, `x402_refunds` | Indefinite | Financial records are never deleted. |

@@ -3,6 +3,7 @@ import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanup
 import { cleanupMcpAuditLogCron } from "@/inngest/functions/cleanupMcpAuditLogCron";
 import { cleanupRestAuditLogCron } from "@/inngest/functions/cleanupRestAuditLogCron";
 import { cleanupSocialConnectionsCron } from "@/inngest/functions/cleanupSocialConnectionsCron";
+import { cleanupTikTokWebhookEventsCron } from "@/inngest/functions/cleanupTikTokWebhookEventsCron";
 import { cleanupX402AccessLogCron } from "@/inngest/functions/cleanupX402AccessLogCron";
 import { cleanupStripeWebhookEvents } from "@/inngest/functions/cleanupStripeWebhookEvents";
 import { processDirectPost } from "@/inngest/functions/processDirectPost";
@@ -42,6 +43,7 @@ export const { GET, POST, PUT } = serve({
     cleanupMcpAuditLogCron,
     cleanupRestAuditLogCron,
     cleanupSocialConnectionsCron,
+    cleanupTikTokWebhookEventsCron,
     cleanupX402AccessLogCron,
     sweepX402ReconciliationCron,
     deliverWebhook,

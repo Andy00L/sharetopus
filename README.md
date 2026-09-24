@@ -25,7 +25,7 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (16 Inngest functions) handle dispatch, polling, webhook delivery, and storage and log cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (17 Inngest functions) handle dispatch, polling, webhook delivery, and storage and log cleanup.
 
 ## ✨ Surfaces
 
@@ -106,7 +106,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 
 ## ⚡ Background Jobs
 
-16 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
+17 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
@@ -124,6 +124,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 | cleanup-mcp-audit-log | Cron daily 04:00 UTC | Prune audit log (>90 days) |
 | cleanup-x402-access-log | Cron daily 06:00 UTC | Prune x402 access log (>90 days) |
 | cleanup-rest-audit-log | Cron daily 07:00 UTC | Prune REST audit log (>90 days) |
+| cleanup-tiktok-webhook-events | Cron daily 08:00 UTC | Prune TikTok webhook event log (>90 days) |
 | cleanup-social-connections | Cron daily 02:00 UTC | Delete stale pending, failed and expired OAuth connections (>30 days) |
 | sweep-x402-reconciliation | Cron hourly at :20 | Resolve or report x402 payments that need a manual look |
 
