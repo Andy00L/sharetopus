@@ -18,8 +18,9 @@ const PostIdSchema = z.guid();
  * GET /v1/posts/[id]/analytics -- per-post analytics metrics.
  *
  * Joins scheduled_posts -> content_history (via scheduled_post_id)
- * -> analytics_metrics (via content_id) to find metrics for a
- * specific post.
+ * -> analytics_metrics (via principal, platform and content_id) to find
+ * metrics for a specific post. content_id is the platform's own post id,
+ * so it alone could match another account's or another platform's rows.
  *
  * Returns 404 if the post has no content_history entry (not yet published).
  */
@@ -28,7 +29,7 @@ export const GET = withRestEndpoint({
   rateLimitAction: "rest.posts.analytics",
   handler: async (ctx, request) => {
     // Step 1: extract post ID from URL path.
-    // Path: /api/v1/posts/[id]/analytics -> id is third-to-last segment.
+    // Path: /api/v1/posts/[id]/analytics -> id is the second-to-last segment.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
@@ -80,7 +81,10 @@ export const GET = withRestEndpoint({
     // error, as it was when this lookup required a single row.
     const { data: contentRows, error: contentError } = await runQuery(
       db
-        .select({ content_id: content_history.content_id })
+        .select({
+          content_id: content_history.content_id,
+          platform: content_history.platform,
+        })
         .from(content_history)
         .where(
           and(
@@ -111,12 +115,19 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 4: query analytics_metrics for this content_id.
+    // Step 4: query the caller's analytics_metrics for this post
+    // (analytics_unique_daily keys a row on principal, platform, content_id, day).
     const { data: analyticsRows, error: analyticsError } = await runQuery(
       db
         .select()
         .from(analytics_metrics)
-        .where(eq(analytics_metrics.content_id, contentRow.content_id))
+        .where(
+          and(
+            eq(analytics_metrics.principal_id, ctx.principal.principalId),
+            eq(analytics_metrics.platform, contentRow.platform),
+            eq(analytics_metrics.content_id, contentRow.content_id),
+          ),
+        )
         .orderBy(desc(analytics_metrics.metric_date))
         .limit(100),
     );
