@@ -1,5 +1,5 @@
 // lib/api/ensureValidToken.ts
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
@@ -246,32 +246,32 @@ async function handleRejectedRefresh(
     return { success: true, token: freshToken };
   }
 
-  // Guarded on the token this refresh started from, so a refresh that lands
-  // after the re-read is never overwritten with a stale flag. A row with no
-  // token has nothing to guard on and is left as it is.
-  const staleAccessToken = account.access_token;
-  if (staleAccessToken) {
-    const { error: flagError } = await runQuery(
-      db
-        .update(social_accounts)
-        .set({ is_available: false, updated_at: new Date().toISOString() })
-        .where(
-          and(
-            eq(social_accounts.id, account.id),
-            eq(social_accounts.access_token, staleAccessToken),
-          ),
+  // Guarded on the expiry this refresh started from: a refresh that lands
+  // after the re-read writes a new expiry, so its row is never overwritten
+  // with a stale flag. The token itself cannot be compared in SQL, since it
+  // is stored encrypted with a fresh IV (schema.ts, encryptedText).
+  const { error: flagError } = await runQuery(
+    db
+      .update(social_accounts)
+      .set({ is_available: false, updated_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(social_accounts.id, account.id),
+          account.token_expires_at === null
+            ? isNull(social_accounts.token_expires_at)
+            : eq(social_accounts.token_expires_at, account.token_expires_at),
         ),
-    );
+      ),
+  );
 
-    if (flagError) {
-      console.error(
-        `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
-      );
-    } else {
-      console.warn(
-        `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
-      );
-    }
+  if (flagError) {
+    console.error(
+      `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
+    );
+  } else {
+    console.warn(
+      `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
+    );
   }
 
   return {

@@ -25,7 +25,7 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (17 Inngest functions) handle dispatch, polling, webhook delivery, and storage and log cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
 
 ## ✨ Surfaces
 
@@ -106,7 +106,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 
 ## ⚡ Background Jobs
 
-17 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
+18 Inngest functions handle scheduling, posting, polling, webhook delivery, token encryption, and cleanup:
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
@@ -127,6 +127,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 | cleanup-tiktok-webhook-events | Cron daily 08:00 UTC | Prune TikTok webhook event log (>90 days) |
 | cleanup-social-connections | Cron daily 02:00 UTC | Delete stale pending, failed and expired OAuth connections (>30 days) |
 | sweep-x402-reconciliation | Cron hourly at :20 | Resolve or report x402 payments that need a manual look |
+| encrypt-social-tokens | Cron daily 09:00 UTC, event `social-tokens.encrypt` | Encrypt social account tokens still stored in plaintext |
 
 See [docs/INNGEST.md](./docs/INNGEST.md).
 

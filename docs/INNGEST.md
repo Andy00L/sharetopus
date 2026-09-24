@@ -23,6 +23,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 - [cleanup-x402-access-log](#cleanup-x402-access-log)
 - [cleanup-rest-audit-log](#cleanup-rest-audit-log)
 - [cleanup-tiktok-webhook-events](#cleanup-tiktok-webhook-events)
+- [encrypt-social-tokens](#encrypt-social-tokens)
 - [deliver-webhook](#deliver-webhook)
 - [Event vocabulary](#event-vocabulary)
 - [Runtime configuration](#runtime-configuration)
@@ -50,6 +51,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | cleanup-tiktok-webhook-events | Cron `0 8 * * *` | default | 0 | Purge logged TikTok webhook events (>90 days) |
 | cleanup-social-connections | Cron `0 2 * * *` | default | 0 | Delete pending, failed and expired OAuth connection rows (>30 days) |
 | sweep-x402-reconciliation | Cron `20 * * * *` | default | 0 | Resolve or report x402 payments that need a manual look |
+| encrypt-social-tokens | Cron `0 9 * * *`, Event `social-tokens.encrypt` | default | 1 | Encrypt social account tokens still stored in plaintext |
 | deliver-webhook | Event `webhook.dispatch.v1` | default | 3 | Deliver one webhook event to a subscriber (HMAC signed) |
 
 ## scheduled-posts-tick
@@ -269,6 +271,17 @@ Deletes REST audit log rows older than 90 days, added on 2026-09-24 (the table h
 
 Deletes `tiktok_webhook_events` rows older than 90 days, added on 2026-09-24 (the table had no cleanup). TikTok redelivers an event for 72 hours at most, so the log only has to outlive that window. A plain DELETE: the table has no `reject_mutation` trigger.
 
+## encrypt-social-tokens
+
+**File:** `src/inngest/functions/encryptSocialTokensCron.ts`
+**Schedule:** Daily at 09:00 UTC, and on the `social-tokens.encrypt` event
+**Retries:** 1
+**Batch:** `BATCH_SIZE` = 500 rows per run
+
+Rewrites every `social_accounts` token still stored in plaintext through the encrypting column (see [SECURITY.md](./SECURITY.md#social-account-tokens-at-rest)). After the deploy that ships encryption, send `social-tokens.encrypt` from the Inngest dashboard to encrypt the existing rows at once instead of waiting for 09:00. It runs inside the deployment on purpose: a backfill run from a laptop with a different key would leave every token unreadable.
+
+Each row update is guarded on the stored values it read, so a token refreshed meanwhile (already encrypted by its own write) is left alone. The step returns counts only, since Inngest stores step results. Once every row is encrypted, a run is one query that finds nothing; the job also catches a row written in plaintext by an instance still running the old code during the rollout.
+
 ## deliver-webhook
 
 **File:** `src/inngest/functions/deliverWebhook.ts` (232 lines)
@@ -313,6 +326,7 @@ Retryable status codes: 408, 429, 500, 502, 503, 504. Terminal failures (other 4
 | `tiktok.publish.poll` | process-direct-post, process-single-post | tiktok-publish-status-poll | publish ID, account, media path |
 | `tiktok.publish.webhook.received` | `/api/webhooks/tiktok/publish` (route handler) | process-tiktok-publish-webhook | TikTok event type, publish ID, post ID |
 | `webhook.dispatch.v1` | `dispatchWebhook` (`src/lib/api/rest/webhooks/dispatch.ts`) | deliver-webhook | subscription_id, event_type, event_id, payload |
+| `social-tokens.encrypt` | Sent by hand from the Inngest dashboard | encrypt-social-tokens | none |
 
 ## Runtime configuration
 
@@ -346,6 +360,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 | `0 6 * * *` (06:00) | cleanup-x402-access-log |
 | `0 7 * * *` (07:00) | cleanup-rest-audit-log |
 | `0 8 * * *` (08:00) | cleanup-tiktok-webhook-events |
+| `0 9 * * *` (09:00) | encrypt-social-tokens |
 
 ## Error classification
 
@@ -363,7 +378,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 ## Source files referenced
 
 - `src/inngest/client.ts` (Inngest client, ID: "sharetopus")
-- `src/app/api/inngest/route.ts` (function registration, 17 functions)
+- `src/app/api/inngest/route.ts` (function registration, 18 functions)
 - `src/lib/jobs/runtimeConfig.ts` (RUNTIME config object)
 - `src/inngest/functions/scheduledPostsTick.ts`
 - `src/inngest/functions/processSinglePost.ts`
@@ -380,6 +395,8 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 - `src/inngest/functions/cleanupRestAuditLogCron.ts`
 - `src/inngest/functions/cleanupSocialConnectionsCron.ts`
 - `src/inngest/functions/sweepX402ReconciliationCron.ts`
+- `src/inngest/functions/cleanupTikTokWebhookEventsCron.ts`
+- `src/inngest/functions/encryptSocialTokensCron.ts`
 - `src/inngest/functions/deliverWebhook.ts`
 - `src/inngest/functions/platformErrors.ts`
 - `src/lib/api/rest/webhooks/dispatch.ts`

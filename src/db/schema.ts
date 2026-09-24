@@ -22,6 +22,9 @@ import {
   type PgTableExtraConfigValue,
 } from "drizzle-orm/pg-core";
 
+// Relative on purpose: drizzle-kit loads this file outside Next.js.
+import { decryptToken, encryptToken } from "../lib/crypto/tokenEncryption";
+
 /*
  * The database schema, and the source of truth for it. Every table, index,
  * foreign key, CHECK constraint and row-level security policy in the public
@@ -66,6 +69,30 @@ export type Json =
 const citext = customType<{ data: string }>({
   dataType() {
     return "citext";
+  },
+});
+
+/**
+ * Text encrypted with AES-256-GCM on write and decrypted on read
+ * (src/lib/crypto/tokenEncryption.ts), for the OAuth tokens and API
+ * credentials in social_accounts. The column stays `text`, so no migration.
+ * Values written before encryption shipped read back unchanged until the
+ * encrypt-social-tokens cron rewrites them.
+ *
+ * Every write uses a fresh IV, so SQL cannot compare these columns to a
+ * value, and operators that bind their value through the column (eq, like)
+ * would compare against a fresh ciphertext: test raw values with an sql``
+ * template instead.
+ */
+const encryptedText = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return "text";
+  },
+  toDriver(plaintext) {
+    return encryptToken(plaintext);
+  },
+  fromDriver(storedValue) {
+    return decryptToken(storedValue);
   },
 });
 
@@ -260,8 +287,8 @@ export const social_accounts = pgTable("social_accounts", {
   following_count: bigint({ mode: "number" }),
   bio_description: text(),
   is_available: boolean().default(true).notNull(),
-  access_token: text(),
-  refresh_token: text(),
+  access_token: encryptedText(),
+  refresh_token: encryptedText(),
   token_expires_at: timestamptz(),
   connection_id: text(),
   extra: jsonb().$type<Json>().default({}).notNull(),

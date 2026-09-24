@@ -434,6 +434,17 @@ Raw client IPs are never stored. All IP addresses are hashed before persistence.
 - Salt: `MCP_IP_HASH_SALT` env var, required in production (server throws if missing)
 - Development: fallback salt with a warning log
 
+### Social account tokens at rest
+
+`social_accounts.access_token` and `refresh_token` hold every posting credential: the OAuth tokens and the API keys of credentials providers. The application encrypts them with AES-256-GCM before they reach Postgres (`src/lib/crypto/tokenEncryption.ts`, applied by the `encryptedText` column type in `src/db/schema.ts`), so a database dump, a leaked service-role key or an SQL injection yields ciphertext only.
+
+- **Key:** `SOCIAL_TOKEN_ENCRYPTION_KEY`, 32 random bytes in base64, set in the deployment and never stored in the database. Without it, every query that reads or writes a token fails instead of storing plaintext.
+- **Format:** `enc:v1:<iv>:<ciphertext>:<tag>`, with a fresh 96-bit IV per write. The `v1` tag leaves room for a key rotation.
+- **Tampering:** a modified value or the wrong key fails the GCM tag check, and the query fails.
+- **Older rows:** values written before encryption shipped read back unchanged. The `encrypt-social-tokens` Inngest job (daily at 09:00 UTC, or on demand with the `social-tokens.encrypt` event) rewrites them inside the deployment, so the backfill always uses the deployment's key.
+- **No value comparisons:** each write uses a new IV, so SQL cannot compare these columns to a value. A guard compares another column instead (`handleRejectedRefresh` guards on `token_expires_at`), and code that must see the stored text selects it through an `sql` template.
+- **Losing the key** makes every stored token unreadable, and every account would need a reconnect. Keep a copy in the team's secret store.
+
 ### OAuth tokens and Inngest
 
 Inngest stores every step result in the run's history, outside our database. No step returns an OAuth token or an account row that carries one: the publish workers load the account inside the step that uses it (`fetchAccountForPublish`), and the TikTok status poll resolves its token inside the status-check step.

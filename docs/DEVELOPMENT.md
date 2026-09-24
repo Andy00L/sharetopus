@@ -160,6 +160,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `SUPABASE_SERVICE_ROLE` | Yes | Service role key (server-only), used for Storage |
 | `DATABASE_URL` | Yes | Transaction pooler connection string (port 6543), used by the Drizzle client in `src/db/client.ts`. Server-only |
 | `SUPABASE_DB_URL` | For `db:*` scripts | Session pooler connection string (port 5432), used by drizzle-kit (`drizzle.config.ts`) |
+| `SOCIAL_TOKEN_ENCRYPTION_KEY` | Yes | Encrypts the social account tokens at rest ([SECURITY.md](./SECURITY.md#social-account-tokens-at-rest)). 32 random bytes, base64: `openssl rand -base64 32`. Every environment that shares a database needs the same key, and losing it forces every account to reconnect |
 | `SUPABASE_BUCKET_NAME` | No | Default: `scheduled-videos` |
 | `SUPABASE_CUSTOM_STORAGE_DOMAIN` | No | For TikTok `supabase_direct` media mode |
 

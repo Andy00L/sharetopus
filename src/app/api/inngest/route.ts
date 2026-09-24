@@ -6,6 +6,7 @@ import { cleanupSocialConnectionsCron } from "@/inngest/functions/cleanupSocialC
 import { cleanupTikTokWebhookEventsCron } from "@/inngest/functions/cleanupTikTokWebhookEventsCron";
 import { cleanupX402AccessLogCron } from "@/inngest/functions/cleanupX402AccessLogCron";
 import { cleanupStripeWebhookEvents } from "@/inngest/functions/cleanupStripeWebhookEvents";
+import { encryptSocialTokensCron } from "@/inngest/functions/encryptSocialTokensCron";
 import { processDirectPost } from "@/inngest/functions/processDirectPost";
 import { processSinglePost } from "@/inngest/functions/processSinglePost";
 import { scheduledPostsTick } from "@/inngest/functions/scheduledPostsTick";
@@ -46,6 +47,7 @@ export const { GET, POST, PUT } = serve({
     cleanupTikTokWebhookEventsCron,
     cleanupX402AccessLogCron,
     sweepX402ReconciliationCron,
+    encryptSocialTokensCron,
     deliverWebhook,
   ],
 });
