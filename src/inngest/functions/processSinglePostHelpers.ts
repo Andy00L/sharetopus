@@ -46,7 +46,8 @@ export type FetchPostResult =
       message: string;
       skip: false;
       post: ScheduledPost;
-      account: SocialAccount;
+      /** The account exists and is not deleted; only its id, never its tokens. */
+      account: Pick<SocialAccount, "id">;
     }
   | { success: true; message: string; skip: true }
   | { success: false; message: string };
@@ -86,9 +87,12 @@ export async function fetchPostAndAccount(
     };
   }
 
+  // Only the id: this result is returned from an Inngest step, which stores
+  // it, and the full row carries the OAuth tokens. The publish step loads
+  // the row itself (fetchAccountForPublish).
   const { data: accountRows, error: accErr } = await runQuery(
     db
-      .select()
+      .select({ id: social_accounts.id })
       .from(social_accounts)
       .where(
         and(
@@ -612,7 +616,7 @@ export type RecordStatusResult = {
  */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
-  account: SocialAccount;
+  account: Pick<SocialAccount, "id">;
   result: PlatformPostOutcome;
 }): Promise<RecordStatusResult> {
   const { post, account, result } = args;

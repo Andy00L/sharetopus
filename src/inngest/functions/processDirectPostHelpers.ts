@@ -1,9 +1,5 @@
 import "server-only";
 
-import { and, eq, isNull } from "drizzle-orm";
-
-import { db, runQuery } from "@/db/client";
-import { social_accounts } from "@/db/schema";
 import type { MediaType, Platform } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
@@ -62,45 +58,6 @@ export type PostNowEventData = {
    */
   post_options?: Record<string, unknown> | null;
 };
-
-// ---------- fetch-account ----------
-
-export type FetchAccountResult =
-  | { success: true; account: SocialAccount }
-  | { success: false; message: string };
-
-export async function fetchAccountForDirectPost(
-  socialAccountId: string,
-): Promise<FetchAccountResult> {
-  const { data: accountRows, error } = await runQuery(
-    db
-      .select()
-      .from(social_accounts)
-      .where(
-        and(
-          eq(social_accounts.id, socialAccountId),
-          isNull(social_accounts.deleted_at),
-        ),
-      )
-      .limit(1),
-  );
-
-  if (error) {
-    return {
-      success: false,
-      message: `Failed to fetch account: ${error.message}`,
-    };
-  }
-  const account = accountRows[0];
-  if (!account) {
-    return {
-      success: false,
-      message: "Social account not found or deleted",
-    };
-  }
-
-  return { success: true, account };
-}
 
 // ---------- call-platform-direct-post ----------
 

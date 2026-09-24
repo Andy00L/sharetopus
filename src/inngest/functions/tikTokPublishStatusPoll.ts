@@ -8,6 +8,14 @@ import {
 import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 import { resolveTikTokAccessTokenForAccount } from "./tikTokPublishStatusPollHelpers";
 
+/** One poll attempt: the token could not be resolved, or TikTok answered. */
+type PollAttemptResult =
+  | { kind: "token_unavailable"; message: string }
+  | {
+      kind: "status";
+      status: Awaited<ReturnType<typeof getTikTokPublishStatus>>;
+    };
+
 /**
  * Inngest worker that polls TikTok's /v2/post/publish/status/fetch/
  * endpoint until the publish reaches a terminal state.
@@ -70,12 +78,28 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         return { outcome: "skipped", reason: "already_finalized" };
       }
 
-      // Resolve a fresh access token (handles refresh if expired)
-      const token = await step.run(`resolve-token-${attempt}`, async () => {
-        return await resolveTikTokAccessTokenForAccount(social_account_id);
-      });
+      // Resolve a fresh access token (refreshing it if expired) and poll in
+      // one step: Inngest stores every step result, so a token returned
+      // from its own step would sit in the run's history. The step id is
+      // new (the two steps used to be separate) so a run already in flight
+      // does not replay an old result shape.
+      const attemptResult = await step.run(
+        `status-check-${attempt}`,
+        async (): Promise<PollAttemptResult> => {
+          const token = await resolveTikTokAccessTokenForAccount(social_account_id);
+          if (!token.success) {
+            return { kind: "token_unavailable", message: token.message };
+          }
+          await incrementTikTokPullAttemptCount(publish_id);
+          const status = await getTikTokPublishStatus({
+            publish_id,
+            access_token: token.token,
+          });
+          return { kind: "status", status };
+        },
+      );
 
-      if (!token.success) {
+      if (attemptResult.kind === "token_unavailable") {
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
           await step.run("finalize-token-failure", async () => {
@@ -94,15 +118,7 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         continue;
       }
 
-      // Poll TikTok for the publish status
-      const status = await step.run(`poll-${attempt}`, async () => {
-        await incrementTikTokPullAttemptCount(publish_id);
-        return await getTikTokPublishStatus({
-          publish_id,
-          access_token: token.token,
-        });
-      });
-
+      const status = attemptResult.status;
       if (!status.success) {
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {

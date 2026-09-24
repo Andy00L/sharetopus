@@ -1,3 +1,4 @@
+import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { inngest } from "@/inngest/client";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
@@ -116,9 +117,26 @@ export const processSinglePost = inngest.createFunction(
     const mediaType = deriveMediaMimeType(fileName, fetched.post.media_type);
 
     const result = await step.run("call-platform-direct-post", async () => {
+      // Loaded here, not in fetch-post-and-account: Inngest stores every
+      // step result, and the row carries the OAuth tokens. Reading it here
+      // also picks up a token another run refreshed since that step.
+      const accountForPublish = await fetchAccountForPublish(fetched.account.id);
+      if (!accountForPublish.success) {
+        // Nothing was published yet, so a failed read is safe to retry.
+        if (accountForPublish.reason === "lookup_failed") {
+          throw new Error(`account-reload-failure: ${accountForPublish.message}`);
+        }
+        const accountGone: PlatformPostOutcome = {
+          ok: false,
+          reason: "invalid_input",
+          message: accountForPublish.message,
+        };
+        return accountGone;
+      }
+
       const outcome = await callPlatformDirectPost({
         post: fetched.post,
-        account: fetched.account,
+        account: accountForPublish.account,
         mediaUrl: urls.mediaUrl,
         tiktokMediaUrl: urls.tiktokMediaUrl,
         fileName,

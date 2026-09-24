@@ -1,15 +1,17 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
+import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { db, runQuery } from "@/db/client";
-import { content_history, social_accounts, type Json } from "@/db/schema";
+import { content_history, type Json } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { inngest } from "@/inngest/client";
 
 /**
  * Resolves a fresh TikTok access token for a social account.
  * Fetches the account row, then calls ensureValidToken to handle
- * refresh if needed.
+ * refresh if needed. Call it inside the step that uses the token; never
+ * return the token from a step (Inngest stores step results).
  *
  * Returns: { success, token } or { success: false, message }.
  */
@@ -18,38 +20,12 @@ export async function resolveTikTokAccessTokenForAccount(
 ): Promise<
   { success: true; token: string } | { success: false; message: string }
 > {
-  const { data: accountRows, error } = await runQuery(
-    db
-      .select()
-      .from(social_accounts)
-      .where(
-        and(
-          eq(social_accounts.id, social_account_id),
-          isNull(social_accounts.deleted_at),
-        ),
-      )
-      .limit(1),
-  );
-
-  if (error) {
-    console.error(
-      "[resolveTikTokAccessTokenForAccount] Account fetch failed:",
-      error.message
-    );
-    return {
-      success: false,
-      message: `Account fetch failed: ${error.message}`,
-    };
-  }
-  const account = accountRows[0];
-  if (!account) {
-    return {
-      success: false,
-      message: `Social account not found: ${social_account_id}`,
-    };
+  const fetched = await fetchAccountForPublish(social_account_id);
+  if (!fetched.success) {
+    return { success: false, message: fetched.message };
   }
 
-  const tokenResult = await ensureValidToken(account);
+  const tokenResult = await ensureValidToken(fetched.account);
 
   if (!tokenResult.success || !tokenResult.token) {
     return {

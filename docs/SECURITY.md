@@ -434,6 +434,10 @@ Raw client IPs are never stored. All IP addresses are hashed before persistence.
 - Salt: `MCP_IP_HASH_SALT` env var, required in production (server throws if missing)
 - Development: fallback salt with a warning log
 
+### OAuth tokens and Inngest
+
+Inngest stores every step result in the run's history, outside our database. No step returns an OAuth token or an account row that carries one: the publish workers load the account inside the step that uses it (`fetchAccountForPublish`), and the TikTok status poll resolves its token inside the status-check step.
+
 ### PII in audit logs
 
 Token, password, secret, and JWT patterns are redacted before insert (see [Argument redaction](#argument-redaction) above).

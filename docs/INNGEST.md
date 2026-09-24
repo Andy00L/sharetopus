@@ -82,17 +82,21 @@ Each event includes `scheduled_post_id`, `principal_id`, `social_account_id`, `p
 
 ```mermaid
 flowchart TD
-    A[Event: post.due] --> B[Fetch scheduled_post + social_account]
+    A[Event: post.due] --> B[Fetch scheduled_post
+check the account exists, id only]
     B --> C{Platform supports post type?}
     C -->|No| D[Record as failed\ninvalid_input]
     C -->|Yes| E[CAS UPDATE status = processing]
     E --> F[Build signed media URL]
-    F --> G[Call platform post function]
+    F --> G[Load the account with its tokens
+Call platform post function]
     G --> H{Result}
     H -->|Success| I[UPDATE status = posted\nINSERT content_history\nCleanup media]
     H -->|Terminal error| J[UPDATE status = failed\nINSERT failed_posts\nCleanup media]
     H -->|Retryable error| K[throw for Inngest retry\nauth_expired / rate_limited / transient]
 ```
+
+No step returns an OAuth token. Inngest stores every step result, so the fetch step keeps only the account id, and the step that publishes loads the full row itself (`fetchAccountForPublish`), which also picks up a token another run refreshed in between. An account deleted between the two steps fails the post as `invalid_input`; a failed read throws inside the step and is retried, since nothing was published.
 
 Platform compatibility: Pinterest, Instagram, and TikTok reject text-only posts. LinkedIn accepts all types.
 
@@ -106,7 +110,7 @@ Media URL generation: Supabase signed URLs for Pinterest/LinkedIn/Instagram. Tik
 **Retries:** 0 (fire-and-forget)
 **Throttle:** `RUNTIME.perAccountThrottlePerMinute` (5) per `social_account_id`
 
-Fetches the social account, calls the platform's `directPostFromEvent` handler, and finalizes the `pending_direct_posts` row. Media cleanup happens on all terminal paths except TikTok success (where the TikTok poll worker handles cleanup after publish completion).
+Loads the social account and calls the platform's `directPostFromEvent` handler in one step, so the OAuth tokens never land in a stored step result, then finalizes the `pending_direct_posts` row. An account that cannot be loaded fails the post and still finalizes the row. Media cleanup happens on all terminal paths except TikTok success (where the TikTok poll worker handles cleanup after publish completion).
 
 ## tiktok-publish-status-poll
 
@@ -122,8 +126,9 @@ flowchart TD
     C -->|No| D[Mark as failed\ntimeout after ~60 min]
     C -->|Yes| W{Webhook already finalized?\nstatus != pending}
     W -->|Yes| X[Return early\nalready handled]
-    W -->|No| E[Resolve fresh TikTok token]
-    E --> F[POST /v2/post/publish/status/fetch/]
+    W -->|No| E[One step: resolve a fresh TikTok token]
+    E --> F[POST /v2/post/publish/status/fetch/
+same step, the token is never returned]
     F --> G{Status}
     G -->|PUBLISH_COMPLETE| H[Mark completed\nUpdate content_history\nCleanup media]
     G -->|FAILED / *_FAILED| I[Mark failed\nUpdate content_history\nCleanup media]
