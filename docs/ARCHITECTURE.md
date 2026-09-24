@@ -88,7 +88,7 @@ graph TD
     subgraph Data["Data Layer"]
         Supabase["Supabase Postgres (35 tables, Drizzle)"]
         Storage["Supabase Storage (scheduled-videos)"]
-        Redis["Upstash Redis (rate limits)"]
+        Redis["Upstash Redis (rate limits, token refresh lock)"]
     end
 
     subgraph External["External Services"]

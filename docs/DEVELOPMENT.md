@@ -41,7 +41,7 @@ graph LR
     subgraph Remote["Remote Services"]
         Supabase["Supabase<br/>DB + Storage"]
         Clerk["Clerk<br/>Auth"]
-        Upstash["Upstash Redis<br/>Rate Limiting"]
+        Upstash["Upstash Redis<br/>Rate limits + refresh lock"]
     end
 
     subgraph LocalTools["Local Tooling"]
@@ -51,7 +51,7 @@ graph LR
 
     App -->|"queries + storage"| Supabase
     App -->|"session verification"| Clerk
-    App -->|"rate limit checks"| Upstash
+    App -->|"rate limits, token refresh lock"| Upstash
     StripeCLI -->|"forwards webhook events"| App
     InngestDev -->|"dispatches background jobs"| App
 ```
@@ -67,7 +67,7 @@ The Next.js dev server talks to remote Supabase, Clerk, and Upstash instances. S
 | [Clerk](https://clerk.com) application | Authentication and user management |
 | [Stripe](https://stripe.com) account | Subscription billing (3 products with price IDs) |
 | [Inngest](https://www.inngest.com) account | Background job processing |
-| [Upstash](https://upstash.com) Redis instance | API rate limiting |
+| [Upstash](https://upstash.com) Redis instance | API rate limiting and the per-account token refresh lock |
 | Platform OAuth apps (one per platform) | LinkedIn, TikTok, Pinterest, Instagram, YouTube, X, Facebook, plus any registry provider you enable |
 
 ## Setup
@@ -175,7 +175,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 
 | Variable | Required | Notes |
 |---|---|---|
-| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint. Also holds the token refresh lock ([PLATFORMS.md](./PLATFORMS.md#token-refresh)); without Redis, refreshes run unlocked |
 | `UPSTASH_REDIS_REST_TOKEN` | Yes | Upstash Redis REST token |
 
 ### Background jobs (Inngest)

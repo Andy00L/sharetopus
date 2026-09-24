@@ -66,6 +66,17 @@ Dashed boxes are optional hooks. If any step returns a failure, the flow short-c
 
 Also in `_shared/`: `buildStreamingMultipartFormDataBody.ts`, which streams 64KB chunks for Pinterest video upload without buffering the full file in memory.
 
+### Token Refresh
+
+`ensureValidToken` (`src/lib/api/ensureValidToken.ts`) refreshes a token that expires within 5 minutes, and `publishViaRegistry` does the same for registry providers. Both run the refresh through `refreshWithAccountLock` (`src/lib/api/refreshWithAccountLock.ts`), so one run per account refreshes at a time:
+
+- The holder takes the Upstash key `token_refresh_lock:<account id>` with `SET NX` and a 45 s expiry, which outlasts the slowest refresh timeout (30 s). It releases the key with a script that deletes it only while the holder still owns it.
+- The holder re-reads the row before refreshing. If another run already saved an unexpired token, it uses that token and skips the platform call. Otherwise it refreshes with the stored refresh token, which can be newer than the caller's copy.
+- Every other run polls the row every 500 ms and returns the token the holder saved. A lock left by a crashed run expires after 45 s and a waiter takes over; a waiter gives up after 50 s with a "try again" error.
+- When Redis is unreachable, the refresh runs without the lock and logs `[refreshWithAccountLock] Lock unavailable`.
+
+X rotates its refresh token on every refresh. Before the lock, the second of two concurrent refreshes was refused, which failed that post and could flag a healthy account as needing a reconnect.
+
 ---
 
 ## Platform Support Matrix
@@ -429,6 +440,8 @@ The zod platform enums (MCP tools, REST schemas, x402 body schema) derive from `
 **Shared:**
 - `src/lib/api/_shared/directPostForAccountsGeneric.ts` (268 lines, generic adapter)
 - `src/lib/api/_shared/buildStreamingMultipartFormDataBody.ts` (streaming multipart for Pinterest video)
+- `src/lib/api/ensureValidToken.ts` (token refresh for the seven dedicated platforms)
+- `src/lib/api/refreshWithAccountLock.ts` (per-account refresh lock, shared with registry providers)
 
 **LinkedIn** (`src/lib/api/linkedin/`):
 - `post/postToLinkedIn.ts`

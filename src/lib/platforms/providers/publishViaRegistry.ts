@@ -6,6 +6,11 @@ import { storeContentHistory } from "@/actions/server/contentHistoryActions/stor
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import type { CreatedVia, MediaType } from "@/db/schema";
+import {
+  isTokenExpiring,
+  refreshWithAccountLock,
+  type StoredCredential,
+} from "@/lib/api/refreshWithAccountLock";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 import { resolveConfiguredProvider } from "./registry";
@@ -32,10 +37,6 @@ import type { ProviderDefinition } from "./types";
  * Tables touched: social_accounts (token refresh persist), content_history
  * (via storeContentHistory).
  */
-
-/** Refresh when the stored token dies within this window (same 5 minutes
- * ensureValidToken uses, so both paths agree on "about to expire"). */
-const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export type RegistryPublishResult = {
   success: boolean;
@@ -140,7 +141,9 @@ type FreshTokenResult =
 
 /**
  * Returns a credential valid for this publish, refreshing and persisting
- * first when the stored one is expired or about to expire.
+ * first when the stored one is expired or about to expire. The refresh runs
+ * under refreshWithAccountLock, so concurrent publishes to one account
+ * refresh it once and share the saved token.
  *
  * Registry providers with no refresh function either never expire
  * (credentials providers store null expiry, so the expiry check is never
@@ -150,8 +153,6 @@ async function ensureFreshRegistryToken(
   provider: ProviderDefinition,
   account: SocialAccount,
 ): Promise<FreshTokenResult> {
-  const logPrefix = `[publishViaRegistry ${account.platform}]`;
-
   if (!account.access_token) {
     return {
       success: false,
@@ -159,31 +160,57 @@ async function ensureFreshRegistryToken(
     };
   }
 
-  const isExpired =
-    account.token_expires_at !== null &&
-    Date.now() + TOKEN_EXPIRY_BUFFER_MS >=
-      new Date(account.token_expires_at).getTime();
-
-  if (!isExpired) {
+  if (!isTokenExpiring(account.token_expires_at)) {
     return { success: true, accessToken: account.access_token };
   }
 
-  if (!provider.refresh || !account.refresh_token) {
-    return {
-      success: false,
-      message: `Your ${provider.label} session has expired and cannot be renewed automatically. Please reconnect the account.`,
-    };
+  const refreshCredential = provider.refresh;
+  if (!refreshCredential || !account.refresh_token) {
+    return buildSessionExpiredResult(provider.label);
   }
 
-  const refreshed = await provider.refresh(account.refresh_token);
+  const outcome = await refreshWithAccountLock(account.id, (stored) =>
+    refreshAndStoreRegistryToken(provider.label, refreshCredential, account, stored),
+  );
+  switch (outcome.kind) {
+    case "stored_token_fresh":
+      return { success: true, accessToken: outcome.accessToken };
+    case "refreshed":
+      return outcome.value;
+    case "unavailable":
+      return {
+        success: false,
+        message: `We could not refresh your ${provider.label} connection just now. Please try again in a few minutes.`,
+      };
+  }
+}
+
+/**
+ * Refreshes a registry account's token from the credential just read under
+ * the refresh lock (the caller's copy may predate a rotation), then saves
+ * the new one.
+ */
+async function refreshAndStoreRegistryToken(
+  providerLabel: string,
+  refreshCredential: NonNullable<ProviderDefinition["refresh"]>,
+  account: SocialAccount,
+  stored: StoredCredential,
+): Promise<FreshTokenResult> {
+  const logPrefix = `[refreshAndStoreRegistryToken ${account.platform}]`;
+
+  if (!stored.refresh_token) {
+    return buildSessionExpiredResult(providerLabel);
+  }
+
+  const refreshed = await refreshCredential(stored.refresh_token);
   if (!refreshed.ok) {
     return {
       success: false,
-      message: `Unable to refresh your ${provider.label} connection: ${refreshed.message}`,
+      message: `Unable to refresh your ${providerLabel} connection: ${refreshed.message}`,
     };
   }
 
-  const nextRefreshToken = refreshed.refreshToken ?? account.refresh_token;
+  const nextRefreshToken = refreshed.refreshToken ?? stored.refresh_token;
   const nextExpiresAt =
     refreshed.expiresIn === null
       ? null
@@ -207,7 +234,7 @@ async function ensureFreshRegistryToken(
     // persisted means the stored credential chain is now dead.
     const rotated =
       Boolean(refreshed.refreshToken) &&
-      refreshed.refreshToken !== account.refresh_token;
+      refreshed.refreshToken !== stored.refresh_token;
     if (rotated) {
       console.error(
         `${logPrefix} RECONNECT REQUIRED: refresh token rotated but could ` +
@@ -223,6 +250,14 @@ async function ensureFreshRegistryToken(
   }
 
   return { success: true, accessToken: refreshed.accessToken };
+}
+
+/** No refresh is possible: the provider has none, or no refresh token is stored. */
+function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
+  return {
+    success: false,
+    message: `Your ${providerLabel} session has expired and cannot be renewed automatically. Please reconnect the account.`,
+  };
 }
 
 /**

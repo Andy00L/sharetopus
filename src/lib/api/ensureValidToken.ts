@@ -1,9 +1,15 @@
-// lib/api/auth/ensureValidToken.ts
+// lib/api/ensureValidToken.ts
 import { and, eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import type { Platform } from "@/db/schema";
+import {
+  isTokenExpiring,
+  readStoredCredential,
+  refreshWithAccountLock,
+  selectFreshAccessToken,
+} from "@/lib/api/refreshWithAccountLock";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
 import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
@@ -32,6 +38,9 @@ type EnsureValidTokenResult = {
  *     expire (token_expires_at is stored null, so this path is only reached
  *     if the token was revoked); the user must reconnect.
  *
+ * The refresh runs under refreshWithAccountLock: when several runs find the
+ * same expired token, one refreshes and the others reuse the token it saved.
+ *
  * When the platform refuses the stored credential, the account is flagged
  * is_available = false so the x402 and MCP connection lists report it as
  * needing re-authentication. A refresh that fails for a reason that may
@@ -52,9 +61,7 @@ export async function ensureValidToken(
     };
   }
 
-  const isExpired = isTokenExpired(account.token_expires_at);
-
-  if (!isExpired) {
+  if (!isTokenExpiring(account.token_expires_at)) {
     return {
       success: true,
       token: accessToken,
@@ -65,16 +72,36 @@ export async function ensureValidToken(
     `[ensureValidToken ${account.platform}] Token expired or close to expiry, refreshing...`,
   );
 
+  // Refreshes from the stored credential, not this copy: the refresh token
+  // may have rotated since this copy was read.
+  const outcome = await refreshWithAccountLock(account.id, (stored) =>
+    refreshAndStoreToken({ ...account, ...stored }),
+  );
+  switch (outcome.kind) {
+    case "stored_token_fresh":
+      return { success: true, token: outcome.accessToken };
+    case "refreshed":
+      return outcome.value;
+    case "unavailable":
+      return buildRetryLaterResult(account.platform);
+  }
+}
+
+/**
+ * Refreshes the account's token and saves the new pair. Runs under the
+ * account's refresh lock; `account` carries the credential just read from
+ * the row.
+ */
+async function refreshAndStoreToken(
+  account: SocialAccount,
+): Promise<EnsureValidTokenResult> {
   try {
     const refreshResult = await refreshTokenForPlatform(account);
     if (refreshResult.kind === "failed") {
-      return {
-        success: false,
-        error: `We could not refresh your ${account.platform} connection just now. Please try again in a few minutes.`,
-      };
+      return buildRetryLaterResult(account.platform);
     }
     if (refreshResult.kind === "rejected") {
-      return handleRejectedRefresh(account, accessToken);
+      return handleRejectedRefresh(account);
     }
     const newTokens = refreshResult.tokens;
 
@@ -141,6 +168,14 @@ export async function ensureValidToken(
   }
 }
 
+/** A refresh that may pass on a later attempt; the account is left as it is. */
+function buildRetryLaterResult(platform: Platform): EnsureValidTokenResult {
+  return {
+    success: false,
+    error: `We could not refresh your ${platform} connection just now. Please try again in a few minutes.`,
+  };
+}
+
 /**
  * Platform dispatch for the refresh call. Encapsulates which credential
  * each platform refreshes with (refresh_token vs long-lived access token)
@@ -176,9 +211,10 @@ async function refreshTokenForPlatform(
         ? refreshXToken(account.refresh_token)
         : missingRefreshToken;
     case "instagram":
-      // Instagram Login refreshes the long-lived access token itself; the
-      // access_token null-check already ran in ensureValidToken.
-      return refreshInstagramToken(account.access_token ?? "");
+      // Instagram Login refreshes the long-lived access token itself.
+      return account.access_token
+        ? refreshInstagramToken(account.access_token)
+        : { kind: "rejected", message: "No access token stored." };
     case "facebook":
       // Facebook Page tokens do not expire; reaching this branch means the
       // token was revoked on the platform side.
@@ -195,99 +231,53 @@ async function refreshTokenForPlatform(
 }
 
 /**
- * The platform refused the stored credential. Another request may have
- * refreshed this account in the meantime (X rotates its refresh token, so
- * the second of two concurrent refreshes is always refused): if the row now
- * holds a different, unexpired token, that token is used. Otherwise the
- * account is flagged is_available = false and the caller is told to
- * reconnect.
+ * The platform refused the stored credential. The refresh lock keeps other
+ * runs from refreshing this account meanwhile, but it is skipped when Redis
+ * is unreachable, so the row is re-read first: if it now holds an unexpired
+ * token another run saved, that token is used. Otherwise the account is
+ * flagged is_available = false and the caller is told to reconnect.
  */
 async function handleRejectedRefresh(
   account: SocialAccount,
-  staleAccessToken: string,
 ): Promise<EnsureValidTokenResult> {
-  const { data: currentRows, error: readError } = await runQuery(
-    db
-      .select({
-        access_token: social_accounts.access_token,
-        token_expires_at: social_accounts.token_expires_at,
-      })
-      .from(social_accounts)
-      .where(eq(social_accounts.id, account.id))
-      .limit(1),
-  );
-  const currentRow = currentRows?.[0];
-
-  if (readError) {
-    console.error(
-      `[handleRejectedRefresh ${account.platform}] Re-read failed for account ${account.id}: ${readError.message}`,
-    );
-  } else if (
-    currentRow?.access_token &&
-    currentRow.access_token !== staleAccessToken &&
-    !isTokenExpired(currentRow.token_expires_at)
-  ) {
-    return { success: true, token: currentRow.access_token };
+  const stored = await readStoredCredential(account.id);
+  const freshToken = stored.ok ? selectFreshAccessToken(stored.credential) : null;
+  if (freshToken) {
+    return { success: true, token: freshToken };
   }
 
-  // Guarded on the token this call started from, so a refresh that lands
-  // after the re-read is never overwritten with a stale flag.
-  const { error: flagError } = await runQuery(
-    db
-      .update(social_accounts)
-      .set({ is_available: false, updated_at: new Date().toISOString() })
-      .where(
-        and(
-          eq(social_accounts.id, account.id),
-          eq(social_accounts.access_token, staleAccessToken),
+  // Guarded on the token this refresh started from, so a refresh that lands
+  // after the re-read is never overwritten with a stale flag. A row with no
+  // token has nothing to guard on and is left as it is.
+  const staleAccessToken = account.access_token;
+  if (staleAccessToken) {
+    const { error: flagError } = await runQuery(
+      db
+        .update(social_accounts)
+        .set({ is_available: false, updated_at: new Date().toISOString() })
+        .where(
+          and(
+            eq(social_accounts.id, account.id),
+            eq(social_accounts.access_token, staleAccessToken),
+          ),
         ),
-      ),
-  );
+    );
 
-  if (flagError) {
-    console.error(
-      `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
-    );
-  } else {
-    console.warn(
-      `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
-    );
+    if (flagError) {
+      console.error(
+        `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
+      );
+    } else {
+      console.warn(
+        `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
+      );
+    }
   }
 
   return {
     success: false,
     error: `Your ${account.platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
   };
-}
-
-/**
- * Whether a token is expired or expires within the next 5 minutes.
- * A null expiry means the token never expires (Facebook Page tokens).
- */
-function isTokenExpired(expiresAt: string | null): boolean {
-  if (!expiresAt) {
-    console.log(
-      "[isTokenExpired] No expiry date found - treating as non-expiring",
-    );
-    return false;
-  }
-  try {
-    const now = new Date();
-    const expiry = new Date(expiresAt);
-
-    // 5 minute buffer in milliseconds, to avoid using a token that dies
-    // mid-upload.
-    const bufferTime = 5 * 60 * 1000;
-    const isExpired = now.getTime() + bufferTime >= expiry.getTime();
-    console.log(
-      `[isTokenExpired] Token expires at: ${expiry.toISOString()}, Current time: ${now.toISOString()}, Expired: ${isExpired}`,
-    );
-
-    return isExpired;
-  } catch (error) {
-    console.error("[isTokenExpired] Error parsing expiry date:", error);
-    return false;
-  }
 }
 
 /**
