@@ -166,19 +166,18 @@ sequenceDiagram
     participant DB as Supabase
 
     A->>T: post_now {idempotency_key: "abc-123"}
-    T->>DB: INSERT pending_direct_posts ON CONFLICT DO NOTHING
-    DB-->>T: 1 row inserted
+    T->>DB: SELECT pending_direct_posts WHERE principal_id = ? AND idempotency_key = "abc-123"
+    DB-->>T: no row
+    T->>DB: INSERT pending_direct_posts (lock row)
     T->>T: Dispatch Inngest post.now event
     T->>A: { event_id: "evt_1", success: true }
 
     Note over A: Network blip. Agent retries.
 
     A->>T: post_now {idempotency_key: "abc-123"}
-    T->>DB: INSERT pending_direct_posts ON CONFLICT DO NOTHING
-    DB-->>T: 0 rows inserted (conflict on principal_id + idempotency_key)
-    T->>DB: SELECT WHERE principal_id = ? AND idempotency_key = "abc-123"
+    T->>DB: SELECT pending_direct_posts WHERE principal_id = ? AND idempotency_key = "abc-123"
     DB-->>T: existing event_id
-    T->>A: { event_id: "evt_1", message: "already dispatched" }
+    T->>A: { event_id: "evt_1" } (not dispatched again)
 ```
 
 ### Supported tools
