@@ -1,6 +1,9 @@
 import "server-only";
+import { and, eq, inArray } from "drizzle-orm";
+
 import { inngest } from "@/inngest/client";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { pending_direct_posts } from "@/db/schema";
 import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 
@@ -13,7 +16,8 @@ export type DispatchPostNowEventsResult =
  * events to Inngest in a single send call.
  *
  * Idempotency: if any event carries an idempotency_key, the helper pre-checks
- * the (principal_id, idempotency_key) partial unique index. Events whose keys
+ * the (principal_id, idempotency_key) unique constraint
+ * (pending_direct_posts_principal_idem_uq). Events whose keys
  * already exist are NOT re-dispatched. The returned eventIds array preserves
  * input order, mixing fresh dispatch_ids with existing event_ids.
  *
@@ -60,13 +64,13 @@ export async function dispatchPostNowEvents(
   }
 
   // Step 1: pre-check existing idempotency keys (only when any event carries one).
-  const keyedEvents = events.filter((e) => e.data.idempotency_key);
+  const keyedEvents = events.filter((postEvent) => postEvent.data.idempotency_key);
   const existingMap = new Map<string, string>(); // idempotency_key -> event_id
 
   if (keyedEvents.length > 0) {
-    const keys = keyedEvents.map((e) => e.data.idempotency_key as string);
+    const keys = keyedEvents.map((keyedEvent) => keyedEvent.data.idempotency_key as string);
     const principalIds = [
-      ...new Set(keyedEvents.map((e) => e.data.principal_id)),
+      ...new Set(keyedEvents.map((keyedEvent) => keyedEvent.data.principal_id)),
     ];
     if (principalIds.length !== 1) {
       return {
@@ -76,11 +80,20 @@ export async function dispatchPostNowEvents(
       };
     }
 
-    const { data: existing, error: lookupErr } = await adminSupabase
-      .from("pending_direct_posts")
-      .select("event_id, idempotency_key")
-      .eq("principal_id", principalIds[0])
-      .in("idempotency_key", keys);
+    const { data: existing, error: lookupErr } = await runQuery(
+      db
+        .select({
+          event_id: pending_direct_posts.event_id,
+          idempotency_key: pending_direct_posts.idempotency_key,
+        })
+        .from(pending_direct_posts)
+        .where(
+          and(
+            eq(pending_direct_posts.principal_id, principalIds[0]),
+            inArray(pending_direct_posts.idempotency_key, keys),
+          ),
+        ),
+    );
 
     if (lookupErr) {
       return {
@@ -90,7 +103,7 @@ export async function dispatchPostNowEvents(
       };
     }
 
-    for (const row of existing ?? []) {
+    for (const row of existing) {
       if (row.idempotency_key) {
         existingMap.set(row.idempotency_key, row.event_id);
       }
@@ -98,8 +111,8 @@ export async function dispatchPostNowEvents(
   }
 
   // Step 2: split events into already-dispatched vs new.
-  const newEvents = events.filter((e) => {
-    const key = e.data.idempotency_key;
+  const newEvents = events.filter((postEvent) => {
+    const key = postEvent.data.idempotency_key;
     return !key || !existingMap.has(key);
   });
 
@@ -152,12 +165,12 @@ export async function dispatchPostNowEvents(
   }
 
   // Step 4: assemble eventIds in input order, mixing fresh + existing.
-  const eventIds = events.map((e) => {
-    const key = e.data.idempotency_key;
+  const eventIds = events.map((postEvent) => {
+    const key = postEvent.data.idempotency_key;
     if (key && existingMap.has(key)) {
       return existingMap.get(key) as string;
     }
-    return e.data.dispatch_id as string;
+    return postEvent.data.dispatch_id as string;
   });
 
   return { success: true, eventIds, freshCount: newEvents.length };

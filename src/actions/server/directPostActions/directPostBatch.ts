@@ -1,11 +1,14 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import {
   CAPTION_LIMITS,
   type CaptionPlatform,
 } from "@/components/core/create/constants/captionLimits";
+import { db, runQuery } from "@/db/client";
+import { pending_direct_posts, social_accounts } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
@@ -344,12 +347,18 @@ export async function preflightDirectPost(
   // dispatchPostNowEvents skips an already-used key and reports success, so a
   // paid retry with the same key would be charged for a post it never gets.
   if (post.idempotency_key) {
-    const { data: existingLocks, error: lockLookupError } = await adminSupabase
-      .from("pending_direct_posts")
-      .select("event_id")
-      .eq("principal_id", principalId)
-      .eq("idempotency_key", post.idempotency_key)
-      .limit(1);
+    const { data: existingLocks, error: lockLookupError } = await runQuery(
+      db
+        .select({ event_id: pending_direct_posts.event_id })
+        .from(pending_direct_posts)
+        .where(
+          and(
+            eq(pending_direct_posts.principal_id, principalId),
+            eq(pending_direct_posts.idempotency_key, post.idempotency_key),
+          ),
+        )
+        .limit(1),
+    );
     if (lockLookupError) {
       return {
         ok: false,
@@ -358,7 +367,7 @@ export async function preflightDirectPost(
         message: `Idempotency lookup failed: ${lockLookupError.message}`,
       };
     }
-    if (existingLocks && existingLocks.length > 0) {
+    if (existingLocks.length > 0) {
       return {
         ok: false,
         httpStatus: 409,
@@ -427,14 +436,20 @@ async function checkOwnershipAndPlatformMatch(
     }
   | { success: false; message: string }
 > {
-  const uniqueIds = [...new Set(posts.map((p) => p.socialAccountId))];
+  const uniqueIds = [...new Set(posts.map((post) => post.socialAccountId))];
 
-  const { data, error } = await adminSupabase
-    .from("social_accounts")
-    .select("id, platform")
-    .eq("principal_id", principalId)
-    .is("deleted_at", null)
-    .in("id", uniqueIds);
+  const { data: ownedRows, error } = await runQuery(
+    db
+      .select({ id: social_accounts.id, platform: social_accounts.platform })
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.principal_id, principalId),
+          isNull(social_accounts.deleted_at),
+          inArray(social_accounts.id, uniqueIds),
+        ),
+      ),
+  );
 
   if (error) {
     return {
@@ -443,9 +458,9 @@ async function checkOwnershipAndPlatformMatch(
     };
   }
 
-  const ownedIds = new Set((data ?? []).map((row) => row.id));
+  const ownedIds = new Set(ownedRows.map((row) => row.id));
   const platformByAccountId = new Map<string, string>();
-  for (const row of data ?? []) {
+  for (const row of ownedRows) {
     platformByAccountId.set(row.id, row.platform);
   }
 

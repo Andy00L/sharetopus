@@ -2,7 +2,10 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pending_direct_posts } from "@/db/schema";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import type {
   PostStatusJob,
@@ -74,7 +77,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   const eventIds = raw
     .split(",")
-    .map((s) => s.trim())
+    .map((rawEventId) => rawEventId.trim())
     .filter(Boolean);
 
   if (eventIds.length === 0) {
@@ -94,11 +97,22 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json(body, { status: 400 });
   }
 
-  const { data, error } = await adminSupabase
-    .from("pending_direct_posts")
-    .select("event_id, status, platform, failure_reason")
-    .in("event_id", eventIds)
-    .eq("principal_id", userId);
+  const { data: statusRows, error } = await runQuery(
+    db
+      .select({
+        event_id: pending_direct_posts.event_id,
+        status: pending_direct_posts.status,
+        platform: pending_direct_posts.platform,
+        failure_reason: pending_direct_posts.failure_reason,
+      })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.event_id, eventIds),
+          eq(pending_direct_posts.principal_id, userId),
+        ),
+      ),
+  );
 
   if (error) {
     console.error(
@@ -116,7 +130,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   // sequential but not transactional; a rare race could leave a row
   // momentarily missing).
   const rowByEventId = new Map(
-    (data ?? []).map((row) => [row.event_id, row]),
+    statusRows.map((row) => [row.event_id, row]),
   );
 
   const jobs: PostStatusJob[] = eventIds.map((eventId) => {
@@ -137,7 +151,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     };
   });
 
-  const allTerminal = jobs.every((j) => isJobTerminal(j.status));
+  const allTerminal = jobs.every((job) => isJobTerminal(job.status));
 
   const body: PostStatusResponse = {
     success: true,

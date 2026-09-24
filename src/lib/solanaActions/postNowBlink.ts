@@ -2,8 +2,10 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { isAddress } from "@solana/kit";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts, x402_charges } from "@/db/schema";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { resolveExistingWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
@@ -390,10 +392,12 @@ export async function confirmPostNowPayment(params: {
 
   // Same link the x402 post-now route stores, so the proof ledger resolves
   // this settlement's outcome the same way.
-  const { error: linkError } = await adminSupabase
-    .from("x402_charges")
-    .update({ metadata: { batch_id: batchResult.batchId } })
-    .eq("id", chargeId);
+  const { error: linkError } = await runQuery(
+    db
+      .update(x402_charges)
+      .set({ metadata: { batch_id: batchResult.batchId } })
+      .where(eq(x402_charges.id, chargeId)),
+  );
   if (linkError) {
     console.error(
       `[confirmPostNowPayment] Failed to link charge ${chargeId} to batch ${batchResult.batchId}: ${linkError.message}`,
@@ -437,19 +441,25 @@ async function checkAccountOwnership(
   principal: WalletPrincipal,
   target: PostNowBlinkTarget,
 ): Promise<{ ok: true } | BlinkFailure> {
-  const { data: account, error } = await adminSupabase
-    .from("social_accounts")
-    .select("id")
-    .eq("id", target.accountId)
-    .eq("principal_id", principal.principalId)
-    .eq("platform", target.platform)
-    .is("deleted_at", null)
-    .maybeSingle();
+  const { data: accountRows, error } = await runQuery(
+    db
+      .select({ id: social_accounts.id })
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, target.accountId),
+          eq(social_accounts.principal_id, principal.principalId),
+          eq(social_accounts.platform, target.platform),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
   if (error) {
     console.error(`[checkAccountOwnership] social_accounts read failed: ${error.message}`);
     return { ok: false, httpStatus: 500, message: "Could not verify the account." };
   }
-  if (!account) {
+  if (!accountRows[0]) {
     return {
       ok: false,
       httpStatus: 404,

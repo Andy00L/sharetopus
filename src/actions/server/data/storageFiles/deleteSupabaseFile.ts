@@ -1,8 +1,17 @@
 import "server-only";
 
+import { and, eq, inArray } from "drizzle-orm";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { countPendingDirectPostsForMediaPath } from "@/actions/server/data/pendingDirectPosts";
 import { countPendingTikTokPullsForMediaPath } from "@/actions/server/data/pendingTikTokPulls";
+import { db, runQuery } from "@/db/client";
+import {
+  failed_posts,
+  pending_direct_posts,
+  pending_tiktok_pulls,
+  scheduled_posts,
+} from "@/db/schema";
 
 const PAGE_SIZE = 1000;
 
@@ -188,11 +197,15 @@ export async function deleteSupabaseFile(
         `[deleteSupabaseFile]: Checking file references before deletion: ${filePath}`,
       );
 
-      const { count: scheduledCount, error: checkError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("id", { count: "exact", head: true })
-        .eq("media_storage_path", filePath)
-        .in("status", ["scheduled", "processing"]);
+      const { data: scheduledCount, error: checkError } = await runQuery(
+        db.$count(
+          scheduled_posts,
+          and(
+            eq(scheduled_posts.media_storage_path, filePath),
+            inArray(scheduled_posts.status, ["scheduled", "processing"]),
+          ),
+        ),
+      );
 
       if (checkError) {
         console.error(
@@ -205,11 +218,9 @@ export async function deleteSupabaseFile(
         };
       }
 
-      const { count: failedCount, error: failedCheckError } =
-        await adminSupabase
-          .from("failed_posts")
-          .select("id", { count: "exact", head: true })
-          .eq("media_storage_path", filePath);
+      const { data: failedCount, error: failedCheckError } = await runQuery(
+        db.$count(failed_posts, eq(failed_posts.media_storage_path, filePath)),
+      );
 
       if (failedCheckError) {
         console.error(
@@ -222,7 +233,7 @@ export async function deleteSupabaseFile(
         };
       }
 
-      const referenceCount = (scheduledCount ?? 0) + (failedCount ?? 0);
+      const referenceCount = scheduledCount + failedCount;
 
       if (referenceCount > 0) {
         console.log(
@@ -345,11 +356,17 @@ async function findReferencedPaths(
   const referenced = new Set<string>();
 
   // scheduled_posts (active statuses only -> hits idx_scheduled_posts_media_storage_path_active)
-  const { data: scheduledRows, error: scheduledError } = await adminSupabase
-    .from("scheduled_posts")
-    .select("media_storage_path")
-    .in("media_storage_path", paths)
-    .in("status", ["scheduled", "processing"]);
+  const { data: scheduledRows, error: scheduledError } = await runQuery(
+    db
+      .select({ media_storage_path: scheduled_posts.media_storage_path })
+      .from(scheduled_posts)
+      .where(
+        and(
+          inArray(scheduled_posts.media_storage_path, paths),
+          inArray(scheduled_posts.status, ["scheduled", "processing"]),
+        ),
+      ),
+  );
 
   if (scheduledError) {
     return {
@@ -357,15 +374,17 @@ async function findReferencedPaths(
       message: `scheduled_posts check failed: ${scheduledError.message}`,
     };
   }
-  for (const row of scheduledRows ?? []) {
+  for (const row of scheduledRows) {
     if (row.media_storage_path) referenced.add(row.media_storage_path);
   }
 
   // failed_posts (hits idx_failed_posts_media_storage_path)
-  const { data: failedRows, error: failedError } = await adminSupabase
-    .from("failed_posts")
-    .select("media_storage_path")
-    .in("media_storage_path", paths);
+  const { data: failedRows, error: failedError } = await runQuery(
+    db
+      .select({ media_storage_path: failed_posts.media_storage_path })
+      .from(failed_posts)
+      .where(inArray(failed_posts.media_storage_path, paths)),
+  );
 
   if (failedError) {
     return {
@@ -373,16 +392,22 @@ async function findReferencedPaths(
       message: `failed_posts check failed: ${failedError.message}`,
     };
   }
-  for (const row of failedRows ?? []) {
+  for (const row of failedRows) {
     if (row.media_storage_path) referenced.add(row.media_storage_path);
   }
 
   // pending_tiktok_pulls (filter on status='pending' to hit idx_pending_tiktok_pulls_path_status)
-  const { data: pullsRows, error: pullsError } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .select("media_storage_path")
-    .in("media_storage_path", paths)
-    .eq("status", "pending");
+  const { data: pullsRows, error: pullsError } = await runQuery(
+    db
+      .select({ media_storage_path: pending_tiktok_pulls.media_storage_path })
+      .from(pending_tiktok_pulls)
+      .where(
+        and(
+          inArray(pending_tiktok_pulls.media_storage_path, paths),
+          eq(pending_tiktok_pulls.status, "pending"),
+        ),
+      ),
+  );
 
   if (pullsError) {
     return {
@@ -390,16 +415,22 @@ async function findReferencedPaths(
       message: `pending_tiktok_pulls check failed: ${pullsError.message}`,
     };
   }
-  for (const row of pullsRows ?? []) {
+  for (const row of pullsRows) {
     if (row.media_storage_path) referenced.add(row.media_storage_path);
   }
 
   // pending_direct_posts (filter on status='processing' to hit idx_pending_direct_posts_path_status)
-  const { data: directRows, error: directError } = await adminSupabase
-    .from("pending_direct_posts")
-    .select("media_storage_path")
-    .in("media_storage_path", paths)
-    .eq("status", "processing");
+  const { data: directRows, error: directError } = await runQuery(
+    db
+      .select({ media_storage_path: pending_direct_posts.media_storage_path })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.media_storage_path, paths),
+          eq(pending_direct_posts.status, "processing"),
+        ),
+      ),
+  );
 
   if (directError) {
     return {
@@ -407,7 +438,7 @@ async function findReferencedPaths(
       message: `pending_direct_posts check failed: ${directError.message}`,
     };
   }
-  for (const row of directRows ?? []) {
+  for (const row of directRows) {
     if (row.media_storage_path) referenced.add(row.media_storage_path);
   }
 

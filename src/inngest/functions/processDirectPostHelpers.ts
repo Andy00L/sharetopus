@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -69,25 +72,26 @@ export type FetchAccountResult =
 export async function fetchAccountForDirectPost(
   socialAccountId: string,
 ): Promise<FetchAccountResult> {
-  const { data: account, error } = await adminSupabase
-    .from("social_accounts")
-    .select("*")
-    .eq("id", socialAccountId)
-    .is("deleted_at", null)
-    .single();
+  const { data: accountRows, error } = await runQuery(
+    db
+      .select()
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, socialAccountId),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
 
   if (error) {
-    if (error.code === "PGRST116") {
-      return {
-        success: false,
-        message: "Social account not found or deleted",
-      };
-    }
     return {
       success: false,
       message: `Failed to fetch account: ${error.message}`,
     };
   }
+  const account = accountRows[0];
   if (!account) {
     return {
       success: false,
@@ -95,7 +99,7 @@ export async function fetchAccountForDirectPost(
     };
   }
 
-  return { success: true, account: account as SocialAccount };
+  return { success: true, account };
 }
 
 // ---------- call-platform-direct-post ----------

@@ -1,5 +1,8 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, sql } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pending_tiktok_pulls } from "@/db/schema";
 import type { PendingTikTokPull } from "@/lib/types/dbTypes";
 
 /**
@@ -20,17 +23,19 @@ export async function insertPendingTikTokPull(input: {
   media_storage_path: string;
   creator_username: string | null;
 }): Promise<{ success: true } | { success: false; message: string }> {
-  const { error } = await adminSupabase.from("pending_tiktok_pulls").insert({
-    publish_id: input.publish_id,
-    principal_id: input.principal_id,
-    social_account_id: input.social_account_id,
-    scheduled_post_id: input.scheduled_post_id ?? null,
-    content_history_id: input.content_history_id ?? null,
-    media_storage_path: input.media_storage_path,
-    creator_username: input.creator_username,
-    status: "pending",
-    attempt_count: 0,
-  });
+  const { error } = await runQuery(
+    db.insert(pending_tiktok_pulls).values({
+      publish_id: input.publish_id,
+      principal_id: input.principal_id,
+      social_account_id: input.social_account_id,
+      scheduled_post_id: input.scheduled_post_id ?? null,
+      content_history_id: input.content_history_id ?? null,
+      media_storage_path: input.media_storage_path,
+      creator_username: input.creator_username,
+      status: "pending",
+      attempt_count: 0,
+    }),
+  );
 
   if (error) {
     console.error(
@@ -58,31 +63,18 @@ export async function incrementTikTokPullAttemptCount(
 ): Promise<
   { success: true; message: string } | { success: false; message: string }
 > {
-  // Supabase JS client does not support SQL expressions like
-  // attempt_count + 1 in .update(). Fetch current, increment, update.
-  const { data: current, error: fetchErr } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .select("attempt_count")
-    .eq("publish_id", publish_id)
-    .single();
-
-  if (fetchErr) {
-    console.error(
-      "[incrementTikTokPullAttemptCount] Fetch failed:",
-      fetchErr.message
-    );
-    return { success: false, message: `Fetch failed: ${fetchErr.message}` };
-  }
-
-  const newCount = (current?.attempt_count ?? 0) + 1;
-
-  const { error } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .update({
-      attempt_count: newCount,
-      last_polled_at: new Date().toISOString(),
-    })
-    .eq("publish_id", publish_id);
+  // One statement: the database adds 1 to the stored count, so two
+  // concurrent polls of one publish_id cannot lose an increment.
+  const { data: updatedRows, error } = await runQuery(
+    db
+      .update(pending_tiktok_pulls)
+      .set({
+        attempt_count: sql`${pending_tiktok_pulls.attempt_count} + 1`,
+        last_polled_at: new Date().toISOString(),
+      })
+      .where(eq(pending_tiktok_pulls.publish_id, publish_id))
+      .returning({ attempt_count: pending_tiktok_pulls.attempt_count }),
+  );
 
   if (error) {
     console.error(
@@ -92,7 +84,21 @@ export async function incrementTikTokPullAttemptCount(
     return { success: false, message: `Update failed: ${error.message}` };
   }
 
-  return { success: true, message: `Attempt count: ${newCount}` };
+  const updatedPull = updatedRows[0];
+  if (!updatedPull) {
+    console.error(
+      `[incrementTikTokPullAttemptCount] No pending pull for publish_id ${publish_id}`
+    );
+    return {
+      success: false,
+      message: `No pending pull for publish_id ${publish_id}`,
+    };
+  }
+
+  return {
+    success: true,
+    message: `Attempt count: ${updatedPull.attempt_count}`,
+  };
 }
 
 /**
@@ -108,19 +114,15 @@ export async function findPendingTikTokPullByPublishId(
   | { success: true; pull: PendingTikTokPull }
   | { success: false; message: string }
 > {
-  const { data, error } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .select("*")
-    .eq("publish_id", publish_id)
-    .single();
+  const { data: pullRows, error } = await runQuery(
+    db
+      .select()
+      .from(pending_tiktok_pulls)
+      .where(eq(pending_tiktok_pulls.publish_id, publish_id))
+      .limit(1),
+  );
 
   if (error) {
-    if (error.code === "PGRST116") {
-      return {
-        success: false,
-        message: `No pending pull found for publish_id: ${publish_id}`,
-      };
-    }
     console.error(
       "[findPendingTikTokPullByPublishId] Query failed:",
       error.message
@@ -128,7 +130,15 @@ export async function findPendingTikTokPullByPublishId(
     return { success: false, message: `Query failed: ${error.message}` };
   }
 
-  return { success: true, pull: data };
+  const pull = pullRows[0];
+  if (!pull) {
+    return {
+      success: false,
+      message: `No pending pull found for publish_id: ${publish_id}`,
+    };
+  }
+
+  return { success: true, pull };
 }
 
 /**
@@ -144,11 +154,15 @@ export async function countPendingTikTokPullsForMediaPath(
 ): Promise<
   { success: true; count: number } | { success: false; message: string }
 > {
-  const { count, error } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .select("publish_id", { count: "exact", head: true })
-    .eq("media_storage_path", media_storage_path)
-    .eq("status", "pending");
+  const { data: count, error } = await runQuery(
+    db.$count(
+      pending_tiktok_pulls,
+      and(
+        eq(pending_tiktok_pulls.media_storage_path, media_storage_path),
+        eq(pending_tiktok_pulls.status, "pending"),
+      ),
+    ),
+  );
 
   if (error) {
     console.error(
@@ -158,5 +172,5 @@ export async function countPendingTikTokPullsForMediaPath(
     return { success: false, message: `Query failed: ${error.message}` };
   }
 
-  return { success: true, count: count ?? 0 };
+  return { success: true, count };
 }

@@ -1,5 +1,7 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { db, runQuery } from "@/db/client";
+import { tiktok_webhook_events } from "@/db/schema";
 
 /**
  * Idempotency claim for TikTok webhook events. INSERT into
@@ -18,12 +20,12 @@ export async function claimTikTokWebhookEvent(input: {
   | { claimed: false; reason: "duplicate"; message: string }
   | { claimed: false; reason: "error"; message: string }
 > {
-  const { error } = await adminSupabase
-    .from("tiktok_webhook_events")
-    .insert({
+  const { error } = await runQuery(
+    db.insert(tiktok_webhook_events).values({
       event_id: input.event_id,
       event_type: input.event_type,
-    });
+    }),
+  );
 
   if (!error) {
     return { claimed: true };

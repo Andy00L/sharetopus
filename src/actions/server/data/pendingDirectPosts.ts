@@ -1,4 +1,7 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pending_direct_posts } from "@/db/schema";
 import { Platform } from "@/lib/types/database.types";
 import "server-only";
 
@@ -31,24 +34,26 @@ export async function insertPendingDirectPosts(
     return { success: true, message: "No rows to insert", insertedCount: 0 };
   }
 
-  const insertRows = rows.map((r) => ({
-    event_id: r.event_id,
-    batch_id: r.batch_id,
-    principal_id: r.principal_id,
-    social_account_id: r.social_account_id,
-    platform: r.platform,
-    media_storage_path: r.media_storage_path,
+  const insertRows = rows.map((lockInput) => ({
+    event_id: lockInput.event_id,
+    batch_id: lockInput.batch_id,
+    principal_id: lockInput.principal_id,
+    social_account_id: lockInput.social_account_id,
+    platform: lockInput.platform,
+    media_storage_path: lockInput.media_storage_path,
     status: "processing" as const,
-    idempotency_key: r.idempotency_key ?? null,
+    idempotency_key: lockInput.idempotency_key ?? null,
   }));
 
-  const { error } = await adminSupabase
-    .from("pending_direct_posts")
-    .insert(insertRows);
+  // One multi-row INSERT: all rows land or none do.
+  const { error } = await runQuery(
+    db.insert(pending_direct_posts).values(insertRows),
+  );
 
   if (error) {
-    // 23505 = unique_violation on either event_id PK (replay) or
-    // (principal_id, idempotency_key) partial unique index (retry).
+    // 23505 = unique_violation on either event_id PK (replay) or the
+    // (principal_id, idempotency_key) unique constraint
+    // pending_direct_posts_principal_idem_uq (retry).
     // Both mean "already dispatched, do not re-dispatch."
     if (error.code === "23505") {
       console.warn(
@@ -83,16 +88,22 @@ export async function finalizePendingDirectPost(
 ): Promise<{ success: boolean; message: string; updated: boolean }> {
   const now = new Date().toISOString();
 
-  const { data, error } = await adminSupabase
-    .from("pending_direct_posts")
-    .update({
-      status,
-      finished_at: now,
-      failure_reason: failureReason,
-    })
-    .eq("event_id", eventId)
-    .eq("status", "processing")
-    .select("event_id");
+  const { data: updatedRows, error } = await runQuery(
+    db
+      .update(pending_direct_posts)
+      .set({
+        status,
+        finished_at: now,
+        failure_reason: failureReason,
+      })
+      .where(
+        and(
+          eq(pending_direct_posts.event_id, eventId),
+          eq(pending_direct_posts.status, "processing"),
+        ),
+      )
+      .returning({ event_id: pending_direct_posts.event_id }),
+  );
 
   if (error) {
     console.error("[finalizePendingDirectPost] Update failed:", error.message);
@@ -103,7 +114,7 @@ export async function finalizePendingDirectPost(
     };
   }
 
-  const updated = !!(data && data.length > 0);
+  const updated = updatedRows.length > 0;
   if (!updated) {
     console.log(`[finalizePendingDirectPost] Already finalized: ${eventId}`);
   } else {
@@ -127,11 +138,15 @@ export async function countPendingDirectPostsForMediaPath(
 ): Promise<
   { success: true; count: number } | { success: false; message: string }
 > {
-  const { count, error } = await adminSupabase
-    .from("pending_direct_posts")
-    .select("event_id", { count: "exact", head: true })
-    .eq("media_storage_path", mediaPath)
-    .eq("status", "processing");
+  const { data: count, error } = await runQuery(
+    db.$count(
+      pending_direct_posts,
+      and(
+        eq(pending_direct_posts.media_storage_path, mediaPath),
+        eq(pending_direct_posts.status, "processing"),
+      ),
+    ),
+  );
 
   if (error) {
     console.error(
@@ -141,7 +156,7 @@ export async function countPendingDirectPostsForMediaPath(
     return { success: false, message: `Query failed: ${error.message}` };
   }
 
-  return { success: true, count: count ?? 0 };
+  return { success: true, count };
 }
 
 /**
@@ -155,16 +170,22 @@ export async function sweepStuckPendingDirectPosts(
 > {
   const now = new Date().toISOString();
 
-  const { data, error } = await adminSupabase
-    .from("pending_direct_posts")
-    .update({
-      status: "failed" as const,
-      finished_at: now,
-      failure_reason: "stale_worker_swept",
-    })
-    .eq("status", "processing")
-    .lt("created_at", cutoffIso)
-    .select("event_id");
+  const { data: sweptRows, error } = await runQuery(
+    db
+      .update(pending_direct_posts)
+      .set({
+        status: "failed" as const,
+        finished_at: now,
+        failure_reason: "stale_worker_swept",
+      })
+      .where(
+        and(
+          eq(pending_direct_posts.status, "processing"),
+          lt(pending_direct_posts.created_at, cutoffIso),
+        ),
+      )
+      .returning({ event_id: pending_direct_posts.event_id }),
+  );
 
   if (error) {
     console.error(
@@ -174,5 +195,5 @@ export async function sweepStuckPendingDirectPosts(
     return { success: false, message: `Sweep failed: ${error.message}` };
   }
 
-  return { success: true, sweptCount: data?.length ?? 0 };
+  return { success: true, sweptCount: sweptRows.length };
 }

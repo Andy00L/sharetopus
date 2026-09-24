@@ -1,8 +1,10 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { content_history, social_accounts, type Json } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { inngest } from "@/inngest/client";
-import type { Json } from "@/lib/types/database.types";
 
 /**
  * Resolves a fresh TikTok access token for a social account.
@@ -16,12 +18,18 @@ export async function resolveTikTokAccessTokenForAccount(
 ): Promise<
   { success: true; token: string } | { success: false; message: string }
 > {
-  const { data: account, error } = await adminSupabase
-    .from("social_accounts")
-    .select("*")
-    .eq("id", social_account_id)
-    .is("deleted_at", null)
-    .single();
+  const { data: accountRows, error } = await runQuery(
+    db
+      .select()
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, social_account_id),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
 
   if (error) {
     console.error(
@@ -33,6 +41,7 @@ export async function resolveTikTokAccessTokenForAccount(
       message: `Account fetch failed: ${error.message}`,
     };
   }
+  const account = accountRows[0];
   if (!account) {
     return {
       success: false,
@@ -77,11 +86,13 @@ export async function updateContentHistoryStatusToFailed(
   }
 
   // Fetch current extra to merge
-  const { data: current, error: fetchErr } = await adminSupabase
-    .from("content_history")
-    .select("extra")
-    .eq("id", content_history_id)
-    .single();
+  const { data: currentRows, error: fetchErr } = await runQuery(
+    db
+      .select({ extra: content_history.extra })
+      .from(content_history)
+      .where(eq(content_history.id, content_history_id))
+      .limit(1),
+  );
 
   if (fetchErr) {
     console.error(
@@ -94,9 +105,20 @@ export async function updateContentHistoryStatusToFailed(
     };
   }
 
+  const current = currentRows[0];
+  if (!current) {
+    console.error(
+      `[updateContentHistoryStatusToFailed] Fetch failed: no content_history row ${content_history_id}`
+    );
+    return {
+      success: false,
+      message: `Fetch content_history failed: no row for id ${content_history_id}`,
+    };
+  }
+
   // Merge failure info into existing extra
   const existingExtra =
-    current?.extra && typeof current.extra === "object" && !Array.isArray(current.extra)
+    current.extra && typeof current.extra === "object" && !Array.isArray(current.extra)
       ? (current.extra as Record<string, Json>)
       : {};
 
@@ -106,13 +128,15 @@ export async function updateContentHistoryStatusToFailed(
     failed_at: new Date().toISOString(),
   };
 
-  const { error: updateErr } = await adminSupabase
-    .from("content_history")
-    .update({
-      status: "failed",
-      extra: mergedExtra as Json,
-    })
-    .eq("id", content_history_id);
+  const { error: updateErr } = await runQuery(
+    db
+      .update(content_history)
+      .set({
+        status: "failed",
+        extra: mergedExtra as Json,
+      })
+      .where(eq(content_history.id, content_history_id)),
+  );
 
   if (updateErr) {
     console.error(

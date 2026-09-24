@@ -1,6 +1,15 @@
 import "server-only";
 
+import { inArray } from "drizzle-orm";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import {
+  failed_posts,
+  pending_direct_posts,
+  pending_tiktok_pulls,
+  scheduled_posts,
+} from "@/db/schema";
 
 /**
  * Lists every file in the bucket older than `cutoffIso`, recursing into
@@ -143,20 +152,18 @@ async function listFolderFiles(
 }
 
 /**
- * Number of paths per `.in()` filter. PostgREST sends the filter in the
- * request URL, so a chunk of 1000 storage paths (~50 chars each) builds a
- * query string large enough to be rejected as a 414 by the gateway. 200
- * keeps the URL comfortably small; the caller loops.
+ * Number of paths per `IN (...)` filter. Each path is one bound parameter;
+ * 200 keeps every statement small and the caller loops over the chunks.
  */
 const REFERENCE_CHUNK_SIZE = 200;
 
-/**
- * Rows fetched per page inside one chunk query. PostgREST caps a response
- * at the project's `max-rows` setting (commonly 1000) and returns the
- * truncated page WITHOUT an error, so every chunk query must paginate to
- * completion instead of trusting a single response.
- */
-const REFERENCE_PAGE_SIZE = 500;
+/** The four tables whose media_storage_path keeps a storage file alive. */
+const MEDIA_REFERENCE_TABLES = {
+  scheduled_posts,
+  failed_posts,
+  pending_tiktok_pulls,
+  pending_direct_posts,
+};
 
 /**
  * Returns the subset of `paths` that are referenced by any of the four
@@ -167,8 +174,9 @@ const REFERENCE_PAGE_SIZE = 500;
  *
  * Correctness note: everything this function fails to report as referenced
  * gets DELETED from storage by the caller. A silently short result is
- * therefore user data loss, not a missed optimization, which is why the
- * chunk queries paginate explicitly and any error aborts the whole sweep.
+ * therefore user data loss, not a missed optimization, which is why each
+ * chunk query reads every match in one statement and any error aborts the
+ * whole sweep.
  */
 export async function findReferencedStoragePaths(
   paths: string[]
@@ -182,8 +190,12 @@ export async function findReferencedStoragePaths(
 
   const referencedSet = new Set<string>();
 
-  for (let i = 0; i < paths.length; i += REFERENCE_CHUNK_SIZE) {
-    const chunk = paths.slice(i, i + REFERENCE_CHUNK_SIZE);
+  for (
+    let chunkStart = 0;
+    chunkStart < paths.length;
+    chunkStart += REFERENCE_CHUNK_SIZE
+  ) {
+    const chunk = paths.slice(chunkStart, chunkStart + REFERENCE_CHUNK_SIZE);
     const result = await queryReferencesForChunk(chunk);
     if (!result.success) return result;
     for (const referencedPath of result.found) {
@@ -213,27 +225,27 @@ async function queryReferencesForChunk(
 
   const found: string[] = [];
 
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
+  for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+    const result = results[resultIndex];
     if (result.status === "rejected") {
       console.error(
-        `[findReferencedStoragePaths] Query to ${tables[i]} threw:`,
+        `[findReferencedStoragePaths] Query to ${tables[resultIndex]} threw:`,
         result.reason
       );
       return {
         success: false,
-        message: `Query to ${tables[i]} threw: ${result.reason}`,
+        message: `Query to ${tables[resultIndex]} threw: ${result.reason}`,
       };
     }
 
     if (!result.value.success) {
       console.error(
-        `[findReferencedStoragePaths] Query to ${tables[i]} failed:`,
+        `[findReferencedStoragePaths] Query to ${tables[resultIndex]} failed:`,
         result.value.message
       );
       return {
         success: false,
-        message: `Query to ${tables[i]} failed: ${result.value.message}`,
+        message: `Query to ${tables[resultIndex]} failed: ${result.value.message}`,
       };
     }
 
@@ -244,55 +256,39 @@ async function queryReferencesForChunk(
 }
 
 /**
- * Reads EVERY row of one table whose media_storage_path is in `chunk`,
- * paging until a short page proves the result set is exhausted.
+ * Reads every distinct media_storage_path of one table that is in `chunk`.
  *
- * A single unpaginated select cannot be trusted here: one storage path can
- * be referenced by many rows (the same media fanned out across platforms,
- * or reused across posts), so a 200-path chunk can match far more than 200
- * rows, and PostgREST silently truncates at the project's max-rows cap.
- * Any reference missed by that truncation would be read as an orphan and
- * its file deleted.
+ * One storage path can be referenced by many rows (the same media fanned
+ * out across platforms, or reused across posts). DISTINCT caps the result
+ * at the chunk size, so a single statement returns every match; no paging,
+ * and no page boundary that could leave a reference unread (an unread
+ * reference is taken for an orphan and its file deleted).
  */
 async function readAllReferencesFromTable(
-  table:
-    | "scheduled_posts"
-    | "failed_posts"
-    | "pending_tiktok_pulls"
-    | "pending_direct_posts",
+  table: keyof typeof MEDIA_REFERENCE_TABLES,
   chunk: string[]
 ): Promise<
   { success: true; found: string[] } | { success: false; message: string }
 > {
-  const found: string[] = [];
-  let offset = 0;
+  const referenceTable = MEDIA_REFERENCE_TABLES[table];
+  const { data: referenceRows, error } = await runQuery(
+    db
+      .selectDistinct({ media_storage_path: referenceTable.media_storage_path })
+      .from(referenceTable)
+      .where(inArray(referenceTable.media_storage_path, chunk)),
+  );
 
-  for (;;) {
-    const { data, error } = await adminSupabase
-      .from(table)
-      .select("media_storage_path")
-      .in("media_storage_path", chunk)
-      .range(offset, offset + REFERENCE_PAGE_SIZE - 1);
-
-    if (error) {
-      return { success: false, message: error.message };
-    }
-    if (!data || data.length === 0) {
-      return { success: true, found };
-    }
-
-    for (const row of data) {
-      if (row.media_storage_path) {
-        found.push(row.media_storage_path);
-      }
-    }
-
-    // A short page means the range exceeded the result set: done.
-    if (data.length < REFERENCE_PAGE_SIZE) {
-      return { success: true, found };
-    }
-    offset += REFERENCE_PAGE_SIZE;
+  if (error) {
+    return { success: false, message: error.message };
   }
+
+  const found: string[] = [];
+  for (const row of referenceRows) {
+    if (row.media_storage_path) {
+      found.push(row.media_storage_path);
+    }
+  }
+  return { success: true, found };
 }
 
 /**
@@ -319,8 +315,8 @@ export async function batchDeleteStorageFiles(input: {
   let failedCount = 0;
   let bytesFreed = 0;
 
-  for (let i = 0; i < input.paths.length; i += batchSize) {
-    const batch = input.paths.slice(i, i + batchSize);
+  for (let batchStart = 0; batchStart < input.paths.length; batchStart += batchSize) {
+    const batch = input.paths.slice(batchStart, batchStart + batchSize);
 
     const { data, error } = await adminSupabase.storage
       .from(input.bucket)
@@ -328,7 +324,7 @@ export async function batchDeleteStorageFiles(input: {
 
     if (error) {
       console.error(
-        `[batchDeleteStorageFiles] Batch ${Math.floor(i / batchSize) + 1} failed:`,
+        `[batchDeleteStorageFiles] Batch ${Math.floor(batchStart / batchSize) + 1} failed:`,
         error.message
       );
       failedCount += batch.length;
@@ -344,8 +340,8 @@ export async function batchDeleteStorageFiles(input: {
       failedCount += batch.length - deleted;
     }
 
-    for (const p of batch.slice(0, deleted)) {
-      bytesFreed += pathSizes[p] ?? 0;
+    for (const deletedPath of batch.slice(0, deleted)) {
+      bytesFreed += pathSizes[deletedPath] ?? 0;
     }
   }
 

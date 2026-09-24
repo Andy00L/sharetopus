@@ -1,5 +1,8 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { content_history, pending_tiktok_pulls } from "@/db/schema";
 import { findPendingTikTokPullByPublishId } from "@/actions/server/data/pendingTikTokPulls";
 import { updateContentHistoryStatusToFailed } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
 import { cleanupMediaIfUnreferenced } from "@/inngest/functions/processSinglePostHelpers";
@@ -81,10 +84,12 @@ export async function finalizeTikTokPostByPublishId(
       opts.tiktok_post_id && !row.tiktok_post_id && opts.outcome === "completed";
 
     if (shouldBackfillPostId) {
-      const { error: updErr } = await adminSupabase
-        .from("pending_tiktok_pulls")
-        .update({ tiktok_post_id: opts.tiktok_post_id })
-        .eq("publish_id", publish_id);
+      const { error: updErr } = await runQuery(
+        db
+          .update(pending_tiktok_pulls)
+          .set({ tiktok_post_id: opts.tiktok_post_id })
+          .where(eq(pending_tiktok_pulls.publish_id, publish_id)),
+      );
 
       if (updErr) {
         console.error(
@@ -104,10 +109,12 @@ export async function finalizeTikTokPostByPublishId(
       });
 
       if (deepLink && row.content_history_id) {
-        const { error: histErr } = await adminSupabase
-          .from("content_history")
-          .update({ media_url: deepLink })
-          .eq("id", row.content_history_id);
+        const { error: histErr } = await runQuery(
+          db
+            .update(content_history)
+            .set({ media_url: deepLink })
+            .where(eq(content_history.id, row.content_history_id)),
+        );
 
         if (histErr) {
           console.error(
@@ -132,15 +139,21 @@ export async function finalizeTikTokPostByPublishId(
 
   // First finalization path.
   if (opts.outcome === "completed") {
-    const { error: updErr } = await adminSupabase
-      .from("pending_tiktok_pulls")
-      .update({
-        status: "completed" as const,
-        tiktok_post_id: opts.tiktok_post_id ?? null,
-        finalized_at: new Date().toISOString(),
-      })
-      .eq("publish_id", publish_id)
-      .eq("status", "pending");
+    const { error: updErr } = await runQuery(
+      db
+        .update(pending_tiktok_pulls)
+        .set({
+          status: "completed" as const,
+          tiktok_post_id: opts.tiktok_post_id ?? null,
+          finalized_at: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(pending_tiktok_pulls.publish_id, publish_id),
+            eq(pending_tiktok_pulls.status, "pending"),
+          ),
+        ),
+    );
 
     if (updErr) {
       console.error(
@@ -157,10 +170,12 @@ export async function finalizeTikTokPostByPublishId(
     });
 
     if (deepLink && row.content_history_id) {
-      const { error: histErr } = await adminSupabase
-        .from("content_history")
-        .update({ media_url: deepLink })
-        .eq("id", row.content_history_id);
+      const { error: histErr } = await runQuery(
+        db
+          .update(content_history)
+          .set({ media_url: deepLink })
+          .where(eq(content_history.id, row.content_history_id)),
+      );
 
       if (histErr) {
         console.error(
@@ -194,15 +209,21 @@ export async function finalizeTikTokPostByPublishId(
   // opts.outcome === "failed"
   const failReason = opts.fail_reason ?? "Unknown failure";
 
-  const { error: updErr } = await adminSupabase
-    .from("pending_tiktok_pulls")
-    .update({
-      status: "failed" as const,
-      failure_reason: failReason,
-      finalized_at: new Date().toISOString(),
-    })
-    .eq("publish_id", publish_id)
-    .eq("status", "pending");
+  const { error: updErr } = await runQuery(
+    db
+      .update(pending_tiktok_pulls)
+      .set({
+        status: "failed" as const,
+        failure_reason: failReason,
+        finalized_at: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(pending_tiktok_pulls.publish_id, publish_id),
+          eq(pending_tiktok_pulls.status, "pending"),
+        ),
+      ),
+  );
 
   if (updErr) {
     console.error(
