@@ -1,7 +1,7 @@
 import "server-only";
 
+import { buildBasicAuthHeader } from "@/lib/api/oauth/buildBasicAuthHeader";
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
-import { buildBasicAuthHeader } from "./exchangeXCode";
 
 /**
  * Refreshes an expired X access token. Requires the offline.access scope on

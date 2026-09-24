@@ -37,10 +37,8 @@ export interface WebOAuthInitiateConfig {
  * subscription gate, account-limit gate, CSRF state cookie, optional PKCE
  * verifier cookie, then the provider authorize URL for the popup.
  *
- * Extracted for the youtube/x/facebook routes; the four older platform
- * initiate routes predate it and still inline the same steps.
- *
- * Called by: /api/social/{youtube,x,facebook}/initiate
+ * Called by: /api/social/{linkedin,tiktok,pinterest,instagram,youtube,x,facebook}/initiate
+ * and /api/social/registry/[provider]/initiate
  */
 export async function initiateWebOAuth(
   config: WebOAuthInitiateConfig,

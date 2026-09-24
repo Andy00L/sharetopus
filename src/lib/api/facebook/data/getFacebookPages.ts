@@ -42,7 +42,7 @@ export type FacebookPagesResult =
  * Posting requires at least one Page: a user with zero Pages cannot be
  * connected and the caller must fail the connect flow.
  *
- * Called by: /api/social/facebook/connect, facebookTokenExchange (x402 flow)
+ * Called by: connectPlatformAccounts (web popup and x402/REST callback)
  */
 export async function getFacebookPages(
   userAccessToken: string,

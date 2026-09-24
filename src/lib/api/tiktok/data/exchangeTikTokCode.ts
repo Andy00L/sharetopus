@@ -1,118 +1,62 @@
-import {
-  TokenExchangeResponse,
-  TokenExchangeResult,
-} from "@/lib/types/dbTypes";
 import "server-only";
 
-// lib/api/tiktok/auth.ts
+import { z } from "zod";
+
+import { requestCodeExchange } from "@/lib/api/oauth/requestCodeExchange";
+import type { TokenExchangeResult } from "@/lib/types/dbTypes";
+
+/**
+ * TikTok token endpoint answer. open_id is the creator's identity, and the
+ * account row is keyed on it.
+ * sourceRef: https://developers.tiktok.com/doc/oauth-user-access-token-management
+ */
+const TikTokTokenSchema = z.object({
+  access_token: z.string().min(1),
+  open_id: z.string().min(1),
+  expires_in: z.number(),
+  refresh_token: z.string().optional(),
+  refresh_expires_in: z.number().optional(),
+  scope: z.string().optional(),
+  token_type: z.string().optional(),
+});
+
+/**
+ * Exchanges a TikTok authorization code for tokens. Development builds use
+ * the sandbox client (TIKTOK_CLIENT_KEY_DEV). `redirectUri` must be the
+ * exact URI the authorize URL carried.
+ *
+ * Called by: connectPlatformAccounts
+ */
 export async function exchangeTikTokCode(
-  code: string
+  code: string,
+  redirectUri: string,
 ): Promise<TokenExchangeResult> {
-  // Get configuration from environment variables
-  const client_id =
-    process.env.NODE_ENV === "development"
-      ? process.env.TIKTOK_CLIENT_KEY_DEV
-      : process.env.TIKTOK_CLIENT_KEY;
-
-  const client_secret =
-    process.env.NODE_ENV === "development"
-      ? process.env.TIKTOK_CLIENT_SECRET_DEV
-      : process.env.TIKTOK_CLIENT_SECRET;
-
-  const redirect_uri = process.env.TIKTOK_REDIRECT_URL;
-
-  if (!client_id || !client_secret || !redirect_uri) {
-    console.error("[exchangeTikTokCode] TikTok configuration missing");
-    return {
-      success: false,
-      message: "TikTok configuration missing. Check environment variables.",
-    };
+  const isDevelopment = process.env.NODE_ENV === "development";
+  const clientKey = isDevelopment
+    ? process.env.TIKTOK_CLIENT_KEY_DEV
+    : process.env.TIKTOK_CLIENT_KEY;
+  const clientSecret = isDevelopment
+    ? process.env.TIKTOK_CLIENT_SECRET_DEV
+    : process.env.TIKTOK_CLIENT_SECRET;
+  if (!clientKey || !clientSecret) {
+    console.error("[exchangeTikTokCode] TikTok configuration missing.");
+    return { success: false, message: "TikTok configuration missing." };
   }
 
-  // TikTok API endpoint for token exchange (V2)
-  const url = "https://open.tiktokapis.com/v2/oauth/token/";
-
-  // Build form parameters
-  const params = new URLSearchParams();
-  params.append("client_key", client_id);
-  params.append("client_secret", client_secret);
-  params.append("code", code);
-  params.append("grant_type", "authorization_code");
-  params.append("redirect_uri", redirect_uri);
-
-  try {
-    console.log("[exchangeTikTokCode] Exchanging code for tokens...");
-
-    // Make token exchange request
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: params.toString(),
-    });
-
-    // Raw text for error handling. Never log a successful body: it holds the
-    // user's access and refresh tokens.
-    const responseText = await response.text();
-
-    if (!response.ok) {
-      console.error(
-        `[exchangeTikTokCode] HTTP ${response.status}: ${responseText}`
-      );
-      return {
-        success: false,
-        message: `TikTok code exchange failed (${response.status})`,
-      };
-    }
-
-    // Parse response as JSON
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error(
-        "[exchangeTikTokCode] Failed to parse token response:",
-        parseError
-      );
-      return {
-        success: false,
-        message: "Failed to parse TikTok token response",
-      };
-    }
-
-    // Validate response contains required fields
-    if (!data || data.error) {
-      console.error(
-        "[exchangeTikTokCode] Invalid token response:",
-        JSON.stringify(data)
-      );
-      return {
-        success: false,
-        message: "Invalid TikTok token response",
-      };
-    }
-
-    if (!data.access_token || !data.open_id) {
-      console.error(
-        "[exchangeTikTokCode] Missing required fields in response; fields received:",
-        Object.keys(data).join(", ")
-      );
-      return {
-        success: false,
-        message: "Missing required fields in TikTok token response",
-      };
-    }
-
-    return { success: true, data: data as TokenExchangeResponse };
-  } catch (error) {
-    console.error("[exchangeTikTokCode] Unexpected error:", error);
-    return {
-      success: false,
-      message:
-        error instanceof Error
-          ? error.message
-          : "Unexpected error during TikTok code exchange",
-    };
-  }
+  const exchanged = await requestCodeExchange({
+    caller: "exchangeTikTokCode",
+    platformLabel: "TikTok",
+    url: "https://open.tiktokapis.com/v2/oauth/token/",
+    method: "POST",
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+    }),
+    schema: TikTokTokenSchema,
+  });
+  if (!exchanged.ok) return { success: false, message: exchanged.message };
+  return { success: true, data: exchanged.answer };
 }

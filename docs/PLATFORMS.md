@@ -320,7 +320,8 @@ sequenceDiagram
 
 ### Key Details
 
-- Long-lived token upgrade happens automatically during OAuth exchange. If the upgrade fails, the short-lived token is stored as a fallback.
+- Long-lived token upgrade happens during the OAuth exchange (`exchangeInstagramCode`). If the upgrade fails, the connect fails: a short-lived token cannot be refreshed and would die within the hour.
+- The account is keyed on the `/me` `user_id`, the professional account ID `postToInstagram` publishes under, in both the web popup and the x402/REST flow.
 - No refresh tokens exist, but the long-lived ACCESS token itself is refreshed before expiry via `/refresh_access_token` (`refreshInstagramToken.ts`, wired into `ensureValidToken`). An already-expired token still requires re-authorization.
 - Alt text is supported for images. Derived from the description (first 1000 characters).
 - `post_type: "video"` is always published as a Reel (`media_type: REELS`).
@@ -417,19 +418,19 @@ Checklist for implementing a new platform, matching how youtube/x/facebook were 
 1. Make sure the platform id is in `SOCIAL_PLATFORMS` (`src/db/schema.ts`). A new id goes there first: `bun run db:generate` writes the matching change to the `platform` CHECK constraints on `social_accounts`, `social_connections` and `pending_direct_posts`, and after a review of that SQL `bun run db:migrate` applies it (see [DATABASE.md](./DATABASE.md#schema-changes)). The `Platform` type follows the list on its own.
 2. Register capabilities: add the key to `POSTING_PLATFORMS`, `PLATFORM_LABELS`, and the media-support map in `src/lib/platforms/capabilities.ts`, plus a `CAPTION_LIMITS` entry.
 3. Create `src/lib/api/{platform}/`:
-   - `data/`: `exchange{Platform}Code.ts`, `get{Platform}Profile.ts`, `refresh{Platform}Token.ts` (when the platform has one)
+   - `data/`: `exchange{Platform}Code.ts` (takes the redirect URI, sends the request through `requestCodeExchange`), `get{Platform}Profile.ts`, `refresh{Platform}Token.ts` (when the platform has one)
    - `post/`: `postTo{Platform}.ts`, `directPostFor{Platform}Accounts.ts` (a `DirectPostPlatformAdapter`)
 4. Wire the token lifecycle: a case in `refreshTokenForPlatform` inside `src/lib/api/ensureValidToken.ts`.
-5. Web OAuth routes via the shared helpers (`initiateWebOAuth`, `completeWebOAuthConnect`):
+5. Wire the connect: a case in `connectPlatformAccounts` (`src/lib/api/oauth/connectPlatformAccounts.ts`) that exchanges the code, reads the profile, and returns the account keyed on the platform's stable id. The web popup and the x402/REST callback both call it, so an account gets the same row whichever flow connected it.
+6. Web OAuth routes via the shared helpers (`initiateWebOAuth`, `completeWebOAuthConnect`), each a few lines of config:
    - `/api/social/{platform}/initiate`
    - `/api/social/{platform}/connect`
-6. x402/REST OAuth:
+7. x402/REST OAuth:
    - a builder case in `src/lib/x402/connect/buildOAuthUrl.ts`
-   - `src/lib/x402/oauth/callback/{platform}TokenExchange.ts` plus a dispatch case in `handleOAuthCallback.ts`
-   - a redirect URI case in `getOAuthRedirectUri` (`src/lib/x402/config.ts`) and the `X402_{PLATFORM}_REDIRECT_URI` env var
-7. Inngest workers: dispatch cases in `processSinglePostHelpers.callPlatformDirectPost` and `processDirectPostHelpers.callDirectPostFromEvent`.
-8. UI: a section in the connections page using `ConnectPlatformButton`, and an icon in `allPlatformsIcons.tsx` / `SocialAvatarWrapper`.
-9. Docs: x402 reference strings in `docs/x402/data/endpoints.ts`, this file, and `.env.example`.
+   - a redirect URI case in `getOAuthRedirectUri` (`src/lib/x402/config.ts`) and the `X402_{PLATFORM}_REDIRECT_URI` env var. The callback exchanges with the redirect URI stored on the `social_connections` row, so the two always match.
+8. Inngest workers: dispatch cases in `processSinglePostHelpers.callPlatformDirectPost` and `processDirectPostHelpers.callDirectPostFromEvent`.
+9. UI: a section in the connections page using `ConnectPlatformButton`, and an icon in `allPlatformsIcons.tsx` / `SocialAvatarWrapper`.
+10. Docs: x402 reference strings in `docs/x402/data/endpoints.ts`, this file, and `.env.example`.
 
 The zod platform enums (MCP tools, REST schemas, x402 body schema) derive from `POSTING_PLATFORMS`, so step 2 updates them automatically.
 

@@ -127,7 +127,8 @@ export interface TokenExchangeResponse {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
-  refresh_expires_in?: string;
+  /** Seconds (TikTok, int64). */
+  refresh_expires_in?: number;
   scope?: string;
   user_id?: string;
   open_id?: string;
@@ -137,12 +138,14 @@ export type TokenExchangeResult =
   | { success: true; data: TokenExchangeResponse }
   | { success: false; message: string };
 
+/** The /me profile of an Instagram professional account; id is its user_id. */
 export interface InstagramProfile {
   id: string;
-  username: string;
-  name: string;
-  account_type: "PERSONAL" | "BUSINESS" | "CREATOR";
-  profile_picture_url: string;
+  username: string | null;
+  name: string | null;
+  /** Stored as Instagram sends it; only extra.account_type reads it. */
+  account_type: string | null;
+  profile_picture_url: string | null;
   followers_count: number | null;
   follows_count: number | null;
 }

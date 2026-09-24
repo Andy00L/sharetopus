@@ -29,7 +29,7 @@ export type XProfileResult =
  * Fetch the authorized X user. The numeric user id is the account
  * identifier stored in social_accounts.
  *
- * Called by: /api/social/x/connect, xTokenExchange (x402 flow)
+ * Called by: connectPlatformAccounts (web popup and x402/REST callback)
  */
 export async function getXProfile(
   accessToken: string,

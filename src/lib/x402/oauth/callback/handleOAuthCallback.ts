@@ -12,13 +12,10 @@ import {
   type ShareLinkRefusal,
 } from "@/actions/server/share-link/validateShareToken";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
-import { exchangeLinkedInForX402 } from "./linkedinTokenExchange";
-import { exchangeTikTokForX402 } from "./tiktokTokenExchange";
-import { exchangePinterestForX402 } from "./pinterestTokenExchange";
-import { exchangeInstagramForX402 } from "./instagramTokenExchange";
-import { exchangeYouTubeForX402 } from "./youtubeTokenExchange";
-import { exchangeXForX402 } from "./xTokenExchange";
-import { exchangeFacebookForX402 } from "./facebookTokenExchange";
+import {
+  buildSocialAccountValues,
+  connectPlatformAccounts,
+} from "@/lib/api/oauth/connectPlatformAccounts";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 // ---------------------------------------------------------------------------
@@ -117,7 +114,9 @@ function isConsumeRefusalReason(
  *      temporarily_unavailable and leaves the connection pending: the code
  *      is not spent yet, so reloading the page retries.
  *   3. If the OAuth provider returned an error: transition to 'failed'
- *   4. Exchange code for token (per-platform wrapper)
+ *   4. Exchange the code and read the account (connectPlatformAccounts,
+ *      shared with the web popup), sending the redirect URI stored on the
+ *      connection: the one its authorize URL carried
  *   5. Share-link flows: consume_share_link RPC (atomic used_count)
  *   6. UPSERT social_accounts row
  *   7. Transition pending -> connected (status-scoped; a concurrent duplicate
@@ -146,6 +145,7 @@ export async function handleOAuthCallback(
         share_link_id: social_connections.share_link_id,
         initiated_via: social_connections.initiated_via,
         oauth_code_verifier: social_connections.oauth_code_verifier,
+        redirect_uri: social_connections.redirect_uri,
       })
       .from(social_connections)
       .where(eq(social_connections.oauth_state, input.state))
@@ -300,26 +300,40 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- 4. Exchange code for token
-  const exchangeResult = await dispatchTokenExchange(
-    input.platform,
-    input.code,
-    connection.oauth_code_verifier,
-  );
-  if (!exchangeResult.ok) {
+  // -- 4. Exchange the code and read the account. The redirect URI must be
+  //       the one the authorize URL carried, which is what the row stores.
+  const connectResult = await connectPlatformAccounts(input.platform, {
+    code: input.code,
+    redirectUri: connection.redirect_uri,
+    codeVerifier: connection.oauth_code_verifier,
+  });
+  const [connectedAccount, ...otherAccounts] = connectResult.success
+    ? connectResult.accounts
+    : [];
+  if (!connectResult.success || !connectedAccount) {
+    const failureMessage = connectResult.success
+      ? `No ${input.platform} account found to connect.`
+      : connectResult.message;
     await transitionPendingTo(connection.id, {
       status: "failed",
-      error_code: exchangeResult.error,
-      error_message: exchangeResult.message,
+      error_code: "exchange_failed",
+      error_message: failureMessage,
     });
 
     return {
       ok: false,
       error: {
         kind: "token_exchange_failed",
-        message: exchangeResult.message,
+        message: failureMessage,
       },
     };
+  }
+  if (otherAccounts.length > 0) {
+    // One connection stores one account. The web popup stores every
+    // Facebook Page; here the first is kept.
+    console.warn(
+      `[handleOAuthCallback] ${otherAccounts.length + 1} ${input.platform} accounts returned; storing the first (${connectedAccount.accountIdentifier}).`,
+    );
   }
 
   // -- 5. Share link: consume_share_link RPC (atomic used_count increment).
@@ -383,26 +397,15 @@ export async function handleOAuthCallback(
     }
   }
 
-  // -- 6. UPSERT social_accounts row. A null expiresIn means the token
-  //       never expires (Facebook Page tokens); the row stores null.
-  const tokenExpiresAt =
-    exchangeResult.expiresIn === null
-      ? null
-      : new Date(Date.now() + exchangeResult.expiresIn * 1000).toISOString();
-
+  // -- 6. UPSERT social_accounts row, with the same values the web popup
+  //       writes, so a reconnect through either flow updates it the same way.
   const socialAccountValues = {
-    principal_id: connection.principal_id,
-    platform: input.platform,
-    account_identifier: exchangeResult.accountIdentifier,
-    is_available: true,
-    display_name: exchangeResult.profile.name ?? null,
-    username: exchangeResult.profile.username ?? exchangeResult.profile.name ?? null,
-    avatar_url: exchangeResult.profile.avatarUrl ?? null,
-    access_token: exchangeResult.accessToken,
-    refresh_token: exchangeResult.refreshToken,
-    token_expires_at: tokenExpiresAt,
+    ...buildSocialAccountValues(
+      connection.principal_id,
+      input.platform,
+      connectedAccount,
+    ),
     connection_id: connection.id,
-    updated_at: new Date().toISOString(),
   };
   const { data: upsertedAccounts, error: upsertError } = await runQuery(
     db
@@ -437,7 +440,8 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- 7. Transition pending -> connected (status-scoped)
+  // -- 7. Transition pending -> connected (status-scoped). The PKCE
+  //       verifier is spent with the code, so it is cleared.
   const { data: connectedRows, error: connectError } = await runQuery(
     db
       .update(social_connections)
@@ -445,6 +449,7 @@ export async function handleOAuthCallback(
         status: "connected",
         connected_at: new Date().toISOString(),
         social_account_id: socialAccount.id,
+        oauth_code_verifier: null,
         updated_at: new Date().toISOString(),
       })
       .where(and(eq(social_connections.id, connection.id), eq(social_connections.status, "pending")))
@@ -501,9 +506,9 @@ export async function handleOAuthCallback(
     dispatchWebhook(connection.principal_id, "connection.connected", connectedWebhookPayload),
   );
 
-  // Derive the username for the success page redirect
+  // The success page greets the account by handle, or by name without one.
   const accountUsername =
-    exchangeResult.profile.username ?? exchangeResult.profile.name ?? null;
+    connectedAccount.username ?? connectedAccount.displayName;
 
   return {
     ok: true,
@@ -521,10 +526,11 @@ export async function handleOAuthCallback(
 /**
  * Status-scoped transition out of 'pending'. Scoping to the prior status is
  * what makes duplicate concurrent callbacks safe: the loser's transition
- * matches zero rows instead of overwriting the winner's outcome. Errors are
- * logged but not propagated; every caller is already on a failure path (or
- * lazily expiring) where the user-facing error matters more than the
- * bookkeeping write.
+ * matches zero rows instead of overwriting the winner's outcome. A terminal
+ * connection never exchanges a code again, so its PKCE verifier is
+ * cleared. Errors are logged but not propagated; every caller is already
+ * on a failure path (or lazily expiring) where the user-facing error
+ * matters more than the bookkeeping write.
  */
 async function transitionPendingTo(
   connectionId: string,
@@ -537,12 +543,14 @@ async function transitionPendingTo(
   const updateFields: {
     status: "expired" | "failed";
     updated_at: string;
+    oauth_code_verifier: null;
     failed_at?: string;
     error_code?: string;
     error_message?: string;
   } = {
     status: fields.status,
     updated_at: new Date().toISOString(),
+    oauth_code_verifier: null,
   };
   if (fields.status === "failed") {
     updateFields.failed_at = new Date().toISOString();
@@ -586,72 +594,4 @@ function logShareLinkAudit(
       resultStatus,
     }),
   );
-}
-
-interface ExchangeSuccess {
-  ok: true;
-  accessToken: string;
-  refreshToken: string | null;
-  /** Seconds until expiry; null means the token never expires (Facebook). */
-  expiresIn: number | null;
-  accountIdentifier: string;
-  profile: {
-    name?: string;
-    username?: string;
-    avatarUrl?: string;
-  };
-}
-
-type ExchangeFailure = {
-  ok: false;
-  error: string;
-  message: string;
-};
-
-/**
- * Exchanges the code with the platform and normalizes the profile. LinkedIn
- * and TikTok expose no handle, so the display name stands in for username;
- * the upsert above applies the same fallback either way.
- */
-async function dispatchTokenExchange(
-  platform: Platform,
-  code: string,
-  codeVerifier: string | null
-): Promise<ExchangeSuccess | ExchangeFailure> {
-  const result = await runPlatformExchange(platform, code, codeVerifier);
-  if (!result.ok) return result;
-
-  const profile = result.profile;
-  return {
-    ok: true,
-    accessToken: result.accessToken,
-    refreshToken: result.refreshToken,
-    expiresIn: result.expiresIn,
-    accountIdentifier: result.accountIdentifier,
-    profile: {
-      name: profile.name,
-      username: ("username" in profile ? profile.username : undefined) ?? profile.name,
-      avatarUrl: profile.avatarUrl,
-    },
-  };
-}
-
-/** The per-platform exchange for this callback. */
-function runPlatformExchange(platform: Platform, code: string, codeVerifier: string | null) {
-  switch (platform) {
-    case "linkedin":
-      return exchangeLinkedInForX402(code);
-    case "tiktok":
-      return exchangeTikTokForX402(code);
-    case "pinterest":
-      return exchangePinterestForX402(code);
-    case "instagram":
-      return exchangeInstagramForX402(code);
-    case "youtube":
-      return exchangeYouTubeForX402(code);
-    case "x":
-      return exchangeXForX402(code, codeVerifier);
-    case "facebook":
-      return exchangeFacebookForX402(code);
-  }
 }

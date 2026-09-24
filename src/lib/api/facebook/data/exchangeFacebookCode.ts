@@ -2,19 +2,17 @@ import "server-only";
 
 import { z } from "zod";
 
-import type {
-  TokenExchangeResponse,
-  TokenExchangeResult,
-} from "@/lib/types/dbTypes";
-
-/** Outbound Graph API calls are bounded to 15s. */
-const EXCHANGE_TIMEOUT_MS = 15_000;
+import { requestCodeExchange } from "@/lib/api/oauth/requestCodeExchange";
+import type { TokenExchangeResult } from "@/lib/types/dbTypes";
 
 /**
  * Graph API version pinned across the repo; postToInstagram.ts pins the
  * same version on graph.instagram.com.
  */
 const GRAPH_API_VERSION = "v23.0";
+
+/** 60 days in seconds, the documented long-lived user token lifetime. */
+const LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
 
 /**
  * /oauth/access_token response (both code exchange and fb_exchange_token).
@@ -27,7 +25,7 @@ const FacebookTokenSchema = z.object({
 });
 
 /**
- * Exchange a Facebook Login code for a LONG-LIVED USER token (web flow).
+ * Exchanges a Facebook Login code for a LONG-LIVED USER token.
  *
  * Two phases:
  *   1. code -> short-lived user token (GET /oauth/access_token)
@@ -38,125 +36,57 @@ const FacebookTokenSchema = z.object({
  * long-lived user token do not expire.
  * sourceRef: https://developers.facebook.com/docs/pages-api/getting-started/
  *
- * Called by: /api/social/facebook/connect, facebookTokenExchange (x402 flow)
+ * `redirectUri` must be the exact URI the authorize URL carried.
+ *
+ * Called by: connectPlatformAccounts
  */
 export async function exchangeFacebookCode(
   code: string,
-  redirectUriOverride?: string,
+  redirectUri: string,
 ): Promise<TokenExchangeResult> {
   const clientId = process.env.FACEBOOK_CLIENT_ID;
   const clientSecret = process.env.FACEBOOK_CLIENT_SECRET;
-  const redirectUri = redirectUriOverride ?? process.env.FACEBOOK_REDIRECT_URL;
-
-  if (!clientId || !clientSecret || !redirectUri) {
+  if (!clientId || !clientSecret) {
     console.error("[exchangeFacebookCode] Facebook configuration missing.");
-    return {
-      success: false,
-      message: "Facebook configuration missing. Check environment variables.",
-    };
+    return { success: false, message: "Facebook configuration missing." };
   }
 
-  // Phase 1: code -> short-lived user token.
-  let shortLivedToken: string;
-  try {
-    const codeExchangeUrl =
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token` +
-      `?client_id=${encodeURIComponent(clientId)}` +
-      `&client_secret=${encodeURIComponent(clientSecret)}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&code=${encodeURIComponent(code)}`;
+  const graphTokenUrl = `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token`;
 
-    const response = await fetch(codeExchangeUrl, {
-      method: "GET",
-      signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
-    });
+  const shortLived = await requestCodeExchange({
+    caller: "exchangeFacebookCode",
+    platformLabel: "Facebook",
+    url: `${graphTokenUrl}?${new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      code,
+    })}`,
+    method: "GET",
+    schema: FacebookTokenSchema,
+  });
+  if (!shortLived.ok) return { success: false, message: shortLived.message };
 
-    const responseText = await response.text();
-    if (!response.ok) {
-      console.error(
-        `[exchangeFacebookCode] Code exchange failed (${response.status}): ${responseText}`,
-      );
-      return {
-        success: false,
-        message: `Facebook code exchange failed (${response.status}).`,
-      };
-    }
+  const longLived = await requestCodeExchange({
+    caller: "exchangeFacebookCode",
+    platformLabel: "Facebook",
+    url: `${graphTokenUrl}?${new URLSearchParams({
+      grant_type: "fb_exchange_token",
+      client_id: clientId,
+      client_secret: clientSecret,
+      fb_exchange_token: shortLived.answer.access_token,
+    })}`,
+    method: "GET",
+    schema: FacebookTokenSchema,
+  });
+  if (!longLived.ok) return { success: false, message: longLived.message };
 
-    const parsed = FacebookTokenSchema.safeParse(JSON.parse(responseText));
-    if (!parsed.success) {
-      console.error(
-        "[exchangeFacebookCode] Code exchange response failed validation.",
-      );
-      return {
-        success: false,
-        message: "Facebook token response had an unexpected shape.",
-      };
-    }
-    shortLivedToken = parsed.data.access_token;
-  } catch (error) {
-    console.error(
-      "[exchangeFacebookCode] Code exchange error:",
-      error instanceof Error ? error.message : error,
-    );
-    return {
-      success: false,
-      message: "Facebook token exchange request failed.",
-    };
-  }
-
-  // Phase 2: short-lived -> long-lived user token (about 60 days).
-  try {
-    const longLivedUrl =
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token` +
-      `?grant_type=fb_exchange_token` +
-      `&client_id=${encodeURIComponent(clientId)}` +
-      `&client_secret=${encodeURIComponent(clientSecret)}` +
-      `&fb_exchange_token=${encodeURIComponent(shortLivedToken)}`;
-
-    const response = await fetch(longLivedUrl, {
-      method: "GET",
-      signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
-    });
-
-    const responseText = await response.text();
-    if (!response.ok) {
-      console.error(
-        `[exchangeFacebookCode] Long-lived exchange failed (${response.status}): ${responseText}`,
-      );
-      return {
-        success: false,
-        message: `Facebook long-lived token exchange failed (${response.status}).`,
-      };
-    }
-
-    const parsed = FacebookTokenSchema.safeParse(JSON.parse(responseText));
-    if (!parsed.success) {
-      console.error(
-        "[exchangeFacebookCode] Long-lived response failed validation.",
-      );
-      return {
-        success: false,
-        message: "Facebook long-lived token response had an unexpected shape.",
-      };
-    }
-
-    // 60 days in seconds, the documented long-lived user token lifetime.
-    const LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
-    const tokenResponse: TokenExchangeResponse = {
-      access_token: parsed.data.access_token,
-      expires_in: parsed.data.expires_in ?? LONG_LIVED_FALLBACK_SECONDS,
-      token_type: parsed.data.token_type,
-    };
-
-    return { success: true, data: tokenResponse };
-  } catch (error) {
-    console.error(
-      "[exchangeFacebookCode] Long-lived exchange error:",
-      error instanceof Error ? error.message : error,
-    );
-    return {
-      success: false,
-      message: "Facebook long-lived token exchange request failed.",
-    };
-  }
+  return {
+    success: true,
+    data: {
+      access_token: longLived.answer.access_token,
+      expires_in: longLived.answer.expires_in ?? LONG_LIVED_FALLBACK_SECONDS,
+      token_type: longLived.answer.token_type,
+    },
+  };
 }

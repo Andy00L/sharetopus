@@ -46,7 +46,7 @@ export type YouTubeProfileResult =
  * Fetch the authorized user's YouTube channel (id, title, avatar, stats).
  * The channel id is the account identifier stored in social_accounts.
  *
- * Called by: /api/social/youtube/connect, youtubeTokenExchange (x402 flow)
+ * Called by: connectPlatformAccounts (web popup and x402/REST callback)
  */
 export async function getYouTubeProfile(
   accessToken: string,

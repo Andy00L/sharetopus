@@ -1,84 +1,86 @@
-// lib/api/linkedin/getLinkedInProfile.ts
 import "server-only";
 
-import { LinkedInProfile } from "@/lib/types/socialProfiles";
+import { z } from "zod";
 
+import type { LinkedInProfile } from "@/lib/types/socialProfiles";
+
+/** Outbound LinkedIn API calls are bounded to 15s. */
+const PROFILE_TIMEOUT_MS = 15_000;
+
+/**
+ * OpenID Connect userinfo answer. sub is the member's identity and the
+ * account row is keyed on it. email and email_verified are optional (they
+ * need the "email" scope). locale is documented as text; it only lands in
+ * extra, so any other shape is tolerated instead of failing the connect.
+ * sourceRef: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
+ */
+const LinkedInUserInfoSchema = z.object({
+  sub: z.string().min(1),
+  name: z.string().optional(),
+  given_name: z.string().optional(),
+  family_name: z.string().optional(),
+  picture: z.string().optional(),
+  locale: z.unknown().optional(),
+  email: z.string().optional(),
+  email_verified: z.boolean().optional(),
+});
+
+export type LinkedInProfileResult =
+  | { success: true; data: LinkedInProfile }
+  | { success: false; message: string };
+
+/**
+ * Reads the member's OpenID Connect profile. A failed read is an error
+ * value: the placeholder profile with an empty id that this used to return
+ * stored an account with an empty identifier.
+ *
+ * Called by: connectPlatformAccounts
+ */
 export async function getLinkedInProfile(
   accessToken: string,
-  userId?: string
-): Promise<LinkedInProfile> {
+): Promise<LinkedInProfileResult> {
   try {
-    const url = "https://api.linkedin.com/v2/userinfo";
-    console.log("[getLinkedInProfile] Requesting profile from:", url);
-
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+    const response = await fetch("https://api.linkedin.com/v2/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(PROFILE_TIMEOUT_MS),
     });
+    if (!response.ok) {
+      console.error(`[getLinkedInProfile] HTTP ${response.status}`);
+      return {
+        success: false,
+        message: `LinkedIn profile request failed (${response.status}).`,
+      };
+    }
 
     // Never log the body: it holds the member's name, email and photo.
-    const responseText = await response.text();
-
-    let data;
-    try {
-      data = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error(
-        "[getLinkedInProfile] Failed to parse API response:",
-        parseError
-      );
+    const parsed = LinkedInUserInfoSchema.safeParse(await response.json());
+    if (!parsed.success) {
+      console.error("[getLinkedInProfile] Profile answer failed validation.");
       return {
-        id: userId ?? "",
-        name: "Linkedin User (Error)",
-        given_name: "",
-        family_name: "",
-        email: "",
-        picture: "",
-        locale: "",
-        email_verified: false,
+        success: false,
+        message: "LinkedIn profile answer had an unexpected shape.",
       };
     }
 
-    if (!response.ok || data.error) {
-      console.warn(`[getLinkedInProfile] API returned an error:`, data.error);
-
-      return {
-        id: userId ?? "",
-        name: "Linkedin User (Limited Access)",
-        given_name: "",
-        family_name: "",
-        email: "",
-        picture: "",
-        locale: "",
-        email_verified: false,
-      };
-    }
-
-    // Extract user data from response
+    const userInfo = parsed.data;
     return {
-      id: data.sub ?? "",
-      name: data.name ?? "",
-      given_name: data.given_name ?? "",
-      family_name: data.family_name ?? "",
-      email: data.email ?? "",
-      picture: data.picture ?? "",
-      locale: data.locale ?? "",
-      email_verified: !!data.email_verified,
+      success: true,
+      data: {
+        id: userInfo.sub,
+        name: userInfo.name ?? "",
+        given_name: userInfo.given_name ?? "",
+        family_name: userInfo.family_name ?? "",
+        email: userInfo.email ?? "",
+        picture: userInfo.picture ?? "",
+        locale: typeof userInfo.locale === "string" ? userInfo.locale : "",
+        email_verified: userInfo.email_verified ?? false,
+      },
     };
   } catch (error) {
-    console.error("[getLinkedInProfile] Profile fetch error:", error);
-
-    return {
-      id: userId ?? "",
-      name: "Linkedin User (Error)",
-      given_name: "",
-      family_name: "",
-      email: "",
-      picture: "",
-      locale: "",
-      email_verified: false,
-    };
+    console.error(
+      "[getLinkedInProfile] Profile request failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return { success: false, message: "LinkedIn profile request failed." };
   }
 }

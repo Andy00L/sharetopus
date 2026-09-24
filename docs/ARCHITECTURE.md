@@ -426,29 +426,28 @@ Whichever path fires first writes the final state. The finalize function is idem
 
 ### Pinterest OAuth flow
 
+Every dedicated platform follows this shape. The initiate and connect routes are a few lines of config over `initiateWebOAuth` and `completeWebOAuthConnect`; `connectPlatformAccounts` holds the per-platform exchange and profile read, and the x402/REST callback (`handleOAuthCallback`) calls the same function with the redirect URI stored on its `social_connections` row.
+
 ```mermaid
 sequenceDiagram
-    participant User as Browser
+    participant User as Browser popup
     participant Init as /api/social/pinterest/initiate
     participant Pinterest as pinterest.com/oauth
     participant Callback as /api/social/pinterest/connect
-    participant Exchange as exchangePinterestCode
-    participant Profile as getPinterestProfile
+    participant Connect as connectPlatformAccounts
     participant DB as Supabase
 
-    User->>Init: GET (click "Connect Pinterest")
-    Init->>Init: Generate state token, set httpOnly cookie (15min)
-    Init->>Pinterest: Redirect with scopes, state, redirect_uri
-    Pinterest->>User: Login + consent screen
-    User->>Pinterest: Authorize
+    User->>Init: POST (click "Connect Pinterest")
+    Init->>Init: Subscription + account-limit gates, state cookie (15min)
+    Init-->>User: authUrl (scopes, state, redirect_uri)
+    User->>Pinterest: Open authUrl, log in, consent
     Pinterest->>Callback: Redirect with code + state
     Callback->>Callback: Verify state matches cookie
-    Callback->>Exchange: POST /v5/oauth/token (Basic Auth, code)
-    Exchange-->>Callback: access_token, refresh_token, expires_in
-    Callback->>Profile: GET /v5/user_account
-    Profile-->>Callback: username, follower_count, profile_image
+    Callback->>Connect: code + PINTEREST_REDIRECT_URL
+    Connect->>Pinterest: POST /v5/oauth/token (Basic Auth), GET /v5/user_account
+    Connect-->>Callback: account keyed on the Pinterest account id
     Callback->>DB: UPSERT social_accounts
-    Callback->>User: Redirect to /connections
+    Callback-->>User: HTML that calls window.opener.onPinterestConnectSuccess
 ```
 
 ## State diagrams

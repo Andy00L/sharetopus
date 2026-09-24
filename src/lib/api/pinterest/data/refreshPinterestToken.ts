@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildBasicAuthHeader } from "@/lib/api/oauth/buildBasicAuthHeader";
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 
 /**
@@ -29,7 +30,7 @@ export default async function refreshPinterestToken(
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+      Authorization: buildBasicAuthHeader(clientId, clientSecret),
     },
     body: new URLSearchParams({
       grant_type: "refresh_token",

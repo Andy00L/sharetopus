@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { parseJsonBody, readOAuthError } from "@/lib/api/oauth/readOAuthAnswer";
 import type { TokenExchangeResponse } from "@/lib/types/dbTypes";
 
 /** Outbound token refresh calls are bounded to 15s. */
@@ -119,20 +120,4 @@ function classifyRefusal(status: number, oauthError: string | null): "rejected" 
   if (oauthError !== null && CLIENT_CREDENTIAL_ERRORS.has(oauthError)) return "failed";
   if (oauthError === "invalid_grant") return "rejected";
   return status === 400 || status === 401 ? "rejected" : "failed";
-}
-
-function parseJsonBody(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-/** The RFC 6749 "error" code, when the body carries one as a string. */
-function readOAuthError(body: unknown): string | null {
-  if (typeof body === "object" && body !== null && "error" in body && typeof body.error === "string") {
-    return body.error;
-  }
-  return null;
 }

@@ -5,7 +5,7 @@ import type { MediaType } from "@/db/schema";
  *
  * Why a registry instead of more switch arms: the seven original platforms
  * are wired through four separate per-platform switch statements
- * (buildOAuthUrl, refreshTokenForPlatform, dispatchTokenExchange,
+ * (buildOAuthUrl, refreshTokenForPlatform, connectPlatformAccounts,
  * callPlatformDirectPost) plus a hand-written adapter set each. Adding 26
  * platforms that way means 100+ new switch arms and 26 chances to
  * re-introduce the Instagram-style copy of the shared post flow. A provider

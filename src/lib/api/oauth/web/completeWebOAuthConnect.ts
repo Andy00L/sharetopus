@@ -2,43 +2,19 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import type { Json, Platform } from "@/db/schema";
+import {
+  buildSocialAccountValues,
+  connectPlatformAccounts,
+} from "@/lib/api/oauth/connectPlatformAccounts";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
+import type { PostingPlatform } from "@/lib/platforms/capabilities";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-/** One connected account normalized for the social_accounts upsert. */
-export interface NormalizedConnectedAccount {
-  accountIdentifier: string;
-  displayName: string | null;
-  username: string | null;
-  avatarUrl: string | null;
-  emailAddress: string | null;
-  accessToken: string;
-  refreshToken: string | null;
-  /** ISO expiry; null means the token never expires (Facebook Page tokens). */
-  tokenExpiresAt: string | null;
-  extra: Json;
-  /**
-   * Profile columns for platforms whose profile call returns them (Pinterest,
-   * TikTok). Omitted, the upsert leaves those columns untouched.
-   */
-  profileStats?: {
-    isVerified: boolean;
-    bioDescription: string | null;
-    followerCount: number | null;
-    followingCount: number | null;
-  };
-}
-
-export type ExchangeAndFetchAccountsResult =
-  | { success: true; accounts: NormalizedConnectedAccount[] }
-  | { success: false; message: string };
-
 export interface WebOAuthCallbackConfig {
-  platform: Platform;
+  platform: PostingPlatform;
   /** Must match the initiate route's cookie names. */
   stateCookieName: string;
   verifierCookieName?: string;
@@ -46,26 +22,20 @@ export interface WebOAuthCallbackConfig {
   successCallbackName: string;
   failureCallbackName: string;
   /**
-   * Exchanges the code and returns every account to store. Facebook returns
-   * one entry per managed Page; other platforms return exactly one.
-   * codeVerifier is non-null only when verifierCookieName is set (PKCE).
+   * The redirect URI the initiate route put in the authorize URL (its env
+   * var); the token exchange must send the same value.
    */
-  exchangeAndFetchAccounts: (
-    code: string,
-    codeVerifier: string | null,
-  ) => Promise<ExchangeAndFetchAccountsResult>;
+  redirectUri: string | undefined;
 }
 
 /**
  * Shared body of every /api/social/<platform>/connect callback route:
  * Clerk auth, provider-error handling, CSRF state verification, PKCE
- * verifier retrieval, token exchange, social_accounts upsert (one row per
+ * verifier retrieval, the code exchange and profile read
+ * (connectPlatformAccounts), the social_accounts upsert (one row per
  * returned account), and the popup HTML that notifies the opener window.
  *
- * The LinkedIn and Instagram connect routes predate it and still inline the
- * same steps.
- *
- * Called by: /api/social/{youtube,x,facebook,pinterest,tiktok}/connect
+ * Called by: /api/social/{linkedin,tiktok,pinterest,instagram,youtube,x,facebook}/connect
  */
 export async function completeWebOAuthConnect(
   request: NextRequest,
@@ -145,10 +115,23 @@ export async function completeWebOAuthConnect(
       });
     }
 
-    const exchangeResult = await config.exchangeAndFetchAccounts(
+    if (!config.redirectUri) {
+      console.error(`${logPrefix} Redirect URI is not configured.`);
+      return buildPopupResponse(config, {
+        ok: false,
+        title: "Configuration Error",
+        bodyText:
+          "This connection is not configured. This window will close automatically.",
+        errorMessage: `${config.platform} redirect URI is not configured`,
+        status: 500,
+      });
+    }
+
+    const exchangeResult = await connectPlatformAccounts(config.platform, {
       code,
+      redirectUri: config.redirectUri,
       codeVerifier,
-    );
+    });
     if (!exchangeResult.success) {
       console.error(`${logPrefix} Exchange failed: ${exchangeResult.message}`);
       return buildPopupResponse(config, {
@@ -176,29 +159,11 @@ export async function completeWebOAuthConnect(
     // (principal_id, platform, account_identifier) makes reconnects update
     // in place, mirroring handleOAuthCallback in the x402 flow.
     for (const connectedAccount of exchangeResult.accounts) {
-      const accountValues = {
-        principal_id: userId,
-        platform: config.platform,
-        account_identifier: connectedAccount.accountIdentifier,
-        is_available: true,
-        display_name: connectedAccount.displayName,
-        username: connectedAccount.username,
-        avatar_url: connectedAccount.avatarUrl,
-        email_address: connectedAccount.emailAddress,
-        access_token: connectedAccount.accessToken,
-        refresh_token: connectedAccount.refreshToken,
-        token_expires_at: connectedAccount.tokenExpiresAt,
-        extra: connectedAccount.extra,
-        updated_at: new Date().toISOString(),
-        ...(connectedAccount.profileStats
-          ? {
-              is_verified: connectedAccount.profileStats.isVerified,
-              bio_description: connectedAccount.profileStats.bioDescription,
-              follower_count: connectedAccount.profileStats.followerCount,
-              following_count: connectedAccount.profileStats.followingCount,
-            }
-          : {}),
-      } satisfies typeof social_accounts.$inferInsert;
+      const accountValues = buildSocialAccountValues(
+        userId,
+        config.platform,
+        connectedAccount,
+      );
 
       const { error: upsertError } = await runQuery(
         db
