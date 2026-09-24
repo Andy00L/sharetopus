@@ -1,14 +1,11 @@
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import {
   getPlatformBrandIcon,
   PlatformLetterBadge,
 } from "@/components/icons/platformBrandIcons";
-import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import { Card } from "@/components/ui/card";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { parseSchedulePrefill } from "@/components/core/create/SocialPostForm/state/parseSchedulePrefill";
 import { listPlatformsSupportingMediaType } from "@/lib/platforms/capabilities";
-import { auth } from "@clerk/nextjs/server";
 import { FileText, Image, Video } from "lucide-react";
 import Link from "next/link";
 
@@ -17,8 +14,6 @@ export default async function CreatePostPage({
 }: {
   readonly searchParams: Promise<{ date?: string; time?: string }>;
 }) {
-  const { userId } = await auth();
-
   // Calendar quick-create links may land here first; forward the picked
   // slot into whichever post type the user chooses.
   const { date, time } = await searchParams;

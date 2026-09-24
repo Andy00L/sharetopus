@@ -1,6 +1,6 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import RenderPosts from "@/components/core/posted/renderPosts";
-import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
+import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import ContentHistorySkeleton from "@/components/suspense/posted/ContentHistorySkeleton";
 import { SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
@@ -9,9 +9,9 @@ import { Suspense } from "react";
 // Main component with suspense boundary
 export default async function page() {
   const { userId } = await auth();
-  const isPaid = await checkActiveSubscription(userId);
-  if (!isPaid.isActive) {
-    return <SubscriptionPrompt />;
+  const subscription = await checkActiveSubscription(userId);
+  if (!subscription.isActive) {
+    return <InactiveSubscriptionNotice status={subscription.status} />;
   }
   async function PostsContent() {
     return <RenderPosts />;

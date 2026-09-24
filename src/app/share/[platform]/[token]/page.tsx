@@ -1,5 +1,4 @@
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
+import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { db, runQuery } from "@/db/client";
@@ -35,24 +34,6 @@ function buildDisplayIdentity(user: {
   const parts = [user.first_name, user.last_name].filter(Boolean);
   if (parts.length > 0) return parts.join(" ");
   return maskEmail(user.email);
-}
-
-/** Maps validation failure reasons to user-friendly messages */
-function friendlyErrorMessage(
-  reason: "not_found" | "revoked" | "expired" | "max_uses_reached" | "invalid_format",
-): string {
-  switch (reason) {
-    case "not_found":
-      return "This share link does not exist or has been removed.";
-    case "revoked":
-      return "This share link has been revoked by its creator.";
-    case "expired":
-      return "This share link has expired.";
-    case "max_uses_reached":
-      return "This share link has reached its maximum number of uses.";
-    case "invalid_format":
-      return "This share link is not valid.";
-  }
 }
 
 export default async function ShareLinkLandingPage({
@@ -93,31 +74,12 @@ export default async function ShareLinkLandingPage({
     ? buildDisplayIdentity(creatorUser)
     : "A Sharetopus user";
 
-  // 3. Pre-check creator account limits
-  const subscription = await checkActiveSubscription(
+  // 3. Pre-check the owner's plan and account limit
+  const ownerCapacity = await checkShareLinkOwnerCapacity(
     shareLink.owner_principal_id,
   );
-  const limitsCheck = await checkAccountLimits(
-    shareLink.owner_principal_id,
-    subscription.tier,
-  );
-
-  if (!limitsCheck.success || !limitsCheck.canAddMore) {
-    return (
-      <SharePageShell>
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <h1 className="text-xl font-semibold">Link Unavailable</h1>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground text-center text-sm">
-              This link cannot accept new connections right now. The owner has
-              reached their account limit.
-            </p>
-          </CardContent>
-        </Card>
-      </SharePageShell>
-    );
+  if (!ownerCapacity.ok) {
+    redirect(`/share/${platform}/error?reason=${ownerCapacity.reason}`);
   }
 
   // 4. Render the landing card

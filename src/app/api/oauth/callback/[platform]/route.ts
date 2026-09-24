@@ -7,8 +7,10 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { escapeHtml } from "@/lib/api/oauth/escapeHtml";
 import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
-import { handleOAuthCallback } from "@/lib/x402/oauth/callback/handleOAuthCallback";
-import type { OAuthCallbackResult } from "@/lib/x402/oauth/callback/handleOAuthCallback";
+import {
+  handleOAuthCallback,
+  type CallbackErrorKind,
+} from "@/lib/x402/oauth/callback/handleOAuthCallback";
 import { isX402Platform, getAppUrl } from "@/lib/x402/config";
 
 export const runtime = "nodejs";
@@ -143,14 +145,19 @@ export async function GET(
     auditCallback("error");
 
     // Share-link flows redirect to the share error page instead of inline HTML
-    if (result.error.kind.startsWith("share_link_") || result.error.kind === "owner_account_limit_reached") {
+    if (result.error.kind.startsWith("share_link_") || result.error.kind.startsWith("owner_")) {
       return NextResponse.redirect(
         `${appUrl}/share/${platform}/error?reason=${encodeURIComponent(result.error.kind)}`,
       );
     }
 
     return new NextResponse(
-      buildHtmlPage("Connection Failed", errorMessage),
+      buildHtmlPage(
+        result.error.kind === "temporarily_unavailable"
+          ? "Temporarily Unavailable"
+          : "Connection Failed",
+        errorMessage,
+      ),
       {
         status: mapCallbackErrorToHttpStatus(result.error.kind),
         headers: { "Content-Type": "text/html" },
@@ -183,11 +190,6 @@ export async function GET(
 // Error status mapping
 // ---------------------------------------------------------------------------
 
-type CallbackErrorKind = Extract<
-  OAuthCallbackResult,
-  { ok: false }
->["error"]["kind"];
-
 /**
  * Failure pages carry non-2xx statuses so agents and monitoring can tell a
  * failed callback from a successful one without parsing HTML.
@@ -204,6 +206,8 @@ function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
       return 502;
     case "db_update_failed":
       return 500;
+    case "temporarily_unavailable":
+      return 503;
     // Share-link kinds redirect before reaching here; this keeps the switch
     // total if that ever changes.
     case "share_link_not_found":
@@ -211,6 +215,7 @@ function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
     case "share_link_expired":
     case "share_link_max_uses_reached":
     case "owner_account_limit_reached":
+    case "owner_subscription_inactive":
       return 400;
   }
 }

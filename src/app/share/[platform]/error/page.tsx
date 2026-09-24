@@ -18,8 +18,14 @@ const REASON_MESSAGES: Record<string, string> = {
   max_uses_reached:
     "This share link has reached its maximum number of uses.",
   invalid_format: "This share link is not valid.",
+  lookup_failed:
+    "We could not check this link right now. Please try again in a minute.",
   owner_account_limit_reached:
     "This link cannot accept new connections right now. The owner has reached their account limit.",
+  owner_subscription_inactive:
+    "This link cannot accept new connections right now. The owner's subscription is not active.",
+  owner_check_failed:
+    "We could not check this link right now. Please open it again in a minute.",
   rate_limited:
     "Too many connection attempts. Please wait a minute and try again.",
   unsupported_platform: "This platform is not supported for share links.",

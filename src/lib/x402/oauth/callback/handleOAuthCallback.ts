@@ -6,9 +6,11 @@ import { after } from "next/server";
 import type { Platform } from "@/lib/x402/connect/types";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
-import { validateShareLinkById } from "@/actions/server/share-link/validateShareToken";
+import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
+import {
+  validateShareLinkById,
+  type ShareLinkRefusal,
+} from "@/actions/server/share-link/validateShareToken";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { exchangeLinkedInForX402 } from "./linkedinTokenExchange";
 import { exchangeTikTokForX402 } from "./tiktokTokenExchange";
@@ -53,21 +55,67 @@ export type OAuthCallbackResult =
         | { kind: "share_link_revoked"; message: string }
         | { kind: "share_link_expired"; message: string }
         | { kind: "share_link_max_uses_reached"; message: string }
-        | { kind: "owner_account_limit_reached"; message: string };
+        | { kind: "owner_account_limit_reached"; message: string }
+        | { kind: "owner_subscription_inactive"; message: string }
+        | { kind: "temporarily_unavailable"; message: string };
     };
+
+export type CallbackErrorKind = Extract<
+  OAuthCallbackResult,
+  { ok: false }
+>["error"]["kind"];
+
+/**
+ * A database read failed before the code was exchanged. Nothing is used up:
+ * the connection stays pending and the code is still valid, so reloading the
+ * callback page retries.
+ */
+const TEMPORARILY_UNAVAILABLE_MESSAGE =
+  "Could not finish connecting right now. Refresh this page to try again.";
+
+/** The callback error for each reason a share link cannot be used. */
+const SHARE_LINK_REFUSAL_KINDS = {
+  invalid_format: "share_link_not_found",
+  not_found: "share_link_not_found",
+  revoked: "share_link_revoked",
+  expired: "share_link_expired",
+  max_uses_reached: "share_link_max_uses_reached",
+  lookup_failed: "temporarily_unavailable",
+} as const satisfies Record<ShareLinkRefusal, CallbackErrorKind>;
+
+/**
+ * Reasons the consume_share_link function returns. It lives only in the
+ * database (sourceRef: pg_get_functiondef of public.consume_share_link,
+ * read 2026-09-24; docs/DATABASE.md lists it).
+ */
+const CONSUME_REFUSAL_REASONS = [
+  "not_found",
+  "revoked",
+  "expired",
+  "max_uses_reached",
+] as const satisfies readonly ShareLinkRefusal[];
+
+function isConsumeRefusalReason(
+  reason: unknown,
+): reason is (typeof CONSUME_REFUSAL_REASONS)[number] {
+  return CONSUME_REFUSAL_REASONS.some((knownReason) => knownReason === reason);
+}
 
 // ---------------------------------------------------------------------------
 // Implementation
 // ---------------------------------------------------------------------------
 
 /**
- * Shared callback handler for all 4 platforms, serving both x402-initiated
+ * Shared callback handler for all 7 platforms, serving both x402-initiated
  * and REST-initiated connections (owner resolved from social_connections by
  * oauth_state; no session cookie involved).
  *
  * Flow:
  *   1. Look up social_connections WHERE oauth_state = $state (must be pending)
- *   2. Share-link flows: re-validate link + owner limits before any exchange
+ *   2. Share-link flows: re-validate link + owner plan and limits before any
+ *      exchange. A failed database read in steps 1-2 answers
+ *      temporarily_unavailable and leaves the connection pending: the code
+ *      is not spent yet, so reloading the page retries.
  *   3. If the OAuth provider returned an error: transition to 'failed'
  *   4. Exchange code for token (per-platform wrapper)
  *   5. Share-link flows: consume_share_link RPC (atomic used_count)
@@ -109,8 +157,8 @@ export async function handleOAuthCallback(
     return {
       ok: false,
       error: {
-        kind: "state_not_found",
-        message: "Failed to look up OAuth state.",
+        kind: "temporarily_unavailable",
+        message: TEMPORARILY_UNAVAILABLE_MESSAGE,
       },
     };
   }
@@ -174,14 +222,13 @@ export async function handleOAuthCallback(
   if (shareLinkId !== null) {
     const shareLinkValidation = await validateShareLinkById(shareLinkId);
     if (!shareLinkValidation.success) {
-      const reasonToKind: Record<string, string> = {
-        not_found: "share_link_not_found",
-        revoked: "share_link_revoked",
-        expired: "share_link_expired",
-        max_uses_reached: "share_link_max_uses_reached",
-      };
-      const errorKind =
-        reasonToKind[shareLinkValidation.reason] ?? "share_link_not_found";
+      const errorKind = SHARE_LINK_REFUSAL_KINDS[shareLinkValidation.reason];
+      if (errorKind === "temporarily_unavailable") {
+        return {
+          ok: false,
+          error: { kind: errorKind, message: TEMPORARILY_UNAVAILABLE_MESSAGE },
+        };
+      }
 
       await transitionPendingTo(connection.id, {
         status: "failed",
@@ -194,36 +241,43 @@ export async function handleOAuthCallback(
       return {
         ok: false,
         error: {
-          kind: errorKind as "share_link_not_found",
+          kind: errorKind,
           message: `Share link is no longer valid: ${shareLinkValidation.reason}.`,
         },
       };
     }
 
-    // Owner tier lookup + account limit check
-    const ownerSubscription = await checkActiveSubscription(
+    // Owner plan + account limit check
+    const ownerCapacity = await checkShareLinkOwnerCapacity(
       connection.principal_id,
     );
-    const ownerLimits = await checkAccountLimits(
-      connection.principal_id,
-      ownerSubscription.tier,
-    );
-    if (!ownerLimits.success || !ownerLimits.canAddMore) {
+    if (!ownerCapacity.ok) {
+      if (ownerCapacity.reason === "owner_check_failed") {
+        return {
+          ok: false,
+          error: {
+            kind: "temporarily_unavailable",
+            message: TEMPORARILY_UNAVAILABLE_MESSAGE,
+          },
+        };
+      }
+
+      const ownerRefusalMessage =
+        ownerCapacity.reason === "owner_subscription_inactive"
+          ? "The link owner's subscription is not active. The connection cannot be completed."
+          : "The link owner has reached their account limit. The connection cannot be completed.";
+
       await transitionPendingTo(connection.id, {
         status: "failed",
-        error_code: "owner_account_limit_reached",
-        error_message: "Owner has reached their account limit.",
+        error_code: ownerCapacity.reason,
+        error_message: ownerRefusalMessage,
       });
 
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
       return {
         ok: false,
-        error: {
-          kind: "owner_account_limit_reached",
-          message:
-            "The link owner has reached their account limit. The connection cannot be completed.",
-        },
+        error: { kind: ownerCapacity.reason, message: ownerRefusalMessage },
       };
     }
   }
@@ -281,37 +335,49 @@ export async function handleOAuthCallback(
     const consumeResult = consumeRows?.[0];
     const consumeReason = consumeResult?.reason;
 
-    if (consumeError || consumeResult?.success !== true) {
-      const reason =
-        (typeof consumeReason === "string" ? consumeReason : null) ??
-        consumeError?.message ??
-        "unknown";
+    // The code is spent by now, so every failure here ends the attempt.
+    if (consumeError) {
       console.error(
-        `[handleOAuthCallback] consume_share_link failed: ${reason}`,
+        `[handleOAuthCallback] consume_share_link failed: ${consumeError.message}`,
+      );
+      await transitionPendingTo(connection.id, {
+        status: "failed",
+        error_code: "db_update_failed",
+        error_message: "Could not record the share link use.",
+      });
+      logShareLinkAudit(input.platform, "share_link.use_failed", "error");
+      return {
+        ok: false,
+        error: {
+          kind: "db_update_failed",
+          message: "Could not record the share link use. Please open the link again.",
+        },
+      };
+    }
+
+    if (consumeResult?.success !== true) {
+      // An unknown reason reads as not_found, as it always has.
+      const refusal = isConsumeRefusalReason(consumeReason)
+        ? consumeReason
+        : "not_found";
+      const errorKind = SHARE_LINK_REFUSAL_KINDS[refusal];
+      console.error(
+        `[handleOAuthCallback] consume_share_link refused: ${refusal}`,
       );
 
       await transitionPendingTo(connection.id, {
         status: "failed",
-        error_code: `share_link_${reason}`,
-        error_message: `Share link consumption failed: ${reason}`,
+        error_code: errorKind,
+        error_message: `Share link consumption failed: ${refusal}`,
       });
 
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      // Map RPC reason to the appropriate error kind
-      const reasonKindMap: Record<string, string> = {
-        not_found: "share_link_not_found",
-        revoked: "share_link_revoked",
-        expired: "share_link_expired",
-        max_uses_reached: "share_link_max_uses_reached",
-      };
-      const errorKind = reasonKindMap[reason] ?? "share_link_not_found";
-
       return {
         ok: false,
         error: {
-          kind: errorKind as "share_link_not_found",
-          message: `Share link could not be used: ${reason}.`,
+          kind: errorKind,
+          message: `Share link could not be used: ${refusal}.`,
         },
       };
     }

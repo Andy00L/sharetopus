@@ -19,19 +19,29 @@ import { share_links } from "@/db/schema";
  * Tables read: share_links (select only)
  */
 
+type ShareLinkRow = typeof share_links.$inferSelect;
+
 type ValidateSuccess = {
   success: true;
-  data: typeof share_links.$inferSelect;
+  data: ShareLinkRow;
 };
+
+/**
+ * Why a share link cannot be used. "lookup_failed" is a failed database
+ * read: the link may be fine, so the visitor is asked to retry instead of
+ * being told it does not exist.
+ */
+export type ShareLinkRefusal =
+  | "invalid_format"
+  | "not_found"
+  | "revoked"
+  | "expired"
+  | "max_uses_reached"
+  | "lookup_failed";
 
 type ValidateFailure = {
   success: false;
-  reason:
-    | "invalid_format"
-    | "not_found"
-    | "revoked"
-    | "expired"
-    | "max_uses_reached";
+  reason: ShareLinkRefusal;
 };
 
 export type ValidateShareTokenResult = ValidateSuccess | ValidateFailure;
@@ -55,34 +65,10 @@ export async function validateShareToken(
     console.error(
       `[validateShareToken] DB error looking up token: ${error.message}`,
     );
-    return { success: false, reason: "not_found" };
+    return { success: false, reason: "lookup_failed" };
   }
 
-  const shareLink = shareLinkRows[0];
-  if (!shareLink) {
-    return { success: false, reason: "not_found" };
-  }
-
-  if (shareLink.revoked_at !== null) {
-    return { success: false, reason: "revoked" };
-  }
-
-  if (
-    shareLink.expires_at !== null &&
-    new Date(shareLink.expires_at) < new Date()
-  ) {
-    return { success: false, reason: "expired" };
-  }
-
-  // Defensive >= (not just ==) to catch any over-increment bugs
-  if (
-    shareLink.max_uses !== null &&
-    shareLink.used_count >= shareLink.max_uses
-  ) {
-    return { success: false, reason: "max_uses_reached" };
-  }
-
-  return { success: true, data: shareLink };
+  return evaluateShareLink(shareLinkRows[0]);
 }
 
 /**
@@ -109,10 +95,16 @@ export async function validateShareLinkById(
     console.error(
       `[validateShareLinkById] DB error looking up id: ${error.message}`,
     );
-    return { success: false, reason: "not_found" };
+    return { success: false, reason: "lookup_failed" };
   }
 
-  const shareLink = shareLinkRows[0];
+  return evaluateShareLink(shareLinkRows[0]);
+}
+
+/** A share link that exists is usable unless revoked, expired, or out of uses. */
+function evaluateShareLink(
+  shareLink: ShareLinkRow | undefined,
+): ValidateShareTokenResult {
   if (!shareLink) {
     return { success: false, reason: "not_found" };
   }
@@ -128,6 +120,7 @@ export async function validateShareLinkById(
     return { success: false, reason: "expired" };
   }
 
+  // Defensive >= (not just ==) to catch any over-increment bugs
   if (
     shareLink.max_uses !== null &&
     shareLink.used_count >= shareLink.max_uses

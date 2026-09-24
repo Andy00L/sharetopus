@@ -3,9 +3,8 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
 import { db, runQuery } from "@/db/client";
 import { social_connections } from "@/db/schema";
@@ -61,16 +60,12 @@ export async function POST(
   }
   const shareLink = validation.data;
 
-  // 3. Re-validate creator account limit (defense against changes since landing)
-  const subscription = await checkActiveSubscription(
+  // 3. Re-check the owner's plan and account limit (defense against changes since landing)
+  const ownerCapacity = await checkShareLinkOwnerCapacity(
     shareLink.owner_principal_id,
   );
-  const limitsCheck = await checkAccountLimits(
-    shareLink.owner_principal_id,
-    subscription.tier,
-  );
-  if (!limitsCheck.success || !limitsCheck.canAddMore) {
-    return redirectToError(platform, "owner_account_limit_reached");
+  if (!ownerCapacity.ok) {
+    return redirectToError(platform, ownerCapacity.reason);
   }
 
   // 4. Generate OAuth state

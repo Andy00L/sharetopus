@@ -48,6 +48,12 @@ export async function createShareLink(
 
   // 2. Tier gate: Creator+
   const subscription = await checkActiveSubscription(userId);
+  if (subscription.status === "unavailable") {
+    return {
+      success: false,
+      message: "Could not check your subscription. Please try again.",
+    };
+  }
   if (!subscription.isActive || !tierMeets(subscription.tier, "creator")) {
     return {
       success: false,

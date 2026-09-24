@@ -18,8 +18,8 @@ import PinterestSVGIcon, {
   TwitterVGIcon,
   YoutubeSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
+import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import RateLimitError from "@/components/RateLimitError";
-import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { tierMeets } from "@/lib/types/plans";
@@ -36,7 +36,7 @@ const AccountsPageWithData = async () => {
   }
   const subscriptionCheck = await checkActiveSubscription(userId);
   if (!subscriptionCheck.isActive) {
-    return <SubscriptionPrompt />;
+    return <InactiveSubscriptionNotice status={subscriptionCheck.status} />;
   }
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;

@@ -93,7 +93,13 @@ What happens to posts and OAuth clients follows the user's access after the writ
 
 Without one, banked referral weeks (`users.creator_access_until` in the future) count as Creator access with status `referral_grant`. Otherwise it returns `isActive=false` with status `none`.
 
-A failed database read returns `isActive=false` with status `unavailable`. Gates stay closed (fail-closed), while billing code tells "could not check" apart from "not subscribed": the customer portal and MCP key creation ask for a retry, `list_billing_summary` returns a tool error, `GET /v1/usage` answers 500, and the MCP subscription gate does not cache the failure.
+A failed database read returns `isActive=false` with status `unavailable`. The type is a union on `isActive`, so a caller that finds no access can read which of `none` and `unavailable` it has. Gates stay closed (fail-closed), but no gate answers "could not check" with "subscribe":
+
+- Gated pages (create, connections, integrations, posted) render `InactiveSubscriptionNotice`: the subscribe prompt for `none`, a "Try again" notice for `unavailable`.
+- The upload URL route and the OAuth initiate routes answer 503.
+- Creating a share link, the customer portal and MCP key creation ask for a retry.
+- MCP and REST answer 503 (see [AUTH.md](./AUTH.md#fail-closed-design)), `list_billing_summary` returns a tool error, `GET /v1/usage` answers 500, and the MCP subscription gate does not cache the failure.
+- A share link checks its owner through `checkShareLinkOwnerCapacity`: a lapsed plan reads as `owner_subscription_inactive`, and a failed read as a retry. Both used to read as "the owner reached their account limit".
 
 It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code asks through `createCustomerPortal`, which reads the id from the Clerk session.
 

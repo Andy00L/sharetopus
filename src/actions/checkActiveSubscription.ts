@@ -18,14 +18,29 @@ export type SubscriptionStatus =
   | "none"
   | "unavailable";
 
-export type ActiveSubscription = {
-  isActive: boolean;
-  priceId: string | null;
-  tier: PlanTier | null;
-  status: SubscriptionStatus;
-  currentPeriodEnd: string | null;
-  startDate: string | null;
-};
+/** Why a user has no access: no plan, or a plan that could not be read. */
+export type InactiveSubscriptionStatus = Extract<
+  SubscriptionStatus,
+  "none" | "unavailable"
+>;
+
+export type ActiveSubscription =
+  | {
+      isActive: true;
+      status: Exclude<SubscriptionStatus, InactiveSubscriptionStatus>;
+      priceId: string | null;
+      tier: PlanTier | null;
+      currentPeriodEnd: string | null;
+      startDate: string | null;
+    }
+  | {
+      isActive: false;
+      status: InactiveSubscriptionStatus;
+      priceId: null;
+      tier: null;
+      currentPeriodEnd: null;
+      startDate: null;
+    };
 
 /**
  * Canonical subscription reader for server code: MCP, REST, pages and
@@ -127,7 +142,7 @@ export async function checkActiveSubscription(
 }
 
 function inactiveSubscription(
-  status: "none" | "unavailable",
+  status: InactiveSubscriptionStatus,
 ): ActiveSubscription {
   return {
     isActive: false,

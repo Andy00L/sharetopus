@@ -5,8 +5,8 @@ import {
   parseSchedulePrefill,
   type SchedulePrefill,
 } from "@/components/core/create/SocialPostForm/state/parseSchedulePrefill";
+import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import RateLimitError from "@/components/RateLimitError";
-import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
@@ -20,18 +20,11 @@ async function SocialPostFormWithData({
   readonly initialSchedule: SchedulePrefill | null;
 }) {
   const { userId } = await auth();
-  const isPaid = await checkActiveSubscription(userId);
-  if (!isPaid.isActive) {
-    return <SubscriptionPrompt />;
+  const subscription = await checkActiveSubscription(userId);
+  if (!subscription.isActive) {
+    return <InactiveSubscriptionNotice status={subscription.status} />;
   }
-
-  if (!userId) {
-    redirect("/create");
-  }
-
-  const subscriptionInfo = await checkActiveSubscription(userId);
-
-  if (!subscriptionInfo.isActive || !subscriptionInfo.tier) {
+  if (!userId || !subscription.tier) {
     redirect("/create");
   }
 

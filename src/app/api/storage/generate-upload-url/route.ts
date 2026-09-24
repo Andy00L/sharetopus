@@ -51,11 +51,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Subscription check
+    // 3. Subscription check. A failed read is ours: 503 and a retry,
+    // never a "subscription required" to a paying user.
     const subscriptionCheck = await checkActiveSubscription(userId);
+    if (subscriptionCheck.status === "unavailable") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Subscription check failed",
+          message: "Could not check your subscription. Please try again.",
+        },
+        { status: 503 }
+      );
+    }
     if (!subscriptionCheck.isActive) {
       return NextResponse.json(
-        { success: false, message: "Abonnement actif requis" },
+        {
+          success: false,
+          error: "Subscription required",
+          message: "An active subscription is required to upload files.",
+        },
         { status: 403 }
       );
     }

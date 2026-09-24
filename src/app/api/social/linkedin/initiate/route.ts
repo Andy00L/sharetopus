@@ -32,6 +32,12 @@ export async function POST() {
       subscriptionCheck
     );
 
+    if (subscriptionCheck.status === "unavailable") {
+      return NextResponse.json(
+        { success: false, message: "Could not check your subscription. Please try again." },
+        { status: 503 }
+      );
+    }
     if (!subscriptionCheck.isActive) {
       return NextResponse.json(
         { success: false, message: "Abonnement actif requis" },

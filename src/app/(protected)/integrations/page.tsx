@@ -1,7 +1,7 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { listRestApiKeys } from "@/actions/server/api/listRestApiKeys";
 import { listApiKeys } from "@/actions/server/mcp/listApiKeys";
-import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
+import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
 import { ApiKeysCard } from "./components/ApiKeysCard";
@@ -12,8 +12,9 @@ import { RestApiKeysCard } from "./components/RestApiKeysCard";
  * Integrations page for managing MCP and REST API keys.
  *
  * Server component. Checks for an active subscription before rendering
- * the key management UI. Free users see a SubscriptionPrompt instead,
- * matching the pattern in src/app/(protected)/connections/page.tsx.
+ * the key management UI. Users without a plan see the subscribe prompt, and
+ * a failed check shows a retry (InactiveSubscriptionNotice), as on
+ * src/app/(protected)/connections/page.tsx.
  *
  * Route: /integrations (protected)
  * Server actions used: checkActiveSubscription, listApiKeys, listRestApiKeys
@@ -23,7 +24,7 @@ export default async function IntegrationsPage() {
 
   const sub = await checkActiveSubscription(userId ?? null);
   if (!sub.isActive) {
-    return <SubscriptionPrompt />;
+    return <InactiveSubscriptionNotice status={sub.status} />;
   }
 
   const [mcpKeysResult, restKeysResult] = await Promise.all([
