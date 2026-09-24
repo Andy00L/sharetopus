@@ -248,10 +248,12 @@ Retryable failures: the worker throws an exception, Inngest catches it and retri
 
 | Operation | Behavior |
 |-----------|----------|
-| **Cancel** | Only posts with `status=scheduled` can be cancelled. Sets `status=cancelled`. |
-| **Resume** | Moves `cancelled` posts back to `scheduled`. Past dates are bumped to now + 1 hour via `bumpPastScheduleToFuture`. |
-| **Reschedule** | Changes `scheduled_at` for 1 to 50 posts. Automatically resumes cancelled posts (no separate resume call needed). |
+| **Cancel** | Only posts with `status=scheduled` can be cancelled. Sets `status=cancelled` and clears `cancelled_by_sub_at`. |
+| **Resume** | Moves `cancelled` posts back to `scheduled` and clears `cancelled_by_sub_at`. Past dates are bumped to now + 1 hour via `bumpPastScheduleToFuture`. |
+| **Reschedule** | Changes `scheduled_at` for 1 to 50 posts. Automatically resumes cancelled posts (no separate resume call needed), clearing `cancelled_by_sub_at` like Resume. |
 | **Delete** | Permanent removal. Orphan media is cleaned up. |
+
+All four answer "Could not load your posts. Please try again." when reading the posts fails; "No posts found" means the ids matched no row.
 
 ## Subscription-triggered cancel
 
@@ -260,6 +262,8 @@ When a user cancels their subscription, the system automatically cancels their f
 1. `cancelFutureScheduledPostsOnSubCancel` sets `status=cancelled` and `cancelled_by_sub_at=now()` for all future scheduled posts belonging to that user.
 2. The `cleanup-cancelled-posts-after-grace` cron runs after a 7-day grace period to permanently remove system-cancelled posts.
 3. If the user resubscribes within the grace period, `resumeCancelledPostsOnResubscribe` resumes all system-cancelled posts. Past dates are bumped forward.
+
+Only the subscription lapse sets `cancelled_by_sub_at`; a manual cancel, resume or reschedule clears it. The tag therefore marks a post whose latest cancellation came from the lapse. Before this rule, a post resumed by hand kept its tag, and cancelling it again later let the grace cleanup delete it.
 
 ## Sweep crons
 

@@ -79,7 +79,17 @@ export async function deleteScheduledPostBatch(
         .where(inArray(scheduled_posts.id, postIds)),
     );
 
-    if (fetchError || posts.length === 0) {
+    if (fetchError) {
+      console.error(
+        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Fetch error:`,
+        fetchError.message,
+      );
+      return {
+        success: false,
+        message: "Could not load your posts. Please try again.",
+      };
+    }
+    if (posts.length === 0) {
       return {
         success: false,
         message: "No posts found with the provided IDs.",

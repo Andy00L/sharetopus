@@ -17,6 +17,9 @@ import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
  * **Tables:** `scheduled_posts` (read + update).
  *
  * If a post's scheduled_at is in the past, bumps it to 1 hour from now.
+ * Clears cancelled_by_sub_at: a post the user brings back is no longer a
+ * subscription cancellation, and a stale tag let the 7-day grace cleanup
+ * delete it after a later manual cancel.
  */
 export async function resumeScheduledPostBatch(
   postIds: string[],
@@ -67,7 +70,17 @@ export async function resumeScheduledPostBatch(
         .where(inArray(scheduled_posts.id, postIds)),
     );
 
-    if (fetchError || posts.length === 0) {
+    if (fetchError) {
+      console.error(
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Fetch error:`,
+        fetchError.message,
+      );
+      return {
+        success: false,
+        message: "Could not load your posts. Please try again.",
+      };
+    }
+    if (posts.length === 0) {
       return { success: false, message: "No posts found." };
     }
 
@@ -119,6 +132,7 @@ export async function resumeScheduledPostBatch(
           .set({
             status: "scheduled",
             scheduled_at: newScheduledAt.toISOString(),
+            cancelled_by_sub_at: null,
           })
           .where(inArray(scheduled_posts.id, pastIds)),
       );
@@ -135,7 +149,7 @@ export async function resumeScheduledPostBatch(
       const { error: updateFutureError } = await runQuery(
         db
           .update(scheduled_posts)
-          .set({ status: "scheduled" })
+          .set({ status: "scheduled", cancelled_by_sub_at: null })
           .where(inArray(scheduled_posts.id, futureIds)),
       );
       if (updateFutureError) {

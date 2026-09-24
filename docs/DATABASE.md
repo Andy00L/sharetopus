@@ -296,7 +296,7 @@ Triggers:
 | `mcp_audit_log`, `x402_access_log` | 90 days, not enforced yet | Daily cleanup jobs delete older rows, but the append-only trigger refuses a DELETE unless the transaction sets `app.allow_append_only_delete = 'on'`, which nothing does yet. Both jobs fail and no row has been deleted. |
 | `stripe_webhook_events` | 90 days | Same 90-day cleanup window. |
 | `tiktok_webhook_events` | 90 days | Same 90-day cleanup window. |
-| Cancelled posts (`scheduled_posts` with status `cancelled`) | 7-day grace period | Cancelled posts remain queryable for 7 days via `cancelled_by_sub_at`, then eligible for hard deletion. |
+| Posts cancelled by a subscription lapse (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | Deleted by `cleanup-cancelled-posts-after-grace` 7 days after the lapse unless the user resubscribes. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
 | `content_history` | Indefinite | Published content records are kept for analytics and history display. |
 | `x402_charges`, `x402_refunds`, `wallet_credits_ledger` | Indefinite | Financial records are never deleted. |
 | `sanctions_screenings` | Indefinite | Compliance records are never deleted. |

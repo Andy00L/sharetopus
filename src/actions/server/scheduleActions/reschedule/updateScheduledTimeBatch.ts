@@ -30,7 +30,9 @@ export type UpdateScheduledTimeBatchResult = {
  * **Tables:** scheduled_posts (read + update).
  *
  * Cancelled posts get auto-resumed (status -> scheduled) along with the
- * time update. Posts in terminal states (posted, failed) are skipped.
+ * time update, and lose their cancelled_by_sub_at tag like a manual resume
+ * (see resumeScheduledPostBatch). Posts in terminal states (posted,
+ * failed) are skipped.
  *
  * @param postIds - Post IDs to reschedule
  * @param newScheduledTime - New datetime (must be in the future)
@@ -99,7 +101,7 @@ export async function updateScheduledTimeBatch(
       );
       return {
         success: false,
-        message: `Failed to fetch posts: ${fetchError.message}`,
+        message: "Could not load your posts. Please try again.",
       };
     }
     if (posts.length === 0) {
@@ -152,6 +154,7 @@ export async function updateScheduledTimeBatch(
           .set({
             scheduled_at: scheduledTime.toISOString(),
             status: "scheduled",
+            cancelled_by_sub_at: null,
           })
           .where(inArray(scheduled_posts.id, cancelledIds)),
       );

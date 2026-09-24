@@ -9,7 +9,9 @@ import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
 /**
  * Cancels scheduled posts in batch. Sets status='cancelled' on rows
- * currently in 'scheduled' status that belong to `principalId`.
+ * currently in 'scheduled' status that belong to `principalId`, and clears
+ * cancelled_by_sub_at: only a subscription lapse sets that tag, and the
+ * 7-day grace cleanup deletes the posts that carry it.
  *
  * **Authentication:** Does not call Clerk. Caller must validate
  * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
@@ -65,7 +67,17 @@ export async function cancelScheduledPostBatch(
         .where(inArray(scheduled_posts.id, postIds)),
     );
 
-    if (fetchError || posts.length === 0) {
+    if (fetchError) {
+      console.error(
+        `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Fetch error:`,
+        fetchError.message,
+      );
+      return {
+        success: false,
+        message: "Could not load your posts. Please try again.",
+      };
+    }
+    if (posts.length === 0) {
       return {
         success: false,
         message: "No posts found with the provided IDs.",
@@ -101,7 +113,7 @@ export async function cancelScheduledPostBatch(
     const { error: updateError } = await runQuery(
       db
         .update(scheduled_posts)
-        .set({ status: "cancelled" })
+        .set({ status: "cancelled", cancelled_by_sub_at: null })
         .where(inArray(scheduled_posts.id, cancellableIds)),
     );
 
