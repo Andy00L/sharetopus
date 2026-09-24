@@ -136,6 +136,11 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
           "The resource does not exist or is not owned by your account, including the social account a post names. Unowned resources return 404, never 403.",
         ],
         [
+          "409",
+          "conflict",
+          "The post's status does not allow the change: only a scheduled post can be cancelled, and only a scheduled or cancelled post can be rescheduled.",
+        ],
+        [
           "429",
           "rate_limited",
           "Per-key rate limit exceeded, or a platform's daily scheduling quota reached. See Rate limits.",

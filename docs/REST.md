@@ -155,6 +155,7 @@ Error codes:
 | `unauthorized` | 401 | Invalid, expired, or revoked API key |
 | `forbidden` | 403 | Valid key but insufficient permissions |
 | `not_found` | 404 | Resource does not exist or not owned by principal, including the social account a post names |
+| `conflict` | 409 | The post's status does not allow the change: only a scheduled post can be cancelled, and only a scheduled or cancelled post can be rescheduled |
 | `validation_error` | 400 | Request body or parameters failed validation, or a post breaks a platform rule (media type, required title or target, caption length, account on another platform) |
 | `rate_limited` | 429 | Per-principal rate limit exceeded, or a platform's daily scheduling quota reached |
 | `internal_error` | 500 | Unexpected server error |
@@ -163,6 +164,8 @@ Error codes:
 Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
 When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
+
+`PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel.
 
 ---
 

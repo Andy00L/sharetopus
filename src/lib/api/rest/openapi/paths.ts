@@ -5,6 +5,7 @@ import {
 import {
   PostPatchInputSchema,
   PostBulkInputSchema,
+  PostDeleteQuerySchema,
 } from "../validation/postPatchSchemas";
 import {
   ConnectionInitiateInputSchema,
@@ -24,6 +25,7 @@ import {
 } from "../validation/webhookSchemas";
 import {
   PostDTOSchema,
+  PostDeleteResultSchema,
   ConnectionDTOSchema,
   ContentHistoryDTOSchema,
   AnalyticsDTOSchema,
@@ -66,6 +68,12 @@ const errorResponses = {
   "404": jsonResponse("Not found", ErrorResponseSchema),
   "429": jsonResponse("Rate limited", ErrorResponseSchema),
   "500": jsonResponse("Internal error", ErrorResponseSchema),
+  "503": jsonResponse("Service unavailable", ErrorResponseSchema),
+};
+
+/** PATCH and DELETE /v1/posts/{id}: the post's status does not allow the change. */
+const postConflictResponse = {
+  "409": jsonResponse("Conflict", ErrorResponseSchema),
 };
 
 /**
@@ -118,18 +126,28 @@ export const restPaths = {
     patch: {
       tags: ["Posts"],
       summary: "Reschedule a post",
+      description: "Only a scheduled or cancelled post can move (409 otherwise). A cancelled post is resumed.",
       operationId: "reschedulePost",
       parameters: [pathParam("id", "Post UUID")],
       requestBody: jsonBody(PostPatchInputSchema),
-      responses: { "200": jsonResponse("Updated post", PostDTOSchema), ...errorResponses },
+      responses: {
+        "200": jsonResponse("Updated post", PostDTOSchema),
+        ...errorResponses,
+        ...postConflictResponse,
+      },
     },
     delete: {
       tags: ["Posts"],
       summary: "Cancel or delete a post",
-      description: "Soft-cancel by default. Use ?hard=true for permanent deletion.",
+      description:
+        "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion.",
       operationId: "deletePost",
-      parameters: [pathParam("id", "Post UUID")],
-      responses: { "200": jsonResponse("Delete result", PostDTOSchema), ...errorResponses },
+      parameters: [pathParam("id", "Post UUID"), ...schemaToQueryParams(PostDeleteQuerySchema)],
+      responses: {
+        "200": jsonResponse("Delete result", PostDeleteResultSchema),
+        ...errorResponses,
+        ...postConflictResponse,
+      },
     },
   },
   "/api/v1/posts/{id}/analytics": {

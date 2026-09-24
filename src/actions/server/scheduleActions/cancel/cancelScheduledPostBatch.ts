@@ -5,7 +5,24 @@ import { inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
+import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+
+/**
+ * A success carries the counts. A failure carries `failure` (see
+ * PostChangeFailure) so each caller can answer in its own terms; `message`
+ * is safe to show and never carries a database error.
+ */
+export type CancelScheduledPostBatchResult = {
+  message: string;
+  resetIn?: number;
+} & (
+  | {
+      success: true;
+      details: { total: number; succeeded: number; failed: number };
+    }
+  | { success: false; failure: PostChangeFailure }
+);
 
 /**
  * Cancels scheduled posts in batch. Sets status='cancelled' on rows
@@ -30,18 +47,17 @@ export async function cancelScheduledPostBatch(
   principalId: string,
   source: CreatedVia,
   requestId?: string | null,
-): Promise<{
-  success: boolean;
-  message: string;
-  resetIn?: number;
-  details?: { total: number; succeeded: number; failed: number };
-}> {
+): Promise<CancelScheduledPostBatchResult> {
   console.log(
     `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
   );
   try {
     if (!postIds || postIds.length === 0) {
-      return { success: false, message: "No post IDs provided." };
+      return {
+        success: false,
+        failure: "invalid_request",
+        message: "No post IDs provided.",
+      };
     }
 
     // Step 1: rate limit
@@ -50,6 +66,7 @@ export async function cancelScheduledPostBatch(
     if (!rateCheck.success) {
       return {
         success: false,
+        failure: rateCheck.reason === "limited" ? "rate_limited" : "unavailable",
         message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
@@ -74,12 +91,14 @@ export async function cancelScheduledPostBatch(
       );
       return {
         success: false,
+        failure: "unavailable",
         message: "Could not load your posts. Please try again.",
       };
     }
     if (posts.length === 0) {
       return {
         success: false,
+        failure: "not_found",
         message: "No posts found with the provided IDs.",
       };
     }
@@ -93,6 +112,7 @@ export async function cancelScheduledPostBatch(
       );
       return {
         success: false,
+        failure: "not_found",
         message: "You do not own some of these posts.",
       };
     }
@@ -104,7 +124,8 @@ export async function cancelScheduledPostBatch(
     if (cancellablePosts.length === 0) {
       return {
         success: false,
-        message: "None of the selected posts can be cancelled.",
+        failure: "not_eligible",
+        message: "Only scheduled posts can be cancelled.",
       };
     }
 
@@ -122,7 +143,11 @@ export async function cancelScheduledPostBatch(
         `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Update error:`,
         updateError.message,
       );
-      return { success: false, message: "Database error cancelling posts." };
+      return {
+        success: false,
+        failure: "internal",
+        message: "Database error cancelling posts.",
+      };
     }
 
     return {
@@ -141,6 +166,7 @@ export async function cancelScheduledPostBatch(
     );
     return {
       success: false,
+      failure: "internal",
       message: "Unexpected error cancelling posts.",
     };
   }

@@ -4,7 +4,10 @@
 
 import { authCheck } from "@/actions/server/authCheck";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
-import { cancelScheduledPostBatch } from "./cancelScheduledPostBatch";
+import {
+  cancelScheduledPostBatch,
+  type CancelScheduledPostBatchResult,
+} from "./cancelScheduledPostBatch";
 
 /**
  * Browser-facing Server Action. Validates Clerk session, then delegates
@@ -15,10 +18,11 @@ import { cancelScheduledPostBatch } from "./cancelScheduledPostBatch";
 export async function cancelScheduledPostBatchAction(
   postIds: string[],
   userId: string | null,
-) {
+): Promise<CancelScheduledPostBatchResult> {
   if (!userId) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "User authentication required. Please sign in to continue.",
     };
   }
@@ -27,6 +31,7 @@ export async function cancelScheduledPostBatchAction(
   if (!authResult) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "Authentication validation failed. Please sign in again.",
     };
   }

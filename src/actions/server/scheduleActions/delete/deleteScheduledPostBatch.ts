@@ -6,8 +6,30 @@ import { inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
+import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { deleteSupabaseFile } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+
+/**
+ * A success carries the counts. A failure carries `failure` (see
+ * PostChangeFailure) so each caller can answer in its own terms; `message`
+ * is safe to show and never carries a database error.
+ */
+export type DeleteScheduledPostBatchResult = {
+  message: string;
+  resetIn?: number;
+} & (
+  | {
+      success: true;
+      details: {
+        total: number;
+        succeeded: number;
+        failed: number;
+        mediaDeleted: number;
+      };
+    }
+  | { success: false; failure: PostChangeFailure }
+);
 
 /**
  * Deletes scheduled posts in batch and cleans up orphaned media from Storage.
@@ -36,24 +58,18 @@ export async function deleteScheduledPostBatch(
   principalId: string,
   source: CreatedVia,
   requestId?: string | null,
-): Promise<{
-  success: boolean;
-  message: string;
-  resetIn?: number;
-  details?: {
-    total: number;
-    succeeded: number;
-    failed: number;
-    mediaDeleted: number;
-  };
-}> {
+): Promise<DeleteScheduledPostBatchResult> {
   console.log(
     `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${postIds?.length ?? 0} post(s) requested`,
   );
 
   try {
     if (!postIds || postIds.length === 0) {
-      return { success: false, message: "No post IDs provided." };
+      return {
+        success: false,
+        failure: "invalid_request",
+        message: "No post IDs provided.",
+      };
     }
 
     // Step 1: rate limit
@@ -62,6 +78,7 @@ export async function deleteScheduledPostBatch(
     if (!rateCheck.success) {
       return {
         success: false,
+        failure: rateCheck.reason === "limited" ? "rate_limited" : "unavailable",
         message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
@@ -86,12 +103,14 @@ export async function deleteScheduledPostBatch(
       );
       return {
         success: false,
+        failure: "unavailable",
         message: "Could not load your posts. Please try again.",
       };
     }
     if (posts.length === 0) {
       return {
         success: false,
+        failure: "not_found",
         message: "No posts found with the provided IDs.",
       };
     }
@@ -105,6 +124,7 @@ export async function deleteScheduledPostBatch(
       );
       return {
         success: false,
+        failure: "not_found",
         message: "You do not own some of these posts.",
       };
     }
@@ -122,7 +142,11 @@ export async function deleteScheduledPostBatch(
         `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Delete error:`,
         deleteError.message,
       );
-      return { success: false, message: "Database error deleting posts." };
+      return {
+        success: false,
+        failure: "internal",
+        message: "Database error deleting posts.",
+      };
     }
 
     // Step 4: parallel media cleanup. deleteSupabaseFile re-checks all
@@ -175,6 +199,10 @@ export async function deleteScheduledPostBatch(
       `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Unexpected error:`,
       err instanceof Error ? err.message : err,
     );
-    return { success: false, message: "Unexpected error deleting posts." };
+    return {
+      success: false,
+      failure: "internal",
+      message: "Unexpected error deleting posts.",
+    };
   }
 }

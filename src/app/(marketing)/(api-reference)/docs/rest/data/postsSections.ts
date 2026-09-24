@@ -444,7 +444,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/{id}",
       title: "Reschedule a post",
       description:
-        "Moves a pending post to a new future time. Cancelled posts are automatically resumed by the move. Returns the updated PostDTO.",
+        "Moves a scheduled or cancelled post to a new future time; a cancelled post is resumed by the move. Any other status answers 409 conflict, and another account's post answers 404. Returns the updated PostDTO.",
       sourceRef:
         "src/app/api/v1/posts/[id]/route.ts (PATCH), src/lib/api/rest/validation/postPatchSchemas.ts (PostPatchInputSchema)",
       paramTables: [
@@ -476,7 +476,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/{id}",
       title: "Cancel or delete a post",
       description:
-        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. hard=true permanently deletes the post and cleans up its media.",
+        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. Only a scheduled post can be cancelled; any other status answers 409 conflict. hard=true permanently deletes the post and cleans up its media. A 200 always means the change happened.",
       sourceRef:
         "src/app/api/v1/posts/[id]/route.ts (DELETE), src/lib/api/rest/validation/postPatchSchemas.ts (PostDeleteQuerySchema)",
       paramTables: [
@@ -487,7 +487,8 @@ export const REST_POSTS_SECTION: DocsSection = {
               name: "hard",
               type: "boolean",
               required: false,
-              description: "true for permanent deletion. Default false (cancel).",
+              description:
+                "true for permanent deletion; false or omitted to cancel. Any other value answers 400.",
             },
           ],
         },
@@ -508,9 +509,10 @@ export const REST_POSTS_SECTION: DocsSection = {
             },
             {
               name: "details",
-              type: "object | null",
+              type: "object",
               required: true,
-              description: "Batch-operation details, when available.",
+              description:
+                "Counts: total, succeeded, failed, plus mediaDeleted when hard=true.",
             },
           ],
         },

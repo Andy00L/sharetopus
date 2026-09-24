@@ -21,6 +21,7 @@ export async function updateScheduledTimeBatchAction(
   if (!userId) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "User authentication required. Please sign in to continue.",
     };
   }
@@ -29,6 +30,7 @@ export async function updateScheduledTimeBatchAction(
   if (!authResult) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "Authentication validation failed. Please sign in again.",
     };
   }

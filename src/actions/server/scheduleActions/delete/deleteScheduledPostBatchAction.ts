@@ -4,7 +4,10 @@
 import { authCheck } from "@/actions/server/authCheck";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { authCheckCronJob } from "../../authCheckCronJob";
-import { deleteScheduledPostBatch } from "./deleteScheduledPostBatch";
+import {
+  deleteScheduledPostBatch,
+  type DeleteScheduledPostBatchResult,
+} from "./deleteScheduledPostBatch";
 
 /**
  * Browser/cron-facing Server Action. Validates Clerk session OR cron secret,
@@ -16,12 +19,13 @@ export async function deleteScheduledPostBatchAction(
   postIds: string[],
   userId: string | null,
   cronSecret?: string,
-) {
+): Promise<DeleteScheduledPostBatchResult> {
   if (cronSecret) {
     const ok = await authCheckCronJob(userId, cronSecret);
     if (!ok) {
       return {
         success: false,
+        failure: "unauthenticated",
         message: "Cron job authentication failed. Invalid secret key.",
       };
     }
@@ -30,13 +34,18 @@ export async function deleteScheduledPostBatchAction(
     if (!ok) {
       return {
         success: false,
+        failure: "unauthenticated",
         message: "Authentication validation failed. Please sign in again.",
       };
     }
   }
 
   if (!userId) {
-    return { success: false, message: "Missing user ID." };
+    return {
+      success: false,
+      failure: "unauthenticated",
+      message: "Missing user ID.",
+    };
   }
 
   const requestId = generateRequestId();

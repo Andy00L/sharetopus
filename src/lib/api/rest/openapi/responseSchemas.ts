@@ -24,6 +24,19 @@ export const PostDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "PostDTO" });
 
+/** DELETE /v1/posts/{id}: the action taken and the batch counts. */
+export const PostDeleteResultSchema = z.object({
+  id: z.string(),
+  action: z.enum(["cancelled", "deleted"]),
+  details: z.object({
+    total: z.number(),
+    succeeded: z.number(),
+    failed: z.number(),
+    // Only on hard=true: stored media files removed with the post.
+    mediaDeleted: z.number().optional(),
+  }),
+}).meta({ id: "PostDeleteResult" });
+
 export const ConnectionDTOSchema = z.object({
   id: z.string(),
   platform: z.string(),

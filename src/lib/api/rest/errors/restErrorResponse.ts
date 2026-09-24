@@ -4,6 +4,7 @@ export type RestErrorCode =
   | "unauthorized"
   | "forbidden"
   | "not_found"
+  | "conflict"
   | "validation_error"
   | "rate_limited"
   | "internal_error"
@@ -20,6 +21,8 @@ const HTTP_STATUS_BY_CODE: Record<RestErrorCode, number> = {
   unauthorized: 401,
   forbidden: 403,
   not_found: 404,
+  // The post's status does not allow the change (RFC 9110 section 15.5.10).
+  conflict: 409,
   validation_error: 400,
   rate_limited: 429,
   internal_error: 500,

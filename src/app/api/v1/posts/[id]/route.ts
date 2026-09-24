@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch";
@@ -90,8 +91,10 @@ export const GET = withRestEndpoint({
 /**
  * PATCH /v1/posts/[id] -- reschedule a post.
  *
- * Updates scheduled_at via updateScheduledTimeBatch. Automatically
- * resumes cancelled posts (matches MCP behavior).
+ * Updates scheduled_at via updateScheduledTimeBatch, which checks
+ * ownership and status and resumes cancelled posts (matches MCP behavior).
+ * Only a scheduled or cancelled post can move; every other status answers
+ * 409 conflict, and another principal's post answers 404 like a missing one.
  */
 export const PATCH = withRestEndpoint({
   scopes: ["api:full"],
@@ -134,40 +137,7 @@ export const PATCH = withRestEndpoint({
     }
     const validatedPatchInput = bodyParseResult.data;
 
-    // Step 3: verify ownership before calling batch function.
-    const { data: existingPosts, error: ownershipError } = await runQuery(
-      db
-        .select({ id: scheduled_posts.id })
-        .from(scheduled_posts)
-        .where(
-          and(
-            eq(scheduled_posts.id, postId),
-            eq(scheduled_posts.principal_id, ctx.principal.principalId),
-          ),
-        )
-        .limit(1),
-    );
-
-    if (ownershipError) {
-      console.error(
-        `[v1/posts/[id] PATCH] ownership check failed (request_id=${ctx.requestId}):`,
-        ownershipError.message,
-      );
-      return restErrorResponse(
-        "internal_error",
-        "Post lookup failed",
-        ctx.requestId,
-      );
-    }
-    if (!existingPosts[0]) {
-      return restErrorResponse(
-        "not_found",
-        "Post not found",
-        ctx.requestId,
-      );
-    }
-
-    // Step 4: call updateScheduledTimeBatch. It auto-resumes cancelled posts.
+    // Step 3: reschedule. A refusal maps to the status the caller can act on.
     const rescheduleResult = await updateScheduledTimeBatch(
       [postId],
       validatedPatchInput.scheduled_at,
@@ -175,16 +145,11 @@ export const PATCH = withRestEndpoint({
       "api",
       ctx.requestId,
     );
-
     if (!rescheduleResult.success) {
-      return restErrorResponse(
-        "internal_error",
-        rescheduleResult.message,
-        ctx.requestId,
-      );
+      return restPostBatchFailureResponse(rescheduleResult, ctx.requestId);
     }
 
-    // Step 5: fetch updated row for response DTO.
+    // Step 4: fetch updated row for response DTO.
     const { data: updatedRows, error: fetchError } = await runQuery(
       db
         .select()
@@ -227,9 +192,10 @@ export const PATCH = withRestEndpoint({
  * ?hard=true: permanent delete via deleteScheduledPostBatch (includes
  * media cleanup).
  *
- * Returns 200 with action taken and batch details. Mirrors the batch
- * behavior: returns succeeded/failed counts rather than 409 on status
- * mismatch.
+ * 200 means the change happened; it carries the action and the batch
+ * counts. Only a scheduled post can be cancelled; every other status
+ * answers 409 conflict. A hard value other than true or false answers 400 instead
+ * of falling back to a cancel.
  */
 export const DELETE = withRestEndpoint({
   scopes: ["api:full"],
@@ -249,86 +215,45 @@ export const DELETE = withRestEndpoint({
     }
     const postId = idParseResult.data;
 
-    // Step 2: parse query params for hard delete flag.
+    // Step 2: parse the hard-delete flag. An unknown value is refused: a
+    // fallback to cancel would do something the caller did not ask for.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
     const queryParseResult = PostDeleteQuerySchema.safeParse(queryObject);
-    const isHardDelete = queryParseResult.success
-      ? queryParseResult.data.hard
-      : false;
-
-    // Step 3: verify ownership.
-    const { data: existingPosts, error: ownershipError } = await runQuery(
-      db
-        .select({ id: scheduled_posts.id })
-        .from(scheduled_posts)
-        .where(
-          and(
-            eq(scheduled_posts.id, postId),
-            eq(scheduled_posts.principal_id, ctx.principal.principalId),
-          ),
-        )
-        .limit(1),
-    );
-
-    if (ownershipError) {
-      console.error(
-        `[v1/posts/[id] DELETE] ownership check failed (request_id=${ctx.requestId}):`,
-        ownershipError.message,
-      );
+    if (!queryParseResult.success) {
       return restErrorResponse(
-        "internal_error",
-        "Post lookup failed",
+        "validation_error",
+        "Query parameter hard must be true or false",
         ctx.requestId,
+        { issues: queryParseResult.error.issues },
       );
     }
-    if (!existingPosts[0]) {
-      return restErrorResponse(
-        "not_found",
-        "Post not found",
-        ctx.requestId,
-      );
-    }
-
-    // Step 4: dispatch to correct batch function.
+    const isHardDelete = queryParseResult.data.hard;
     const action = isHardDelete ? "deleted" : "cancelled";
 
-    if (isHardDelete) {
-      const deleteResult = await deleteScheduledPostBatch(
-        [postId],
-        ctx.principal.principalId,
-        "api",
-        ctx.requestId,
-      );
-
-      return {
-        response: NextResponse.json(
-          {
-            id: postId,
-            action,
-            details: deleteResult.details ?? null,
-          },
-          { status: 200, headers: { "x-request-id": ctx.requestId } },
-        ),
-        auditSummary: { post_id: postId, action },
-      };
+    // Step 3: delete or cancel. The batch function checks ownership and
+    // status; a refusal maps to the status the caller can act on.
+    const changeResult = isHardDelete
+      ? await deleteScheduledPostBatch(
+          [postId],
+          ctx.principal.principalId,
+          "api",
+          ctx.requestId,
+        )
+      : await cancelScheduledPostBatch(
+          [postId],
+          ctx.principal.principalId,
+          "api",
+          ctx.requestId,
+        );
+    if (!changeResult.success) {
+      return restPostBatchFailureResponse(changeResult, ctx.requestId);
     }
-
-    const cancelResult = await cancelScheduledPostBatch(
-      [postId],
-      ctx.principal.principalId,
-      "api",
-      ctx.requestId,
-    );
 
     return {
       response: NextResponse.json(
-        {
-          id: postId,
-          action,
-          details: cancelResult.details ?? null,
-        },
+        { id: postId, action, details: changeResult.details },
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: { post_id: postId, action },
