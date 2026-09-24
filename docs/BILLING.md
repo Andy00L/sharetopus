@@ -250,6 +250,7 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 |------|---------|
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
+| `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by both the webhook and the `ensureUserExists` sync |
 | `src/actions/server/stripe/checkUserSubscription.ts` | `checkActiveSubscription`, subscription status checks |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |

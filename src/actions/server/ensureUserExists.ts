@@ -10,6 +10,7 @@ import {
   stripe_subscriptions,
   users,
 } from "@/db/schema";
+import { toSubscriptionRow } from "@/actions/server/stripe/toSubscriptionRow";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
 import stripe from "@/lib/stripe";
@@ -25,7 +26,7 @@ export async function ensureUserExists() {
   if (!user) return;
 
   // Check if user already exists in Supabase
-  const { data: existingUserRows } = await runQuery(
+  const { data: existingUserRows, error: lookupError } = await runQuery(
     db
       .select({ stripe_customer_id: users.stripe_customer_id })
       .from(users)
@@ -33,7 +34,18 @@ export async function ensureUserExists() {
       .limit(1)
   );
 
-  const existingUser = existingUserRows?.[0];
+  // A failed lookup says nothing about the row. Reading it as "no user"
+  // created a second Stripe customer for an existing user; the next page
+  // load checks again.
+  if (lookupError) {
+    console.error(
+      `[ensureUserExists] User lookup failed for ${user.id}:`,
+      lookupError.message
+    );
+    return;
+  }
+
+  const existingUser = existingUserRows[0];
   if (existingUser) {
     // User exists, sync subscriptions + invoices if needed
     if (existingUser.stripe_customer_id) {
@@ -153,25 +165,14 @@ async function syncStripeSubscriptions(
     if (subscriptions.data.length === 0) return;
 
     for (const subscription of subscriptions.data) {
-      const priceId = subscription.items.data[0]?.plan.id ?? null;
-      const subscriptionData = {
-        user_id: userId,
-        stripe_customer_id: stripeCustomerId,
-        stripe_subscription_id: subscription.id,
-        status: subscription.status,
-        start_date: new Date(subscription.created * 1000).toISOString(),
-        end_date: new Date(
-          Math.min(
-            ...subscription.items.data.map(
-              (subscriptionItem) => subscriptionItem.current_period_end
-            )
-          ) * 1000
-        ).toISOString(),
-        stripe_price_id: priceId,
-      };
+      const subscriptionData = toSubscriptionRow(
+        subscription,
+        userId,
+        stripeCustomerId
+      );
 
       // Check if this subscription already exists in Supabase
-      const { data: existingRows } = await runQuery(
+      const { data: existingRows, error: lookupError } = await runQuery(
         db
           .select({ status: stripe_subscriptions.status })
           .from(stripe_subscriptions)
@@ -181,18 +182,24 @@ async function syncStripeSubscriptions(
           .limit(1)
       );
 
-      const existing = existingRows?.[0];
+      // Unknown is not missing: an insert here would collide with the row
+      // that may well exist. The next page load syncs it.
+      if (lookupError) {
+        console.error(
+          `[ensureUserExists] Lookup failed for subscription ${subscription.id}:`,
+          lookupError.message
+        );
+        continue;
+      }
+
+      const existing = existingRows[0];
       if (existing) {
         // Update status if it changed (mirrors webhook subscription.updated / .deleted)
         if (existing.status !== subscription.status) {
           const { error } = await runQuery(
             db
               .update(stripe_subscriptions)
-              .set({
-                status: subscription.status,
-                end_date: subscriptionData.end_date,
-                stripe_price_id: subscriptionData.stripe_price_id,
-              })
+              .set(subscriptionData)
               .where(
                 eq(stripe_subscriptions.stripe_subscription_id, subscription.id)
               )
@@ -255,7 +262,7 @@ async function syncStripeInvoices(
       if (!invoice.id) continue;
 
       // Check if this invoice already exists in Supabase
-      const { data: existingRows } = await runQuery(
+      const { data: existingRows, error: lookupError } = await runQuery(
         db
           .select({ id: stripe_invoices.id })
           .from(stripe_invoices)
@@ -263,7 +270,15 @@ async function syncStripeInvoices(
           .limit(1)
       );
 
-      const existing = existingRows?.[0];
+      if (lookupError) {
+        console.error(
+          `[ensureUserExists] Lookup failed for invoice ${invoice.id}:`,
+          lookupError.message
+        );
+        continue;
+      }
+
+      const existing = existingRows[0];
       if (existing) continue;
 
       const status = invoice.status === "paid" ? "succeeded" : "failed";

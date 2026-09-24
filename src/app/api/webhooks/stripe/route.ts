@@ -6,6 +6,7 @@ import {
   claimWebhookEvent,
   releaseWebhookEvent,
 } from "@/actions/server/stripe/claimWebhookEvent";
+import { toSubscriptionRow } from "@/actions/server/stripe/toSubscriptionRow";
 import { db, runQuery } from "@/db/client";
 import { stripe_invoices, stripe_subscriptions, users } from "@/db/schema";
 import { invalidateCachedOAuthClientsByUser } from "@/lib/mcp/auth/oauthClientCache";
@@ -148,25 +149,11 @@ async function handleSubscriptionEvent(
     return ok({ no_user_match: true });
   }
 
-  const priceId = subscription.items.data[0]?.price?.id ?? null;
-  const periodEndMs =
-    Math.min(
-      ...subscription.items.data.map(
-        (subscriptionItem) => subscriptionItem.current_period_end,
-      ),
-    ) * 1000;
-  const periodEndIso = new Date(periodEndMs).toISOString();
-
-  const subscriptionData = {
-    user_id: userId,
-    stripe_customer_id: stripeCustomerId,
-    stripe_subscription_id: subscription.id,
-    status: subscription.status,
-    start_date: new Date(subscription.created * 1000).toISOString(),
-    end_date: periodEndIso,
-    current_period_end: periodEndIso,
-    stripe_price_id: priceId,
-  };
+  const subscriptionData = toSubscriptionRow(
+    subscription,
+    userId,
+    stripeCustomerId,
+  );
 
   if (type === "deleted") {
     const { error } = await runQuery(
