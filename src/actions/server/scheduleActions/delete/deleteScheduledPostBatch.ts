@@ -1,7 +1,10 @@
 // src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/lib/types/database.types";
 import { deleteSupabaseFile } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
@@ -65,12 +68,18 @@ export async function deleteScheduledPostBatch(
     }
 
     // Step 2: fetch posts and verify ownership
-    const { data: posts, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, principal_id, platform, media_storage_path")
-      .in("id", postIds);
+    const { data: posts, error: fetchError } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          principal_id: scheduled_posts.principal_id,
+          media_storage_path: scheduled_posts.media_storage_path,
+        })
+        .from(scheduled_posts)
+        .where(inArray(scheduled_posts.id, postIds)),
+    );
 
-    if (fetchError || !posts || posts.length === 0) {
+    if (fetchError || posts.length === 0) {
       return {
         success: false,
         message: "No posts found with the provided IDs.",
@@ -92,10 +101,11 @@ export async function deleteScheduledPostBatch(
 
     // Step 3: delete posts from DB
     const postIdsToDelete = posts.map((post) => post.id);
-    const { error: deleteError } = await adminSupabase
-      .from("scheduled_posts")
-      .delete()
-      .in("id", postIdsToDelete);
+    const { error: deleteError } = await runQuery(
+      db
+        .delete(scheduled_posts)
+        .where(inArray(scheduled_posts.id, postIdsToDelete)),
+    );
 
     if (deleteError) {
       console.error(

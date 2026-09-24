@@ -1,7 +1,10 @@
 // src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/lib/types/database.types";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
@@ -52,12 +55,19 @@ export async function resumeScheduledPostBatch(
     }
 
     // Step 2: fetch posts and verify ownership
-    const { data: posts, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, principal_id, status, scheduled_at, platform")
-      .in("id", postIds);
+    const { data: posts, error: fetchError } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          principal_id: scheduled_posts.principal_id,
+          status: scheduled_posts.status,
+          scheduled_at: scheduled_posts.scheduled_at,
+        })
+        .from(scheduled_posts)
+        .where(inArray(scheduled_posts.id, postIds)),
+    );
 
-    if (fetchError || !posts || posts.length === 0) {
+    if (fetchError || posts.length === 0) {
       return { success: false, message: "No posts found." };
     }
 
@@ -103,13 +113,15 @@ export async function resumeScheduledPostBatch(
 
     if (pastIds.length > 0) {
       const newScheduledAt = bumpPastScheduleToFuture(new Date(0));
-      const { error: updatePastError } = await adminSupabase
-        .from("scheduled_posts")
-        .update({
-          status: "scheduled",
-          scheduled_at: newScheduledAt.toISOString(),
-        })
-        .in("id", pastIds);
+      const { error: updatePastError } = await runQuery(
+        db
+          .update(scheduled_posts)
+          .set({
+            status: "scheduled",
+            scheduled_at: newScheduledAt.toISOString(),
+          })
+          .where(inArray(scheduled_posts.id, pastIds)),
+      );
       if (updatePastError) {
         console.error(
           `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Past update error:`,
@@ -120,10 +132,12 @@ export async function resumeScheduledPostBatch(
     }
 
     if (futureIds.length > 0) {
-      const { error: updateFutureError } = await adminSupabase
-        .from("scheduled_posts")
-        .update({ status: "scheduled" })
-        .in("id", futureIds);
+      const { error: updateFutureError } = await runQuery(
+        db
+          .update(scheduled_posts)
+          .set({ status: "scheduled" })
+          .where(inArray(scheduled_posts.id, futureIds)),
+      );
       if (updateFutureError) {
         console.error(
           `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Future update error:`,

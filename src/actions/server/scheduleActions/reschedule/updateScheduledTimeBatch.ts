@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/lib/types/database.types";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
@@ -78,10 +81,16 @@ export async function updateScheduledTimeBatch(
     }
 
     // Fetch + ownership check (single query)
-    const { data: posts, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, principal_id, status, platform")
-      .in("id", postIds);
+    const { data: posts, error: fetchError } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          principal_id: scheduled_posts.principal_id,
+          status: scheduled_posts.status,
+        })
+        .from(scheduled_posts)
+        .where(inArray(scheduled_posts.id, postIds)),
+    );
 
     if (fetchError) {
       console.error(
@@ -93,36 +102,40 @@ export async function updateScheduledTimeBatch(
         message: `Failed to fetch posts: ${fetchError.message}`,
       };
     }
-    if (!posts || posts.length === 0) {
+    if (posts.length === 0) {
       return { success: false, message: "No posts found." };
     }
 
-    const unauthorized = posts.filter((p) => p.principal_id !== principalId);
+    const unauthorized = posts.filter(
+      (post) => post.principal_id !== principalId,
+    );
     if (unauthorized.length > 0) {
       return { success: false, message: "You do not own some of these posts." };
     }
 
     const reschedulable = posts.filter(
-      (p) => p.status === "scheduled" || p.status === "cancelled",
+      (post) => post.status === "scheduled" || post.status === "cancelled",
     );
     if (reschedulable.length === 0) {
       return { success: false, message: "No posts in a reschedulable state." };
     }
 
     const scheduledIds = reschedulable
-      .filter((p) => p.status === "scheduled")
-      .map((p) => p.id);
+      .filter((post) => post.status === "scheduled")
+      .map((post) => post.id);
     const cancelledIds = reschedulable
-      .filter((p) => p.status === "cancelled")
-      .map((p) => p.id);
+      .filter((post) => post.status === "cancelled")
+      .map((post) => post.id);
 
     let ok = true;
 
     if (scheduledIds.length > 0) {
-      const { error } = await adminSupabase
-        .from("scheduled_posts")
-        .update({ scheduled_at: scheduledTime.toISOString() })
-        .in("id", scheduledIds);
+      const { error } = await runQuery(
+        db
+          .update(scheduled_posts)
+          .set({ scheduled_at: scheduledTime.toISOString() })
+          .where(inArray(scheduled_posts.id, scheduledIds)),
+      );
       if (error) {
         console.error(
           `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update scheduled error:`,
@@ -133,13 +146,15 @@ export async function updateScheduledTimeBatch(
     }
 
     if (cancelledIds.length > 0) {
-      const { error } = await adminSupabase
-        .from("scheduled_posts")
-        .update({
-          scheduled_at: scheduledTime.toISOString(),
-          status: "scheduled",
-        })
-        .in("id", cancelledIds);
+      const { error } = await runQuery(
+        db
+          .update(scheduled_posts)
+          .set({
+            scheduled_at: scheduledTime.toISOString(),
+            status: "scheduled",
+          })
+          .where(inArray(scheduled_posts.id, cancelledIds)),
+      );
       if (error) {
         console.error(
           `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update cancelled error:`,

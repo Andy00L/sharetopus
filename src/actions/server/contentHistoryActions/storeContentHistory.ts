@@ -1,7 +1,8 @@
 // actions/server/contentHistoryActions/storeContentHistory.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { content_history } from "@/db/schema";
 import type { Json, TablesInsert } from "@/lib/types/database.types";
 
 export type StoreContentHistoryInput = {
@@ -66,15 +67,20 @@ export async function storeContentHistory(
     };
 
     // Insert the record into the content_history table
-    const { data: newRecord, error } = await adminSupabase
-      .from("content_history")
-      .insert(insertData)
-      .select("id")
-      .single();
+    const { data: insertedRows, error } = await runQuery(
+      db
+        .insert(content_history)
+        .values(insertData)
+        .returning({ id: content_history.id }),
+    );
 
-    if (error) {
+    const newRecord = insertedRows?.[0];
+    if (error || !newRecord) {
       console.error("[storeContentHistory] Supabase insert error:", error);
-      return { success: false, message: `Database error: ${error.message}` };
+      return {
+        success: false,
+        message: `Database error: ${error?.message ?? "no row returned"}`,
+      };
     }
 
     return {

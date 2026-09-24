@@ -1,5 +1,9 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts, stripe_subscriptions } from "@/db/schema";
 
 export type CleanupResult =
   | {
@@ -34,13 +38,22 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       Date.now() - GRACE_DAYS * 24 * 60 * 60 * 1000
     ).toISOString();
 
-    const { data: candidates, error: queryErr } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, principal_id")
-      .eq("status", "cancelled")
-      .not("cancelled_by_sub_at", "is", null)
-      .lt("cancelled_by_sub_at", cutoff)
-      .limit(MAX_DELETE_PER_RUN);
+    const { data: candidates, error: queryErr } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          principal_id: scheduled_posts.principal_id,
+        })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.status, "cancelled"),
+            isNotNull(scheduled_posts.cancelled_by_sub_at),
+            lt(scheduled_posts.cancelled_by_sub_at, cutoff),
+          ),
+        )
+        .limit(MAX_DELETE_PER_RUN),
+    );
 
     if (queryErr) {
       return {
@@ -49,7 +62,7 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       };
     }
 
-    if (!candidates || candidates.length === 0) {
+    if (candidates.length === 0) {
       return {
         success: true,
         candidatesFound: 0,
@@ -73,14 +86,20 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       // Re-check subscription. If user resubscribed, skip and let
       // tomorrow's run re-evaluate (the resume-on-resubscribe handler
       // should have cleared the cancellation tag by then).
-      const { data: sub } = await adminSupabase
-        .from("stripe_subscriptions")
-        .select("status")
-        .eq("user_id", principalId)
-        .in("status", ["active", "trialing"])
-        .limit(1)
-        .maybeSingle();
+      const { data: subscriptionRows } = await runQuery(
+        db
+          .select({ status: stripe_subscriptions.status })
+          .from(stripe_subscriptions)
+          .where(
+            and(
+              eq(stripe_subscriptions.user_id, principalId),
+              inArray(stripe_subscriptions.status, ["active", "trialing"]),
+            ),
+          )
+          .limit(1),
+      );
 
+      const sub = subscriptionRows?.[0];
       if (sub) {
         console.log(
           `[cleanupCancelledPostsAfterGrace] Skipping ${postIds.length} posts for ${principalId} (resubscribed, status=${sub.status})`
@@ -89,10 +108,9 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
         continue;
       }
 
-      const { error: deleteErr } = await adminSupabase
-        .from("scheduled_posts")
-        .delete()
-        .in("id", postIds);
+      const { error: deleteErr } = await runQuery(
+        db.delete(scheduled_posts).where(inArray(scheduled_posts.id, postIds)),
+      );
 
       if (deleteErr) {
         console.error(

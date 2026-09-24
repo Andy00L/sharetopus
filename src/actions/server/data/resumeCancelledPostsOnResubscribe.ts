@@ -1,6 +1,10 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import { bumpPastScheduleToFuture } from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
 import "server-only";
+
+import { and, eq, isNotNull } from "drizzle-orm";
+
+import { bumpPastScheduleToFuture } from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 
 export type ResumeResult =
   | { success: true; resumed: number; bumped: number }
@@ -28,12 +32,21 @@ export async function resumeCancelledPostsOnResubscribe(
   principalId: string,
 ): Promise<ResumeResult> {
   try {
-    const { data: candidates, error: fetchErr } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, scheduled_at")
-      .eq("principal_id", principalId)
-      .eq("status", "cancelled")
-      .not("cancelled_by_sub_at", "is", null);
+    const { data: candidates, error: fetchErr } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          scheduled_at: scheduled_posts.scheduled_at,
+        })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "cancelled"),
+            isNotNull(scheduled_posts.cancelled_by_sub_at),
+          ),
+        ),
+    );
 
     if (fetchErr) {
       return {
@@ -42,7 +55,7 @@ export async function resumeCancelledPostsOnResubscribe(
       };
     }
 
-    if (!candidates || candidates.length === 0) {
+    if (candidates.length === 0) {
       return { success: true, resumed: 0, bumped: 0 };
     }
 
@@ -54,14 +67,16 @@ export async function resumeCancelledPostsOnResubscribe(
       const newTime = bumpPastScheduleToFuture(original);
       const wasBumped = newTime.getTime() !== original.getTime();
 
-      const { error: updateErr } = await adminSupabase
-        .from("scheduled_posts")
-        .update({
-          status: "scheduled",
-          scheduled_at: newTime.toISOString(),
-          cancelled_by_sub_at: null,
-        })
-        .eq("id", row.id);
+      const { error: updateErr } = await runQuery(
+        db
+          .update(scheduled_posts)
+          .set({
+            status: "scheduled",
+            scheduled_at: newTime.toISOString(),
+            cancelled_by_sub_at: null,
+          })
+          .where(eq(scheduled_posts.id, row.id)),
+      );
 
       if (updateErr) {
         console.error(

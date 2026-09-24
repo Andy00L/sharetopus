@@ -1,8 +1,11 @@
 // src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
+import { db, runQuery } from "@/db/client";
+import { platform_quotas, scheduled_posts, social_accounts } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
   CreatedVia,
@@ -41,7 +44,7 @@ export type SchedulePostBatchResult = {
  * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
  * **Rate limiting:** 10 calls per 60s per source (anti-spam). N posts = 1 call.
  * **Tables:** social_accounts (ownership), platform_quotas (daily cap),
- *             scheduled_posts (bulk upsert).
+ *             scheduled_posts (bulk insert).
  *
  * Flow:
  *   1. Size + per-post field validation. Partial success accepted.
@@ -49,7 +52,7 @@ export type SchedulePostBatchResult = {
  *   3. Ownership check: 1 query for all unique social_account_ids.
  *   4. Platform daily quota: existing posts in next 24h + new <= daily_cap.
  *   5. Build rows with idempotency_key = `${batchId}:${index}`.
- *   6. Bulk upsert with ignoreDuplicates on (principal_id, idempotency_key).
+ *   6. Bulk insert, ON CONFLICT (principal_id, idempotency_key) DO NOTHING.
  *   7. Fetch pre-existing rows for skipped keys (duplicate detection).
  *
  * Single post = batch with N=1. Same code path, same rate limit cost.
@@ -222,14 +225,24 @@ export async function schedulePostBatch(
     // Step 5: build rows
     const rows = buildInsertRows(ownedPosts, principalId, source, batchId);
 
-    // Step 6: bulk upsert with onConflict ignore
-    const { data: insertedRows, error: upsertError } = await adminSupabase
-      .from("scheduled_posts")
-      .upsert(rows, {
-        onConflict: "principal_id,idempotency_key",
-        ignoreDuplicates: true,
-      })
-      .select("id, idempotency_key");
+    // Step 6: bulk insert. A row whose (principal_id, idempotency_key)
+    // already exists is skipped (unique constraint
+    // scheduled_posts_principal_idem_uq) and is absent from the returned rows.
+    const { data: inserted, error: upsertError } = await runQuery(
+      db
+        .insert(scheduled_posts)
+        .values(rows)
+        .onConflictDoNothing({
+          target: [
+            scheduled_posts.principal_id,
+            scheduled_posts.idempotency_key,
+          ],
+        })
+        .returning({
+          id: scheduled_posts.id,
+          idempotency_key: scheduled_posts.idempotency_key,
+        }),
+    );
 
     if (upsertError) {
       console.error(
@@ -250,7 +263,6 @@ export async function schedulePostBatch(
       };
     }
 
-    const inserted = insertedRows ?? [];
     const insertedKeySet = new Set(inserted.map((row) => row.idempotency_key));
 
     // Step 7: detect duplicates by fetching skipped keys
@@ -268,11 +280,20 @@ export async function schedulePostBatch(
 
     let duplicates = 0;
     if (skippedKeys.length > 0) {
-      const { data: existingRows, error: fetchError } = await adminSupabase
-        .from("scheduled_posts")
-        .select("id, idempotency_key")
-        .eq("principal_id", principalId)
-        .in("idempotency_key", skippedKeys);
+      const { data: existingRows, error: fetchError } = await runQuery(
+        db
+          .select({
+            id: scheduled_posts.id,
+            idempotency_key: scheduled_posts.idempotency_key,
+          })
+          .from(scheduled_posts)
+          .where(
+            and(
+              eq(scheduled_posts.principal_id, principalId),
+              inArray(scheduled_posts.idempotency_key, skippedKeys),
+            ),
+          ),
+      );
 
       if (fetchError) {
         console.error(
@@ -282,7 +303,7 @@ export async function schedulePostBatch(
         // Non-fatal: the inserts already succeeded. Caller just won't get
         // the schedule_ids of the duplicates.
       } else {
-        for (const row of existingRows ?? []) {
+        for (const row of existingRows) {
           if (row.idempotency_key) {
             keyToScheduleId.set(row.idempotency_key, row.id);
             duplicates++;
@@ -384,15 +405,21 @@ export async function preflightSchedulePost(
     return { ok: false, httpStatus: 429, errorKind: "platform_quota_exceeded", message: quotaCheck.message };
   }
 
-  // The upsert ignores an already-used key and reports success, so a paid
+  // The insert skips an already-used key and reports success, so a paid
   // retry with the same key would be charged for a post it never gets.
   if (post.idempotency_key) {
-    const { data: existingPosts, error: lookupError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id")
-      .eq("principal_id", principalId)
-      .eq("idempotency_key", post.idempotency_key)
-      .limit(1);
+    const { data: existingPosts, error: lookupError } = await runQuery(
+      db
+        .select({ id: scheduled_posts.id })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.idempotency_key, post.idempotency_key),
+          ),
+        )
+        .limit(1),
+    );
     if (lookupError) {
       return {
         ok: false,
@@ -401,7 +428,7 @@ export async function preflightSchedulePost(
         message: `Idempotency lookup failed: ${lookupError.message}`,
       };
     }
-    if (existingPosts && existingPosts.length > 0) {
+    if (existingPosts.length > 0) {
       return {
         ok: false,
         httpStatus: 409,
@@ -475,12 +502,18 @@ async function checkOwnership(
   const uniqueIds = [...new Set(socialAccountIds)];
 
   // Deleted accounts cannot publish; directPostBatch filters them the same way.
-  const { data, error } = await adminSupabase
-    .from("social_accounts")
-    .select("id")
-    .eq("principal_id", principalId)
-    .is("deleted_at", null)
-    .in("id", uniqueIds);
+  const { data: ownedRows, error } = await runQuery(
+    db
+      .select({ id: social_accounts.id })
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.principal_id, principalId),
+          isNull(social_accounts.deleted_at),
+          inArray(social_accounts.id, uniqueIds),
+        ),
+      ),
+  );
 
   if (error) {
     return {
@@ -491,7 +524,7 @@ async function checkOwnership(
 
   return {
     success: true,
-    ownedIds: new Set((data ?? []).map((row) => row.id)),
+    ownedIds: new Set(ownedRows.map((row) => row.id)),
   };
 }
 
@@ -516,13 +549,17 @@ async function checkPlatformDailyQuotas(
       (post) => post.platform === platform,
     ).length;
 
-    const { count: existingCount, error: countError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id", { count: "exact", head: true })
-      .eq("principal_id", principalId)
-      .eq("platform", platform)
-      .gte("scheduled_at", now.toISOString())
-      .lte("scheduled_at", tomorrow.toISOString());
+    const { data: existingCount, error: countError } = await runQuery(
+      db.$count(
+        scheduled_posts,
+        and(
+          eq(scheduled_posts.principal_id, principalId),
+          eq(scheduled_posts.platform, platform),
+          gte(scheduled_posts.scheduled_at, now.toISOString()),
+          lte(scheduled_posts.scheduled_at, tomorrow.toISOString()),
+        ),
+      ),
+    );
 
     if (countError) {
       console.error(
@@ -532,11 +569,13 @@ async function checkPlatformDailyQuotas(
       return { success: false, message: "Platform quota lookup failed." };
     }
 
-    const { data: quota, error: quotaError } = await adminSupabase
-      .from("platform_quotas")
-      .select("daily_cap")
-      .eq("platform", platform)
-      .maybeSingle();
+    const { data: quotaRows, error: quotaError } = await runQuery(
+      db
+        .select({ daily_cap: platform_quotas.daily_cap })
+        .from(platform_quotas)
+        .where(eq(platform_quotas.platform, platform))
+        .limit(1),
+    );
 
     if (quotaError) {
       console.error(
@@ -546,13 +585,15 @@ async function checkPlatformDailyQuotas(
       return { success: false, message: "Platform quota lookup failed." };
     }
 
+    // No platform_quotas row for this platform: the default cap applies.
+    const quota = quotaRows[0];
     const dailyCap = quota?.daily_cap ?? DEFAULT_PLATFORM_DAILY_CAP;
-    const totalAfter = (existingCount ?? 0) + postsForPlatform;
+    const totalAfter = existingCount + postsForPlatform;
 
     if (totalAfter > dailyCap) {
       return {
         success: false,
-        message: `Platform quota exceeded for ${platform}. ${existingCount ?? 0} already scheduled in next 24h, adding ${postsForPlatform} would exceed daily cap of ${dailyCap}.`,
+        message: `Platform quota exceeded for ${platform}. ${existingCount} already scheduled in next 24h, adding ${postsForPlatform} would exceed daily cap of ${dailyCap}.`,
       };
     }
   }

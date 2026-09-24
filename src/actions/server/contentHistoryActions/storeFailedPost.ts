@@ -1,7 +1,8 @@
 // actions/server/contentHistoryActions/storeFailedPost.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { failed_posts } from "@/db/schema";
 import type { Json, MediaType, TablesInsert } from "@/lib/types/database.types";
 
 type FailedPostData = {
@@ -65,15 +66,20 @@ export async function storeFailedPost(
       x402_charge_id: data.x402_charge_id || null,
     };
 
-    const { data: newRecord, error } = await adminSupabase
-      .from("failed_posts")
-      .insert(insertData)
-      .select("id")
-      .single();
+    const { data: insertedRows, error } = await runQuery(
+      db
+        .insert(failed_posts)
+        .values(insertData)
+        .returning({ id: failed_posts.id }),
+    );
 
-    if (error) {
+    const newRecord = insertedRows?.[0];
+    if (error || !newRecord) {
       console.error("[storeFailedPost] Supabase insert error:", error);
-      return { success: false, message: `Database error: ${error.message}` };
+      return {
+        success: false,
+        message: `Database error: ${error?.message ?? "no row returned"}`,
+      };
     }
 
     return {

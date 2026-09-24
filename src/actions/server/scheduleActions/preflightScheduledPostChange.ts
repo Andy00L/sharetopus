@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/lib/types/database.types";
 import type { PreflightResult } from "@/lib/types/preflight";
 
@@ -21,16 +24,21 @@ export async function preflightScheduledPostChange(params: {
   principalId: string;
   eligibleStatuses: readonly PostStatus[] | null;
 }): Promise<PreflightResult> {
-  const { data: posts, error } = await adminSupabase
-    .from("scheduled_posts")
-    .select("id, principal_id, status")
-    .in("id", params.postIds);
+  const { data: posts, error } = await runQuery(
+    db
+      .select({
+        principal_id: scheduled_posts.principal_id,
+        status: scheduled_posts.status,
+      })
+      .from(scheduled_posts)
+      .where(inArray(scheduled_posts.id, params.postIds)),
+  );
 
   if (error) {
     console.error(`[preflightScheduledPostChange] scheduled_posts read failed: ${error.message}`);
     return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: "Could not look up the posts." };
   }
-  if (!posts || posts.length === 0) {
+  if (posts.length === 0) {
     return { ok: false, httpStatus: 404, errorKind: "posts_not_found", message: "No posts found for these ids." };
   }
   if (posts.some((post) => post.principal_id !== params.principalId)) {

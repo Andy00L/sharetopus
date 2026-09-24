@@ -421,8 +421,8 @@ export type Database = {
             | "cancelled";
           scheduled_at: string;
           posted_at: string | null;
-          /** GENERATED, never include in Insert/Update */
-          scheduled_at_date: string;
+          /** GENERATED (nullable in the live table), never include in Insert/Update */
+          scheduled_at_date: string | null;
           post_title: string | null;
           post_description: string | null;
           post_options: Json;
@@ -1119,8 +1119,8 @@ export type Database = {
             | "cancelled";
           scheduled_at: string;
           posted_at: string | null;
-          /** GENERATED, never include in Insert/Update */
-          scheduled_at_date: string;
+          /** GENERATED (nullable in the live table), never include in Insert/Update */
+          scheduled_at_date: string | null;
           post_title: string | null;
           post_description: string | null;
           post_options: Json;

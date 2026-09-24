@@ -1,7 +1,10 @@
 // src/actions/server/scheduleActions/get/getScheduledPosts.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, asc, eq, ne } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts, social_accounts } from "@/db/schema";
 import type { CreatedVia, PostStatus } from "@/lib/types/database.types";
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
@@ -52,45 +55,58 @@ export async function getScheduledPosts(
       };
     }
 
-    // Step 2: build query
-    let query = adminSupabase
-      .from("scheduled_posts")
-      .select(
-        `
-        id,
-        scheduled_at,
-        status,
-        platform,
-        post_title,
-        post_description,
-        error_message,
-        media_type,
-        media_storage_path,
-        batch_id,
-        created_via,
-        social_accounts:social_account_id (
-          id,
-          display_name,
-          avatar_url
-        )
-      `,
+    // Step 2: build query. An explicit status wins; without one, posted rows
+    // stay hidden unless includePosted asks for every status.
+    const statusCondition = filters?.status
+      ? eq(scheduled_posts.status, filters.status)
+      : filters?.includePosted
+        ? undefined
+        : ne(scheduled_posts.status, "posted");
+
+    const scheduledPostsQuery = db
+      .select({
+        id: scheduled_posts.id,
+        scheduled_at: scheduled_posts.scheduled_at,
+        status: scheduled_posts.status,
+        platform: scheduled_posts.platform,
+        post_title: scheduled_posts.post_title,
+        post_description: scheduled_posts.post_description,
+        error_message: scheduled_posts.error_message,
+        media_type: scheduled_posts.media_type,
+        media_storage_path: scheduled_posts.media_storage_path,
+        batch_id: scheduled_posts.batch_id,
+        created_via: scheduled_posts.created_via,
+        // id stays the first key: Drizzle returns null for a nested object
+        // whose first column is null, which only happens when no account
+        // row matched the left join.
+        social_accounts: {
+          id: social_accounts.id,
+          display_name: social_accounts.display_name,
+          avatar_url: social_accounts.avatar_url,
+        },
+      })
+      .from(scheduled_posts)
+      .leftJoin(
+        social_accounts,
+        eq(social_accounts.id, scheduled_posts.social_account_id),
       )
-      .eq("principal_id", principalId)
-      .order("scheduled_at", { ascending: true });
+      .where(
+        and(
+          eq(scheduled_posts.principal_id, principalId),
+          filters?.platform
+            ? eq(scheduled_posts.platform, filters.platform)
+            : undefined,
+          statusCondition,
+        ),
+      )
+      .orderBy(asc(scheduled_posts.scheduled_at))
+      .$dynamic();
 
-    if (filters?.platform) {
-      query = query.eq("platform", filters.platform);
-    }
-    if (filters?.status) {
-      query = query.eq("status", filters.status);
-    } else if (!filters?.includePosted) {
-      query = query.neq("status", "posted");
-    }
-    if (filters?.limit) {
-      query = query.limit(filters.limit);
-    }
-
-    const { data, error } = await query;
+    const { data: postRows, error } = await runQuery(
+      filters?.limit
+        ? scheduledPostsQuery.limit(filters.limit)
+        : scheduledPostsQuery,
+    );
 
     if (error) {
       console.error("[getScheduledPosts] DB error:", error.message);
@@ -100,7 +116,7 @@ export async function getScheduledPosts(
       };
     }
 
-    const posts: ScheduledPostListItem[] = data ?? [];
+    const posts: ScheduledPostListItem[] = postRows;
 
     return {
       success: true,

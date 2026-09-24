@@ -1,7 +1,10 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts, social_accounts } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -52,27 +55,27 @@ export type FetchPostResult =
 export async function fetchPostAndAccount(
   scheduledPostId: string,
 ): Promise<FetchPostResult> {
-  const { data: post, error: postErr } = await adminSupabase
-    .from("scheduled_posts")
-    .select("*")
-    .eq("id", scheduledPostId)
-    .single();
+  const { data: postRows, error: postErr } = await runQuery(
+    db
+      .select()
+      .from(scheduled_posts)
+      .where(eq(scheduled_posts.id, scheduledPostId))
+      .limit(1),
+  );
 
   if (postErr) {
-    if (postErr.code === "PGRST116") {
-      return { success: true, message: "post not found", skip: true };
-    }
     return {
       success: false,
       message: `Failed to fetch post: ${postErr.message}`,
     };
   }
+  const post = postRows[0];
   if (!post) {
     return { success: true, message: "post not found", skip: true };
   }
 
   const terminalStates: PostStatus[] = ["posted", "failed", "cancelled"];
-  if (terminalStates.includes(post.status as PostStatus)) {
+  if (terminalStates.includes(post.status)) {
     return {
       success: true,
       message: `post already ${post.status}`,
@@ -80,25 +83,26 @@ export async function fetchPostAndAccount(
     };
   }
 
-  const { data: account, error: accErr } = await adminSupabase
-    .from("social_accounts")
-    .select("*")
-    .eq("id", post.social_account_id)
-    .is("deleted_at", null)
-    .single();
+  const { data: accountRows, error: accErr } = await runQuery(
+    db
+      .select()
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, post.social_account_id),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
 
   if (accErr) {
-    if (accErr.code === "PGRST116") {
-      return {
-        success: false,
-        message: "Social account not found or deleted",
-      };
-    }
     return {
       success: false,
       message: `Failed to fetch account: ${accErr.message}`,
     };
   }
+  const account = accountRows[0];
   if (!account) {
     return {
       success: false,
@@ -110,8 +114,8 @@ export async function fetchPostAndAccount(
     success: true,
     message: "fetched",
     skip: false,
-    post: post as ScheduledPost,
-    account: account as SocialAccount,
+    post,
+    account,
   };
 }
 
@@ -131,15 +135,24 @@ export type ClaimResult = {
 export async function claimPostForProcessing(
   scheduledPostId: string,
 ): Promise<ClaimResult> {
-  const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .update({
-      status: "processing" satisfies PostStatus,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", scheduledPostId)
-    .in("status", ["scheduled", "queued"] satisfies PostStatus[])
-    .select("id");
+  const { data, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({
+        status: "processing" satisfies PostStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .where(
+        and(
+          eq(scheduled_posts.id, scheduledPostId),
+          inArray(
+            scheduled_posts.status,
+            ["scheduled", "queued"] satisfies PostStatus[],
+          ),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
+  );
 
   if (error) {
     console.error("[processSinglePost] claim failed:", error.message);
@@ -151,8 +164,8 @@ export async function claimPostForProcessing(
   }
   return {
     success: true,
-    message: data && data.length > 0 ? "claimed" : "not claimed",
-    claimed: !!(data && data.length > 0),
+    message: data.length > 0 ? "claimed" : "not claimed",
+    claimed: data.length > 0,
   };
 }
 
@@ -603,17 +616,23 @@ export async function recordPostStatus(args: {
   const nowIso = new Date().toISOString();
 
   if (result.ok) {
-    const { data, error } = await adminSupabase
-      .from("scheduled_posts")
-      .update({
-        status: "posted" satisfies PostStatus,
-        posted_at: nowIso,
-        error_message: null,
-        updated_at: nowIso,
-      })
-      .eq("id", post.id)
-      .eq("status", "processing" satisfies PostStatus)
-      .select("id");
+    const { data, error } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          status: "posted" satisfies PostStatus,
+          posted_at: nowIso,
+          error_message: null,
+          updated_at: nowIso,
+        })
+        .where(
+          and(
+            eq(scheduled_posts.id, post.id),
+            eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          ),
+        )
+        .returning({ id: scheduled_posts.id }),
+    );
 
     if (error) {
       console.error("[recordPostStatus] mark posted failed:", error.message);
@@ -623,7 +642,7 @@ export async function recordPostStatus(args: {
         updated: false,
       };
     }
-    const wasPosted = !!(data && data.length > 0);
+    const wasPosted = data.length > 0;
 
     // Dispatch post.published webhook on successful status transition.
     if (wasPosted) {
@@ -644,16 +663,22 @@ export async function recordPostStatus(args: {
   // never reach this branch.
   const errorMessage = `${result.reason}: ${result.message}`.slice(0, 1000);
 
-  const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .update({
-      status: "failed" satisfies PostStatus,
-      error_message: errorMessage,
-      updated_at: nowIso,
-    })
-    .eq("id", post.id)
-    .eq("status", "processing" satisfies PostStatus)
-    .select("id");
+  const { data, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({
+        status: "failed" satisfies PostStatus,
+        error_message: errorMessage,
+        updated_at: nowIso,
+      })
+      .where(
+        and(
+          eq(scheduled_posts.id, post.id),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
+  );
 
   if (error) {
     console.error("[recordPostStatus] mark failed failed:", error.message);
@@ -664,7 +689,7 @@ export async function recordPostStatus(args: {
     };
   }
 
-  const wasUpdated = !!(data && data.length > 0);
+  const wasUpdated = data.length > 0;
 
   // Write a failed_posts row only when we actually transitioned the
   // row to 'failed'. The CAS guard prevents duplicate rows on

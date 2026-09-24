@@ -1,5 +1,9 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { and, eq, gt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 
 export type CancelResult =
   | { success: true; cancelled: number }
@@ -23,16 +27,22 @@ export async function cancelFutureScheduledPostsOnSubCancel(
   try {
     const nowIso = new Date().toISOString();
 
-    const { data, error } = await adminSupabase
-      .from("scheduled_posts")
-      .update({
-        status: "cancelled",
-        cancelled_by_sub_at: nowIso,
-      })
-      .eq("principal_id", principalId)
-      .eq("status", "scheduled")
-      .gt("scheduled_at", nowIso)
-      .select("id");
+    const { data: cancelledRows, error } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          status: "cancelled",
+          cancelled_by_sub_at: nowIso,
+        })
+        .where(
+          and(
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "scheduled"),
+            gt(scheduled_posts.scheduled_at, nowIso),
+          ),
+        )
+        .returning({ id: scheduled_posts.id }),
+    );
 
     if (error) {
       return {
@@ -41,7 +51,7 @@ export async function cancelFutureScheduledPostsOnSubCancel(
       };
     }
 
-    const count = data?.length ?? 0;
+    const count = cancelledRows.length;
     if (count > 0) {
       console.log(
         `[cancelFutureScheduledPostsOnSubCancel] Cancelled ${count} future posts for ${principalId}`

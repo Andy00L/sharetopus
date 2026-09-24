@@ -1,6 +1,10 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
-import type { CreatedVia } from "@/lib/types/database.types";
 import "server-only";
+
+import { inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
+import type { CreatedVia } from "@/lib/types/database.types";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
 /**
@@ -50,12 +54,18 @@ export async function cancelScheduledPostBatch(
     }
 
     // Step 2: fetch posts and verify ownership
-    const { data: posts, error: fetchError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("id, principal_id, status, platform")
-      .in("id", postIds);
+    const { data: posts, error: fetchError } = await runQuery(
+      db
+        .select({
+          id: scheduled_posts.id,
+          principal_id: scheduled_posts.principal_id,
+          status: scheduled_posts.status,
+        })
+        .from(scheduled_posts)
+        .where(inArray(scheduled_posts.id, postIds)),
+    );
 
-    if (fetchError || !posts || posts.length === 0) {
+    if (fetchError || posts.length === 0) {
       return {
         success: false,
         message: "No posts found with the provided IDs.",
@@ -88,10 +98,12 @@ export async function cancelScheduledPostBatch(
 
     // Step 4: batch update to 'cancelled'
     const cancellableIds = cancellablePosts.map((post) => post.id);
-    const { error: updateError } = await adminSupabase
-      .from("scheduled_posts")
-      .update({ status: "cancelled" })
-      .in("id", cancellableIds);
+    const { error: updateError } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({ status: "cancelled" })
+        .where(inArray(scheduled_posts.id, cancellableIds)),
+    );
 
     if (updateError) {
       console.error(

@@ -1,5 +1,9 @@
 import "server-only";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+
+import { and, asc, eq, inArray, lte } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts } from "@/db/schema";
 import type { Platform, PostStatus } from "@/lib/types/database.types";
 
 export type DuePost = {
@@ -18,13 +22,25 @@ export async function fetchDueScheduledPosts(
   nowIso: string,
   limit: number
 ): Promise<FetchDueResult> {
-  const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .select("id, principal_id, social_account_id, platform, scheduled_at")
-    .eq("status", "scheduled" satisfies PostStatus)
-    .lte("scheduled_at", nowIso)
-    .order("scheduled_at", { ascending: true })
-    .limit(limit);
+  const { data, error } = await runQuery(
+    db
+      .select({
+        id: scheduled_posts.id,
+        principal_id: scheduled_posts.principal_id,
+        social_account_id: scheduled_posts.social_account_id,
+        platform: scheduled_posts.platform,
+        scheduled_at: scheduled_posts.scheduled_at,
+      })
+      .from(scheduled_posts)
+      .where(
+        and(
+          eq(scheduled_posts.status, "scheduled" satisfies PostStatus),
+          lte(scheduled_posts.scheduled_at, nowIso),
+        ),
+      )
+      .orderBy(asc(scheduled_posts.scheduled_at))
+      .limit(limit),
+  );
 
   if (error) {
     console.error("[scheduledPostsTick] fetch failed:", error.message);
@@ -55,15 +71,21 @@ export async function markPostsAsQueued(
   if (postIds.length === 0) {
     return { success: true, message: "Nothing to mark", updated: 0 };
   }
-  const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .update({
-      status: "queued" satisfies PostStatus,
-      updated_at: new Date().toISOString(),
-    })
-    .in("id", postIds)
-    .eq("status", "scheduled" satisfies PostStatus)
-    .select("id");
+  const { data, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({
+        status: "queued" satisfies PostStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .where(
+        and(
+          inArray(scheduled_posts.id, postIds),
+          eq(scheduled_posts.status, "scheduled" satisfies PostStatus),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
+  );
 
   if (error) {
     console.error("[scheduledPostsTick] mark queued failed:", error.message);
@@ -75,7 +97,7 @@ export async function markPostsAsQueued(
   }
   return {
     success: true,
-    message: `Marked ${data?.length ?? 0} as queued`,
-    updated: data?.length ?? 0,
+    message: `Marked ${data.length} as queued`,
+    updated: data.length,
   };
 }

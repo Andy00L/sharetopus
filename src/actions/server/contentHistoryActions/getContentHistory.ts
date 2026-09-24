@@ -1,7 +1,10 @@
 // actions/server/contentHistoryActions/getContentHistory.ts
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, desc, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { content_history, social_accounts } from "@/db/schema";
 import type {
   ContentHistory,
   CreatedVia,
@@ -10,8 +13,8 @@ import type {
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
- * Fetches rows from `content_history` (newest first), with optional filters, using the
- * service-role Supabase client. Each {@link CreatedVia} value gets its own rate-limit bucket
+ * Fetches rows from `content_history` (newest first), with optional filters, through the
+ * server-side Drizzle client. Each {@link CreatedVia} value gets its own rate-limit bucket
  * so traffic from one channel does not exhaust another’s quota.
  *
  * **Authentication:** Does not call Clerk. The caller must pass a `principalId` they are
@@ -22,7 +25,9 @@ import { checkRateLimit } from "../rateLimit/checkRateLimit";
  * `mcp_content_history`), the same `principalId`, and **60 requests per 60 seconds**.
  * On limit exceeded: `success: false`, a generic user message, and optional `resetIn`.
  *
- * **Data:** Reads `content_history` and joins `social_accounts` on `social_account_id` for `avatar_url`.
+ * **Data:** Reads `content_history` and left-joins `social_accounts` on `social_account_id`
+ * for `avatar_url`. Each row carries `social_accounts: { avatar_url } | null` (null when the
+ * row has no account), the shape the history UI reads.
  *
  * **Known callers:** `renderPosts.tsx` (`source: "web"`), `listContentHistory.ts` (`source: "mcp"`).
  * Other `CreatedVia` values are typed for consistency; if used, they receive their own scope
@@ -45,7 +50,7 @@ export async function getContentHistory(
 }> {
   const rateLimitScope = `${source}_content_history`;
 
-  // Step 2 — Throttle: max 60 hits / 60s per (scope, principalId) via Upstash (see checkRateLimit).
+  // Step 2: Throttle: max 60 hits / 60s per (scope, principalId) via Upstash (see checkRateLimit).
   const rateLimitResult = await checkRateLimit(
     rateLimitScope,
     principalId,
@@ -53,7 +58,7 @@ export async function getContentHistory(
     60,
   );
 
-  // Step 3 — Stop early if the bucket is exhausted; surface retry hint when available.
+  // Step 3: Stop early if the bucket is exhausted; surface retry hint when available.
   if (!rateLimitResult.success) {
     console.error(
       `[getContentHistory] Rate limit exceeded: Source: ${source}, Principal ID: ${principalId}`,
@@ -66,37 +71,57 @@ export async function getContentHistory(
     };
   }
 
-  // Step 4 — Base query: all columns + account avatar, scoped to this principal, newest first.
-  let contentHistoryQuery = adminSupabase
-    .from("content_history")
-    .select(`*, social_accounts!social_account_id(avatar_url)`)
-    .eq("principal_id", principalId)
-    .order("created_at", { ascending: false });
+  // Step 4: Base query: all columns + account avatar, scoped to this principal, newest first.
+  // Step 5: Narrow to one platform when requested (enum-aligned with DB).
+  const contentHistoryQuery = db
+    .select({
+      history: content_history,
+      account_id: social_accounts.id,
+      account_avatar_url: social_accounts.avatar_url,
+    })
+    .from(content_history)
+    .leftJoin(
+      social_accounts,
+      eq(social_accounts.id, content_history.social_account_id),
+    )
+    .where(
+      and(
+        eq(content_history.principal_id, principalId),
+        filters?.platform
+          ? eq(content_history.platform, filters.platform)
+          : undefined,
+      ),
+    )
+    .orderBy(desc(content_history.created_at))
+    .$dynamic();
 
-  // Step 5 — Narrow to one platform when requested (enum-aligned with DB).
-  if (filters?.platform) {
-    contentHistoryQuery = contentHistoryQuery.eq("platform", filters.platform);
-  }
-
-  // Step 6 — Cap row count after sort (most recent N).
-  if (filters?.limit) {
-    contentHistoryQuery = contentHistoryQuery.limit(filters.limit);
-  }
-
-  // Step 7 — Execute and handle PostgREST errors without leaking internals to the client.
-  const { data: contentHistoryRows, error: contentHistoryError } =
-    await contentHistoryQuery;
+  // Step 6: Cap row count after sort (most recent N).
+  // Step 7: Execute and handle database errors without leaking internals to the client.
+  const { data: historyRows, error: contentHistoryError } = await runQuery(
+    filters?.limit
+      ? contentHistoryQuery.limit(filters.limit)
+      : contentHistoryQuery,
+  );
   if (contentHistoryError) {
     console.error("[getContentHistory] DB error:", contentHistoryError.message);
     return { success: false, message: "Failed to fetch content history." };
   }
 
-  // Step 8 — Success payload; empty list is still success with an explicit message.
+  // The avatar is rebuilt by hand instead of selected as a nested object:
+  // Drizzle nulls a nested object whose first column is null, so an account
+  // without an avatar would lose its { avatar_url: null } entry.
+  const contentHistoryRows = historyRows.map((row) => ({
+    ...row.history,
+    social_accounts:
+      row.account_id === null ? null : { avatar_url: row.account_avatar_url },
+  }));
+
+  // Step 8: Success payload; empty list is still success with an explicit message.
   return {
     success: true,
-    message: contentHistoryRows?.length
+    message: contentHistoryRows.length
       ? `Retrieved ${contentHistoryRows.length} record(s).`
       : "No content history found.",
-    data: contentHistoryRows as ContentHistory[],
+    data: contentHistoryRows,
   };
 }
