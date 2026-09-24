@@ -144,7 +144,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System map, component interactions, data flows, state diagrams |
 | [docs/AUTH.md](./docs/AUTH.md) | Clerk, MCP auth (API key + OAuth), principal model, entitlement |
 | [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
-| [docs/DATABASE.md](./docs/DATABASE.md) | All 37 tables, schema changes with Drizzle, RLS posture |
+| [docs/DATABASE.md](./docs/DATABASE.md) | All 35 tables, schema changes with Drizzle, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
 | [docs/INNGEST.md](./docs/INNGEST.md) | 12 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |

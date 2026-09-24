@@ -125,9 +125,6 @@ export const SANCTIONS_RESULTS = ["clean", "sanctioned", "error"] as const;
 /** Which surface an API key unlocks. */
 export const API_KEY_KINDS = ["rest", "mcp", "wallet"] as const;
 
-/** Why a wallet credit balance moved. */
-export const LEDGER_REASONS = ["topup", "spend", "refund", "adjustment"] as const;
-
 /** Lifecycle of an x402 charge. */
 export const X402_CHARGE_STATUSES = ["pending", "settled", "failed", "refunded"] as const;
 
@@ -169,7 +166,6 @@ export const principals = pgTable("principals", {
 }, (table) => [
   index("idx_principals_kind_active").on(table.kind).where(sql`(deleted_at IS NULL)`),
   pgPolicy("principals_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("principals_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = id)` }),
   check("principals_kind_check", isOneOf("kind", PRINCIPAL_KINDS)),
 ]).enableRLS();
 
@@ -193,8 +189,6 @@ export const users = pgTable("users", {
   unique("users_email_key").on(table.email),
   unique("users_stripe_customer_id_key").on(table.stripe_customer_id),
   pgPolicy("users_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("users_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = id)` }),
-  pgPolicy("users_self_update", { for: "update", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = id)` }),
 ]).enableRLS();
 
 export const wallets = pgTable("wallets", {
@@ -217,8 +211,6 @@ export const wallets = pgTable("wallets", {
   }).onDelete("restrict"),
   unique("wallets_address_key").on(table.address),
   pgPolicy("wallets_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("wallets_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = id)` }),
-  pgPolicy("wallets_self_update", { for: "update", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = id)` }),
   check("wallets_chain_check", isOneOf("chain", WALLET_CHAINS)),
   check("wallets_sanctions_status_check", isOneOf("sanctions_status", SANCTIONS_STATUSES)),
 ]).enableRLS();
@@ -248,9 +240,6 @@ export const api_keys = pgTable("api_keys", {
   }).onDelete("cascade"),
   unique("api_keys_token_hash_key").on(table.token_hash),
   pgPolicy("api_keys_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("api_keys_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
-  pgPolicy("api_keys_self_insert", { for: "insert", to: ["authenticated"], withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
-  pgPolicy("api_keys_self_update", { for: "update", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("api_keys_kind_check", isOneOf("kind", API_KEY_KINDS)),
 ]).enableRLS();
 
@@ -295,7 +284,6 @@ export const social_accounts = pgTable("social_accounts", {
   }).onDelete("cascade"),
   unique("social_accounts_unique_per_principal").on(table.principal_id, table.platform, table.account_identifier),
   pgPolicy("social_accounts_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("social_accounts_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("social_accounts_platform_check", isOneOf("platform", SOCIAL_PLATFORMS)),
 ]).enableRLS();
 
@@ -350,7 +338,6 @@ export const social_connections = pgTable("social_connections", {
   }).onDelete("set null"),
   unique("social_connections_oauth_state_key").on(table.oauth_state),
   pgPolicy("social_connections_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("social_connections_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("social_connections_initiated_via_check", isOneOf("initiated_via", CONNECTION_INITIATED_VIA)),
   check("social_connections_platform_check", isOneOf("platform", SOCIAL_PLATFORMS)),
   check("social_connections_status_check", isOneOf("status", CONNECTION_STATUSES)),
@@ -370,7 +357,6 @@ export const share_links = pgTable("share_links", {
 }, (table) => [
   index("share_links_active_idx").on(table.owner_principal_id, table.created_at.desc().nullsFirst()).where(sql`(revoked_at IS NULL)`),
   index("share_links_owner_idx").on(table.owner_principal_id),
-  index("share_links_token_idx").on(table.token),
   foreignKey({
     columns: [table.owner_principal_id],
     foreignColumns: [users.id],
@@ -433,7 +419,6 @@ export const scheduled_posts = pgTable("scheduled_posts", {
   }).onDelete("set null"),
   unique("scheduled_posts_principal_idem_uq").on(table.principal_id, table.idempotency_key),
   pgPolicy("scheduled_posts_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("scheduled_posts_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("scheduled_posts_created_via_check", isOneOf("created_via", CREATED_VIA_CHANNELS)),
   check("scheduled_posts_media_type_check", isOneOf("media_type", MEDIA_TYPES)),
   check("scheduled_posts_status_check", isOneOf("status", POST_STATUSES)),
@@ -476,7 +461,6 @@ export const failed_posts = pgTable("failed_posts", {
     name: "failed_posts_principal_id_fkey",
   }).onDelete("cascade"),
   pgPolicy("failed_posts_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("failed_posts_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("failed_posts_status_check", isOneOf("status", POST_STATUSES)),
   check("scheduled_posts_created_via_check", isOneOf("created_via", CREATED_VIA_CHANNELS)),
   check("scheduled_posts_media_type_check", isOneOf("media_type", MEDIA_TYPES)),
@@ -589,7 +573,6 @@ export const content_history = pgTable("content_history", {
     name: "content_history_social_account_id_fkey",
   }).onDelete("set null"),
   pgPolicy("content_history_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("content_history_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("content_history_created_via_check", isOneOf("created_via", CREATED_VIA_CHANNELS)),
 ]).enableRLS();
 
@@ -616,7 +599,6 @@ export const analytics_metrics = pgTable("analytics_metrics", {
   }).onDelete("cascade"),
   unique("analytics_unique_daily").on(table.principal_id, table.platform, table.content_id, table.metric_date),
   pgPolicy("analytics_metrics_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("analytics_metrics_self_all", { for: "all", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)`, withCheck: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
 ]).enableRLS();
 
 export const tiktok_webhook_events = pgTable("tiktok_webhook_events", {
@@ -651,7 +633,6 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   }).onDelete("cascade"),
   unique("stripe_subscriptions_stripe_subscription_id_key").on(table.stripe_subscription_id),
   pgPolicy("stripe_subscriptions_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("stripe_subs_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = user_id)` }),
 ]).enableRLS();
 
 export const stripe_invoices = pgTable("stripe_invoices", {
@@ -696,7 +677,6 @@ export const usage_quotas = pgTable("usage_quotas", {
   }).onDelete("cascade"),
   primaryKey({ columns: [table.principal_id, table.period, table.action], name: "usage_quotas_pkey" }),
   pgPolicy("usage_quotas_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("usage_quotas_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
 ]).enableRLS();
 
 export const platform_quotas = pgTable("platform_quotas", {
@@ -707,7 +687,6 @@ export const platform_quotas = pgTable("platform_quotas", {
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   pgPolicy("platform_quotas_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("platform_quotas_public_read", { for: "select", to: ["anon", "authenticated"], using: sql`true` }),
 ]).enableRLS();
 
 export const referral_codes = pgTable("referral_codes", {
@@ -715,7 +694,6 @@ export const referral_codes = pgTable("referral_codes", {
   code: text().notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
-  index("referral_codes_code_idx").on(table.code),
   foreignKey({
     columns: [table.user_id],
     foreignColumns: [users.id],
@@ -781,7 +759,6 @@ export const pricing_actions = pgTable("pricing_actions", {
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
   pgPolicy("pricing_actions_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("pricing_actions_public_read", { for: "select", to: ["anon", "authenticated"], using: sql`((effective_until IS NULL) OR (effective_until > now()))` }),
   check("pricing_actions_recurrence_check", isOneOf("recurrence", PRICING_RECURRENCES)),
   check("pricing_actions_usdc_price_check", sql`usdc_price >= (0)::numeric`),
 ]).enableRLS();
@@ -844,7 +821,6 @@ export const x402_charges = pgTable("x402_charges", {
   unique("x402_charges_nonce_key").on(table.nonce),
   unique("x402_charges_request_id_key").on(table.request_id),
   pgPolicy("x402_charges_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("x402_charges_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = principal_id)` }),
   check("x402_charges_amount_usdc_check", sql`amount_usdc > (0)::numeric`),
   check("x402_charges_status_check", isOneOf("status", X402_CHARGE_STATUSES)),
 ]).enableRLS();
@@ -871,7 +847,6 @@ export const x402_refunds = pgTable("x402_refunds", {
     name: "x402_refunds_initiated_by_fkey",
   }).onDelete("set null"),
   pgPolicy("x402_refunds_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("x402_refunds_self_select", { for: "select", to: ["authenticated"], using: sql`(charge_id IN ( SELECT x402_charges.id FROM x402_charges WHERE (x402_charges.principal_id = (auth.jwt() ->> 'sub'::text))))` }),
   check("x402_refunds_refunded_usdc_check", sql`refunded_usdc > (0)::numeric`),
 ]).enableRLS();
 
@@ -925,7 +900,6 @@ export const x402_access_log = pgTable("x402_access_log", {
     name: "x402_access_log_wallet_id_fkey",
   }).onDelete("set null"),
   pgPolicy("x402_access_log_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("x402_access_log_self_select", { for: "select", to: ["authenticated"], using: sql`(((auth.jwt() ->> 'sub'::text) = wallet_id) OR ((auth.jwt() ->> 'sub'::text) = principal_id))` }),
   check("x402_access_log_result_status_check", isOneOf("result_status", X402_ACCESS_RESULT_STATUSES)),
 ]).enableRLS();
 
@@ -940,41 +914,7 @@ export const wallet_credits = pgTable("wallet_credits", {
     name: "wallet_credits_wallet_id_fkey",
   }).onDelete("cascade"),
   pgPolicy("wallet_credits_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("wallet_credits_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = wallet_id)` }),
   check("wallet_credits_balance_usdc_check", sql`balance_usdc >= (0)::numeric`),
-]).enableRLS();
-
-export const wallet_credits_ledger = pgTable("wallet_credits_ledger", {
-  id: bigserial({ mode: "number" }).primaryKey(),
-  wallet_id: text().notNull(),
-  delta_usdc: numeric({ precision: 18, scale: 6, mode: "number" }).notNull(),
-  reason: text({ enum: LEDGER_REASONS }).notNull(),
-  related_charge_id: uuid(),
-  related_action: text(),
-  idempotency_key: text(),
-  created_at: timestamptz().default(sql`now()`).notNull(),
-}, (table) => [
-  index("idx_ledger_wallet_time").on(table.wallet_id, table.created_at.desc().nullsFirst()),
-  index("wallet_credits_ledger_wallet_created_idx").on(table.wallet_id, table.created_at.desc().nullsFirst()),
-  foreignKey({
-    columns: [table.related_charge_id],
-    foreignColumns: [x402_charges.id],
-    name: "ledger_charge_fk",
-  }).onDelete("set null"),
-  foreignKey({
-    columns: [table.related_action],
-    foreignColumns: [pricing_actions.action],
-    name: "wallet_credits_ledger_related_action_fkey",
-  }),
-  foreignKey({
-    columns: [table.wallet_id],
-    foreignColumns: [wallets.id],
-    name: "wallet_credits_ledger_wallet_id_fkey",
-  }).onDelete("cascade"),
-  unique("ledger_idempotency_unique").on(table.wallet_id, table.idempotency_key),
-  pgPolicy("wallet_credits_ledger_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("wallet_credits_ledger_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = wallet_id)` }),
-  check("wallet_credits_ledger_reason_check", isOneOf("reason", LEDGER_REASONS)),
 ]).enableRLS();
 
 export const sanctions_screenings = pgTable("sanctions_screenings", {
@@ -992,18 +932,7 @@ export const sanctions_screenings = pgTable("sanctions_screenings", {
     name: "sanctions_screenings_wallet_id_fkey",
   }).onDelete("cascade"),
   pgPolicy("sanctions_screenings_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("sanctions_screenings_self_select", { for: "select", to: ["authenticated"], using: sql`((auth.jwt() ->> 'sub'::text) = wallet_id)` }),
   check("sanctions_screenings_result_check", isOneOf("result", SANCTIONS_RESULTS)),
-]).enableRLS();
-
-export const usdc_fmv_daily = pgTable("usdc_fmv_daily", {
-  fmv_date: date().primaryKey(),
-  usd_per_usdc: numeric({ precision: 18, scale: 8, mode: "number" }).notNull(),
-  source: text().notNull(),
-  fetched_at: timestamptz().default(sql`now()`).notNull(),
-}, (table) => [
-  pgPolicy("usdc_fmv_daily_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
-  pgPolicy("usdc_fmv_public_read", { for: "select", to: ["anon", "authenticated"], using: sql`true` }),
 ]).enableRLS();
 
 // MCP, REST API and webhooks

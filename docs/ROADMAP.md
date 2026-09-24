@@ -172,7 +172,7 @@ YouTube, X/Twitter, Threads, and Facebook appear in the `social_accounts.platfor
 
 ### Wallet Credits Ledger
 
-The `wallet_credits_ledger` table schema exists as part of the x402 migration. Building the actual credit/debit transaction logic depends on the x402 code path being completed first.
+Not built. The x402 migration created an empty `wallet_credits_ledger` table that no code ever wrote; it was dropped on 2026-09-24 (`drizzle/0001_drop_unused_access.sql`). Building credits means declaring a ledger table in `src/db/schema.ts`, generating its migration, and writing the credit and debit logic on the Drizzle client.
 
 ### Federated Agent Features
 

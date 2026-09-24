@@ -393,7 +393,7 @@ Verification: recipients should compute `HMAC-SHA256(rawBody, subscription_secre
 
 ## Append-Only Audit
 
-Nine tables are append-only. Six of them (`mcp_audit_log`, `stripe_invoices`, `wallet_credits_ledger`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
+Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
@@ -402,7 +402,6 @@ Nine tables are append-only. Six of them (`mcp_audit_log`, `stripe_invoices`, `w
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
 | `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
-| `wallet_credits_ledger` | Credit transaction history (x402, deferred) | Indefinite |
 | `x402_access_log` | Access audit trail (x402, deferred) | 90 days intended; the cleanup cron's DELETE is refused by the trigger, so nothing is deleted yet |
 | `x402_refunds` | Refund records (x402, deferred) | Indefinite |
 | `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |
@@ -479,7 +478,7 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 
 - **OFAC / FINTRAC / MiCA screening.** The `sanctions_screenings` table exists but no screening service is integrated.
 - **Wallet KYC.** No identity verification for wallet-based access.
-- **USDC fair market value tracking.** The `usdc_fmv_daily` table exists but is not populated.
+- **USDC fair market value tracking.** Not built. The empty `usdc_fmv_daily` table planned for it was dropped on 2026-09-24.
 
 ## Source Files Referenced
 

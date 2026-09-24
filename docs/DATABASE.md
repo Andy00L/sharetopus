@@ -1,6 +1,6 @@
 # Database
 
-37 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
+35 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
 
 `src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. All server code queries through the Drizzle client in `src/db/client.ts`; supabase-js (`adminSupabase`) is used for Storage only, and its type has no tables, so a `.from()` query through it does not compile. Row and insert types come from the tables themselves (`typeof scheduled_posts.$inferSelect`, `$inferInsert`), and the value unions (`Platform`, `PostStatus`, `MediaType`, ...) are exported next to their lists in `src/db/schema.ts`, so a column change reaches every type without a separate edit.
 
@@ -21,7 +21,7 @@
    - [REST API (1)](#rest-api)
    - [Webhooks (2)](#webhooks)
    - [Analytics (1)](#analytics)
-   - [x402 / Wallet (9)](#x402--wallet)
+   - [x402 / Wallet (7)](#x402--wallet)
    - [Infrastructure (3)](#infrastructure)
 4. [Status CHECK constraints](#status-check-constraints)
 5. [Append-only tables](#append-only-tables)
@@ -41,7 +41,7 @@
 | `bun run db:migrate` | Applies the pending migrations in `drizzle/` and records each one in `drizzle.__drizzle_migrations`. |
 | `bun run db:pull` | Reads the live database into `drizzle/`. Only for checking drift: `src/db/schema.ts` is edited by hand. |
 
-To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object.
+To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object. `drizzle/0001_drop_unused_access.sql` (2026-09-24) is the first applied change: generated from the schema, then extended by hand with grants, which `src/db/schema.ts` cannot express (see [RLS posture](#rls-posture)). `db:migrate` runs every pending migration in one transaction.
 
 | Variable | Pooler | Used by |
 |----------|--------|---------|
@@ -84,7 +84,6 @@ erDiagram
     share_links ||--o{ social_connections : "share_link_id"
 
     wallets ||--o| wallet_credits : "balance"
-    wallets ||--o{ wallet_credits_ledger : "ledger"
     wallets ||--o{ x402_charges : "pays"
     wallets ||--o{ sanctions_screenings : "screened"
 
@@ -103,9 +102,6 @@ erDiagram
     x402_charges }o--o| scheduled_posts : "scheduled_post_id"
     x402_charges }o--o| social_connections : "social_connection_id"
     x402_charges }o--|| pricing_actions : "action"
-
-    wallet_credits_ledger }o--o| x402_charges : "related_charge_id"
-    wallet_credits_ledger }o--o| pricing_actions : "related_action"
 
     x402_access_log }o--o| x402_charges : "charge_id"
     x402_access_log }o--o| pricing_actions : "action"
@@ -191,13 +187,11 @@ erDiagram
 | Table | Purpose | Columns |
 |-------|---------|---------|
 | `wallet_credits` | USDC credit balance per wallet. | wallet_id, balance_usdc, updated_at |
-| `wallet_credits_ledger` | Credit transaction history (append-only). | id, wallet_id, delta_usdc, reason (`topup` &#124; `spend` &#124; `refund` &#124; `adjustment`), related_charge_id, related_action, idempotency_key, created_at |
 | `x402_charges` | x402 payment charge records. | id, principal_id, wallet_id, action, amount_usdc, amount_usd_at_receipt, network, asset, nonce, request_id, payer_address, recipient_address, status (`pending` &#124; `settled` &#124; `failed` &#124; `refunded`), facilitator, facilitator_fee_usdc, tx_hash, block_number, scheduled_post_id, social_connection_id, error_message, metadata, created_at, settled_at |
 | `x402_refunds` | Refund records (append-only). | id, charge_id, reason, refunded_usdc, refund_tx_hash, initiated_by, metadata, created_at |
 | `x402_access_log` | Access audit trail (append-only). | id, principal_id, wallet_id, endpoint, action, charge_id, result_status (`ok` &#124; `402_required` &#124; `sanctioned` &#124; `rate_limited` &#124; `error`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
 | `pricing_actions` | Action pricing definitions. | action (PK), display_name, usdc_price, description, recurrence (`one_time` &#124; `monthly`), effective_from, effective_until, metadata, created_at, updated_at |
 | `x402_reconciliation` | Payments that need a manual look: settled on chain but not recorded, or a refund that failed. | id, charge_id, tx_hash, kind (`settle_unrecorded` &#124; `settle_indeterminate` &#124; `refund_failed`), payer_address, amount_atomic, network, created_at |
-| `usdc_fmv_daily` | Daily USDC fair market value snapshots. | fmv_date, usd_per_usdc, source, fetched_at |
 | `sanctions_screenings` | Wallet sanctions check results (append-only). | id, wallet_id, result (`clean` &#124; `sanctioned` &#124; `error`), source, raw_response, checked_at |
 
 ### Infrastructure
@@ -230,7 +224,6 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 | `api_keys.kind` | `rest`, `mcp`, `wallet` |
 | `mcp_oauth_clients.trust_level` | `unverified`, `verified`, `blocked` |
 | `mcp_audit_log.result_status` | `ok`, `error`, `denied`, `rate_limited`, `quota_exceeded` |
-| `wallet_credits_ledger.reason` | `topup`, `spend`, `refund`, `adjustment` |
 | `x402_charges.status` | `pending`, `settled`, `failed`, `refunded` |
 | `x402_access_log.result_status` | `ok`, `402_required`, `sanctioned`, `rate_limited`, `error` |
 | `pricing_actions.recurrence` | `one_time`, `monthly` |
@@ -242,14 +235,13 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 
 ## Append-only tables
 
-Nine tables are append-only. Six of them (`mcp_audit_log`, `stripe_invoices`, `wallet_credits_ledger`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
+Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
 
 | Table | What it logs |
 |-------|-------------|
 | `mcp_audit_log` | Every MCP tool call (args redacted, result status, latency). The insert in `logToolCall` (`src/lib/mcp/audit.ts`) is awaited. |
 | `rest_audit_log` | Every REST API request (endpoint, method, status code, latency). Insert via `writeRestAuditLog` (`src/lib/api/rest/audit/writeRestAuditLog.ts`). |
 | `stripe_invoices` | Stripe payment records. |
-| `wallet_credits_ledger` | Credit transaction history for x402 wallets. |
 | `x402_access_log` | x402 endpoint access audit trail. |
 | `x402_refunds` | x402 refund records. |
 | `sanctions_screenings` | Wallet sanctions check results. |
@@ -279,7 +271,7 @@ Triggers:
 | Trigger function | Fires on | Effect |
 |------------------|----------|--------|
 | `handle_updated_at` | UPDATE on `analytics_metrics`, `pricing_actions`, `principals`, `scheduled_posts`, `social_accounts`, `social_connections`, `stripe_subscriptions`, `users`, `wallet_credits` | Sets `updated_at`, so code never writes it. |
-| `reject_mutation` | UPDATE or DELETE on the six trigger-protected append-only tables | Raises an error. |
+| `reject_mutation` | UPDATE or DELETE on the five trigger-protected append-only tables | Raises an error. |
 | `enforce_principal_kind` | INSERT, or UPDATE of `principal_id`, on `mcp_audit_log` and `x402_charges` | Refuses a principal that is not `clerk` (audit log) or not `wallet` (charges). |
 | `enforce_api_key_kind_matrix` | INSERT, or UPDATE of `principal_id` or `kind`, on `api_keys` | `rest` and `mcp` keys need a `clerk` principal, `wallet` keys a `wallet` principal. |
 | `social_connections_status_guard` | UPDATE on `social_connections` | `connected`, `expired`, `failed` and `revoked` are terminal statuses. |
@@ -298,14 +290,14 @@ Triggers:
 | `tiktok_webhook_events` | 90 days | Same 90-day cleanup window. |
 | Posts cancelled by a subscription lapse (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | Deleted by `cleanup-cancelled-posts-after-grace` 7 days after the lapse unless the user resubscribes. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
 | `content_history` | Indefinite | Published content records are kept for analytics and history display. |
-| `x402_charges`, `x402_refunds`, `wallet_credits_ledger` | Indefinite | Financial records are never deleted. |
+| `x402_charges`, `x402_refunds` | Indefinite | Financial records are never deleted. |
 | `sanctions_screenings` | Indefinite | Compliance records are never deleted. |
 
 ---
 
 ## RLS posture
 
-All 37 tables have Row Level Security (RLS) enabled, and the `rls_auto_enable` event trigger enables it on any new table. The application reads and writes only on the server, through the Drizzle client (`src/db/client.ts`), which bypasses RLS. The service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) is used only for Storage, where it bypasses the storage policies the same way. Access control is enforced in application code by filtering on `principal_id` in every query.
+All 35 tables have Row Level Security (RLS) enabled, and the `rls_auto_enable` event trigger enables it on any new table. The application reads and writes only on the server, through the Drizzle client (`src/db/client.ts`), which bypasses RLS. The service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) is used only for Storage, where it bypasses the storage policies the same way. Access control is enforced in application code by filtering on `principal_id` in every query.
 
 What this means in practice:
 
@@ -313,7 +305,9 @@ What this means in practice:
 - All data access goes through server actions or API routes.
 - Every server action manually verifies `principal_id` ownership before returning data.
 - Both clients have full read/write access and are guarded by the `server-only` import.
-- The `*_self_*` and `*_public_read` policies for the `authenticated` and `anon` roles are not used by the app.
+- Each table keeps only its `*_svc` policy for `service_role`. The `*_self_*` and `*_public_read` policies for `authenticated` and `anon` were dropped on 2026-09-24 (`drizzle/0001_drop_unused_access.sql`); the app never used them.
+- `anon` and `authenticated` hold no right on any public table or sequence (no SELECT, no TRUNCATE, TRIGGER or REFERENCES), and the `postgres` role's default privileges no longer grant them rights on tables or sequences it creates later. With RLS on and no grant, the Data API (PostgREST, GraphQL) serves them nothing.
+- Objects that `supabase_admin` creates in `public` still receive Supabase's own default grants to `anon` and `authenticated`; revoke them if Supabase tooling ever adds a table there.
 
 Tradeoff: simpler than managing per-table RLS policies, but the application layer is the only access control boundary. A bug in a server action could expose data across principals.
 

@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-37 database tables. 18 MCP tools. 28 REST API endpoints. 12 Inngest functions.
+35 database tables. 18 MCP tools. 28 REST API endpoints. 12 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -81,7 +81,7 @@ graph TD
     end
 
     subgraph Data["Data Layer"]
-        Supabase["Supabase Postgres (37 tables, Drizzle)"]
+        Supabase["Supabase Postgres (35 tables, Drizzle)"]
         Storage["Supabase Storage (scheduled-videos)"]
         Redis["Upstash Redis (rate limits)"]
     end
