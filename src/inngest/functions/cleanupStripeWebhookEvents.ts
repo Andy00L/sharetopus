@@ -1,4 +1,7 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { stripe_webhook_events } from "@/db/schema";
 import { inngest } from "@/inngest/client";
 
 export const cleanupStripeWebhookEvents = inngest.createFunction(
@@ -14,23 +17,25 @@ export const cleanupStripeWebhookEvents = inngest.createFunction(
         Date.now() - 90 * 24 * 60 * 60 * 1000,
       ).toISOString();
 
-      const { count, error } = await adminSupabase
-        .from("stripe_webhook_events")
-        .delete({ count: "exact" })
-        .lt("processed_at", cutoff);
+      const { data: deleteResult, error } = await runQuery(
+        db
+          .delete(stripe_webhook_events)
+          .where(lt(stripe_webhook_events.processed_at, cutoff)),
+      );
 
       if (error) {
         console.error(
           "[cleanupStripeWebhookEvents] Delete failed:",
           error.message,
         );
+        // Thrown so Inngest records the step as failed.
         throw new Error(`Delete failed: ${error.message}`);
       }
 
       console.log(
-        `[cleanupStripeWebhookEvents] Deleted ${count ?? 0} events older than ${cutoff}`,
+        `[cleanupStripeWebhookEvents] Deleted ${deleteResult.count} events older than ${cutoff}`,
       );
-      return { deleted: count ?? 0, cutoff };
+      return { deleted: deleteResult.count, cutoff };
     });
   },
 );

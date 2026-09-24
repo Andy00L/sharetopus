@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { referrals, users } from "@/db/schema";
 import { ensureReferralCode } from "./generateReferralCode";
 import { loadReferralProgress } from "./loadReferralProgress";
 
@@ -50,11 +53,15 @@ export async function getReferralSummary(
   }
 
   // Count total verified referrals (verified + redeemed)
-  const { count: verifiedCount, error: verifiedError } = await adminSupabase
-    .from("referrals")
-    .select("id", { count: "exact", head: true })
-    .eq("referrer_id", userId)
-    .in("status", ["verified", "redeemed"]);
+  const { data: verifiedCount, error: verifiedError } = await runQuery(
+    db.$count(
+      referrals,
+      and(
+        eq(referrals.referrer_id, userId),
+        inArray(referrals.status, ["verified", "redeemed"]),
+      ),
+    ),
+  );
 
   if (verifiedError) {
     console.error(
@@ -65,11 +72,12 @@ export async function getReferralSummary(
   }
 
   // Count redeemed referrals separately
-  const { count: redeemedCount, error: redeemedError } = await adminSupabase
-    .from("referrals")
-    .select("id", { count: "exact", head: true })
-    .eq("referrer_id", userId)
-    .eq("status", "redeemed");
+  const { data: redeemedCount, error: redeemedError } = await runQuery(
+    db.$count(
+      referrals,
+      and(eq(referrals.referrer_id, userId), eq(referrals.status, "redeemed")),
+    ),
+  );
 
   if (redeemedError) {
     console.error(
@@ -80,16 +88,20 @@ export async function getReferralSummary(
   }
 
   // Read creator_access_until for display
-  const { data: userData, error: userError } = await adminSupabase
-    .from("users")
-    .select("creator_access_until")
-    .eq("id", userId)
-    .single();
+  const { data: userRows, error: userError } = await runQuery(
+    db
+      .select({ creator_access_until: users.creator_access_until })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
+  );
 
-  if (userError) {
+  // A missing users row gets the same reply as a failed read.
+  const userData = userRows?.[0];
+  if (userError || !userData) {
     console.error(
       `[getReferralSummary] Failed to read creator_access_until for ${userId}:`,
-      userError.message,
+      userError?.message ?? "no user row",
     );
     return { success: false, message: "Failed to load referral access" };
   }
@@ -104,7 +116,7 @@ export async function getReferralSummary(
     weeksEarned: progressResult.weeksEarned,
     capReached: progressResult.capReached,
     creatorAccessUntil,
-    totalVerified: verifiedCount ?? 0,
-    totalRedeemed: redeemedCount ?? 0,
+    totalVerified: verifiedCount,
+    totalRedeemed: redeemedCount,
   };
 }

@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { referral_codes } from "@/db/schema";
 
 /**
  * Generates (or retrieves) a unique referral code for a user.
@@ -38,11 +41,13 @@ export async function ensureReferralCode(
   userId: string,
 ): Promise<{ success: true; code: string } | { success: false; message: string }> {
   // Check for existing code first (idempotent path)
-  const { data: existing, error: selectError } = await adminSupabase
-    .from("referral_codes")
-    .select("code")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const { data: existingRows, error: selectError } = await runQuery(
+    db
+      .select({ code: referral_codes.code })
+      .from(referral_codes)
+      .where(eq(referral_codes.user_id, userId))
+      .limit(1),
+  );
 
   if (selectError) {
     console.error(
@@ -52,6 +57,7 @@ export async function ensureReferralCode(
     return { success: false, message: "Failed to check existing referral code" };
   }
 
+  const existing = existingRows[0];
   if (existing) {
     return { success: true, code: existing.code };
   }
@@ -59,9 +65,9 @@ export async function ensureReferralCode(
   // Generate a new code with collision retry
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const candidateCode = generateRandomCode();
-    const { error: insertError } = await adminSupabase
-      .from("referral_codes")
-      .insert({ user_id: userId, code: candidateCode });
+    const { error: insertError } = await runQuery(
+      db.insert(referral_codes).values({ user_id: userId, code: candidateCode }),
+    );
 
     if (!insertError) {
       return { success: true, code: candidateCode };
@@ -80,12 +86,15 @@ export async function ensureReferralCode(
     // Unique violation on the code column: retry with a new code.
     // Unique violation on user_id (PK): another request already created one.
     // Either way, re-check for existing code before retrying.
-    const { data: raceWinner } = await adminSupabase
-      .from("referral_codes")
-      .select("code")
-      .eq("user_id", userId)
-      .maybeSingle();
+    const { data: raceWinnerRows } = await runQuery(
+      db
+        .select({ code: referral_codes.code })
+        .from(referral_codes)
+        .where(eq(referral_codes.user_id, userId))
+        .limit(1),
+    );
 
+    const raceWinner = raceWinnerRows?.[0];
     if (raceWinner) {
       return { success: true, code: raceWinner.code };
     }

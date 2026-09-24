@@ -1,7 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
@@ -46,7 +49,7 @@ export async function checkOutSession(priceId: string): Promise<{
 
     // Verify user is properly authenticated
     const authResult = await authCheck(userId);
-    if (!authResult) {
+    if (!authResult || !userId) {
       console.error(
         `[checkOutSession]: Authentication check failed for user ID: ${userId}`
       );
@@ -84,17 +87,20 @@ export async function checkOutSession(priceId: string): Promise<{
     console.log(
       `[checkOutSession]: Fetching Stripe customer ID for user: ${userId}`
     );
-    const { data, error } = await adminSupabase
-      .from("users")
-      .select("stripe_customer_id")
-      .eq("id", userId!)
-      .single();
+    const { data: userRows, error } = await runQuery(
+      db
+        .select({ stripe_customer_id: users.stripe_customer_id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+    );
 
-    if (error) {
+    // A missing users row gets the same reply as a failed lookup.
+    const userRow = userRows?.[0];
+    if (error || !userRow) {
       console.error(
         `[checkOutSession]: Database error fetching customer_id for user ${userId}:`,
-        error.message,
-        error.details
+        error?.message ?? "no user row"
       );
       return {
         success: false,
@@ -103,7 +109,7 @@ export async function checkOutSession(priceId: string): Promise<{
     }
 
     // Check if customer ID exists
-    if (!data?.stripe_customer_id) {
+    if (!userRow.stripe_customer_id) {
       console.error(
         `[checkOutSession]: No Stripe customer ID found for user: ${userId}`
       );
@@ -114,9 +120,9 @@ export async function checkOutSession(priceId: string): Promise<{
     }
 
     console.log(
-      `[checkOutSession]: User ${userId} has Stripe customer ID: ${data.stripe_customer_id}`
+      `[checkOutSession]: User ${userId} has Stripe customer ID: ${userRow.stripe_customer_id}`
     );
-    const customerId = data.stripe_customer_id;
+    const customerId = userRow.stripe_customer_id;
 
     // Step 4: Create the Stripe checkout session
     const session = await stripe.checkout.sessions.create({

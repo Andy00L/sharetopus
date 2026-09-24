@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { stripe_webhook_events } from "@/db/schema";
 
 export type ClaimResult =
   | { claimed: true }
@@ -22,11 +25,13 @@ export async function claimWebhookEvent(input: {
   type: string;
   livemode: boolean;
 }): Promise<ClaimResult> {
-  const { error } = await adminSupabase.from("stripe_webhook_events").insert({
-    event_id: input.event_id,
-    type: input.type,
-    livemode: input.livemode,
-  });
+  const { error } = await runQuery(
+    db.insert(stripe_webhook_events).values({
+      event_id: input.event_id,
+      type: input.type,
+      livemode: input.livemode,
+    }),
+  );
 
   if (!error) {
     return { claimed: true };
@@ -60,10 +65,11 @@ export async function claimWebhookEvent(input: {
  * retry to re-process. Failures here are logged but not thrown.
  */
 export async function releaseWebhookEvent(eventId: string): Promise<void> {
-  const { error } = await adminSupabase
-    .from("stripe_webhook_events")
-    .delete()
-    .eq("event_id", eventId);
+  const { error } = await runQuery(
+    db
+      .delete(stripe_webhook_events)
+      .where(eq(stripe_webhook_events.event_id, eventId)),
+  );
 
   if (error) {
     console.error(

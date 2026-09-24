@@ -1,6 +1,9 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, desc, eq, inArray } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { stripe_subscriptions, users } from "@/db/schema";
 import { priceIdToTier, type PlanTier } from "@/lib/types/plans";
 
 export type ActiveSubscription = {
@@ -39,14 +42,24 @@ export async function checkActiveSubscription(
   }
 
   try {
-    const { data, error } = await adminSupabase
-      .from("stripe_subscriptions")
-      .select("stripe_price_id, status, current_period_end, start_date")
-      .eq("user_id", userId)
-      .in("status", ["active", "trialing"])
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const { data: subscriptionRows, error } = await runQuery(
+      db
+        .select({
+          stripe_price_id: stripe_subscriptions.stripe_price_id,
+          status: stripe_subscriptions.status,
+          current_period_end: stripe_subscriptions.current_period_end,
+          start_date: stripe_subscriptions.start_date,
+        })
+        .from(stripe_subscriptions)
+        .where(
+          and(
+            eq(stripe_subscriptions.user_id, userId),
+            inArray(stripe_subscriptions.status, ["active", "trialing"]),
+          ),
+        )
+        .orderBy(desc(stripe_subscriptions.created_at))
+        .limit(1),
+    );
 
     if (error) {
       console.error(
@@ -56,16 +69,20 @@ export async function checkActiveSubscription(
       return emptyResult;
     }
 
-    if (!data) {
+    const activeSubscription = subscriptionRows[0];
+    if (!activeSubscription) {
       // Referral-granted Creator access fallback: if the user has no active
       // Stripe subscription, check whether referral rewards have banked time
       // via the creator_access_until column (set by the grant_referral_rewards RPC).
-      const { data: userData } = await adminSupabase
-        .from("users")
-        .select("creator_access_until")
-        .eq("id", userId)
-        .single();
+      const { data: userRows } = await runQuery(
+        db
+          .select({ creator_access_until: users.creator_access_until })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1),
+      );
 
+      const userData = userRows?.[0];
       if (
         userData?.creator_access_until &&
         new Date(userData.creator_access_until) > new Date()
@@ -73,7 +90,7 @@ export async function checkActiveSubscription(
         return {
           isActive: true,
           priceId: null,
-          tier: "creator" as PlanTier,
+          tier: "creator",
           status: "referral_grant",
           currentPeriodEnd: userData.creator_access_until,
           startDate: null,
@@ -83,16 +100,16 @@ export async function checkActiveSubscription(
       return emptyResult;
     }
 
-    const priceId = data.stripe_price_id;
+    const priceId = activeSubscription.stripe_price_id;
     const tier = priceIdToTier(priceId);
 
     return {
       isActive: true,
       priceId,
       tier,
-      status: data.status,
-      currentPeriodEnd: data.current_period_end,
-      startDate: data.start_date,
+      status: activeSubscription.status,
+      currentPeriodEnd: activeSubscription.current_period_end,
+      startDate: activeSubscription.start_date,
     };
   } catch (err) {
     console.error("[checkActiveSubscription] Unexpected error:", err);

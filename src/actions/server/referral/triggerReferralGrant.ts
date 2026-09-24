@@ -1,6 +1,8 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { sql } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 
 /**
@@ -26,9 +28,10 @@ export async function triggerReferralGrant(
 ): Promise<
   { success: true; weeksGranted: number } | { success: false; message: string }
 > {
-  const { data: weeksGranted, error: rpcError } = await adminSupabase.rpc(
-    "grant_referral_rewards",
-    { p_referrer_id: referrerId },
+  const { data: grantRows, error: rpcError } = await runQuery(
+    db.execute(
+      sql`select public.grant_referral_rewards(${referrerId}) as weeks_granted`,
+    ),
   );
 
   if (rpcError) {
@@ -39,6 +42,8 @@ export async function triggerReferralGrant(
     return { success: false, message: "Reward grant RPC failed" };
   }
 
+  // The function returns int4, which db.execute hands back as a number.
+  const weeksGranted: unknown = grantRows[0]?.weeks_granted;
   const grantedWeeks = typeof weeksGranted === "number" ? weeksGranted : 0;
 
   if (grantedWeeks > 0) {

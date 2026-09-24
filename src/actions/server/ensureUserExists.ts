@@ -1,8 +1,15 @@
 import "server-only";
 import { currentUser } from "@clerk/nextjs/server";
+import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { after } from "next/server";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import {
+  principals,
+  stripe_invoices,
+  stripe_subscriptions,
+  users,
+} from "@/db/schema";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
 import stripe from "@/lib/stripe";
@@ -18,12 +25,15 @@ export async function ensureUserExists() {
   if (!user) return;
 
   // Check if user already exists in Supabase
-  const { data: existingUser } = await adminSupabase
-    .from("users")
-    .select("id, stripe_customer_id")
-    .eq("id", user.id)
-    .single();
+  const { data: existingUserRows } = await runQuery(
+    db
+      .select({ stripe_customer_id: users.stripe_customer_id })
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1)
+  );
 
+  const existingUser = existingUserRows?.[0];
   if (existingUser) {
     // User exists, sync subscriptions + invoices if needed
     if (existingUser.stripe_customer_id) {
@@ -62,9 +72,12 @@ export async function ensureUserExists() {
   }
 
   // Upsert into principals first (users.id FK requires it)
-  const { error: principalError } = await adminSupabase
-    .from("principals")
-    .upsert({ id: user.id, kind: "clerk" }, { onConflict: "id", ignoreDuplicates: true });
+  const { error: principalError } = await runQuery(
+    db
+      .insert(principals)
+      .values({ id: user.id, kind: "clerk" })
+      .onConflictDoNothing({ target: principals.id })
+  );
 
   if (principalError) {
     console.error("[ensureUserExists] Erreur upsert principal:", principalError);
@@ -78,13 +91,15 @@ export async function ensureUserExists() {
   }
 
   // Insert user into Supabase
-  const { error } = await adminSupabase.from("users").insert({
-    id: user.id,
-    email,
-    first_name: user.firstName ?? user.username ?? null,
-    last_name: user.lastName ?? null,
-    stripe_customer_id: stripeCustomerId,
-  });
+  const { error } = await runQuery(
+    db.insert(users).values({
+      id: user.id,
+      email,
+      first_name: user.firstName ?? user.username ?? null,
+      last_name: user.lastName ?? null,
+      stripe_customer_id: stripeCustomerId,
+    })
+  );
 
   if (error) {
     console.error("[ensureUserExists] Erreur insertion Supabase:", error);
@@ -147,30 +162,41 @@ async function syncStripeSubscriptions(
         start_date: new Date(subscription.created * 1000).toISOString(),
         end_date: new Date(
           Math.min(
-            ...subscription.items.data.map((i) => i.current_period_end)
+            ...subscription.items.data.map(
+              (subscriptionItem) => subscriptionItem.current_period_end
+            )
           ) * 1000
         ).toISOString(),
         stripe_price_id: priceId,
       };
 
       // Check if this subscription already exists in Supabase
-      const { data: existing } = await adminSupabase
-        .from("stripe_subscriptions")
-        .select("id, status")
-        .eq("stripe_subscription_id", subscription.id)
-        .single();
+      const { data: existingRows } = await runQuery(
+        db
+          .select({ status: stripe_subscriptions.status })
+          .from(stripe_subscriptions)
+          .where(
+            eq(stripe_subscriptions.stripe_subscription_id, subscription.id)
+          )
+          .limit(1)
+      );
 
+      const existing = existingRows?.[0];
       if (existing) {
         // Update status if it changed (mirrors webhook subscription.updated / .deleted)
         if (existing.status !== subscription.status) {
-          const { error } = await adminSupabase
-            .from("stripe_subscriptions")
-            .update({
-              status: subscription.status,
-              end_date: subscriptionData.end_date,
-              stripe_price_id: subscriptionData.stripe_price_id,
-            })
-            .eq("stripe_subscription_id", subscription.id);
+          const { error } = await runQuery(
+            db
+              .update(stripe_subscriptions)
+              .set({
+                status: subscription.status,
+                end_date: subscriptionData.end_date,
+                stripe_price_id: subscriptionData.stripe_price_id,
+              })
+              .where(
+                eq(stripe_subscriptions.stripe_subscription_id, subscription.id)
+              )
+          );
 
           if (error) {
             console.error(
@@ -188,9 +214,9 @@ async function syncStripeSubscriptions(
       }
 
       // Insert new subscription (mirrors webhook subscription.created)
-      const { error } = await adminSupabase
-        .from("stripe_subscriptions")
-        .insert(subscriptionData);
+      const { error } = await runQuery(
+        db.insert(stripe_subscriptions).values(subscriptionData)
+      );
 
       if (error) {
         console.error(
@@ -229,25 +255,29 @@ async function syncStripeInvoices(
       if (!invoice.id) continue;
 
       // Check if this invoice already exists in Supabase
-      const { data: existing } = await adminSupabase
-        .from("stripe_invoices")
-        .select("id")
-        .eq("stripe_invoice_id", invoice.id)
-        .single();
+      const { data: existingRows } = await runQuery(
+        db
+          .select({ id: stripe_invoices.id })
+          .from(stripe_invoices)
+          .where(eq(stripe_invoices.stripe_invoice_id, invoice.id))
+          .limit(1)
+      );
 
+      const existing = existingRows?.[0];
       if (existing) continue;
 
       const status = invoice.status === "paid" ? "succeeded" : "failed";
 
-      const { error } = await adminSupabase
-        .from("stripe_invoices")
-        .insert({
+      // An undefined amount_paid_cents inserts the column default (NULL).
+      const { error } = await runQuery(
+        db.insert(stripe_invoices).values({
           user_id: userId,
           stripe_invoice_id: invoice.id,
           amount_paid_cents: status === "succeeded" ? (invoice.amount_paid ?? 0) : undefined,
           currency: invoice.currency,
           status,
-        });
+        })
+      );
 
       if (error) {
         console.error(

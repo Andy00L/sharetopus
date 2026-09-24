@@ -1,4 +1,3 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { cancelFutureScheduledPostsOnSubCancel } from "@/actions/server/data/cancelFutureScheduledPostsOnSubCancel";
 import { demoteOauthClientsOnCancel } from "@/actions/server/data/demoteOauthClientsOnCancel";
 import { promoteOauthClientsOnResubscribe } from "@/actions/server/data/promoteOauthClientsOnResubscribe";
@@ -7,10 +6,13 @@ import {
   claimWebhookEvent,
   releaseWebhookEvent,
 } from "@/actions/server/stripe/claimWebhookEvent";
+import { db, runQuery } from "@/db/client";
+import { stripe_invoices, stripe_subscriptions, users } from "@/db/schema";
 import { invalidateCachedOAuthClientsByUser } from "@/lib/mcp/auth/oauthClientCache";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 
 import stripe from "@/lib/stripe";
+import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -107,12 +109,15 @@ async function handleSubscriptionEvent(
   const subscription = event.data.object as Stripe.Subscription;
   const stripeCustomerId = subscription.customer as string;
 
-  const { data: userData, error: userError } = await adminSupabase
-    .from("users")
-    .select("id")
-    .eq("stripe_customer_id", stripeCustomerId)
-    .single();
+  const { data: userRows, error: userError } = await runQuery(
+    db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.stripe_customer_id, stripeCustomerId))
+      .limit(1),
+  );
 
+  const userData = userRows?.[0];
   if (userError || !userData) {
     console.error(
       `[Stripe webhook] No user for customer ${stripeCustomerId}: ${userError?.message ?? "not found"}`,
@@ -124,8 +129,11 @@ async function handleSubscriptionEvent(
   const userId = userData.id;
   const priceId = subscription.items.data[0]?.price?.id ?? null;
   const periodEndMs =
-    Math.min(...subscription.items.data.map((i) => i.current_period_end)) *
-    1000;
+    Math.min(
+      ...subscription.items.data.map(
+        (subscriptionItem) => subscriptionItem.current_period_end,
+      ),
+    ) * 1000;
   const periodEndIso = new Date(periodEndMs).toISOString();
 
   const subscriptionData = {
@@ -140,10 +148,12 @@ async function handleSubscriptionEvent(
   };
 
   if (type === "deleted") {
-    const { error } = await adminSupabase
-      .from("stripe_subscriptions")
-      .update({ status: "canceled" })
-      .eq("stripe_subscription_id", subscription.id);
+    const { error } = await runQuery(
+      db
+        .update(stripe_subscriptions)
+        .set({ status: "canceled" })
+        .where(eq(stripe_subscriptions.stripe_subscription_id, subscription.id)),
+    );
 
     if (error) {
       throw new Error(
@@ -178,9 +188,15 @@ async function handleSubscriptionEvent(
 
   if (type === "created") {
     // UPSERT so Stripe retry after partial processing is idempotent.
-    const { error } = await adminSupabase
-      .from("stripe_subscriptions")
-      .upsert(subscriptionData, { onConflict: "stripe_subscription_id" });
+    const { error } = await runQuery(
+      db
+        .insert(stripe_subscriptions)
+        .values(subscriptionData)
+        .onConflictDoUpdate({
+          target: stripe_subscriptions.stripe_subscription_id,
+          set: subscriptionData,
+        }),
+    );
 
     if (error) {
       throw new Error(`Failed to upsert subscription: ${error.message}`);
@@ -211,9 +227,15 @@ async function handleSubscriptionEvent(
   }
 
   // type === "updated"
-  const { error } = await adminSupabase
-    .from("stripe_subscriptions")
-    .upsert(subscriptionData, { onConflict: "stripe_subscription_id" });
+  const { error } = await runQuery(
+    db
+      .insert(stripe_subscriptions)
+      .values(subscriptionData)
+      .onConflictDoUpdate({
+        target: stripe_subscriptions.stripe_subscription_id,
+        set: subscriptionData,
+      }),
+  );
 
   if (error) {
     throw new Error(`Failed to update subscription: ${error.message}`);
@@ -234,12 +256,15 @@ async function handleInvoiceEvent(
   const invoice = event.data.object as Stripe.Invoice;
   const stripeCustomerId = invoice.customer as string;
 
-  const { data: userData, error: userError } = await adminSupabase
-    .from("users")
-    .select("id")
-    .eq("stripe_customer_id", stripeCustomerId)
-    .single();
+  const { data: userRows, error: userError } = await runQuery(
+    db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.stripe_customer_id, stripeCustomerId))
+      .limit(1),
+  );
 
+  const userData = userRows?.[0];
   if (userError || !userData) {
     console.error(
       `[Stripe webhook] No user for invoice customer ${stripeCustomerId}: ${userError?.message ?? "not found"}`,
@@ -256,9 +281,15 @@ async function handleInvoiceEvent(
   };
 
   // UPSERT to handle Stripe retry after partial success.
-  const { error } = await adminSupabase
-    .from("stripe_invoices")
-    .upsert(invoiceData, { onConflict: "stripe_invoice_id" });
+  const { error } = await runQuery(
+    db
+      .insert(stripe_invoices)
+      .values(invoiceData)
+      .onConflictDoUpdate({
+        target: stripe_invoices.stripe_invoice_id,
+        set: invoiceData,
+      }),
+  );
 
   if (error) {
     throw new Error(`Failed to upsert invoice: ${error.message}`);

@@ -1,7 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
@@ -12,7 +15,7 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
  *
  * This function handles the entire process of creating a Stripe customer portal session:
  * 1. Performs rate limiting to prevent abuse (max 20 requests per minute)
- * 2. Verifies the user has an active subscription (active, trialing, or past_due)
+ * 2. Verifies the user has an active subscription (active or trialing, or banked referral access)
  * 3. Retrieves the user's Stripe customer ID from the database
  * 4. Creates a Stripe customer portal session with proper return URL
  * 5. Returns the session URL for client-side redirect
@@ -34,7 +37,7 @@ export async function createCustomerPortal(): Promise<{
     const { userId } = await auth();
 
     const authResult = await authCheck(userId);
-    if (!authResult) {
+    if (!authResult || !userId) {
       console.error(
         `[CreateCustomerPortal]: Authentication check failed for user ID: ${userId}`
       );
@@ -92,17 +95,20 @@ export async function createCustomerPortal(): Promise<{
       `[CreateCustomerPortal]: Fetching Stripe customer ID for user: ${userId}`
     );
 
-    const { data, error } = await adminSupabase
-      .from("users")
-      .select("stripe_customer_id")
-      .eq("id", userId!)
-      .single();
+    const { data: userRows, error } = await runQuery(
+      db
+        .select({ stripe_customer_id: users.stripe_customer_id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1)
+    );
 
-    if (error) {
+    // A missing users row gets the same reply as a failed lookup.
+    const userRow = userRows?.[0];
+    if (error || !userRow) {
       console.error(
         `[CreateCustomerPortal]: Database error fetching customer_id for user ${userId}:`,
-        error.message,
-        error.details
+        error?.message ?? "no user row"
       );
       return {
         success: false,
@@ -111,7 +117,7 @@ export async function createCustomerPortal(): Promise<{
     }
 
     // Check if customer ID exists
-    if (!data?.stripe_customer_id) {
+    if (!userRow.stripe_customer_id) {
       console.error(
         `[CreateCustomerPortal]: No Stripe customer ID found for user: ${userId}`
       );
@@ -122,9 +128,9 @@ export async function createCustomerPortal(): Promise<{
     }
 
     console.log(
-      `[CreateCustomerPortal]: User ${userId} has Stripe customer ID: ${data.stripe_customer_id}`
+      `[CreateCustomerPortal]: User ${userId} has Stripe customer ID: ${userRow.stripe_customer_id}`
     );
-    const customerId = data.stripe_customer_id;
+    const customerId = userRow.stripe_customer_id;
 
     console.log(
       `[CreateCustomerPortal]: Creating Stripe portal session for customer: ${customerId}`

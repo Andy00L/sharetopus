@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { referral_codes, referrals, users } from "@/db/schema";
 import { triggerReferralGrant } from "./triggerReferralGrant";
 
 /**
@@ -32,11 +35,13 @@ export async function recordReferralOnSignup(params: {
 }): Promise<{ success: true } | { success: false; message: string }> {
   const { newUserId, newUserEmail, referralCode } = params;
   try {
-    const { data: codeRow, error: codeError } = await adminSupabase
-      .from("referral_codes")
-      .select("user_id")
-      .eq("code", referralCode)
-      .maybeSingle();
+    const { data: codeRows, error: codeError } = await runQuery(
+      db
+        .select({ user_id: referral_codes.user_id })
+        .from(referral_codes)
+        .where(eq(referral_codes.code, referralCode))
+        .limit(1),
+    );
 
     if (codeError) {
       console.error(
@@ -46,6 +51,7 @@ export async function recordReferralOnSignup(params: {
       return { success: false, message: "Failed to resolve referral code" };
     }
 
+    const codeRow = codeRows[0];
     if (!codeRow) {
       console.warn(
         `[recordReferralOnSignup] Unknown referral code "${referralCode}" for user ${newUserId}`,
@@ -62,12 +68,15 @@ export async function recordReferralOnSignup(params: {
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    const { data: referrerUser } = await adminSupabase
-      .from("users")
-      .select("email")
-      .eq("id", referrerId)
-      .maybeSingle();
+    const { data: referrerUserRows } = await runQuery(
+      db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, referrerId))
+        .limit(1),
+    );
 
+    const referrerUser = referrerUserRows?.[0];
     if (
       referrerUser?.email &&
       referrerUser.email.toLowerCase() === newUserEmail.toLowerCase()
@@ -78,14 +87,14 @@ export async function recordReferralOnSignup(params: {
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    const { error: insertError } = await adminSupabase
-      .from("referrals")
-      .insert({
+    const { error: insertError } = await runQuery(
+      db.insert(referrals).values({
         referrer_id: referrerId,
         referred_id: newUserId,
         status: "verified",
         verified_at: new Date().toISOString(),
-      });
+      }),
+    );
 
     if (insertError) {
       // UNIQUE (referred_id): this user was already attributed.

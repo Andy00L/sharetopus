@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { referral_reward_grants, referrals } from "@/db/schema";
 import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
 
 export type ReferralProgressResult =
@@ -30,11 +33,12 @@ export type ReferralProgressResult =
  * Called by: getReferralProgress (sidebar badge), getReferralSummary (referral page)
  */
 export async function loadReferralProgress(userId: string): Promise<ReferralProgressResult> {
-  const { count: verifiedCount, error: verifiedError } = await adminSupabase
-    .from("referrals")
-    .select("id", { count: "exact", head: true })
-    .eq("referrer_id", userId)
-    .eq("status", "verified");
+  const { data: verifiedCount, error: verifiedError } = await runQuery(
+    db.$count(
+      referrals,
+      and(eq(referrals.referrer_id, userId), eq(referrals.status, "verified")),
+    ),
+  );
 
   if (verifiedError) {
     console.error(
@@ -44,10 +48,12 @@ export async function loadReferralProgress(userId: string): Promise<ReferralProg
     return { success: false, message: "Failed to load referral progress" };
   }
 
-  const { data: grantRows, error: grantsError } = await adminSupabase
-    .from("referral_reward_grants")
-    .select("weeks_granted")
-    .eq("user_id", userId);
+  const { data: grantRows, error: grantsError } = await runQuery(
+    db
+      .select({ weeks_granted: referral_reward_grants.weeks_granted })
+      .from(referral_reward_grants)
+      .where(eq(referral_reward_grants.user_id, userId)),
+  );
 
   if (grantsError) {
     console.error(
@@ -57,14 +63,14 @@ export async function loadReferralProgress(userId: string): Promise<ReferralProg
     return { success: false, message: "Failed to load referral grants" };
   }
 
-  const weeksEarned = (grantRows ?? []).reduce(
+  const weeksEarned = grantRows.reduce(
     (sum, row) => sum + row.weeks_granted,
     0,
   );
 
   return {
     success: true,
-    towardNextWeek: verifiedCount ?? 0,
+    towardNextWeek: verifiedCount,
     weeksEarned,
     capReached: weeksEarned >= MAX_REFERRAL_WEEKS,
   };

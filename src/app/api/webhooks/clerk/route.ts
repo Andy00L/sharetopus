@@ -1,8 +1,10 @@
 // app/api/webhooks/clerk/route.ts
-import { adminSupabase as supabase } from "@/actions/api/adminSupabase";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
+import { db, runQuery } from "@/db/client";
+import { principals, users } from "@/db/schema";
 import stripe from "@/lib/stripe";
 import { WebhookEvent } from "@clerk/backend";
+import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { Webhook } from "svix";
 
@@ -149,12 +151,12 @@ async function handleUserCreated(data: ClerkUserData) {
     }
 
     // Upsert into principals first (users.id FK requires it)
-    const { error: principalError } = await supabase
-      .from("principals")
-      .upsert(
-        { id: userId, kind: "clerk" },
-        { onConflict: "id", ignoreDuplicates: true },
-      );
+    const { error: principalError } = await runQuery(
+      db
+        .insert(principals)
+        .values({ id: userId, kind: "clerk" })
+        .onConflictDoNothing({ target: principals.id }),
+    );
 
     if (principalError) {
       console.error("[Clerk Routes]: Principal upsert failed:", principalError);
@@ -170,13 +172,15 @@ async function handleUserCreated(data: ClerkUserData) {
     }
 
     // Insert the new user into your Supabase table.
-    const { error } = await supabase.from("users").insert({
-      id: userId,
-      email,
-      first_name: firstName,
-      last_name: lastName,
-      stripe_customer_id: stripeCustomerId,
-    });
+    const { error } = await runQuery(
+      db.insert(users).values({
+        id: userId,
+        email,
+        first_name: firstName,
+        last_name: lastName,
+        stripe_customer_id: stripeCustomerId,
+      }),
+    );
 
     if (error) {
       console.error(
@@ -217,15 +221,19 @@ async function handleUserUpdated(data: ClerkUserData) {
     const firstName = nameParts[0] || null;
     const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : null;
 
-    const { error } = await supabase
-      .from("users")
-      .update({
-        email,
-        first_name: firstName,
-        last_name: lastName,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", userId);
+    // An undefined email (no address on the Clerk user) leaves the column
+    // untouched: Drizzle drops undefined keys from the SET list.
+    const { error } = await runQuery(
+      db
+        .update(users)
+        .set({
+          email,
+          first_name: firstName,
+          last_name: lastName,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(users.id, userId)),
+    );
 
     if (error) {
       console.error(
@@ -234,12 +242,15 @@ async function handleUserUpdated(data: ClerkUserData) {
       );
     }
     // Get stripe_customer_id to update Stripe
-    const { data: userData } = await supabase
-      .from("users")
-      .select("stripe_customer_id")
-      .eq("id", userId)
-      .single();
+    const { data: userRows } = await runQuery(
+      db
+        .select({ stripe_customer_id: users.stripe_customer_id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1),
+    );
 
+    const userData = userRows?.[0];
     if (userData?.stripe_customer_id) {
       try {
         await stripe.customers.update(userData.stripe_customer_id, {
@@ -265,14 +276,19 @@ async function handleUserDeleted(data: { id: string }) {
   try {
     const userId = data.id;
     // Get stripe_customer_id before deleting the user
-    const { data: userData } = await supabase
-      .from("users")
-      .select("stripe_customer_id")
-      .eq("id", userId)
-      .single();
+    const { data: userRows } = await runQuery(
+      db
+        .select({ stripe_customer_id: users.stripe_customer_id })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1),
+    );
+    const userData = userRows?.[0];
 
     // Delete user from Supabase (this will cascade delete subscriptions)
-    const { error } = await supabase.from("users").delete().eq("id", userId);
+    const { error } = await runQuery(
+      db.delete(users).where(eq(users.id, userId)),
+    );
 
     if (error) {
       console.error(
