@@ -1,6 +1,6 @@
 # DB changes: provider registry
 
-Run these yourself. Nothing in the code applies migrations.
+Status: applied. The 28 platform ids now live in `SOCIAL_PLATFORMS` (`src/db/schema.ts`), which builds the `platform` CHECK constraints and the `Platform` type. A new id is added to that list and shipped with `bun run db:generate` and `bun run db:migrate` (see [DATABASE.md](./DATABASE.md#schema-changes)). This file stays as the record of the original change.
 
 ## Step 0: find out what `platform` actually is
 

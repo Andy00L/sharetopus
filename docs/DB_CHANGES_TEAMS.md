@@ -1,6 +1,6 @@
 # DB changes: teams and invites
 
-Run these yourself. Nothing in the code applies migrations.
+Not applied (decision pending, [ROADMAP.md](./ROADMAP.md) open issue 6). If this gets built, the three tables are declared in `src/db/schema.ts` and `bun run db:generate` writes the migration (see [DATABASE.md](./DATABASE.md#schema-changes)); the SQL below is the design to follow.
 
 Three tables. They hang off `principals`, not off `users`, so a wallet
 principal can belong to a team later without a second model.
@@ -65,10 +65,11 @@ account takeover one leaked link away.
 
 ## RLS
 
-Every read and write in the code goes through `adminSupabase` (service role),
-which bypasses RLS, and scopes by `principal_id` in the query itself. That
-matches how `social_accounts` and `scheduled_posts` are already handled. If
-you later expose these tables to the anon key, they need RLS policies first.
+The draft code in `src/lib/teams/` still queries through supabase-js
+(`adminSupabase`). Built for real, it moves to the Drizzle client, which also
+bypasses RLS, and scopes by `principal_id` in the query itself. That matches
+how `social_accounts` and `scheduled_posts` are already handled. If you later
+expose these tables to the anon key, they need RLS policies first.
 
 ## Verifying afterwards
 
@@ -82,9 +83,10 @@ where schemaname = 'public' and tablename = 'team_invites';
 
 ## Type edit
 
-After you run this, tell me and I will add `Teams`, `TeamMembers`, and
-`TeamInvites` to `src/lib/types/database.types.ts` by hand, following your
-rule that the file is never regenerated.
+`src/lib/types/database.types.ts` holds hand-written blocks for these three
+tables for now. Once the tables are declared in `src/db/schema.ts`, that file
+derives their types like every other table, and the hand-written blocks are
+deleted in the same change.
 
-The code below compiles today because it declares its own row shapes and
-casts nothing; it will simply return errors as values until the tables exist.
+The code compiles today because it declares its own row shapes and casts
+nothing; it will simply return errors as values until the tables exist.

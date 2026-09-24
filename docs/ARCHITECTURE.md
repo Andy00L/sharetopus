@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-34 database tables. 18 MCP tools. 28 REST API endpoints. 12 Inngest functions.
+37 database tables. 18 MCP tools. 28 REST API endpoints. 12 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -81,7 +81,7 @@ graph TD
     end
 
     subgraph Data["Data Layer"]
-        Supabase["Supabase Postgres (34 tables)"]
+        Supabase["Supabase Postgres (37 tables, Drizzle)"]
         Storage["Supabase Storage (scheduled-videos)"]
         Redis["Upstash Redis (rate limits)"]
     end
@@ -133,7 +133,7 @@ graph TD
 src/
   actions/
     api/
-      adminSupabase.ts          # Supabase client with service role (bypasses RLS)
+      adminSupabase.ts          # Service-role Supabase client, used for Storage only
     client/
       signedUrlUpload.ts        # Client-side XHR upload with progress
     server/
@@ -211,6 +211,9 @@ src/
     marketing-page/             # Hero, comparison, details, nav
     sidebar/                    # App navigation
     ui/                         # shadcn/ui components
+  db/
+    client.ts                   # Drizzle client (postgres.js, transaction pooler) + runQuery
+    schema.ts                   # Drizzle schema: every table, the source of truth
   inngest/
     client.ts                   # Inngest client (id: "sharetopus")
     dispatch/
@@ -264,7 +267,7 @@ src/
       tools/                    # 18 tool definitions (one file per tool, Zod 4 schemas)
       prompts/                  # 3 prompt definitions (auditCalendar, planWeekForPlatform, repurposePost)
     types/
-      database.types.ts         # Generated Supabase types (34 tables)
+      database.types.ts         # Row and Insert types derived from src/db/schema.ts
       plans.ts                  # Plan tiers (Starter, Creator, Pro), price IDs, account/storage limits
     utils/
       generateRequestId.ts      # Web requestId tracing for server actions
@@ -504,7 +507,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 **Internal vs public actions.** MCP tools call `_internal` actions that skip Clerk auth (the MCP auth layer already verified the principal). Public server actions add Clerk auth + rate limiting and delegate to the same `_internal` functions. This avoids double-auth but means `_internal` functions must never be imported from client components. The `server-only` package enforces this at build time.
 
-**Admin Supabase client.** All server actions use a service-role Supabase client that bypasses RLS. This is simpler than managing RLS policies for server-side operations but means the application layer is responsible for all access control. Every action manually checks `principal_id` ownership.
+**Server-side database access.** All server code queries Postgres through the Drizzle client (`src/db/client.ts`), which connects through the Supabase transaction pooler as the `postgres` role, a role that bypasses RLS. Supabase's service-role client (`adminSupabase`) remains for Storage only. This is simpler than managing RLS policies for server-side operations but means the application layer is responsible for all access control. Every action manually checks `principal_id` ownership.
 
 **Web requestId tracing.** Public server actions call `generateRequestId()` and pass the ID through the call chain. This ties together the server action, any Inngest events dispatched, and the resulting background work, making it possible to trace a user action end-to-end in logs.
 
@@ -528,7 +531,9 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | CSS | tailwindcss | 4.2.4 |
 | Auth | @clerk/nextjs | 7.3.2 |
 | MCP Auth | @clerk/mcp-tools | 0.5.0 |
-| Database | @supabase/supabase-js | 2.105.3 |
+| Database | drizzle-orm + postgres (postgres.js) | 0.45.3 / 3.4.9 |
+| Migrations | drizzle-kit | 0.31.11 |
+| Storage | @supabase/supabase-js | 2.105.3 |
 | Payments | stripe | 18.5.0 |
 | Background Jobs | inngest | 4.3.0 |
 | Rate Limiting | @upstash/ratelimit | 2.0.8 |
@@ -577,9 +582,11 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/lib/api/_shared/scheduleForAccountGeneric.ts` | Generic scheduler |
 | `src/lib/api/_shared/buildStreamingMultipartFormDataBody.ts` | Streaming multipart for Pinterest video |
 | `src/actions/server/data/finalizeTikTokPostByPublishId.ts` | Shared TikTok finalize (webhook + polling converge here) |
-| `src/actions/api/adminSupabase.ts` | Service-role Supabase client (bypasses RLS) |
+| `src/db/client.ts` | Drizzle client and `runQuery` (errors as values) |
+| `src/db/schema.ts` | Drizzle schema, the source of truth for every table |
+| `src/actions/api/adminSupabase.ts` | Service-role Supabase client, used for Storage only |
 | `src/lib/utils/generateRequestId.ts` | Web requestId tracing for server actions |
-| `src/lib/types/database.types.ts` | Generated Supabase types (34 tables) |
+| `src/lib/types/database.types.ts` | Row and Insert types derived from the Drizzle schema |
 | `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper (auth, validation, audit, rate limit) |
 | `src/lib/api/rest/webhooks/dispatch.ts` | Webhook event dispatch to Inngest |
 | `src/lib/api/rest/openapi/buildDocument.ts` | OpenAPI 3.1 document generation |

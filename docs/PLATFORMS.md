@@ -395,44 +395,7 @@ Resumable upload in two steps, streaming the file bytes from Supabase Storage:
 
 ## Future Platforms
 
-These platforms are not yet postable:
-
-- **Threads**: in the `social_accounts.platform` DB union, no integration code.
-- **Google Business Profile**: NOT in the DB union yet. Blocked on a schema change only Drew can apply; see below.
-
-Bluesky is not in the database type definitions.
-
-### Enabling Google Business Profile
-
-`src/lib/types/database.types.ts` is hand-maintained and read-only for agents, and the `platform` CHECK constraints in Postgres mirror it. Both must change before any `google_business` code can compile or run. Steps, in order:
-
-1. Run this SQL against Supabase (adjust constraint names if they differ; check with `\d social_accounts`):
-
-```sql
-ALTER TABLE social_accounts
-  DROP CONSTRAINT social_accounts_platform_check;
-ALTER TABLE social_accounts
-  ADD CONSTRAINT social_accounts_platform_check CHECK (platform IN (
-    'linkedin', 'tiktok', 'pinterest', 'instagram',
-    'facebook', 'threads', 'youtube', 'x', 'google_business'
-  ));
-
-ALTER TABLE social_connections
-  DROP CONSTRAINT social_connections_platform_check;
-ALTER TABLE social_connections
-  ADD CONSTRAINT social_connections_platform_check CHECK (platform IN (
-    'linkedin', 'tiktok', 'pinterest', 'instagram',
-    'facebook', 'threads', 'youtube', 'x', 'google_business'
-  ));
-
-INSERT INTO platform_quotas (platform, daily_cap, burst_cap_60s, notes)
-VALUES ('google_business', 50, 5, 'Google Business Profile localPosts')
-ON CONFLICT (platform) DO NOTHING;
-```
-
-2. Hand-edit `src/lib/types/database.types.ts`: append `| "google_business"` to the platform union in six places (social_accounts Row/Insert/Update, social_connections Row/Insert/Update) and to the `Platform` alias near line 2258.
-
-3. After both are applied, extend the code exactly like the youtube/x/facebook additions in this change (same checklist below). Google Business specifics: OAuth is standard Google (`https://www.googleapis.com/auth/business.manage` scope, same token endpoint as YouTube), the account identifier is `accounts/{accountId}/locations/{locationId}`, and publishing goes through `POST https://mybusiness.googleapis.com/v4/{parent}/localPosts` with `summary` text and an optional `media` array of publicly reachable URLs.
+The seven platforms above have dedicated adapters. Every other id in `SOCIAL_PLATFORMS` (`src/db/schema.ts`), Threads (`threads`), Bluesky (`bluesky`) and Google Business Profile (`gmb`) among them, publishes through the provider registry in `src/lib/platforms/providers/catalog.ts` instead of a dedicated adapter. A platform graduates to a dedicated adapter through the checklist below.
 
 ---
 
@@ -440,7 +403,7 @@ ON CONFLICT (platform) DO NOTHING;
 
 Checklist for implementing a new platform, matching how youtube/x/facebook were added:
 
-1. Confirm the platform value exists in the DB `platform` CHECK constraints and in `src/lib/types/database.types.ts` (hand-edited by Drew).
+1. Make sure the platform id is in `SOCIAL_PLATFORMS` (`src/db/schema.ts`). A new id goes there first: `bun run db:generate` writes the matching change to the `platform` CHECK constraints on `social_accounts`, `social_connections` and `pending_direct_posts`, and after a review of that SQL `bun run db:migrate` applies it (see [DATABASE.md](./DATABASE.md#schema-changes)). The `Platform` type follows the list on its own.
 2. Register capabilities: add the key to `POSTING_PLATFORMS`, `PLATFORM_LABELS`, and the media-support map in `src/lib/platforms/capabilities.ts`, plus a `CAPTION_LIMITS` entry.
 3. Create `src/lib/api/{platform}/`:
    - `data/`: `exchange{Platform}Code.ts`, `get{Platform}Profile.ts`, `refresh{Platform}Token.ts` (when the platform has one)

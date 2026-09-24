@@ -98,7 +98,7 @@ The `mcp_oauth_clients` table tracks `trust_level` (unverified, verified, blocke
 ### 9. Data Retention Crons
 
 Three Inngest crons handle cleanup:
-- `cleanup-mcp-audit-log`: 90-day retention
+- `cleanup-mcp-audit-log`: 90-day retention, not enforced yet: the append-only trigger refuses its DELETE (see [DATABASE.md](./DATABASE.md#data-lifecycle-and-retention))
 - `cleanup-stripe-webhook-events`: 90-day retention
 - `cleanup-cancelled-posts-after-grace`: 7-day grace period
 
@@ -211,9 +211,9 @@ The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analyti
 
 ### 6. Teams and Channel Groups: Build or Delete
 
-Teams (shared workspaces with owner, admin, and member roles plus email invites) and channel groups (named sets of social accounts, for agencies) were designed but never shipped. Their SQL in `docs/DB_CHANGES_TEAMS.md` and `docs/DB_CHANGES_GROUPS.md` has not been run, so the five tables (`teams`, `team_members`, `team_invites`, `channel_groups`, `channel_group_members`) exist only in `src/lib/types/database.types.ts`. The code in `src/lib/teams/` (3 files) and `src/lib/groups/channelGroups.ts`, 934 lines in all, has no importers.
+Teams (shared workspaces with owner, admin, and member roles plus email invites) and channel groups (named sets of social accounts, for agencies) were designed but never shipped. Their SQL in `docs/DB_CHANGES_TEAMS.md` and `docs/DB_CHANGES_GROUPS.md` has not been run, so the five tables (`teams`, `team_members`, `team_invites`, `channel_groups`, `channel_group_members`) exist only in `src/lib/types/database.types.ts`. The code in `src/lib/teams/` (3 files) and `src/lib/groups/channelGroups.ts`, 934 lines in all, has no importers, and it is the only code still querying through supabase-js (18 calls) instead of Drizzle.
 
-Decision pending: build it (run the SQL, then add the UI and API) or delete the code, the five type blocks, and the two SQL docs.
+Decision pending: build it (declare the five tables in `src/db/schema.ts`, generate and apply the migration, move the code to Drizzle, then add the UI and API) or delete the code, the five type blocks, and the two SQL docs.
 
 ## Won't Fix (For Now)
 

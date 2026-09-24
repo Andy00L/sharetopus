@@ -52,7 +52,8 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 | Language | TypeScript | 5.9.3 |
 | UI | React + Tailwind CSS + shadcn/ui | 19.2.0 / 4.2.4 |
 | Auth | Clerk (`@clerk/nextjs`) | 7.3.2 |
-| Database + Storage | Supabase (`@supabase/supabase-js`) | 2.105.3 |
+| Database | Supabase Postgres via Drizzle ORM (`drizzle-orm` + `postgres`) | 0.45.3 / 3.4.9 |
+| Storage | Supabase Storage (`@supabase/supabase-js`) | 2.105.3 |
 | Payments | Stripe | 18.5.0 |
 | Background Jobs | Inngest | 4.3.0 |
 | Rate Limiting | Upstash Redis + `@upstash/ratelimit` | 1.38.0 / 2.0.8 |
@@ -143,7 +144,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System map, component interactions, data flows, state diagrams |
 | [docs/AUTH.md](./docs/AUTH.md) | Clerk, MCP auth (API key + OAuth), principal model, entitlement |
 | [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
-| [docs/DATABASE.md](./docs/DATABASE.md) | All 34 tables, relationships, RLS posture |
+| [docs/DATABASE.md](./docs/DATABASE.md) | All 37 tables, schema changes with Drizzle, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
 | [docs/INNGEST.md](./docs/INNGEST.md) | 12 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |
@@ -162,7 +163,8 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 | Category | Variables |
 |----------|-----------|
 | Auth | `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` |
-| Database | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE` |
+| Database | `DATABASE_URL` (Supabase transaction pooler, port 6543) |
+| Storage | `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE` |
 | Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 | Jobs | `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` |
 | Rate Limiting | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` |
@@ -171,7 +173,7 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 
 ## 🔒 Security
 
-Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests), both with 90-day retention. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
+Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests); retention status per table is in docs/SECURITY.md. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
 
 Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 

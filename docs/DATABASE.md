@@ -2,7 +2,7 @@
 
 37 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
 
-`src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. Server code queries through the Drizzle client in `src/db/client.ts`. Code that has not moved to Drizzle yet still uses supabase-js (`adminSupabase`) with the hand-maintained types in `src/lib/types/database.types.ts`, which is never regenerated.
+`src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. All server code queries through the Drizzle client in `src/db/client.ts`; supabase-js (`adminSupabase`) is used for Storage only. The row and insert types app code imports from `src/lib/types/database.types.ts` are derived from the schema, so a column change in `src/db/schema.ts` reaches them without a separate edit.
 
 [Back to README](../README.md)
 
@@ -48,9 +48,9 @@ To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review
 | `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`. Prepared statements are off because this pooler does not keep them between transactions. |
 | `SUPABASE_DB_URL` | Session pooler, port 5432 | drizzle-kit, through `drizzle.config.ts`. |
 
-Both connect as the database owner, which bypasses RLS the way the service-role key does.
+Both connect as the `postgres` role, which bypasses RLS the way the service-role key does.
 
-Rows read through Drizzle have the shape supabase-js rows had: snake_case keys, timestamps as ISO strings (`2026-09-23T20:26:45.1234+00:00`), and numeric and bigint columns as numbers. The `timestamptz` column type in `src/db/schema.ts` converts Postgres' own text form to the ISO one.
+Rows read through Drizzle have the shape supabase-js rows had: snake_case keys, timestamps as ISO strings (`2026-09-23T20:26:45.1234+00:00`), and numeric and bigint columns as numbers. The `timestamptz` column type in `src/db/schema.ts` converts Postgres' own text form to the ISO one. Raw SQL through `db.execute` skips that column mapping: bigint and numeric values come back as strings and timestamps in Postgres' text form, so read timestamp columns through the query builder and parse numbers explicitly.
 
 ---
 
@@ -264,12 +264,12 @@ See [SECURITY.md](./SECURITY.md) for details on argument redaction and PII handl
 
 Drizzle does not manage Postgres functions or triggers, so they live only in the database. To change one, write the SQL in a hand-written migration: `bun run db:generate --custom --name <change>` creates an empty file in `drizzle/` for it.
 
-Functions the app calls:
+Functions the app calls, with raw SQL through `db.execute` (for example `src/lib/mcp/entitlement.ts`); each caller checks the type of every returned field:
 
 | Function | Arguments | Returns | Purpose |
 |----------|-----------|---------|---------|
-| `atomic_increment_quota` | `(_principal_id, _period, _action, _cap)` | `number` or `null` | Atomically increments `usage_quotas.count`. Returns the new count if under the cap, `null` if the cap would be exceeded. Prevents race conditions in concurrent MCP requests. |
-| `get_user_storage_bytes` | `(_bucket, _prefix)` | `number` | Returns total storage bytes for a principal in a given Supabase Storage bucket. Reads `storage.objects` directly (no pagination). Used by `enforceStorageQuota`. |
+| `atomic_increment_quota` | `(_principal_id, _period, _action, _cap)` | integer or `null` | Atomically increments `usage_quotas.count`. Returns the new count if under the cap, `null` if the cap would be exceeded. Prevents race conditions in concurrent MCP requests. |
+| `get_user_storage_bytes` | `(_bucket, _prefix)` | bigint (a string through raw SQL) | Returns total storage bytes for a principal in a given Supabase Storage bucket. Reads `storage.objects` directly (no pagination). Called through `getUserStorageBytes` (the MCP and x402 storage quota checks) and by `GET /v1/usage`. |
 | `consume_share_link` | `(p_share_link_id)` | `(success, reason)` | Locks the share link, checks revoked, expiry and `max_uses`, then counts one use. Called when a share-link OAuth flow succeeds. |
 | `grant_referral_rewards` | `(p_referrer_id)` | weeks granted | Turns each 3 verified referrals into 1 free week (at most 15 redeemed referrals per referrer) and extends `users.creator_access_until`. |
 | `onboard_wallet_atomic` | `(p_principal_id, p_address, p_chain, p_sanctions_source)` | `{ principal_id, wallet_id, is_new }` | Creates a wallet principal with its `wallets`, `sanctions_screenings` and `wallet_credits` rows in one transaction, or returns the existing wallet for that address. |
@@ -305,7 +305,7 @@ Triggers:
 
 ## RLS posture
 
-All 37 tables have Row Level Security (RLS) enabled, and the `rls_auto_enable` event trigger enables it on any new table. The application reads and writes only on the server, through the Drizzle client (`src/db/client.ts`) or the service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`), and both bypass RLS. Access control is enforced in application code by filtering on `principal_id` in every query.
+All 37 tables have Row Level Security (RLS) enabled, and the `rls_auto_enable` event trigger enables it on any new table. The application reads and writes only on the server, through the Drizzle client (`src/db/client.ts`), which bypasses RLS. The service-role Supabase client (`adminSupabase` in `src/actions/api/adminSupabase.ts`) is used only for Storage, where it bypasses the storage policies the same way. Access control is enforced in application code by filtering on `principal_id` in every query.
 
 What this means in practice:
 
@@ -369,8 +369,8 @@ stateDiagram-v2
 | `src/db/client.ts` | Drizzle client (`db`) and `runQuery`, which returns `{ data, error }` instead of throwing |
 | `drizzle.config.ts` | drizzle-kit settings for `db:pull`, `db:generate`, `db:migrate` |
 | `drizzle/` | Migrations and their snapshots, starting with `0000_baseline.sql` |
-| `src/lib/types/database.types.ts` | Hand-maintained supabase-js types for code not yet on Drizzle |
-| `src/actions/api/adminSupabase.ts` | Service-role Supabase client that bypasses RLS |
+| `src/lib/types/database.types.ts` | Row and Insert types for app code, derived from `src/db/schema.ts`; only the not-yet-created teams and channel-group tables are written by hand |
+| `src/actions/api/adminSupabase.ts` | Service-role Supabase client, used for Storage only |
 | `src/lib/mcp/audit.ts` | `logToolCall`, the awaited insert into `mcp_audit_log` |
 | `src/lib/api/rest/audit/writeRestAuditLog.ts` | Audit log writer for REST API requests |
 | `src/lib/api/rest/webhooks/dispatch.ts` | Dispatches webhook events to Inngest for delivery |

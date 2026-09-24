@@ -56,7 +56,7 @@ MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth 
 | 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/storage/generate-view-url`, `/api/media` |
 | 7 | TikTok media URL forgery | HMAC-SHA256 + 30-min expiry | `buildProxiedTikTokMediaUrl.ts` |
 | 8 | Media proxy path traversal | Block `..`, `//`, leading `/` | `/api/media/route.ts` |
-| 9 | Audit log tampering | Append-only table (Update: never, DB trigger) | `mcp_audit_log` table |
+| 9 | Audit log tampering | Append-only table (`reject_mutation` DB trigger refuses UPDATE and DELETE) | `mcp_audit_log` table |
 | 10 | Concurrent quota race condition | `atomic_increment_quota` Postgres function | `entitlement.ts` |
 | 11 | Monthly cap exhaustion | Per-tier quotas enforced atomically | `entitlement.ts` |
 | 12 | IP tracking privacy leak | SHA-256 hash with configurable salt | `ipHash.ts` |
@@ -190,7 +190,7 @@ sequenceDiagram
 | `bulk_schedule` | Derived: `${batchId}:${index}` from `batch_id` param | `scheduled_posts` |
 | `bulk_post_now` | Derived: `${batch_id}:${index}` from `batch_id` param | `pending_direct_posts` |
 
-DB enforcement: partial unique index on `(principal_id, idempotency_key)` on both tables. All four tools use `INSERT ... ON CONFLICT DO NOTHING`.
+DB enforcement: a unique constraint on `(principal_id, idempotency_key)` on both tables (`scheduled_posts_principal_idem_uq`, `pending_direct_posts_principal_idem_uq`); rows without a key never collide, since NULLs are distinct. `schedule_post` and `bulk_schedule` insert with `ON CONFLICT (principal_id, idempotency_key) DO NOTHING`. `post_now` and `bulk_post_now` look up existing keys before dispatching and treat a unique violation (`23505`) on the lock insert as already dispatched.
 
 The key is optional. Omitting it means no deduplication (every call creates a new row). Agents should always supply one when retries are possible.
 
@@ -392,17 +392,17 @@ Verification: recipients should compute `HMAC-SHA256(rawBody, subscription_secre
 
 ## Append-Only Audit
 
-Nine tables are append-only (`Update: never` in database types, enforced at the DB layer):
+Nine tables are append-only. Six of them (`mcp_audit_log`, `stripe_invoices`, `wallet_credits_ledger`, `x402_access_log`, `x402_refunds`, `sanctions_screenings`) have a `reject_mutation` trigger, so Postgres itself refuses an UPDATE or DELETE. The other three are append-only by convention: no code updates them.
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
-| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days (cleanup cron) |
+| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days intended; the cleanup cron's DELETE is refused by the trigger, so nothing is deleted yet |
 | `rest_audit_log` | Every REST API request with endpoint, method, status code, latency | Grows indefinitely (no cleanup cron yet) |
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
 | `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
 | `wallet_credits_ledger` | Credit transaction history (x402, deferred) | Indefinite |
-| `x402_access_log` | Access audit trail (x402, deferred) | Indefinite |
+| `x402_access_log` | Access audit trail (x402, deferred) | 90 days intended; the cleanup cron's DELETE is refused by the trigger, so nothing is deleted yet |
 | `x402_refunds` | Refund records (x402, deferred) | Indefinite |
 | `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |
 
@@ -434,7 +434,7 @@ Token, password, secret, and JWT patterns are redacted before insert (see [Argum
 
 | Data | Retention |
 |------|-----------|
-| `mcp_audit_log` | 90 days (via `cleanup-mcp-audit-log` cron) |
+| `mcp_audit_log`, `x402_access_log` | 90 days intended, not enforced yet: the append-only trigger refuses the cleanup crons' DELETE ([DATABASE.md](./DATABASE.md#data-lifecycle-and-retention)) |
 | `rest_audit_log` | Grows indefinitely (no cleanup cron yet) |
 | `stripe_webhook_events` | 90 days (via `cleanup-stripe-webhook-events` cron) |
 | Cancelled scheduled posts | 7-day grace period |
@@ -472,7 +472,7 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 - **PII redaction in audit logs.** Token, password, secret, JWT patterns are redacted before insert.
 - **IP hashing.** Raw client IPs are never stored. SHA-256 hashed with configurable salt.
 - **Append-only financial tables.** `stripe_invoices` cannot be updated or deleted at the DB layer.
-- **90-day audit retention.** `mcp_audit_log` and `stripe_webhook_events` are cleaned up by scheduled crons.
+- **90-day webhook-event retention.** `stripe_webhook_events` is cleaned up by a scheduled cron. The `mcp_audit_log` and `x402_access_log` crons exist but cannot delete until retention is switched on for the append-only trigger.
 
 ### Deferred (until x402 ships)
 
