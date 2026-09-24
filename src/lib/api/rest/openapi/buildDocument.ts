@@ -1,18 +1,23 @@
 import "server-only";
 
+import { createDocument } from "zod-openapi";
+
 import { restPaths } from "./paths";
 
 /**
  * Builds the full OpenAPI 3.1 document for the Sharetopus REST API.
  *
- * Single source of truth: every endpoint here references the SAME Zod
- * schemas used for runtime validation. The paths object is the
- * canonical registry of all v1 endpoints.
+ * The paths object is the canonical registry of all v1 endpoints.
+ * createDocument (zod-openapi) renders its Zod schemas to JSON Schema:
+ * request bodies and query parameters from the schemas the routes
+ * validate with, and every schema carrying .meta({ id }) becomes a
+ * component under components.schemas. Serving the paths without it sent
+ * Zod's internal objects instead of schemas.
  *
  * Public endpoint, cached for 1 hour. No auth required.
  */
 export function buildOpenApiDocument() {
-  return {
+  return createDocument({
     openapi: "3.1.0",
     info: {
       title: "Sharetopus REST API",
@@ -36,5 +41,5 @@ export function buildOpenApiDocument() {
     },
     security: [{ bearerAuth: [] }],
     paths: restPaths,
-  };
+  });
 }

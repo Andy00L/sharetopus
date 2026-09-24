@@ -1,3 +1,6 @@
+import type { ZodType } from "zod";
+import type { ZodOpenApiPathsObject } from "zod-openapi";
+
 import {
   PostCreateInputSchema,
   PostListQuerySchema,
@@ -44,7 +47,7 @@ import {
 /**
  * Helper to build a standard JSON request body spec.
  */
-function jsonBody(schema: unknown) {
+function jsonBody(schema: ZodType) {
   return {
     content: { "application/json": { schema } },
     required: true as const,
@@ -54,7 +57,7 @@ function jsonBody(schema: unknown) {
 /**
  * Helper to build a standard JSON response spec.
  */
-function jsonResponse(description: string, schema: unknown) {
+function jsonResponse(description: string, schema: ZodType) {
   return {
     description,
     content: { "application/json": { schema } },
@@ -77,9 +80,10 @@ const postConflictResponse = {
 };
 
 /**
- * OpenAPI path definitions for all v1 endpoints. Each entry references
- * the SAME Zod schemas used for runtime validation. No drift possible
- * between docs and actual behavior.
+ * OpenAPI path definitions for all v1 endpoints. Request bodies and query
+ * parameters are the same Zod schemas the routes validate with;
+ * buildOpenApiDocument renders them, and the response mirrors in
+ * responseSchemas.ts, to JSON Schema through zod-openapi.
  */
 export const restPaths = {
   "/api/v1/posts": {
@@ -98,7 +102,7 @@ export const restPaths = {
       tags: ["Posts"],
       summary: "List posts",
       operationId: "listPosts",
-      parameters: schemaToQueryParams(PostListQuerySchema),
+      requestParams: { query: PostListQuerySchema },
       responses: {
         "200": jsonResponse("Paginated posts", PaginatedPostsSchema),
         ...errorResponses,
@@ -142,7 +146,8 @@ export const restPaths = {
       description:
         "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion.",
       operationId: "deletePost",
-      parameters: [pathParam("id", "Post UUID"), ...schemaToQueryParams(PostDeleteQuerySchema)],
+      parameters: [pathParam("id", "Post UUID")],
+      requestParams: { query: PostDeleteQuerySchema },
       responses: {
         "200": jsonResponse("Delete result", PostDeleteResultSchema),
         ...errorResponses,
@@ -164,7 +169,7 @@ export const restPaths = {
       tags: ["Connections"],
       summary: "List connections",
       operationId: "listConnections",
-      parameters: schemaToQueryParams(ConnectionListQuerySchema),
+      requestParams: { query: ConnectionListQuerySchema },
       responses: { "200": jsonResponse("Paginated connections", PaginatedConnectionsSchema), ...errorResponses },
     },
   },
@@ -200,10 +205,8 @@ export const restPaths = {
       tags: ["Connections"],
       summary: "List Pinterest boards",
       operationId: "listPinterestBoards",
-      parameters: [
-        pathParam("id", "Pinterest connection UUID"),
-        ...schemaToQueryParams(PinterestBoardsQuerySchema),
-      ],
+      parameters: [pathParam("id", "Pinterest connection UUID")],
+      requestParams: { query: PinterestBoardsQuerySchema },
       responses: { "200": jsonResponse("Boards", PinterestBoardDTOSchema), ...errorResponses },
     },
   },
@@ -248,7 +251,7 @@ export const restPaths = {
       tags: ["Analytics"],
       summary: "List account analytics",
       operationId: "listAnalytics",
-      parameters: schemaToQueryParams(AnalyticsQuerySchema),
+      requestParams: { query: AnalyticsQuerySchema },
       responses: { "200": jsonResponse("Paginated analytics", PaginatedAnalyticsSchema), ...errorResponses },
     },
   },
@@ -257,7 +260,7 @@ export const restPaths = {
       tags: ["Content History"],
       summary: "List content history",
       operationId: "listContentHistory",
-      parameters: schemaToQueryParams(ContentHistoryQuerySchema),
+      requestParams: { query: ContentHistoryQuerySchema },
       responses: { "200": jsonResponse("Paginated content history", PaginatedContentHistorySchema), ...errorResponses },
     },
   },
@@ -323,10 +326,8 @@ export const restPaths = {
       tags: ["Webhooks"],
       summary: "List deliveries",
       operationId: "listWebhookDeliveries",
-      parameters: [
-        pathParam("id", "Subscription UUID"),
-        ...schemaToQueryParams(WebhookDeliveryListQuerySchema),
-      ],
+      parameters: [pathParam("id", "Subscription UUID")],
+      requestParams: { query: WebhookDeliveryListQuerySchema },
       responses: { "200": jsonResponse("Paginated deliveries", PaginatedDeliveriesSchema), ...errorResponses },
     },
   },
@@ -342,25 +343,10 @@ export const restPaths = {
       responses: { "200": jsonResponse("Replay result", WebhookDeliveryDTOSchema), ...errorResponses },
     },
   },
-};
+} satisfies ZodOpenApiPathsObject;
 
 // -- Helpers --
 
 function pathParam(name: string, description: string) {
   return { name, in: "path" as const, required: true, schema: { type: "string" as const }, description };
-}
-
-/**
- * Extracts query parameter definitions from a Zod object schema.
- * Reads the shape keys and produces OpenAPI parameter objects.
- */
-function schemaToQueryParams(schema: { shape?: Record<string, unknown> }) {
-  if (!schema.shape) return [];
-  return Object.keys(schema.shape).map((key) => ({
-    name: key,
-    in: "query" as const,
-    required: false,
-    schema: { type: "string" as const },
-    description: key,
-  }));
 }
