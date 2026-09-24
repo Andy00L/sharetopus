@@ -94,7 +94,7 @@ export const REST_MEDIA_SECTION: DocsSection = {
       path: "/api/v1/media/attach-from-url",
       title: "Attach media from a URL",
       description:
-        "Downloads media from a public URL into Sharetopus storage server-side. SSRF-protected (private address ranges are blocked) and restricted to image and video content types. The filename is inferred from the URL when omitted.",
+        "Downloads media from a public URL into Sharetopus storage server-side. SSRF-protected (private address ranges are blocked) and restricted to image and video content types. The stored file gets a random name; use the returned storage_path.",
       sourceRef:
         "src/app/api/v1/media/attach-from-url/route.ts, mediaSchemas.ts (AttachFromUrlInputSchema)",
       paramTables: [
@@ -111,7 +111,8 @@ export const REST_MEDIA_SECTION: DocsSection = {
               name: "filename",
               type: "string",
               required: false,
-              description: "1 to 255 characters. Inferred from the URL when omitted.",
+              description:
+                "1 to 255 characters. Accepted for compatibility and not used: the storage path is always your account folder plus a random id.",
             },
           ],
         },

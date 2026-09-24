@@ -1,13 +1,12 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
-
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
+import { buildAttachedMediaPath } from "../_shared/buildAttachedMediaPath";
 import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
 import { safeUserFetch } from "../_shared/safeUserFetch";
@@ -164,15 +163,11 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           };
         }
 
-        // Build the storage key from a random UUID and a whitelisted
-        // extension derived from the verified content type. The user
-        // filename and URL basename are never interpolated into the object
-        // key: that prevents path-traversal / tenant-prefix escape and
-        // mirrors generateServerSignedUploadUrl.
-        const ext = fetchResult.contentType.startsWith("video/")
-          ? "mp4"
-          : "jpg";
-        const storagePath = `${ctx.principal.principalId}/${randomUUID()}.${ext}`;
+        // The key never includes the filename or the URL basename.
+        const storagePath = buildAttachedMediaPath(
+          ctx.principal.principalId,
+          fetchResult.contentType,
+        );
 
         try {
           const { error: uploadError } = await adminSupabase.storage

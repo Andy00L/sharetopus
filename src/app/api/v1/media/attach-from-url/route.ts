@@ -4,6 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { AttachFromUrlInputSchema } from "@/lib/api/rest/validation/mediaSchemas";
+import { buildAttachedMediaPath } from "@/lib/mcp/_shared/buildAttachedMediaPath";
 import { safeUserFetch } from "@/lib/mcp/_shared/safeUserFetch";
 import { getUploadLimitsForPrincipal } from "@/lib/mcp/_shared/getUploadLimitsForPrincipal";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
@@ -109,19 +110,12 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 7: determine filename and upload path.
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(validatedInput.url);
-    } catch {
-      parsedUrl = new URL("https://unknown/media");
-    }
-    const urlBasename = parsedUrl.pathname.split("/").pop() ?? "media";
-    const fallbackExt = isVideo ? ".mp4" : ".jpg";
-    const resolvedFilename =
-      validatedInput.filename ??
-      (urlBasename.includes(".") ? urlBasename : `${urlBasename}${fallbackExt}`);
-    const storagePath = `${ctx.principal.principalId}/${Date.now()}_${resolvedFilename}`;
+    // Step 7: upload path. The key never includes the filename or the URL
+    // basename: interpolating them let "../other-user/x.jpg" shape the key.
+    const storagePath = buildAttachedMediaPath(
+      ctx.principal.principalId,
+      fetchResult.contentType,
+    );
 
     // Step 8: upload to Supabase storage.
     const { error: uploadError } = await adminSupabase.storage

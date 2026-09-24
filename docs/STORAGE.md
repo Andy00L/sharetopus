@@ -30,15 +30,14 @@ Media files (images and videos) are stored in Supabase Storage. Upload paths exi
 
 **Bucket name:** `scheduled-videos`, or `SUPABASE_BUCKET_NAME` when set. Every storage call (uploads, downloads, view URLs, the media proxy, deletes, the orphan sweep, the storage quota) reads it from one constant, `MEDIA_BUCKET` in `src/lib/storage/mediaBucket.ts`, so they cannot point at different buckets.
 
-**Storage path format:** Two patterns are used:
+**Storage path format:** `{principalId}/{randomUUID()}.{ext}` on every upload path:
 
-- `generateServerSignedUploadUrl` and `request_upload_url`: `{principalId}/{randomUUID()}.{ext}`
-- `attach_media_from_url`: `{principalId}/{timestamp}_{filename}`
+- `generateServerSignedUploadUrl` (web, `request_upload_url`, `POST /v1/media/upload-url`): the extension comes from the filename.
+- `buildAttachedMediaPath` (`attach_media_from_url`, `POST /v1/media/attach-from-url`): the extension comes from the verified content type (`mp4` for video, `jpg` otherwise). The filename and the URL are never part of the key, so no caller value can shape it or point outside the principal's folder.
 
-The `principalId` is the Clerk user ID (e.g., `user_2abc123def456`). Example paths:
+The `principalId` is the Clerk user ID (e.g., `user_2abc123def456`). Example path:
 
 - `user_2abc123def456/a1b2c3d4-e5f6-7890-abcd-ef1234567890.mp4`
-- `user_2abc123def456/1715400000000_photo.jpg`
 
 Every file operation validates that the path starts with the authenticated user's principal ID. This prevents cross-user access at the application layer.
 
