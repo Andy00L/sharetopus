@@ -102,14 +102,16 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function handleSubscriptionEvent(
-  event: Stripe.Event,
-  type: "created" | "updated" | "deleted",
-) {
-  const subscription = event.data.object as Stripe.Subscription;
-  const stripeCustomerId = subscription.customer as string;
-
-  const { data: userRows, error: userError } = await runQuery(
+/**
+ * The id of the user a Stripe customer belongs to, or null when no user does.
+ * A failed lookup throws: POST then releases the claim and answers 500, so
+ * Stripe retries. Answering 200 there dropped the event for good, and with it
+ * the record of a paid subscription.
+ */
+async function findUserIdForCustomer(
+  stripeCustomerId: string,
+): Promise<string | null> {
+  const { data: userRows, error } = await runQuery(
     db
       .select({ id: users.id })
       .from(users)
@@ -117,16 +119,35 @@ async function handleSubscriptionEvent(
       .limit(1),
   );
 
-  const userData = userRows?.[0];
-  if (userError || !userData) {
-    console.error(
-      `[Stripe webhook] No user for customer ${stripeCustomerId}: ${userError?.message ?? "not found"}`,
+  if (error) {
+    throw new Error(
+      `User lookup failed for customer ${stripeCustomerId}: ${error.message}`,
     );
-    // Permanent error: 200 so Stripe stops retrying.
+  }
+  return userRows[0]?.id ?? null;
+}
+
+async function handleSubscriptionEvent(
+  event:
+    | Stripe.CustomerSubscriptionCreatedEvent
+    | Stripe.CustomerSubscriptionUpdatedEvent
+    | Stripe.CustomerSubscriptionDeletedEvent,
+  type: "created" | "updated" | "deleted",
+) {
+  const subscription = event.data.object;
+  // Webhook payloads carry the customer id; the object form only appears when expanded.
+  const stripeCustomerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : subscription.customer.id;
+
+  const userId = await findUserIdForCustomer(stripeCustomerId);
+  if (!userId) {
+    console.error(`[Stripe webhook] No user for customer ${stripeCustomerId}`);
+    // No user will ever match this customer: 200 so Stripe stops retrying.
     return ok({ no_user_match: true });
   }
 
-  const userId = userData.id;
   const priceId = subscription.items.data[0]?.price?.id ?? null;
   const periodEndMs =
     Math.min(
@@ -250,30 +271,27 @@ async function handleSubscriptionEvent(
 }
 
 async function handleInvoiceEvent(
-  event: Stripe.Event,
+  event: Stripe.InvoicePaymentSucceededEvent | Stripe.InvoicePaymentFailedEvent,
   status: "succeeded" | "failed",
 ) {
-  const invoice = event.data.object as Stripe.Invoice;
-  const stripeCustomerId = invoice.customer as string;
+  const invoice = event.data.object;
+  const stripeCustomerId =
+    typeof invoice.customer === "string"
+      ? invoice.customer
+      : (invoice.customer?.id ?? null);
 
-  const { data: userRows, error: userError } = await runQuery(
-    db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.stripe_customer_id, stripeCustomerId))
-      .limit(1),
-  );
-
-  const userData = userRows?.[0];
-  if (userError || !userData) {
+  const userId = stripeCustomerId
+    ? await findUserIdForCustomer(stripeCustomerId)
+    : null;
+  if (!userId) {
     console.error(
-      `[Stripe webhook] No user for invoice customer ${stripeCustomerId}: ${userError?.message ?? "not found"}`,
+      `[Stripe webhook] No user for invoice customer ${stripeCustomerId ?? "(none)"}`,
     );
     return ok({ no_user_match: true });
   }
 
   const invoiceData = {
-    user_id: userData.id,
+    user_id: userId,
     stripe_invoice_id: invoice.id,
     amount_paid_cents: status === "succeeded" ? invoice.amount_paid : null,
     currency: invoice.currency,
@@ -295,5 +313,5 @@ async function handleInvoiceEvent(
     throw new Error(`Failed to upsert invoice: ${error.message}`);
   }
 
-  return ok({ invoice: status, user_id: userData.id });
+  return ok({ invoice: status, user_id: userId });
 }

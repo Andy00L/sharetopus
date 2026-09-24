@@ -59,16 +59,15 @@ sequenceDiagram
     Webhook->>DB: UPSERT stripe_subscriptions
     Webhook->>DB: Resume cancelled posts, promote OAuth clients
     Webhook->>Webhook: Invalidate caches
-    Webhook->>Webhook: releaseWebhookEvent
     Stripe->>Webhook: invoice.payment_succeeded
     Webhook->>DB: INSERT stripe_invoices (amount_paid_cents)
 ```
 
-Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to guarantee idempotent handling of each Stripe event.
+Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to guarantee idempotent handling of each Stripe event. When a database step fails, the user lookup included, the handler releases the claim and answers 500, so Stripe delivers the event again. An event whose customer matches no user answers 200 with `no_user_match`, because no retry can change that.
 
 ## Webhook events
 
-`src/app/api/webhooks/stripe/route.ts` (268 lines) processes five event types:
+`src/app/api/webhooks/stripe/route.ts` processes five event types:
 
 | Event | Action |
 |-------|--------|
@@ -250,7 +249,7 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | File | Purpose |
 |------|---------|
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
-| `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler (268 lines) |
+| `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
 | `src/actions/server/stripe/checkUserSubscription.ts` | `checkActiveSubscription`, subscription status checks |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
