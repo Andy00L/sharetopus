@@ -4,6 +4,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import type { PostRejection } from "@/lib/types/postBatch";
 
 /**
  * The platform of each listed social account the principal owns, keyed by
@@ -52,11 +53,21 @@ export async function loadOwnedAccountPlatforms(
 export function describeAccountMismatch(
   platformByAccountId: Map<string, string>,
   post: { socialAccountId: string; platform: string },
-): string | null {
+): PostRejection | null {
   const accountPlatform = platformByAccountId.get(post.socialAccountId);
-  if (!accountPlatform) return "You do not own this social account.";
+  if (!accountPlatform) {
+    return {
+      socialAccountId: post.socialAccountId,
+      code: "not_owned",
+      reason: "You do not own this social account.",
+    };
+  }
   if (accountPlatform !== post.platform) {
-    return `Account platform is ${accountPlatform}, post declared ${post.platform}.`;
+    return {
+      socialAccountId: post.socialAccountId,
+      code: "platform_mismatch",
+      reason: `Account platform is ${accountPlatform}, post declared ${post.platform}.`,
+    };
   }
   return null;
 }

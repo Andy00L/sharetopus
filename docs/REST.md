@@ -153,13 +153,15 @@ Error codes:
 |------|------------|-------------|
 | `unauthorized` | 401 | Invalid, expired, or revoked API key |
 | `forbidden` | 403 | Valid key but insufficient permissions |
-| `not_found` | 404 | Resource does not exist or not owned by principal |
-| `validation_error` | 400 | Request body or parameters failed Zod validation |
-| `rate_limited` | 429 | Per-principal rate limit exceeded |
+| `not_found` | 404 | Resource does not exist or not owned by principal, including the social account a post names |
+| `validation_error` | 400 | Request body or parameters failed validation, or a post breaks a platform rule (media type, required title or target, caption length, account on another platform) |
+| `rate_limited` | 429 | Per-principal rate limit exceeded, or a platform's daily scheduling quota reached |
 | `internal_error` | 500 | Unexpected server error |
-| `service_unavailable` | 503 | The API key could not be checked (a database read failed). The key was not rejected; retry with it. |
+| `service_unavailable` | 503 | A check the request needed could not run (API key lookup, account ownership read, rate limiter). Nothing was rejected or written; retry after `retry_after_seconds`. |
 
 Rate limit and 503 responses include `retry_after_seconds` in `details`.
+
+When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
 
 ---
 

@@ -9,6 +9,12 @@ export type RestErrorCode =
   | "internal_error"
   | "service_unavailable";
 
+/**
+ * Seconds a caller waits before retrying a 503: something the request
+ * needed (an API key lookup, an ownership read) could not be checked.
+ */
+export const SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
+
 const HTTP_STATUS_BY_CODE: Record<RestErrorCode, number> = {
   unauthorized: 401,
   forbidden: 403,

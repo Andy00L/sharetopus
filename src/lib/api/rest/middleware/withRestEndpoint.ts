@@ -7,15 +7,15 @@ import { resolveRestApiKey } from "../auth/resolveRestApiKey";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
-import { restErrorResponse } from "../errors/restErrorResponse";
+import {
+  restErrorResponse,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from "../errors/restErrorResponse";
 import {
   writeRestAuditLog,
   type RestAuditOutcome,
 } from "../audit/writeRestAuditLog";
 import type { RestApiKeyContext } from "../auth/types";
-
-/** Seconds a caller waits before retrying when its API key could not be checked. */
-const AUTH_RETRY_AFTER_SECONDS = 30;
 
 /**
  * Union return type for REST handlers.
@@ -100,7 +100,7 @@ export function withRestEndpoint(
         "service_unavailable",
         "Could not verify the API key right now. Retry shortly.",
         requestId,
-        { retry_after_seconds: AUTH_RETRY_AFTER_SECONDS },
+        { retry_after_seconds: SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS },
       );
     }
     if (resolution.status === "rejected") {

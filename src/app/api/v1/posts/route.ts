@@ -17,6 +17,7 @@ import {
 } from "@/lib/api/rest/adapters/restInputToScheduledPost";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import { db, runQuery } from "@/db/client";
@@ -28,8 +29,11 @@ import { scheduled_posts } from "@/db/schema";
  * scheduled_at omitted -> directPostBatch (publishes immediately).
  * scheduled_at provided -> schedulePostBatch.
  *
- * Returns 200 with PostDTO on success, 400 on Zod validation failure,
- * 500 on unexpected DB errors.
+ * Returns 200 with PostDTO on success. A refused post answers what the
+ * caller can act on (restPostBatchFailureResponse): 400 for invalid input
+ * or an account on another platform, 404 for an account that is not the
+ * caller's, 429 for the rate limit or the platform's daily quota, 503 when
+ * a check could not run. Only a server failure answers 500.
  */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
@@ -80,14 +84,7 @@ export const POST = withRestEndpoint({
       );
 
       if (!batchResult.success) {
-        const firstRejection = batchResult.details?.rejected?.[0];
-        const failureMessage =
-          firstRejection?.reason ?? batchResult.message;
-        return restErrorResponse(
-          "internal_error",
-          failureMessage,
-          ctx.requestId,
-        );
+        return restPostBatchFailureResponse(batchResult, ctx.requestId);
       }
 
       // directPostBatch returns eventIds, not post IDs. Look up the
@@ -144,14 +141,7 @@ export const POST = withRestEndpoint({
     );
 
     if (!batchResult.success) {
-      const firstRejection = batchResult.details?.rejected?.[0];
-      const failureMessage =
-        firstRejection?.reason ?? batchResult.message;
-      return restErrorResponse(
-        "internal_error",
-        failureMessage,
-        ctx.requestId,
-      );
+      return restPostBatchFailureResponse(batchResult, ctx.requestId);
     }
 
     // schedulePostBatch returns scheduleIds which are scheduled_posts.id.

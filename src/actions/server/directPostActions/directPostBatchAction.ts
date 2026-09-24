@@ -20,6 +20,7 @@ export async function directPostBatchAction(
   if (!userId) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "User authentication required. Please sign in to continue.",
       batchId: batchId ?? "",
       details: { total: 0, dispatched: 0, duplicates: 0, rejected: [] },
@@ -31,6 +32,7 @@ export async function directPostBatchAction(
   if (!authResult) {
     return {
       success: false,
+      failure: "unauthenticated",
       message: "Authentication validation failed. Please sign in again.",
       batchId: batchId ?? "",
       details: { total: 0, dispatched: 0, duplicates: 0, rejected: [] },

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { restInputToSchedulePostData } from "@/lib/api/rest/adapters/restInputToScheduledPost";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
 import { PostBulkInputSchema } from "@/lib/api/rest/validation/postPatchSchemas";
@@ -70,13 +71,9 @@ export const POST = withRestEndpoint({
       ctx.requestId,
     );
 
+    // Nothing was scheduled: answer with the status the caller can act on.
     if (!batchResult.success) {
-      return restErrorResponse(
-        "internal_error",
-        batchResult.message,
-        ctx.requestId,
-        { batch_id: sharedBatchId },
-      );
+      return restPostBatchFailureResponse(batchResult, ctx.requestId);
     }
 
     // Step 6: fetch created rows to return as PostDTOs.

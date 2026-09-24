@@ -109,15 +109,16 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
     navLabel: "Errors",
     title: "Error codes",
     summary:
-      "Every error response uses one envelope: { error: { code, message, details? }, request_id }. details appears only on validation errors, rate limits and 503s.",
-    sourceRef: "src/lib/api/rest/errors/restErrorResponse.ts",
+      "Every error response uses one envelope: { error: { code, message, details? }, request_id }. details appears on validation errors, refused posts, rate limits and 503s. A refused post lists each refusal in details.rejected with its code (invalid_input, not_owned or platform_mismatch) and reason; a client mistake never answers 500.",
+    sourceRef:
+      "src/lib/api/rest/errors/restErrorResponse.ts, restPostBatchFailureResponse.ts",
     table: {
       columns: ["Status", "Code", "Meaning"],
       rows: [
         [
           "400",
           "validation_error",
-          "The body or query failed schema validation, or the JSON is malformed. details carries the field-level issues.",
+          "The body or query failed schema validation, the JSON is malformed, or a post breaks a platform rule (media type, required title or target, caption length, account on another platform). details carries the field-level issues or the refused posts.",
         ],
         [
           "401",
@@ -132,9 +133,13 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
         [
           "404",
           "not_found",
-          "The resource does not exist or is not owned by your account. Unowned resources return 404, never 403.",
+          "The resource does not exist or is not owned by your account, including the social account a post names. Unowned resources return 404, never 403.",
         ],
-        ["429", "rate_limited", "Per-key rate limit exceeded. See Rate limits."],
+        [
+          "429",
+          "rate_limited",
+          "Per-key rate limit exceeded, or a platform's daily scheduling quota reached. See Rate limits.",
+        ],
         [
           "500",
           "internal_error",
@@ -143,7 +148,7 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
         [
           "503",
           "service_unavailable",
-          "The API key could not be checked because of a server-side failure. The key was not rejected: retry with the same key after retry_after_seconds (in details).",
+          "A check the request needed could not run because of a server-side failure (the API key lookup, an ownership read, the rate limiter). Nothing was rejected or written: retry after retry_after_seconds (in details).",
         ],
       ],
     },

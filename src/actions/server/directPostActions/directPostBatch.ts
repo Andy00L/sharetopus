@@ -15,6 +15,7 @@ import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents"
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
 import type { PlatformOptions } from "@/lib/types/dbTypes";
+import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
@@ -42,8 +43,12 @@ export type DirectPostData = {
   postOptions?: Record<string, unknown> | null;
 };
 
+/**
+ * A failed batch carries `failure` (see PostBatchFailure) so each caller can
+ * answer in its own terms; `message` is safe to show and never carries a
+ * database error.
+ */
 export type DirectPostBatchResult = {
-  success: boolean;
   message: string;
   batchId: string;
   resetIn?: number;
@@ -51,10 +56,10 @@ export type DirectPostBatchResult = {
     total: number;
     dispatched: number;
     duplicates: number;
-    rejected: { socialAccountId: string; reason: string }[];
+    rejected: PostRejection[];
   };
   eventIds: string[];
-};
+} & ({ success: true } | { success: false; failure: PostBatchFailure });
 
 /**
  * Dispatches N direct-post events in a single batch. Shared core for
@@ -94,7 +99,7 @@ export async function directPostBatch(
     total: 0,
     dispatched: 0,
     duplicates: 0,
-    rejected: [] as { socialAccountId: string; reason: string }[],
+    rejected: [] as PostRejection[],
   };
 
   try {
@@ -102,6 +107,7 @@ export async function directPostBatch(
     if (!posts || posts.length === 0) {
       return {
         success: false,
+        failure: "invalid_request",
         message: "No posts provided.",
         batchId,
         details: emptyDetails,
@@ -111,6 +117,7 @@ export async function directPostBatch(
     if (posts.length > MAX_BATCH_SIZE) {
       return {
         success: false,
+        failure: "invalid_request",
         message: `Batch size exceeds maximum of ${MAX_BATCH_SIZE} posts.`,
         batchId,
         details: { ...emptyDetails, total: posts.length },
@@ -118,7 +125,8 @@ export async function directPostBatch(
       };
     }
 
-    // Step 1: rate limit
+    // Step 1: rate limit. A limiter that could not answer is not the
+    // caller's doing, so it is not reported as "too many requests".
     const rateCheck = await checkRateLimit(
       `${source}_direct_post_batch`,
       principalId,
@@ -126,9 +134,13 @@ export async function directPostBatch(
       RATE_WINDOW_SECONDS,
     );
     if (!rateCheck.success) {
+      const isLimited = rateCheck.reason === "limited";
       return {
         success: false,
-        message: "Too many post requests. Please try again later.",
+        failure: isLimited ? "rate_limited" : "unavailable",
+        message: isLimited
+          ? "Too many post requests. Please try again later."
+          : "Could not check the rate limit. Please try again.",
         batchId,
         resetIn: rateCheck.resetIn,
         details: { ...emptyDetails, total: posts.length },
@@ -137,7 +149,7 @@ export async function directPostBatch(
     }
 
     // Step 2: per-post validation, partial success
-    const rejected: { socialAccountId: string; reason: string }[] = [];
+    const rejected: PostRejection[] = [];
     const validPosts: DirectPostData[] = [];
 
     for (const post of posts) {
@@ -145,6 +157,7 @@ export async function directPostBatch(
       if (validationError) {
         rejected.push({
           socialAccountId: post.socialAccountId ?? "unknown",
+          code: "invalid_input",
           reason: validationError,
         });
         continue;
@@ -155,6 +168,7 @@ export async function directPostBatch(
     if (validPosts.length === 0) {
       return {
         success: false,
+        failure: "rejected",
         message: "All posts failed validation.",
         batchId,
         details: {
@@ -173,9 +187,13 @@ export async function directPostBatch(
       principalId,
     );
     if (!ownership.success) {
+      console.error(
+        `[directPostBatch] [req=${requestId ?? "?"}] ${ownership.message}`,
+      );
       return {
         success: false,
-        message: ownership.message,
+        failure: "unavailable",
+        message: "Could not check account ownership. Please try again.",
         batchId,
         details: {
           total: posts.length,
@@ -191,7 +209,7 @@ export async function directPostBatch(
     for (const post of validPosts) {
       const mismatch = describeAccountMismatch(ownership.platformByAccountId, post);
       if (mismatch) {
-        rejected.push({ socialAccountId: post.socialAccountId, reason: mismatch });
+        rejected.push(mismatch);
       } else {
         ownedPosts.push(post);
       }
@@ -200,6 +218,7 @@ export async function directPostBatch(
     if (ownedPosts.length === 0) {
       return {
         success: false,
+        failure: "rejected",
         message: "No posts owned by the principal.",
         batchId,
         details: {
@@ -215,9 +234,13 @@ export async function directPostBatch(
     // Step 4: mint URLs cached by media path
     const urlResult = await buildMediaUrlsCached(ownedPosts, principalId);
     if (!urlResult.success) {
+      console.error(
+        `[directPostBatch] [req=${requestId ?? "?"}] ${urlResult.message}`,
+      );
       return {
         success: false,
-        message: urlResult.message,
+        failure: "internal",
+        message: "Could not prepare the media for publishing. Please try again.",
         batchId,
         details: {
           total: posts.length,
@@ -250,7 +273,8 @@ export async function directPostBatch(
       );
       return {
         success: false,
-        message: dispatch.message,
+        failure: "internal",
+        message: "Could not dispatch the post. Please try again.",
         batchId,
         details: {
           total: posts.length,
@@ -283,6 +307,7 @@ export async function directPostBatch(
     );
     return {
       success: false,
+      failure: "internal",
       message: "Unexpected error dispatching posts.",
       batchId,
       details: emptyDetails,

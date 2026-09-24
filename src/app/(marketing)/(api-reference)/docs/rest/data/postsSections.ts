@@ -231,7 +231,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts",
       title: "Create a post",
       description:
-        "Schedules a post (scheduled_at in the future) or publishes immediately (scheduled_at omitted). Validation is platform-aware: unsupported media types, a missing title where the platform requires one, and a missing required target (Pinterest board, subreddit, Lemmy community, Google Business location) are rejected with 400 validation_error. A post whose account is on another platform than platform is refused before anything is scheduled.",
+        "Schedules a post (scheduled_at in the future) or publishes immediately (scheduled_at omitted). Validation is platform-aware: unsupported media types, a missing title where the platform requires one, and a missing required target (Pinterest board, subreddit, Lemmy community, Google Business location) are rejected with 400 validation_error, as is a post whose account is on another platform; an account that is not yours answers 404. details.rejected carries each refusal's code and reason.",
       sourceRef:
         "src/app/api/v1/posts/route.ts (POST), src/lib/api/rest/validation/schemas.ts (PostCreateInputSchema)",
       paramTables: [CREATE_BODY_FIELDS, POST_DTO_FIELDS],
@@ -382,7 +382,8 @@ export const REST_POSTS_SECTION: DocsSection = {
               name: "rejected",
               type: "object[]",
               required: true,
-              description: "Items that failed validation, with reasons.",
+              description:
+                "Refused items: socialAccountId, code (invalid_input, not_owned or platform_mismatch) and reason. When every item is refused, the call answers the first refusal's status instead of 200.",
             },
             {
               name: "posts",

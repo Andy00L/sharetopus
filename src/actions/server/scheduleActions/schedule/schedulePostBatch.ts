@@ -12,6 +12,7 @@ import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts } from "@/db/schema";
 import type { CreatedVia, Json } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
+import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
@@ -24,8 +25,12 @@ const DEFAULT_PLATFORM_DAILY_CAP = 50;
 
 type ScheduledPostInsertRow = typeof scheduled_posts.$inferInsert;
 
+/**
+ * A failed batch carries `failure` (see PostBatchFailure) so each caller can
+ * answer in its own terms; `message` is safe to show and never carries a
+ * database error.
+ */
 export type SchedulePostBatchResult = {
-  success: boolean;
   message: string;
   batchId: string;
   resetIn?: number;
@@ -33,10 +38,10 @@ export type SchedulePostBatchResult = {
     total: number;
     inserted: number;
     duplicates: number;
-    rejected: { socialAccountId: string; reason: string }[];
+    rejected: PostRejection[];
   };
   scheduleIds: string[];
-};
+} & ({ success: true } | { success: false; failure: PostBatchFailure });
 
 /**
  * Schedules N posts in a single batch. Shared core for web/MCP/x402.
@@ -75,13 +80,19 @@ export async function schedulePostBatch(
     `[schedulePostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s) requested, batchId=${batchId}`,
   );
 
-  const emptyDetails = { total: 0, inserted: 0, duplicates: 0, rejected: [] };
+  const emptyDetails = {
+    total: 0,
+    inserted: 0,
+    duplicates: 0,
+    rejected: [] as PostRejection[],
+  };
 
   try {
     // Step 0: shape checks
     if (!posts || posts.length === 0) {
       return {
         success: false,
+        failure: "invalid_request",
         message: "No posts provided.",
         batchId,
         details: emptyDetails,
@@ -92,6 +103,7 @@ export async function schedulePostBatch(
     if (posts.length > MAX_BATCH_SIZE) {
       return {
         success: false,
+        failure: "invalid_request",
         message: `Batch size exceeds maximum of ${MAX_BATCH_SIZE} posts.`,
         batchId,
         details: { ...emptyDetails, total: posts.length },
@@ -99,7 +111,8 @@ export async function schedulePostBatch(
       };
     }
 
-    // Step 1: rate limit (anti-spam, not anti-batch)
+    // Step 1: rate limit (anti-spam, not anti-batch). A limiter that could
+    // not answer is not the caller's doing, so it is not "too many requests".
     const rateLimitScope = `${source}_schedule_post_batch`;
     const rateCheck = await checkRateLimit(
       rateLimitScope,
@@ -108,9 +121,13 @@ export async function schedulePostBatch(
       RATE_WINDOW_SECONDS,
     );
     if (!rateCheck.success) {
+      const isLimited = rateCheck.reason === "limited";
       return {
         success: false,
-        message: "Too many schedule requests. Please try again later.",
+        failure: isLimited ? "rate_limited" : "unavailable",
+        message: isLimited
+          ? "Too many schedule requests. Please try again later."
+          : "Could not check the rate limit. Please try again.",
         batchId,
         resetIn: rateCheck.resetIn,
         details: { ...emptyDetails, total: posts.length },
@@ -119,7 +136,7 @@ export async function schedulePostBatch(
     }
 
     // Step 2: per-post field validation, partial success
-    const rejectedPosts: { socialAccountId: string; reason: string }[] = [];
+    const rejectedPosts: PostRejection[] = [];
     const validPosts: SchedulePostData[] = [];
 
     for (const post of posts) {
@@ -127,6 +144,7 @@ export async function schedulePostBatch(
       if (validationError) {
         rejectedPosts.push({
           socialAccountId: post.socialAccountId ?? "unknown",
+          code: "invalid_input",
           reason: validationError,
         });
         continue;
@@ -137,6 +155,7 @@ export async function schedulePostBatch(
     if (validPosts.length === 0) {
       return {
         success: false,
+        failure: "rejected",
         message: "All posts failed validation.",
         batchId,
         details: {
@@ -161,7 +180,8 @@ export async function schedulePostBatch(
       );
       return {
         success: false,
-        message: ownershipResult.message,
+        failure: "unavailable",
+        message: "Could not check account ownership. Please try again.",
         batchId,
         details: {
           total: posts.length,
@@ -180,7 +200,7 @@ export async function schedulePostBatch(
         post,
       );
       if (mismatch) {
-        rejectedPosts.push({ socialAccountId: post.socialAccountId, reason: mismatch });
+        rejectedPosts.push(mismatch);
       } else {
         ownedPosts.push(post);
       }
@@ -192,6 +212,7 @@ export async function schedulePostBatch(
       );
       return {
         success: false,
+        failure: "rejected",
         message: "No posts owned by the principal.",
         batchId,
         details: {
@@ -213,6 +234,7 @@ export async function schedulePostBatch(
     if (!quotaCheck.success) {
       return {
         success: false,
+        failure: quotaCheck.failure,
         message: quotaCheck.message,
         batchId,
         details: {
@@ -254,7 +276,8 @@ export async function schedulePostBatch(
       );
       return {
         success: false,
-        message: `Failed to insert posts: ${upsertError.message}`,
+        failure: "internal",
+        message: "Could not save the posts. Please try again.",
         batchId,
         details: {
           total: posts.length,
@@ -351,6 +374,7 @@ export async function schedulePostBatch(
     );
     return {
       success: false,
+      failure: "internal",
       message: "Unexpected error scheduling posts.",
       batchId,
       details: emptyDetails,
@@ -415,7 +439,9 @@ export async function preflightSchedulePost(
 
   const quotaCheck = await checkPlatformDailyQuotas([post], principalId);
   if (!quotaCheck.success) {
-    return { ok: false, httpStatus: 429, errorKind: "platform_quota_exceeded", message: quotaCheck.message };
+    return quotaCheck.failure === "quota_exceeded"
+      ? { ok: false, httpStatus: 429, errorKind: "platform_quota_exceeded", message: quotaCheck.message }
+      : { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: quotaCheck.message };
   }
 
   // The insert skips an already-used key and reports success, so a paid
@@ -514,7 +540,10 @@ async function checkPlatformDailyQuotas(
   posts: SchedulePostData[],
   principalId: string,
   requestId?: string | null,
-): Promise<{ success: true } | { success: false; message: string }> {
+): Promise<
+  | { success: true }
+  | { success: false; failure: "quota_exceeded" | "unavailable"; message: string }
+> {
   const platforms = [...new Set(posts.map((post) => post.platform))];
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -541,7 +570,7 @@ async function checkPlatformDailyQuotas(
         `[schedulePostBatch] [req=${requestId ?? "?"}] Quota count failed for ${platform}:`,
         countError.message,
       );
-      return { success: false, message: "Platform quota lookup failed." };
+      return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
     }
 
     const { data: quotaRows, error: quotaError } = await runQuery(
@@ -557,7 +586,7 @@ async function checkPlatformDailyQuotas(
         `[schedulePostBatch] [req=${requestId ?? "?"}] Quota fetch failed for ${platform}:`,
         quotaError.message,
       );
-      return { success: false, message: "Platform quota lookup failed." };
+      return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
     }
 
     // No platform_quotas row for this platform: the default cap applies.
@@ -568,6 +597,7 @@ async function checkPlatformDailyQuotas(
     if (totalAfter > dailyCap) {
       return {
         success: false,
+        failure: "quota_exceeded",
         message: `Platform quota exceeded for ${platform}. ${existingCount} already scheduled in next 24h, adding ${postsForPlatform} would exceed daily cap of ${dailyCap}.`,
       };
     }
