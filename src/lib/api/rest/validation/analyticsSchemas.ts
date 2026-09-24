@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
-import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
+import {
+  CreatedAtCursorSchema,
+  MetricDateCursorSchema,
+} from "@/lib/api/rest/pagination";
 
 const AnalyticsPlatformEnum = z.enum(POSTING_PLATFORMS);
 
@@ -13,11 +16,9 @@ export const AnalyticsQuerySchema = z.object({
   content_id: z.string().optional(),
   days: z.coerce.number().int().min(1).max(90).default(30),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  // This endpoint pages on metric_date, a date column, so its next_cursor
-  // is a plain date such as 2026-09-23.
-  cursor: z.iso
-    .date({ error: "cursor must be a next_cursor value from a previous page" })
-    .optional(),
+  // This endpoint pages on (metric_date, id): every row of a day shares its
+  // metric_date.
+  cursor: MetricDateCursorSchema.optional(),
 });
 
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuerySchema>;

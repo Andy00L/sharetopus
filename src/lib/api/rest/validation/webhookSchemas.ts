@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { WebhookEventTypeEnum } from "@/lib/api/rest/webhooks/eventTypes";
-import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
+import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
 
 /**
  * Body schema for POST /v1/webhooks (create subscription).

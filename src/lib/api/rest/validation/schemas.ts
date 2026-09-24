@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
 import {
   SCHEDULABLE_PLATFORMS,
   platformSupportsMediaType,
@@ -134,20 +135,8 @@ export const PostCreateInputSchema = z
 export type PostCreateInput = z.infer<typeof PostCreateInputSchema>;
 
 /**
- * `cursor` of the list endpoints paginated on created_at: the next_cursor a
- * previous page returned, the last row's created_at as a timestamptz string
- * (e.g. 2026-09-23T12:34:56.123456+00:00, so the "+" must be URL-encoded).
- * Parsing it here makes a malformed cursor a 400. Unparsed, it reached
- * Postgres and the failed timestamp cast came back as a 500.
- */
-export const CreatedAtCursorSchema = z.iso.datetime({
-  offset: true,
-  error: "cursor must be a next_cursor value from a previous page, URL-encoded",
-});
-
-/**
  * Query schema for GET /v1/posts.
- * Cursor pagination on created_at. Cursor value is the last item's created_at.
+ * Keyset pagination on (created_at, id); see src/lib/api/rest/pagination.ts.
  */
 export const PostListQuerySchema = z.object({
   status: z

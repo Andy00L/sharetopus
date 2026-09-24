@@ -1,7 +1,12 @@
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
+import {
+  newestFirst,
+  rowsAfter,
+  toListPage,
+} from "@/lib/api/rest/pagination";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toAnalyticsDTO } from "@/lib/api/rest/dto/toAnalyticsDTO";
 import { AnalyticsQuerySchema } from "@/lib/api/rest/validation/analyticsSchemas";
@@ -13,7 +18,7 @@ import { analytics_metrics } from "@/db/schema";
  *
  * Mirrors the MCP get_account_analytics query shape: reads
  * analytics_metrics filtered by principal, platform, content_id,
- * and lookback days. Cursor pagination on metric_date.
+ * and lookback days. Keyset pagination on (metric_date, id).
  *
  * Note: analytics_metrics is not currently populated by any cron.
  * Endpoints ship and return data:[] until the analytics pipeline
@@ -59,12 +64,10 @@ export const GET = withRestEndpoint({
             query.content_id
               ? eq(analytics_metrics.content_id, query.content_id)
               : undefined,
-            query.cursor
-              ? lt(analytics_metrics.metric_date, query.cursor)
-              : undefined,
+            rowsAfter(analytics_metrics.metric_date, analytics_metrics.id, query.cursor),
           ),
         )
-        .orderBy(desc(analytics_metrics.metric_date))
+        .orderBy(...newestFirst(analytics_metrics.metric_date, analytics_metrics.id))
         .limit(query.limit + 1),
     );
     if (queryError) {
@@ -80,15 +83,13 @@ export const GET = withRestEndpoint({
     }
 
     // Step 4: compute pagination.
-    const hasMore = fetchedRows.length > query.limit;
-    const pagedRows = hasMore
-      ? fetchedRows.slice(0, query.limit)
-      : fetchedRows;
-    const nextCursor = hasMore
-      ? pagedRows[pagedRows.length - 1].metric_date
-      : null;
+    const { pageRows, nextCursor } = toListPage(
+      fetchedRows,
+      query.limit,
+      (metricRow) => metricRow.metric_date,
+    );
 
-    const analyticsDtos = pagedRows.map(toAnalyticsDTO);
+    const analyticsDtos = pageRows.map(toAnalyticsDTO);
 
     return {
       response: NextResponse.json(

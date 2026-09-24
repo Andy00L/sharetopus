@@ -1,7 +1,12 @@
-import { and, desc, eq, isNull, lt } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
+import {
+  newestFirst,
+  rowsAfter,
+  toListPage,
+} from "@/lib/api/rest/pagination";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
 import { ConnectionListQuerySchema } from "@/lib/api/rest/validation/connectionSchemas";
@@ -12,7 +17,7 @@ import { social_accounts } from "@/db/schema";
  * GET /v1/connections -- list connected social accounts.
  *
  * Principal-scoped. Tokens stripped via toConnectionDTO.
- * Cursor pagination on created_at.
+ * Keyset pagination on (created_at, id).
  */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -49,12 +54,10 @@ export const GET = withRestEndpoint({
             query.platform
               ? eq(social_accounts.platform, query.platform)
               : undefined,
-            query.cursor
-              ? lt(social_accounts.created_at, query.cursor)
-              : undefined,
+            rowsAfter(social_accounts.created_at, social_accounts.id, query.cursor),
           ),
         )
-        .orderBy(desc(social_accounts.created_at))
+        .orderBy(...newestFirst(social_accounts.created_at, social_accounts.id))
         .limit(query.limit + 1),
     );
     if (queryError) {
@@ -70,15 +73,13 @@ export const GET = withRestEndpoint({
     }
 
     // Step 3: compute pagination cursor.
-    const hasMore = fetchedRows.length > query.limit;
-    const pagedRows = hasMore
-      ? fetchedRows.slice(0, query.limit)
-      : fetchedRows;
-    const nextCursor = hasMore
-      ? pagedRows[pagedRows.length - 1].created_at
-      : null;
+    const { pageRows, nextCursor } = toListPage(
+      fetchedRows,
+      query.limit,
+      (accountRow) => accountRow.created_at,
+    );
 
-    const connectionDtos = pagedRows.map(toConnectionDTO);
+    const connectionDtos = pageRows.map(toConnectionDTO);
 
     return {
       response: NextResponse.json(

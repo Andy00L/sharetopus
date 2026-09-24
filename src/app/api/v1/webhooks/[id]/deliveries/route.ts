@@ -1,8 +1,13 @@
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
+import {
+  newestFirst,
+  rowsAfter,
+  toListPage,
+} from "@/lib/api/rest/pagination";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toWebhookDeliveryDTO } from "@/lib/api/rest/dto/toWebhookDeliveryDTO";
 import { WebhookDeliveryListQuerySchema } from "@/lib/api/rest/validation/webhookSchemas";
@@ -14,7 +19,7 @@ const SubscriptionIdSchema = z.guid();
 /**
  * GET /v1/webhooks/[id]/deliveries -- list delivery log for a subscription.
  *
- * Cursor pagination on created_at (newest first).
+ * Keyset pagination on (created_at, id), newest first.
  */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -92,12 +97,10 @@ export const GET = withRestEndpoint({
         .where(
           and(
             eq(webhook_deliveries.subscription_id, subscriptionId),
-            query.cursor
-              ? lt(webhook_deliveries.created_at, query.cursor)
-              : undefined,
+            rowsAfter(webhook_deliveries.created_at, webhook_deliveries.id, query.cursor),
           ),
         )
-        .orderBy(desc(webhook_deliveries.created_at))
+        .orderBy(...newestFirst(webhook_deliveries.created_at, webhook_deliveries.id))
         .limit(query.limit + 1),
     );
     if (queryError) {
@@ -113,15 +116,13 @@ export const GET = withRestEndpoint({
     }
 
     // Step 5: compute pagination.
-    const hasMore = fetchedRows.length > query.limit;
-    const pagedRows = hasMore
-      ? fetchedRows.slice(0, query.limit)
-      : fetchedRows;
-    const nextCursor = hasMore
-      ? pagedRows[pagedRows.length - 1].created_at
-      : null;
+    const { pageRows, nextCursor } = toListPage(
+      fetchedRows,
+      query.limit,
+      (deliveryRow) => deliveryRow.created_at,
+    );
 
-    const deliveryDtos = pagedRows.map(toWebhookDeliveryDTO);
+    const deliveryDtos = pageRows.map(toWebhookDeliveryDTO);
 
     return {
       response: NextResponse.json(

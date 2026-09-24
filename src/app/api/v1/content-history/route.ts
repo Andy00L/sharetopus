@@ -1,7 +1,12 @@
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
+import {
+  newestFirst,
+  rowsAfter,
+  toListPage,
+} from "@/lib/api/rest/pagination";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toContentHistoryDTO } from "@/lib/api/rest/dto/toContentHistoryDTO";
 import { ContentHistoryQuerySchema } from "@/lib/api/rest/validation/analyticsSchemas";
@@ -15,7 +20,7 @@ import { content_history } from "@/db/schema";
  * getContentHistory helper reads). Direct query here because
  * the helper joins social_accounts for avatar_url which the
  * REST DTO does not expose, and has its own rate limiting.
- * Cursor pagination on created_at.
+ * Keyset pagination on (created_at, id).
  */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -49,12 +54,10 @@ export const GET = withRestEndpoint({
             query.platform
               ? eq(content_history.platform, query.platform)
               : undefined,
-            query.cursor
-              ? lt(content_history.created_at, query.cursor)
-              : undefined,
+            rowsAfter(content_history.created_at, content_history.id, query.cursor),
           ),
         )
-        .orderBy(desc(content_history.created_at))
+        .orderBy(...newestFirst(content_history.created_at, content_history.id))
         .limit(query.limit + 1),
     );
     if (queryError) {
@@ -70,15 +73,13 @@ export const GET = withRestEndpoint({
     }
 
     // Step 3: compute pagination.
-    const hasMore = fetchedRows.length > query.limit;
-    const pagedRows = hasMore
-      ? fetchedRows.slice(0, query.limit)
-      : fetchedRows;
-    const nextCursor = hasMore
-      ? pagedRows[pagedRows.length - 1].created_at
-      : null;
+    const { pageRows, nextCursor } = toListPage(
+      fetchedRows,
+      query.limit,
+      (historyRow) => historyRow.created_at,
+    );
 
-    const contentDtos = pagedRows.map(toContentHistoryDTO);
+    const contentDtos = pageRows.map(toContentHistoryDTO);
 
     return {
       response: NextResponse.json(

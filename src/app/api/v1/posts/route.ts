@@ -1,7 +1,12 @@
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
+import {
+  newestFirst,
+  rowsAfter,
+  toListPage,
+} from "@/lib/api/rest/pagination";
 import {
   PostCreateInputSchema,
   PostListQuerySchema,
@@ -199,7 +204,7 @@ export const POST = withRestEndpoint({
  * GET /v1/posts -- paginated list, principal-scoped.
  *
  * Query: status, platform, batch_id, limit (1-100, default 20),
- * cursor (created_at of last item in previous page).
+ * cursor (next_cursor of the previous page; keyset on created_at, id).
  */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -236,12 +241,10 @@ export const GET = withRestEndpoint({
             query.batch_id
               ? eq(scheduled_posts.batch_id, query.batch_id)
               : undefined,
-            query.cursor
-              ? lt(scheduled_posts.created_at, query.cursor)
-              : undefined,
+            rowsAfter(scheduled_posts.created_at, scheduled_posts.id, query.cursor),
           ),
         )
-        .orderBy(desc(scheduled_posts.created_at))
+        .orderBy(...newestFirst(scheduled_posts.created_at, scheduled_posts.id))
         .limit(query.limit + 1),
     );
     if (queryError) {
@@ -258,15 +261,13 @@ export const GET = withRestEndpoint({
 
     // Step 3: compute pagination cursor. Over-fetch by 1 to detect
     // more pages; the extra row never appears in the response payload.
-    const hasMore = fetchedRows.length > query.limit;
-    const pagedRows = hasMore
-      ? fetchedRows.slice(0, query.limit)
-      : fetchedRows;
-    const nextCursor = hasMore
-      ? pagedRows[pagedRows.length - 1].created_at
-      : null;
+    const { pageRows, nextCursor, hasMore } = toListPage(
+      fetchedRows,
+      query.limit,
+      (postRow) => postRow.created_at,
+    );
 
-    const postDtos = pagedRows.map(toPostDTO);
+    const postDtos = pageRows.map(toPostDTO);
 
     return {
       response: NextResponse.json(

@@ -19,19 +19,21 @@ const UNAUTHORIZED_401 = `{
   "request_id": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa"
 }`;
 
+/** A real next_cursor (src/lib/api/rest/pagination.ts, toListPage): base64url of ["<created_at>", "<id>"]. */
+const EXAMPLE_CURSOR =
+  "WyIyMDI2LTA3LTAxVDA5OjMwOjAwLjEyMzQ1NiswMDowMCIsIjViMGYyYTNlLThjNGQtNGUxZi05YTdiLTNjMmQxZTBmOWE4YiJd";
+
 const PAGINATED_PAGE_2 = `# First page
 curl "https://sharetopus.com/api/v1/posts?limit=20" \\
   -H "Authorization: Bearer stp_rest_YOUR_KEY"
 
-# Next page: pass next_cursor from the previous response, URL-encoded
-curl -G "https://sharetopus.com/api/v1/posts" \\
-  --data-urlencode "limit=20" \\
-  --data-urlencode "cursor=2026-07-01T09:30:00.123456+00:00" \\
+# Next page: pass next_cursor from the previous response as received
+curl "https://sharetopus.com/api/v1/posts?limit=20&cursor=${EXAMPLE_CURSOR}" \\
   -H "Authorization: Bearer stp_rest_YOUR_KEY"`;
 
 const PAGINATED_ENVELOPE = `{
   "data": [ { "...": "resource objects, newest first" } ],
-  "next_cursor": "2026-07-01T09:30:00.123456+00:00"
+  "next_cursor": "${EXAMPLE_CURSOR}"
 }`;
 
 const RATE_LIMITED_429 = `{
@@ -84,9 +86,9 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
     navLabel: "Pagination",
     title: "Pagination",
     summary:
-      "List endpoints use cursor pagination on the resource creation date, newest first. The cursor is opaque: always pass back next_cursor exactly as received.",
+      "List endpoints use cursor pagination, newest first: ordered by creation date (analytics: by metric date), with the id breaking ties, so every item appears exactly once. The cursor is opaque: always pass back next_cursor exactly as received.",
     sourceRef:
-      "src/lib/api/rest/validation/schemas.ts (PostListQuerySchema, CreatedAtCursorSchema), src/app/api/v1/posts/route.ts (GET)",
+      "src/lib/api/rest/pagination.ts (CreatedAtCursorSchema, rowsAfter, toListPage), src/app/api/v1/posts/route.ts (GET)",
     flowSteps: [
       {
         title: "Request a page.",
@@ -94,7 +96,7 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
       },
       {
         title: "Follow next_cursor.",
-        body: "The response envelope is { data, next_cursor }. A null next_cursor means the last page. Pass the value back as ?cursor= to fetch the next page, URL-encoded: the + of its time zone offset otherwise arrives as a space. A cursor the API did not issue returns 400 validation_error.",
+        body: "The response envelope is { data, next_cursor }. A null next_cursor means the last page. Pass the value back as ?cursor= to fetch the next page; it is URL-safe as issued. A cursor the API did not issue returns 400 validation_error.",
       },
     ],
     flowCodeSamples: [

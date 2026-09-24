@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
-import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
+import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
 
 /**
  * Supported platforms for OAuth initiation via REST. Every posting
@@ -47,7 +47,7 @@ export type ConnectionInitiateInput = z.infer<
 /**
  * Query schema for GET /v1/connections.
  *
- * Cursor pagination on created_at, with optional platform filter
+ * Keyset pagination on (created_at, id), with optional platform filter
  * and availability toggle.
  */
 export const ConnectionListQuerySchema = z.object({
