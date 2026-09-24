@@ -191,7 +191,7 @@ When the user resubscribes, the webhook handler:
 
 If the user does not resubscribe within 7 days, the daily cron `cleanup-cancelled-posts-after-grace` (05:00 UTC) deletes their system-cancelled posts. Orphan media in storage is picked up by `sweep-orphan-storage-files` (03:00 UTC) the following day.
 
-The cron re-checks subscription status before deletion as a guard against webhook delivery failures.
+The cron re-checks subscription status before deletion as a guard against webhook delivery failures. When that check fails, it keeps the posts and the next daily run checks again. The delete itself repeats the selection criteria, so a post resumed during the run is not removed.
 
 ```mermaid
 flowchart TD

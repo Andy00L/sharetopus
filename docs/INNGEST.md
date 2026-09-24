@@ -204,12 +204,12 @@ Removes unverified OAuth clients that have no recent sessions and are older than
 
 ## cleanup-cancelled-posts-after-grace
 
-**File:** `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` (40 lines)
+**File:** `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` (41 lines)
 **Schedule:** Daily at 05:00 UTC
 **Retries:** 0
 **Grace period:** 7 days after subscription cancellation
 
-Deletes scheduled posts belonging to users whose subscriptions were cancelled more than 7 days ago. The grace period gives users time to resubscribe before their queued content is removed.
+Deletes scheduled posts belonging to users whose subscriptions were cancelled more than 7 days ago. The grace period gives users time to resubscribe before their queued content is removed. Users with an active or trialing subscription keep their posts. So do users whose subscription check fails. Those are counted in `skippedDueToCheckError`, and the next run checks them again.
 
 ## cleanup-stripe-webhook-events
 

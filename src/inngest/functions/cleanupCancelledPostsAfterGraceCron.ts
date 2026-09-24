@@ -34,6 +34,7 @@ export const cleanupCancelledPostsAfterGraceCron = inngest.createFunction(
       candidatesFound: result.candidatesFound,
       deleted: result.deleted,
       skippedDueToResubscribe: result.skippedDueToResubscribe,
+      skippedDueToCheckError: result.skippedDueToCheckError,
     };
   }
 );
