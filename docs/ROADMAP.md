@@ -209,11 +209,11 @@ Internationalization is configured in `i18n-config.ts` (fr, en, es) and dependen
 
 The `/studio` route renders a "Coming Soon" card. Blocked by issue 1 (no analytics data pipeline).
 
-### 6. Teams and Channel Groups: Build or Delete
+### 6. Teams and Channel Groups: Not Built
 
-Teams (shared workspaces with owner, admin, and member roles plus email invites) and channel groups (named sets of social accounts, for agencies) were designed but never shipped. Their SQL in `docs/DB_CHANGES_TEAMS.md` and `docs/DB_CHANGES_GROUPS.md` has not been run, so the five tables (`teams`, `team_members`, `team_invites`, `channel_groups`, `channel_group_members`) exist only in `src/lib/types/database.types.ts`. The code in `src/lib/teams/` (3 files) and `src/lib/groups/channelGroups.ts`, 934 lines in all, has no importers, and it is the only code still querying through supabase-js (18 calls) instead of Drizzle.
+Teams (shared workspaces with owner, admin, and member roles plus email invites) and channel groups (named sets of social accounts, for agencies) were designed but never shipped. Their design is in `docs/DB_CHANGES_TEAMS.md` and `docs/DB_CHANGES_GROUPS.md`; that SQL has not been run, so the five tables (`teams`, `team_members`, `team_invites`, `channel_groups`, `channel_group_members`) do not exist. The first draft of the code (supabase-js, 934 lines, never imported) was deleted on 2026-09-24; it is in git history at commits `32fe79e` (teams) and `9881f78` (groups).
 
-Decision pending: build it (declare the five tables in `src/db/schema.ts`, generate and apply the migration, move the code to Drizzle, then add the UI and API) or delete the code, the five type blocks, and the two SQL docs.
+Building it means declaring the five tables in `src/db/schema.ts`, generating and applying the migration, writing the code on the Drizzle client, then adding the UI and API.
 
 ## Won't Fix (For Now)
 

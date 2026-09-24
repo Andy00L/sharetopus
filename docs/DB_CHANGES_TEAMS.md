@@ -1,6 +1,6 @@
 # DB changes: teams and invites
 
-Not applied (decision pending, [ROADMAP.md](./ROADMAP.md) open issue 6). If this gets built, the three tables are declared in `src/db/schema.ts` and `bun run db:generate` writes the migration (see [DATABASE.md](./DATABASE.md#schema-changes)); the SQL below is the design to follow.
+Not built ([ROADMAP.md](./ROADMAP.md) open issue 6). If this gets built, the three tables are declared in `src/db/schema.ts` and `bun run db:generate` writes the migration (see [DATABASE.md](./DATABASE.md#schema-changes)); the SQL below is the design to follow. A first draft of the code (supabase-js, never wired to a route) was deleted on 2026-09-24 and stays in git history at commit `32fe79e`.
 
 Three tables. They hang off `principals`, not off `users`, so a wallet
 principal can belong to a team later without a second model.
@@ -65,11 +65,10 @@ account takeover one leaked link away.
 
 ## RLS
 
-The draft code in `src/lib/teams/` still queries through supabase-js
-(`adminSupabase`). Built for real, it moves to the Drizzle client, which also
-bypasses RLS, and scopes by `principal_id` in the query itself. That matches
-how `social_accounts` and `scheduled_posts` are already handled. If you later
-expose these tables to the anon key, they need RLS policies first.
+The code queries through the Drizzle client, which bypasses RLS, and scopes
+by `principal_id` in the query itself. That matches how `social_accounts` and
+`scheduled_posts` are already handled. If you later expose these tables to
+the anon key, they need RLS policies first.
 
 ## Verifying afterwards
 
@@ -80,13 +79,3 @@ where table_schema = 'public' and table_name in ('teams','team_members','team_in
 select indexname from pg_indexes
 where schemaname = 'public' and tablename = 'team_invites';
 ```
-
-## Type edit
-
-`src/lib/types/database.types.ts` holds hand-written blocks for these three
-tables for now. Once the tables are declared in `src/db/schema.ts`, that file
-derives their types like every other table, and the hand-written blocks are
-deleted in the same change.
-
-The code compiles today because it declares its own row shapes and casts
-nothing; it will simply return errors as values until the tables exist.

@@ -1,6 +1,6 @@
 # DB changes: channel groups (agency model)
 
-Not applied (decision pending, [ROADMAP.md](./ROADMAP.md) open issue 6). If this gets built, the two tables are declared in `src/db/schema.ts` and `bun run db:generate` writes the migration (see [DATABASE.md](./DATABASE.md#schema-changes)); the SQL below is the design to follow.
+Not built ([ROADMAP.md](./ROADMAP.md) open issue 6). If this gets built, the two tables are declared in `src/db/schema.ts` and `bun run db:generate` writes the migration (see [DATABASE.md](./DATABASE.md#schema-changes)); the SQL below is the design to follow. A first draft of the code (supabase-js, never wired to a route) was deleted on 2026-09-24 and stays in git history at commit `9881f78`.
 
 Two tables. `social_accounts` is deliberately left untouched: a join table
 keeps the grouping reversible and avoids an ALTER on the busiest table in the
@@ -46,11 +46,9 @@ update of the existing row, not a second insert.
 
 ## RLS
 
-The draft code in `src/lib/groups/channelGroups.ts` still queries through
-supabase-js (`adminSupabase`). Built for real, it moves to the Drizzle client,
-with an explicit `principal_id` filter in every query, matching how
-`social_accounts` and `scheduled_posts` are handled. Add RLS policies before
-exposing these tables to the anon key.
+The code queries through the Drizzle client, with an explicit `principal_id`
+filter in every query, matching how `social_accounts` and `scheduled_posts`
+are handled. Add RLS policies before exposing these tables to the anon key.
 
 ## Verifying afterwards
 
@@ -62,11 +60,3 @@ where table_schema = 'public'
 select indexname, indexdef from pg_indexes
 where schemaname = 'public' and tablename = 'channel_group_members';
 ```
-
-## Type edit
-
-`src/lib/types/database.types.ts` holds hand-written blocks for these two
-tables for now. Once the tables are declared in `src/db/schema.ts`, that file
-derives their types like every other table, and the hand-written blocks are
-deleted in the same change. The code compiles today and returns errors as
-values until the tables exist.
