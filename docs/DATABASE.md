@@ -271,7 +271,7 @@ Triggers:
 | Trigger function | Fires on | Effect |
 |------------------|----------|--------|
 | `handle_updated_at` | UPDATE on `analytics_metrics`, `pricing_actions`, `principals`, `scheduled_posts`, `social_accounts`, `social_connections`, `stripe_subscriptions`, `users`, `wallet_credits` | Sets `updated_at`, so code never writes it. |
-| `reject_mutation` | UPDATE or DELETE on the five trigger-protected append-only tables | Raises an error. |
+| `reject_mutation` | UPDATE or DELETE on the five trigger-protected append-only tables | Raises an error, except for a DELETE in a transaction that set `app.allow_append_only_delete = 'on'` (the retention crons do). |
 | `enforce_principal_kind` | INSERT, or UPDATE of `principal_id`, on `mcp_audit_log` and `x402_charges` | Refuses a principal that is not `clerk` (audit log) or not `wallet` (charges). |
 | `enforce_api_key_kind_matrix` | INSERT, or UPDATE of `principal_id` or `kind`, on `api_keys` | `rest` and `mcp` keys need a `clerk` principal, `wallet` keys a `wallet` principal. |
 | `social_connections_status_guard` | UPDATE on `social_connections` | `connected`, `expired`, `failed` and `revoked` are terminal statuses. |
@@ -285,9 +285,10 @@ Triggers:
 
 | Data | Retention | Mechanism |
 |------|-----------|-----------|
-| `mcp_audit_log`, `x402_access_log` | 90 days, not enforced yet | Daily cleanup jobs delete older rows, but the append-only trigger refuses a DELETE unless the transaction sets `app.allow_append_only_delete = 'on'`, which nothing does yet. Both jobs fail and no row has been deleted. |
-| `stripe_webhook_events` | 90 days | Same 90-day cleanup window. |
-| `tiktok_webhook_events` | 90 days | Same 90-day cleanup window. |
+| `mcp_audit_log`, `x402_access_log` | 90 days | Daily crons (`cleanup-mcp-audit-log` 04:00 UTC, `cleanup-x402-access-log` 06:00 UTC) delete older rows. Each DELETE runs in a transaction that first sets `app.allow_append_only_delete = 'on'` with `set_config(..., true)`, the one exception the append-only trigger allows. Enforced since 2026-09-24; before that every run failed at the trigger. |
+| `rest_audit_log` | 90 days | Daily cron `cleanup-rest-audit-log` at 07:00 UTC, since 2026-09-24. A plain DELETE: the table has no `reject_mutation` trigger. |
+| `stripe_webhook_events` | 90 days | Daily cron `cleanup-stripe-webhook-events` at 03:00 UTC. |
+| `tiktok_webhook_events` | Indefinite | No cleanup job exists. |
 | Posts cancelled by a subscription lapse (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | Deleted by `cleanup-cancelled-posts-after-grace` 7 days after the lapse unless the user resubscribes. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
 | `content_history` | Indefinite | Published content records are kept for analytics and history display. |
 | `x402_charges`, `x402_refunds` | Indefinite | Financial records are never deleted. |

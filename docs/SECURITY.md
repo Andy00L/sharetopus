@@ -397,12 +397,12 @@ Eight tables are append-only. Five of them (`mcp_audit_log`, `stripe_invoices`, 
 
 | Table | Purpose | Retention |
 |-------|---------|-----------|
-| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days intended; the cleanup cron's DELETE is refused by the trigger, so nothing is deleted yet |
-| `rest_audit_log` | Every REST API request with endpoint, method, status code, latency | Grows indefinitely (no cleanup cron yet) |
+| `mcp_audit_log` | Every MCP tool call with redacted args, result status, latency | 90 days (daily cron; its DELETE opts in through `app.allow_append_only_delete`) |
+| `rest_audit_log` | Every REST API request with endpoint, method, status code, latency | 90 days (daily cron) |
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
 | `tiktok_webhook_events` | TikTok webhook idempotency | Indefinite |
-| `x402_access_log` | Access audit trail (x402, deferred) | 90 days intended; the cleanup cron's DELETE is refused by the trigger, so nothing is deleted yet |
+| `x402_access_log` | Access audit trail (x402, deferred) | 90 days (daily cron; its DELETE opts in through `app.allow_append_only_delete`) |
 | `x402_refunds` | Refund records (x402, deferred) | Indefinite |
 | `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |
 
@@ -434,8 +434,8 @@ Token, password, secret, and JWT patterns are redacted before insert (see [Argum
 
 | Data | Retention |
 |------|-----------|
-| `mcp_audit_log`, `x402_access_log` | 90 days intended, not enforced yet: the append-only trigger refuses the cleanup crons' DELETE ([DATABASE.md](./DATABASE.md#data-lifecycle-and-retention)) |
-| `rest_audit_log` | Grows indefinitely (no cleanup cron yet) |
+| `mcp_audit_log`, `x402_access_log` | 90 days, enforced since 2026-09-24 by daily crons that opt in to the append-only trigger's one DELETE exception ([DATABASE.md](./DATABASE.md#data-lifecycle-and-retention)) |
+| `rest_audit_log` | 90 days (`cleanup-rest-audit-log`, since 2026-09-24) |
 | `stripe_webhook_events` | 90 days (via `cleanup-stripe-webhook-events` cron) |
 | Cancelled scheduled posts | 7-day grace period |
 | `stripe_invoices` | Grows indefinitely (no cleanup) |
@@ -472,7 +472,7 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 - **PII redaction in audit logs.** Token, password, secret, JWT patterns are redacted before insert.
 - **IP hashing.** Raw client IPs are never stored. SHA-256 hashed with configurable salt.
 - **Append-only financial tables.** `stripe_invoices` cannot be updated or deleted at the DB layer.
-- **90-day webhook-event retention.** `stripe_webhook_events` is cleaned up by a scheduled cron. The `mcp_audit_log` and `x402_access_log` crons exist but cannot delete until retention is switched on for the append-only trigger.
+- **90-day log retention.** Daily crons delete `stripe_webhook_events`, `mcp_audit_log`, `x402_access_log` and `rest_audit_log` rows older than 90 days. The append-only trigger still refuses any other UPDATE or DELETE on its tables.
 
 ### Deferred (until x402 ships)
 

@@ -25,7 +25,7 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (12 Inngest functions) handle dispatch, polling, webhook delivery, and storage cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (16 Inngest functions) handle dispatch, polling, webhook delivery, and storage and log cleanup.
 
 ## ✨ Surfaces
 
@@ -106,7 +106,7 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 
 ## ⚡ Background Jobs
 
-12 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
+16 Inngest functions handle scheduling, posting, polling, webhook delivery, and cleanup:
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
@@ -122,6 +122,10 @@ Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](
 | cleanup-cancelled-posts-after-grace | Cron daily 05:00 UTC | Delete system-cancelled posts (>7 days) |
 | cleanup-stripe-webhook-events | Cron daily 03:00 UTC | Prune webhook idempotency log (>90 days) |
 | cleanup-mcp-audit-log | Cron daily 04:00 UTC | Prune audit log (>90 days) |
+| cleanup-x402-access-log | Cron daily 06:00 UTC | Prune x402 access log (>90 days) |
+| cleanup-rest-audit-log | Cron daily 07:00 UTC | Prune REST audit log (>90 days) |
+| cleanup-social-connections | Cron daily 02:00 UTC | Delete stale pending, failed and expired OAuth connections (>30 days) |
+| sweep-x402-reconciliation | Cron hourly at :20 | Resolve or report x402 payments that need a manual look |
 
 See [docs/INNGEST.md](./docs/INNGEST.md).
 
@@ -146,7 +150,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
 | [docs/DATABASE.md](./docs/DATABASE.md) | All 35 tables, schema changes with Drizzle, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
-| [docs/INNGEST.md](./docs/INNGEST.md) | 12 background functions, cron schedules, sweep jobs |
+| [docs/INNGEST.md](./docs/INNGEST.md) | 16 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |
 | [docs/REST.md](./docs/REST.md) | REST API: 28 endpoints, withRestEndpoint HOF, validation, audit |
 | [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Webhook subsystem: signing, retry, replay, auto-disable |
@@ -173,7 +177,7 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 
 ## 🔒 Security
 
-Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests); retention status per table is in docs/SECURITY.md. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
+Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests), each kept 90 days; retention per table is in docs/SECURITY.md. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
 
 Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 

@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-35 database tables. 18 MCP tools. 28 REST API endpoints. 12 Inngest functions.
+35 database tables. 18 MCP tools. 28 REST API endpoints. 16 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -61,7 +61,7 @@ graph TD
         end
     end
 
-    subgraph Background["Background (Inngest, 12 functions)"]
+    subgraph Background["Background (Inngest, 16 functions)"]
         subgraph EventHandlers["Event-driven (5)"]
             Worker["process-single-post (post.due, retries 3)"]
             DirectWorker["process-direct-post (post.now, retries 0)"]
@@ -69,14 +69,18 @@ graph TD
             TikTokWebhook["process-tiktok-publish-webhook (tiktok.publish.webhook.received, retries 3)"]
             WebhookDeliver["deliver-webhook (webhook.dispatch.v1, retries 3)"]
         end
-        subgraph Crons["Cron jobs (7)"]
+        subgraph Crons["Cron jobs (11)"]
             Dispatcher["scheduled-posts-tick (*/5 min)"]
             StuckSweep["sweep-stuck-direct-posts (*/5 min)"]
+            ReconSweep["sweep-x402-reconciliation (hourly :20)"]
+            ConnectionSweep["cleanup-social-connections (daily 02:00)"]
             OrphanSweep["sweep-orphan-storage-files (daily 03:00)"]
             StripeSweep["cleanup-stripe-webhook-events (daily 03:00)"]
             OauthSweep["sweep-stale-oauth-clients (daily 04:00)"]
             AuditSweep["cleanup-mcp-audit-log (daily 04:00)"]
             GraceSweep["cleanup-cancelled-posts-after-grace (daily 05:00)"]
+            X402LogSweep["cleanup-x402-access-log (daily 06:00)"]
+            RestLogSweep["cleanup-rest-audit-log (daily 07:00)"]
         end
     end
 
@@ -121,6 +125,10 @@ graph TD
     OauthSweep --> Supabase
     AuditSweep --> Supabase
     GraceSweep --> Supabase
+    ReconSweep --> Supabase
+    ConnectionSweep --> Supabase
+    X402LogSweep --> Supabase
+    RestLogSweep --> Supabase
     Clerk -->|webhooks| WebhookRoutes
     Stripe -->|webhooks| WebhookRoutes
     TK -->|webhooks| WebhookRoutes
@@ -172,7 +180,7 @@ src/
       oauth-protected-resource/ # RFC 9728 OAuth discovery for MCP clients
     api/
       auth/[clerk]/             # Clerk auth UI
-      inngest/                  # Inngest serve() endpoint (12 functions)
+      inngest/                  # Inngest serve() endpoint (16 functions)
       mcp/mcp/                  # MCP server (mcp-handler 2.x: protocol 2026-07-28 + 2025-era clients)
       v1/                       # REST API v1 (28 endpoints)
         posts/                  # CRUD + bulk schedule
@@ -231,6 +239,8 @@ src/
       cleanupStripeWebhookEvents.ts  # Cron daily 03:00: purge stripe_webhook_events > 90d
       sweepStaleOauthClientsCron.ts   # Cron daily 04:00: purge unverified OAuth clients > 90d
       cleanupMcpAuditLogCron.ts       # Cron daily 04:00: purge mcp_audit_log > 90d
+      cleanupX402AccessLogCron.ts     # Cron daily 06:00: purge x402_access_log > 90d
+      cleanupRestAuditLogCron.ts      # Cron daily 07:00: purge rest_audit_log > 90d
       cleanupCancelledPostsAfterGraceCron.ts  # Cron daily 05:00: delete cancelled posts past 7d grace
       deliverWebhook.ts         # Event webhook.dispatch.v1: deliver one webhook (HMAC signed, retries 3)
       platformErrors.ts         # Error classification (retryable vs terminal)
@@ -560,7 +570,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 
 | File | What it does |
 |------|-------------|
-| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 12 functions |
+| `src/app/api/inngest/route.ts` | Inngest serve() endpoint, registers all 16 functions |
 | `src/inngest/client.ts` | Inngest client instance (id: "sharetopus") |
 | `src/inngest/functions/scheduledPostsTick.ts` | Cron: dispatch due scheduled posts every 5 min |
 | `src/inngest/functions/processSinglePost.ts` | Event worker: process one scheduled post |
@@ -572,6 +582,8 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/inngest/functions/cleanupStripeWebhookEvents.ts` | Cron: purge Stripe webhook events older than 90 days |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | Cron: purge unverified OAuth clients older than 90 days |
 | `src/inngest/functions/cleanupMcpAuditLogCron.ts` | Cron: purge mcp_audit_log rows older than 90 days |
+| `src/inngest/functions/cleanupX402AccessLogCron.ts` | Cron: purge x402_access_log rows older than 90 days |
+| `src/inngest/functions/cleanupRestAuditLogCron.ts` | Cron: purge rest_audit_log rows older than 90 days |
 | `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Cron: delete cancelled posts past 7-day grace |
 | `src/inngest/functions/platformErrors.ts` | Error classification (retryable vs terminal) |
 | `src/lib/mcp/withMcpTool.ts` | HOF: auth, entitlement, audit, error handling for MCP tools |

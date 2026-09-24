@@ -1,6 +1,6 @@
 # Inngest Functions
 
-12 background functions registered in `src/app/api/inngest/route.ts`. The Inngest client ID is `sharetopus` (`src/inngest/client.ts`).
+16 background functions registered in `src/app/api/inngest/route.ts`. The Inngest client ID is `sharetopus` (`src/inngest/client.ts`).
 
 Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env-overridable defaults tuned for Vercel Hobby (300s max function duration, ~2048 MB memory).
 
@@ -20,6 +20,8 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 - [cleanup-cancelled-posts-after-grace](#cleanup-cancelled-posts-after-grace)
 - [cleanup-stripe-webhook-events](#cleanup-stripe-webhook-events)
 - [cleanup-mcp-audit-log](#cleanup-mcp-audit-log)
+- [cleanup-x402-access-log](#cleanup-x402-access-log)
+- [cleanup-rest-audit-log](#cleanup-rest-audit-log)
 - [deliver-webhook](#deliver-webhook)
 - [Event vocabulary](#event-vocabulary)
 - [Runtime configuration](#runtime-configuration)
@@ -41,7 +43,11 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | sweep-stale-oauth-clients | Cron `0 4 * * *` | default | 0 | Remove unverified OAuth clients (>90 days) |
 | cleanup-cancelled-posts-after-grace | Cron `0 5 * * *` | default | 0 | Delete posts after subscription cancel grace period |
 | cleanup-stripe-webhook-events | Cron `0 3 * * *` | default | 0 | Purge processed Stripe webhook events (>90 days) |
-| cleanup-mcp-audit-log | Cron `0 4 * * *` | default | 0 | Truncate MCP audit log entries (>90 days) |
+| cleanup-mcp-audit-log | Cron `0 4 * * *` | default | 0 | Delete MCP audit log rows (>90 days) |
+| cleanup-x402-access-log | Cron `0 6 * * *` | default | 0 | Delete x402 access log rows (>90 days) |
+| cleanup-rest-audit-log | Cron `0 7 * * *` | default | 0 | Delete REST audit log rows (>90 days) |
+| cleanup-social-connections | Cron `0 2 * * *` | default | 0 | Delete pending, failed and expired OAuth connection rows (>30 days) |
+| sweep-x402-reconciliation | Cron `20 * * * *` | default | 0 | Resolve or report x402 payments that need a manual look |
 | deliver-webhook | Event `webhook.dispatch.v1` | default | 3 | Deliver one webhook event to a subscriber (HMAC signed) |
 
 ## scheduled-posts-tick
@@ -191,7 +197,7 @@ flowchart TD
 
 **Partial success:** Failed batch deletes are logged but do not abort the run. The 24-hour cutoff ensures orphans remain eligible for the next run.
 
-**Bucket:** `SUPABASE_BUCKET_NAME` env var (default: `scheduled-videos`).
+**Bucket:** `MEDIA_BUCKET` (`src/lib/storage/mediaBucket.ts`): `SUPABASE_BUCKET_NAME` when set, `scheduled-videos` otherwise.
 
 ## sweep-stale-oauth-clients
 
@@ -227,7 +233,25 @@ Purges processed Stripe webhook event records older than 90 days. These records 
 **Retries:** 0
 **Retention:** `RETENTION_DAYS` = 90
 
-Truncates MCP audit log entries older than 90 days. Uses the service-role client to bypass the append-only RLS trigger on the audit table, since normal clients can only insert.
+Deletes MCP audit log rows older than 90 days. The table's `reject_mutation` trigger refuses every UPDATE and DELETE, and no database role bypasses a trigger, so the DELETE runs in its own transaction that first calls `set_config('app.allow_append_only_delete', 'on', true)`: the one exception the trigger allows, local to that transaction. Until 2026-09-24 nothing set it, and every run failed at the DELETE.
+
+## cleanup-x402-access-log
+
+**File:** `src/inngest/functions/cleanupX402AccessLogCron.ts`
+**Schedule:** Daily at 06:00 UTC
+**Retries:** 0
+**Retention:** `RETENTION_DAYS` = 90
+
+Deletes x402 access log rows older than 90 days, through the same trigger exception as cleanup-mcp-audit-log.
+
+## cleanup-rest-audit-log
+
+**File:** `src/inngest/functions/cleanupRestAuditLogCron.ts`
+**Schedule:** Daily at 07:00 UTC
+**Retries:** 0
+**Retention:** `RETENTION_DAYS` = 90
+
+Deletes REST audit log rows older than 90 days, added on 2026-09-24 (the table had no cleanup). `rest_audit_log` is append-only by convention and has no `reject_mutation` trigger, so a plain DELETE goes through.
 
 ## deliver-webhook
 
@@ -298,9 +322,13 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 | UTC Time | Functions |
 |---|---|
 | `*/5 * * * *` (every 5 min) | scheduled-posts-tick, sweep-stuck-direct-posts |
+| `20 * * * *` (hourly at :20) | sweep-x402-reconciliation |
+| `0 2 * * *` (02:00) | cleanup-social-connections |
 | `0 3 * * *` (03:00) | sweep-orphan-storage-files, cleanup-stripe-webhook-events |
 | `0 4 * * *` (04:00) | sweep-stale-oauth-clients, cleanup-mcp-audit-log |
 | `0 5 * * *` (05:00) | cleanup-cancelled-posts-after-grace |
+| `0 6 * * *` (06:00) | cleanup-x402-access-log |
+| `0 7 * * *` (07:00) | cleanup-rest-audit-log |
 
 ## Error classification
 
@@ -318,7 +346,7 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 ## Source files referenced
 
 - `src/inngest/client.ts` (Inngest client, ID: "sharetopus")
-- `src/app/api/inngest/route.ts` (function registration, 12 functions)
+- `src/app/api/inngest/route.ts` (function registration, 16 functions)
 - `src/lib/jobs/runtimeConfig.ts` (RUNTIME config object)
 - `src/inngest/functions/scheduledPostsTick.ts`
 - `src/inngest/functions/processSinglePost.ts`
@@ -331,6 +359,10 @@ All cron times are UTC. Functions at the same time slot run in parallel (no orde
 - `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts`
 - `src/inngest/functions/cleanupStripeWebhookEvents.ts`
 - `src/inngest/functions/cleanupMcpAuditLogCron.ts`
+- `src/inngest/functions/cleanupX402AccessLogCron.ts`
+- `src/inngest/functions/cleanupRestAuditLogCron.ts`
+- `src/inngest/functions/cleanupSocialConnectionsCron.ts`
+- `src/inngest/functions/sweepX402ReconciliationCron.ts`
 - `src/inngest/functions/deliverWebhook.ts`
 - `src/inngest/functions/platformErrors.ts`
 - `src/lib/api/rest/webhooks/dispatch.ts`

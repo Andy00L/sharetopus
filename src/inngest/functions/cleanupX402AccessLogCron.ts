@@ -1,6 +1,6 @@
 import "server-only";
 
-import { lt } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { x402_access_log } from "@/db/schema";
@@ -14,8 +14,8 @@ const RETENTION_DAYS = 90;
  *
  * Runs at 06:00 UTC. Like mcp_audit_log, the table's append-only trigger
  * (reject_mutation) refuses a DELETE unless the transaction sets
- * app.allow_append_only_delete = 'on'. Nothing sets it yet, so this job
- * fails at the DELETE and no rows are removed.
+ * app.allow_append_only_delete = 'on', so the DELETE runs in its own
+ * transaction that sets it (see cleanupMcpAuditLogCron).
  *
  * Mirrors cleanupMcpAuditLogCron retention policy.
  */
@@ -32,10 +32,16 @@ export const cleanupX402AccessLogCron = inngest.createFunction(
     const cutoffIso = cutoff.toISOString();
 
     const result = await step.run("delete-old-x402-log-rows", async () => {
-      const { data: deleteResult, error } = await runQuery(
-        db
-          .delete(x402_access_log)
-          .where(lt(x402_access_log.created_at, cutoffIso)),
+      const { data: deletedCount, error } = await runQuery(
+        db.transaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.allow_append_only_delete', 'on', true)`,
+          );
+          const deleteResult = await transaction
+            .delete(x402_access_log)
+            .where(lt(x402_access_log.created_at, cutoffIso));
+          return deleteResult.count;
+        }),
       );
 
       if (error) {
@@ -45,7 +51,7 @@ export const cleanupX402AccessLogCron = inngest.createFunction(
         );
       }
 
-      return { deleted: deleteResult.count };
+      return { deleted: deletedCount };
     });
 
     console.log(

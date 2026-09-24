@@ -31,7 +31,7 @@ graph TD
         SharedFinalize["TikTok Shared Finalize (poll+webhook)"]
         GenericAdapter["Generic Adapter Pattern"]
         OAuthTrust["OAuth Client Trust Enforcement"]
-        RetentionCrons["Data Retention Crons (3)"]
+        RetentionCrons["Data Retention Crons"]
         SSRFGuard["SSRF Guard (safeUserFetch)"]
         StorageQuota["Storage Quota Enforcement"]
         ToolAnnotations["MCP Tool Annotations (18 tools)"]
@@ -97,8 +97,9 @@ The `mcp_oauth_clients` table tracks `trust_level` (unverified, verified, blocke
 
 ### 9. Data Retention Crons
 
-Three Inngest crons handle cleanup:
-- `cleanup-mcp-audit-log`: 90-day retention, not enforced yet: the append-only trigger refuses its DELETE (see [DATABASE.md](./DATABASE.md#data-lifecycle-and-retention))
+Inngest crons handle cleanup:
+- `cleanup-mcp-audit-log`, `cleanup-x402-access-log`: 90-day retention, enforced since 2026-09-24; each DELETE opts in to the append-only trigger's exception (see [DATABASE.md](./DATABASE.md#data-lifecycle-and-retention))
+- `cleanup-rest-audit-log`: 90-day retention, added on 2026-09-24
 - `cleanup-stripe-webhook-events`: 90-day retention
 - `cleanup-cancelled-posts-after-grace`: 7-day grace period
 
@@ -238,6 +239,8 @@ Building it means declaring the five tables in `src/db/schema.ts`, generating an
 | `src/app/(protected)/integrations/components/ApiKeysCard.tsx` | API key expiry display |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | OAuth trust sweep cron |
 | `src/inngest/functions/cleanupMcpAuditLogCron.ts` | Audit log retention cron |
+| `src/inngest/functions/cleanupX402AccessLogCron.ts` | x402 access log retention cron |
+| `src/inngest/functions/cleanupRestAuditLogCron.ts` | REST audit log retention cron |
 | `src/inngest/functions/cleanupStripeWebhookEvents.ts` | Stripe events retention cron |
 | `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Cancelled posts cleanup cron |
 | `i18n-config.ts` | i18n language configuration |

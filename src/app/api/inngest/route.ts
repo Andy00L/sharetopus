@@ -1,6 +1,7 @@
 import { inngest } from "@/inngest/client";
 import { cleanupCancelledPostsAfterGraceCron } from "@/inngest/functions/cleanupCancelledPostsAfterGraceCron";
 import { cleanupMcpAuditLogCron } from "@/inngest/functions/cleanupMcpAuditLogCron";
+import { cleanupRestAuditLogCron } from "@/inngest/functions/cleanupRestAuditLogCron";
 import { cleanupSocialConnectionsCron } from "@/inngest/functions/cleanupSocialConnectionsCron";
 import { cleanupX402AccessLogCron } from "@/inngest/functions/cleanupX402AccessLogCron";
 import { cleanupStripeWebhookEvents } from "@/inngest/functions/cleanupStripeWebhookEvents";
@@ -39,6 +40,7 @@ export const { GET, POST, PUT } = serve({
     cleanupCancelledPostsAfterGraceCron,
     cleanupStripeWebhookEvents,
     cleanupMcpAuditLogCron,
+    cleanupRestAuditLogCron,
     cleanupSocialConnectionsCron,
     cleanupX402AccessLogCron,
     sweepX402ReconciliationCron,

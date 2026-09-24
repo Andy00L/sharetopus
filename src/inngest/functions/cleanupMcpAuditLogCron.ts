@@ -1,6 +1,6 @@
 import "server-only";
 
-import { lt } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { mcp_audit_log } from "@/db/schema";
@@ -13,10 +13,12 @@ const RETENTION_DAYS = 90;
  * Daily cleanup of mcp_audit_log rows older than 90 days.
  *
  * Runs at 04:00 UTC. The table's append-only trigger (reject_mutation)
- * refuses a DELETE unless the transaction sets
- * app.allow_append_only_delete = 'on'. Nothing sets it yet, so this job
- * fails at the DELETE and no rows are removed; switching retention on is
- * pending (docs/DATABASE.md, data lifecycle).
+ * refuses every UPDATE and DELETE unless the transaction sets
+ * app.allow_append_only_delete = 'on', so the DELETE runs in its own
+ * transaction that sets it; set_config(..., true) keeps the setting local
+ * to that transaction. Until 2026-09-24 nothing set it and every run failed
+ * at the DELETE. sourceRef: public.reject_mutation(), docs/DATABASE.md
+ * (append-only tables).
  *
  * Retention rationale:
  *   - 90 days covers most compliance / forensics windows
@@ -39,8 +41,16 @@ export const cleanupMcpAuditLogCron = inngest.createFunction(
     const cutoffIso = cutoff.toISOString();
 
     const result = await step.run("delete-old-audit-rows", async () => {
-      const { data: deleteResult, error } = await runQuery(
-        db.delete(mcp_audit_log).where(lt(mcp_audit_log.created_at, cutoffIso)),
+      const { data: deletedCount, error } = await runQuery(
+        db.transaction(async (transaction) => {
+          await transaction.execute(
+            sql`select set_config('app.allow_append_only_delete', 'on', true)`,
+          );
+          const deleteResult = await transaction
+            .delete(mcp_audit_log)
+            .where(lt(mcp_audit_log.created_at, cutoffIso));
+          return deleteResult.count;
+        }),
       );
 
       if (error) {
@@ -50,7 +60,7 @@ export const cleanupMcpAuditLogCron = inngest.createFunction(
         );
       }
 
-      return { deleted: deleteResult.count };
+      return { deleted: deletedCount };
     });
 
     console.log(
