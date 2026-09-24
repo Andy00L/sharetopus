@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
 
 const AnalyticsPlatformEnum = z.enum(POSTING_PLATFORMS);
 
@@ -12,7 +13,11 @@ export const AnalyticsQuerySchema = z.object({
   content_id: z.string().optional(),
   days: z.coerce.number().int().min(1).max(90).default(30),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  cursor: z.string().optional(),
+  // This endpoint pages on metric_date, a date column, so its next_cursor
+  // is a plain date such as 2026-09-23.
+  cursor: z.iso
+    .date({ error: "cursor must be a next_cursor value from a previous page" })
+    .optional(),
 });
 
 export type AnalyticsQuery = z.infer<typeof AnalyticsQuerySchema>;
@@ -34,7 +39,7 @@ const ContentHistoryPlatformEnum = z.enum([
 export const ContentHistoryQuerySchema = z.object({
   platform: ContentHistoryPlatformEnum.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  cursor: z.string().optional(),
+  cursor: CreatedAtCursorSchema.optional(),
 });
 
 export type ContentHistoryQuery = z.infer<typeof ContentHistoryQuerySchema>;

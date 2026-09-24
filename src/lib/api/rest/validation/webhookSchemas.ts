@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { WebhookEventTypeEnum } from "@/lib/api/rest/webhooks/eventTypes";
+import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
 
 /**
  * Body schema for POST /v1/webhooks (create subscription).
@@ -46,7 +47,7 @@ export type WebhookTestInput = z.infer<typeof WebhookTestInputSchema>;
  */
 export const WebhookDeliveryListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  cursor: z.string().optional(),
+  cursor: CreatedAtCursorSchema.optional(),
 });
 
 export type WebhookDeliveryListQuery = z.infer<

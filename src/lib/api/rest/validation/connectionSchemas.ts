@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { CreatedAtCursorSchema } from "@/lib/api/rest/validation/schemas";
 
 /**
  * Supported platforms for OAuth initiation via REST. Every posting
@@ -56,7 +57,7 @@ export const ConnectionListQuerySchema = z.object({
     .transform((value) => value === "true"),
   platform: AllPlatformEnum.optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  cursor: z.string().optional(),
+  cursor: CreatedAtCursorSchema.optional(),
 });
 
 export type ConnectionListQuery = z.infer<typeof ConnectionListQuerySchema>;
