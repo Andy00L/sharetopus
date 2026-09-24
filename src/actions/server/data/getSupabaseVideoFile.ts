@@ -1,4 +1,5 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
 
 /**
@@ -30,7 +31,7 @@ export async function getSupabaseVideoFile(
 
     // Get the file from Supabase Storage
     const { data, error } = await adminSupabase.storage
-      .from("scheduled-videos") // Bucket name
+      .from(MEDIA_BUCKET)
       .download(filePath);
 
     if (error) {
@@ -38,10 +39,9 @@ export async function getSupabaseVideoFile(
         `[Get Supabase video File] Supabase download error for path ${filePath}:`,
         error
       );
-      console.error("File not found or is empty");
       return {
         success: false,
-        message: "Failed to download file: ${error.message}",
+        message: `Failed to download file: ${error.message}`,
       };
     }
 

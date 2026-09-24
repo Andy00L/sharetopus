@@ -7,6 +7,7 @@ import { AttachFromUrlInputSchema } from "@/lib/api/rest/validation/mediaSchemas
 import { safeUserFetch } from "@/lib/mcp/_shared/safeUserFetch";
 import { getUploadLimitsForPrincipal } from "@/lib/mcp/_shared/getUploadLimitsForPrincipal";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
 const ALLOWED_CONTENT_TYPES = [
   "image/jpeg",
@@ -124,7 +125,7 @@ export const POST = withRestEndpoint({
 
     // Step 8: upload to Supabase storage.
     const { error: uploadError } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(MEDIA_BUCKET)
       .upload(storagePath, fetchResult.bytes, {
         contentType: fetchResult.contentType,
         upsert: false,

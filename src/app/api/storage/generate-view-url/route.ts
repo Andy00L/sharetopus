@@ -1,4 +1,5 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
 
     // Generate signed URL
     const { data, error } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(MEDIA_BUCKET)
       .createSignedUrl(path, expiresIn);
 
     if (error) {

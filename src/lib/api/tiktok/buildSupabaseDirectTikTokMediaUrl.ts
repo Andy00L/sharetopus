@@ -1,5 +1,6 @@
 import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
 /**
  * Builds a direct Supabase signed URL for TikTok using the operator's
@@ -16,15 +17,10 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 export async function buildSupabaseDirectTikTokMediaUrl(input: {
   mediaPath: string;
   expiresInSeconds?: number;
-  bucket?: string;
 }): Promise<
   { success: true; url: string } | { success: false; message: string }
 > {
-  const {
-    mediaPath,
-    expiresInSeconds = 3600,
-    bucket = "scheduled-videos",
-  } = input;
+  const { mediaPath, expiresInSeconds = 3600 } = input;
 
   const customDomain = process.env.SUPABASE_CUSTOM_STORAGE_DOMAIN;
 
@@ -49,7 +45,7 @@ export async function buildSupabaseDirectTikTokMediaUrl(input: {
   }
 
   const { data, error } = await adminSupabase.storage
-    .from(bucket)
+    .from(MEDIA_BUCKET)
     .createSignedUrl(mediaPath, expiresInSeconds);
 
   if (error) {

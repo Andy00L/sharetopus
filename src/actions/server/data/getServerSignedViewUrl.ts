@@ -1,9 +1,6 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
-
-// Matches bucket used in src/app/api/storage/generate-view-url/route.ts
-// and src/app/api/storage/generate-upload-url/route.ts
-const STORAGE_BUCKET = process.env.SUPABASE_BUCKET_NAME;
 
 /**
  * Server-side helper to generate a Supabase signed view URL.
@@ -27,14 +24,8 @@ export async function getServerSignedViewUrl(
   }
 
   try {
-    if (!STORAGE_BUCKET) {
-      return {
-        success: false,
-        message: "[getServerSignedViewUrl] SUPABASE_BUCKET_NAME not configured",
-      };
-    }
     const { data, error } = await adminSupabase.storage
-      .from(STORAGE_BUCKET)
+      .from(MEDIA_BUCKET)
       .createSignedUrl(path, expiresInSeconds);
 
     if (error) {

@@ -3,8 +3,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-
-const BUCKET = "scheduled-videos";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
 /**
  * Reads the total storage bytes for a principal from Supabase Storage.
@@ -26,7 +25,7 @@ export async function getUserStorageBytes(
 > {
   const { data: storageRows, error } = await runQuery(
     db.execute(
-      sql`select public.get_user_storage_bytes(_bucket => ${BUCKET}, _prefix => ${`${principalId}/`}) as total_bytes`,
+      sql`select public.get_user_storage_bytes(_bucket => ${MEDIA_BUCKET}, _prefix => ${`${principalId}/`}) as total_bytes`,
     ),
   );
 

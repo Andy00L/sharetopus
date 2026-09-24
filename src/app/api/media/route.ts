@@ -1,4 +1,5 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -96,7 +97,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const { data, error } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(MEDIA_BUCKET)
       .createSignedUrl(filePath, 600); // 10 minutes
 
     if (error) {

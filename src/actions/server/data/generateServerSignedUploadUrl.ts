@@ -10,6 +10,7 @@ import {
   DEFAULT_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import type { PlanTier } from "@/lib/types/plans";
 import { randomUUID } from "crypto";
 
@@ -33,7 +34,6 @@ export interface GenerateUploadUrlInput {
 }
 
 export type GenerateUploadUrlReason =
-  | "missing_bucket_env"
   | "invalid_input"
   | "content_type_not_allowed"
   | "file_too_large"
@@ -104,11 +104,10 @@ export function checkUploadRequest(input: {
  *
  * Validation order:
  *   1. Input fields present and valid
- *   2. Bucket env configured
- *   3. Content type in allow-list
- *   4. Per-file size cap (from TIER_UPLOAD_LIMITS)
- *   5. Storage quota (via enforceStorageQuota RPC, when countTowardStorage)
- *   6. Mint signed upload URL via adminSupabase
+ *   2. Content type in allow-list
+ *   3. Per-file size cap (from TIER_UPLOAD_LIMITS)
+ *   4. Storage quota (via enforceStorageQuota RPC, when countTowardStorage)
+ *   5. Mint signed upload URL in MEDIA_BUCKET via adminSupabase
  */
 export async function generateServerSignedUploadUrl(
   input: GenerateUploadUrlInput
@@ -128,26 +127,13 @@ export async function generateServerSignedUploadUrl(
     };
   }
 
-  // 2. Resolve bucket
-  const bucket = process.env.SUPABASE_BUCKET_NAME;
-  if (!bucket) {
-    console.error(
-      "[generateServerSignedUploadUrl] SUPABASE_BUCKET_NAME not configured"
-    );
-    return {
-      success: false,
-      message: "Upload service is not configured. Please contact support.",
-      reason: "missing_bucket_env",
-    };
-  }
-
-  // 3-4. Content type allow-list and per-file size cap
+  // 2-3. Content type allow-list and per-file size cap
   const requestCheck = checkUploadRequest(input);
   if (!requestCheck.ok) {
     return { success: false, message: requestCheck.message, reason: requestCheck.reason };
   }
 
-  // 5. Aggregate storage quota (RPC-based, accurate for any file count)
+  // 4. Aggregate storage quota (RPC-based, accurate for any file count)
   if (input.countTowardStorage) {
     const check = await enforceStorageQuota(
       input.principalId,
@@ -163,14 +149,13 @@ export async function generateServerSignedUploadUrl(
     }
   }
 
-  // 6. Build path: principalId/uuid.ext
+  // 5. Build path (principalId/uuid.ext) and create the signed upload URL
   const ext = (input.filename.split(".").pop() ?? "bin").toLowerCase();
   const filePath = `${input.principalId}/${randomUUID()}.${ext}`;
 
-  // 7. Create signed upload URL
   try {
     const { data, error } = await adminSupabase.storage
-      .from(bucket)
+      .from(MEDIA_BUCKET)
       .createSignedUploadUrl(filePath);
 
     if (error) {

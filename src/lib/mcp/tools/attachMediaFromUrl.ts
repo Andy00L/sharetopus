@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -175,7 +176,7 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
 
         try {
           const { error: uploadError } = await adminSupabase.storage
-            .from("scheduled-videos")
+            .from(MEDIA_BUCKET)
             .upload(storagePath, fetchResult.bytes, {
               contentType: fetchResult.contentType,
               upsert: false,

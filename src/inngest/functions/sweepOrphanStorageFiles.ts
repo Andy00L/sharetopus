@@ -4,10 +4,10 @@ import {
   findReferencedStoragePaths,
   batchDeleteStorageFiles,
 } from "@/actions/server/data/orphanStorageSweep";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
 const CUTOFF_HOURS = 24;
 const MAX_FILES_PER_RUN = 10_000;
-const BUCKET = process.env.SUPABASE_BUCKET_NAME ?? "scheduled-videos";
 
 /**
  * Daily cron that sweeps storage files older than 24h with no reference
@@ -31,7 +31,7 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
     ).toISOString();
 
     const listResult = await step.run("list-aged", () =>
-      listAgedStorageFiles({ bucket: BUCKET, cutoffIso, maxFiles: MAX_FILES_PER_RUN })
+      listAgedStorageFiles({ bucket: MEDIA_BUCKET, cutoffIso, maxFiles: MAX_FILES_PER_RUN })
     );
 
     if (!listResult.success) {
@@ -74,7 +74,9 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
     }
 
     const referencedSet = new Set(refResult.referenced);
-    const orphans = listResult.paths.filter((p) => !referencedSet.has(p));
+    const orphans = listResult.paths.filter(
+      (storagePath) => !referencedSet.has(storagePath)
+    );
 
     if (orphans.length === 0) {
       console.log(
@@ -94,7 +96,7 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
 
     const deleteResult = await step.run("batch-delete", () =>
       batchDeleteStorageFiles({
-        bucket: BUCKET,
+        bucket: MEDIA_BUCKET,
         paths: orphans,
         pathSizes: listResult.pathSizes,
       })

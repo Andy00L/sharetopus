@@ -306,7 +306,7 @@ flowchart LR
 
 `enforceStorageQuota` is the single enforcement point for all three upload paths:
 
-1. Calls `get_user_storage_bytes` Postgres RPC with `_bucket = "scheduled-videos"` and `_prefix = "{principalId}/"`.
+1. Calls `get_user_storage_bytes` Postgres RPC with `_bucket = MEDIA_BUCKET` (`src/lib/storage/mediaBucket.ts`) and `_prefix = "{principalId}/"`.
 2. The RPC reads `storage.objects` directly (no pagination, no estimation).
 3. Computes `projected = currentBytes + additionalBytes`.
 4. Compares against `STORAGE_LIMITS[priceId]` (falls back to 5 GB default).

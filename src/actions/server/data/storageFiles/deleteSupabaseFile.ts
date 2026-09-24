@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { countPendingDirectPostsForMediaPath } from "@/actions/server/data/pendingDirectPosts";
 import { countPendingTikTokPullsForMediaPath } from "@/actions/server/data/pendingTikTokPulls";
 import { db, runQuery } from "@/db/client";
@@ -35,7 +36,7 @@ const PAGE_SIZE = 1000;
  * and surfaced as { success: false, message }.
  *
  * Tables read: scheduled_posts, failed_posts, pending_tiktok_pulls, pending_direct_posts
- * Storage written: scheduled-videos bucket (delete)
+ * Storage written: MEDIA_BUCKET (delete)
  */
 export async function deleteSupabaseFile(
   principalId: string,
@@ -62,7 +63,7 @@ export async function deleteSupabaseFile(
 
       while (true) {
         const { data: page, error: listError } = await adminSupabase.storage
-          .from("scheduled-videos")
+          .from(MEDIA_BUCKET)
           .list(principalId, { limit: PAGE_SIZE, offset });
 
         if (listError) {
@@ -152,7 +153,7 @@ export async function deleteSupabaseFile(
       );
 
       const { error: deleteError } = await adminSupabase.storage
-        .from("scheduled-videos")
+        .from(MEDIA_BUCKET)
         .remove(filesToDelete);
 
       if (deleteError) {
@@ -303,7 +304,7 @@ export async function deleteSupabaseFile(
 
     console.log(`[deleteSupabaseFile]: Executing file deletion: ${filePath}`);
     const { error } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(MEDIA_BUCKET)
       .remove([filePath]);
 
     if (error) {

@@ -25,7 +25,6 @@ export async function buildTikTokMediaUrl(input: {
   mediaPath: string;
   principalId: string;
   expiresInSeconds?: number;
-  bucket?: string;
 }): Promise<BuildTikTokMediaUrlResult> {
   const rawMode = process.env.TIKTOK_MEDIA_SOURCE ?? "proxy";
   const mode = rawMode.trim().toLowerCase();
@@ -56,7 +55,6 @@ export async function buildTikTokMediaUrl(input: {
   const result = await buildSupabaseDirectTikTokMediaUrl({
     mediaPath: input.mediaPath,
     expiresInSeconds: input.expiresInSeconds,
-    bucket: input.bucket,
   });
   if (!result.success) {
     return result;

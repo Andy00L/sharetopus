@@ -1,5 +1,6 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { buildStreamingMultipartFormDataBody } from "@/lib/api/_shared/buildStreamingMultipartFormDataBody";
+import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
 import {
   PinterestMediaRegistrationResponse,
@@ -174,7 +175,7 @@ async function uploadVideoFileStreaming({
   try {
     // Mint a Supabase signed URL (10-minute expiry for upload window)
     const { data: signedData, error: signedError } = await adminSupabase.storage
-      .from("scheduled-videos")
+      .from(MEDIA_BUCKET)
       .createSignedUrl(mediaPath, 600);
 
     if (signedError || !signedData?.signedUrl) {
@@ -251,15 +252,17 @@ async function uploadVideoFileStreaming({
         fileStream: supabaseResponse.body,
       });
 
-    // POST to Pinterest's S3 upload endpoint
-    const response = await fetch(uploadUrl, {
+    // POST to Pinterest's S3 upload endpoint. Node's fetch requires
+    // duplex: "half" for a ReadableStream body, and lib.dom's RequestInit
+    // does not declare it yet, so the init is typed with it added
+    // (sourceRef: https://nodejs.org/api/globals.html#fetch).
+    const streamingUploadInit: RequestInit & { duplex: "half" } = {
       method: "POST",
       body: streamingBody,
       headers: streamingHeaders,
-      // @ts-expect-error duplex: "half" required by Node 18+ when body is a ReadableStream;
-      // not yet in lib.dom.d.ts. See https://nodejs.org/api/globals.html#fetch.
       duplex: "half",
-    });
+    };
+    const response = await fetch(uploadUrl, streamingUploadInit);
 
     if (!response.ok) {
       const errorText = await response.text();

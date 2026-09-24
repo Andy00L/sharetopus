@@ -8,7 +8,6 @@ import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
 const REASON_TO_STATUS: Record<GenerateUploadUrlReason, number> = {
-  missing_bucket_env: 500,
   invalid_input: 400,
   content_type_not_allowed: 400,
   file_too_large: 413,

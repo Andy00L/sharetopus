@@ -28,7 +28,7 @@ Media files (images and videos) are stored in Supabase Storage. Upload paths exi
 
 ## Bucket and path convention
 
-**Bucket name:** `scheduled-videos` (configurable via `SUPABASE_BUCKET_NAME` env var)
+**Bucket name:** `scheduled-videos`, or `SUPABASE_BUCKET_NAME` when set. Every storage call (uploads, downloads, view URLs, the media proxy, deletes, the orphan sweep, the storage quota) reads it from one constant, `MEDIA_BUCKET` in `src/lib/storage/mediaBucket.ts`, so they cannot point at different buckets.
 
 **Storage path format:** Two patterns are used:
 
@@ -130,7 +130,7 @@ A single enforcement point (`enforceStorageQuota`) is used by all three upload p
 ```mermaid
 flowchart TD
     A[Upload request arrives] --> B[Call get_user_storage_bytes RPC]
-    B --> C["RPC params: _bucket='scheduled-videos', _prefix='{principalId}/'"]
+    B --> C["RPC params: _bucket=MEDIA_BUCKET, _prefix='{principalId}/'"]
     C --> D[RPC reads storage.objects directly]
     D --> E[projected = currentBytes + additionalBytes]
     E --> F{projected <= STORAGE_LIMITS for priceId?}
@@ -310,7 +310,8 @@ Platform-specific timestamp formats for video cover images:
 | `src/actions/client/signedUrlUpload.ts` | Client-side XHR upload with progress |
 | `src/actions/server/data/getServerSignedViewUrl.ts` | Server-side signed view URL helper |
 | `src/actions/server/data/generateServerSignedUploadUrl.ts` | Server-side signed upload URL generation |
-| `src/actions/server/data/deleteSupabaseFile.ts` | Reference-aware file deletion |
+| `src/actions/server/data/storageFiles/deleteSupabaseFile.ts` | Reference-aware file deletion |
+| `src/lib/storage/mediaBucket.ts` | `MEDIA_BUCKET`, the one bucket name every storage call uses |
 | `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement (all 3 upload paths) |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF-guarded HTTP fetch |
 | `src/lib/mcp/tools/request_upload_url.ts` | MCP upload URL tool |
