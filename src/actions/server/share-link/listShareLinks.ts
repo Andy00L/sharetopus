@@ -1,7 +1,9 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { share_links } from "@/db/schema";
 import { auth } from "@clerk/nextjs/server";
+import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 
 /**
  * Lists all active (non-revoked, non-expired) share links for the
@@ -33,16 +35,32 @@ export async function listShareLinks(): Promise<ListShareLinksResult> {
     return { success: false, message: "Authentication required." };
   }
 
-  const { data: rows, error } = await adminSupabase
-    .from("share_links")
-    .select(
-      "id, platform, token, created_at, expires_at, max_uses, used_count, last_used_at",
-    )
-    .eq("owner_principal_id", userId)
-    .is("revoked_at", null)
-    .or("expires_at.is.null,expires_at.gt." + new Date().toISOString())
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const { data: rows, error } = await runQuery(
+    db
+      .select({
+        id: share_links.id,
+        platform: share_links.platform,
+        token: share_links.token,
+        created_at: share_links.created_at,
+        expires_at: share_links.expires_at,
+        max_uses: share_links.max_uses,
+        used_count: share_links.used_count,
+        last_used_at: share_links.last_used_at,
+      })
+      .from(share_links)
+      .where(
+        and(
+          eq(share_links.owner_principal_id, userId),
+          isNull(share_links.revoked_at),
+          or(
+            isNull(share_links.expires_at),
+            gt(share_links.expires_at, new Date().toISOString()),
+          ),
+        ),
+      )
+      .orderBy(desc(share_links.created_at))
+      .limit(50),
+  );
 
   if (error) {
     console.error(
@@ -52,7 +70,7 @@ export async function listShareLinks(): Promise<ListShareLinksResult> {
     return { success: false, message: "Failed to load share links." };
   }
 
-  const summaries: ShareLinkSummary[] = (rows ?? []).map((row) => ({
+  const summaries: ShareLinkSummary[] = rows.map((row) => ({
     id: row.id,
     platform: row.platform,
     token: row.token,

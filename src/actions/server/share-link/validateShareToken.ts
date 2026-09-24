@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { share_links } from "@/db/schema";
 import type { ShareLink } from "@/lib/types/database.types";
 
 /**
@@ -45,11 +48,9 @@ export async function validateShareToken(
     return { success: false, reason: "invalid_format" };
   }
 
-  const { data: shareLink, error } = await adminSupabase
-    .from("share_links")
-    .select("*")
-    .eq("token", token)
-    .maybeSingle();
+  const { data: shareLinkRows, error } = await runQuery(
+    db.select().from(share_links).where(eq(share_links.token, token)).limit(1),
+  );
 
   if (error) {
     console.error(
@@ -58,6 +59,7 @@ export async function validateShareToken(
     return { success: false, reason: "not_found" };
   }
 
+  const shareLink = shareLinkRows[0];
   if (!shareLink) {
     return { success: false, reason: "not_found" };
   }
@@ -96,11 +98,13 @@ export async function validateShareToken(
 export async function validateShareLinkById(
   shareLinkId: string,
 ): Promise<ValidateShareTokenResult> {
-  const { data: shareLink, error } = await adminSupabase
-    .from("share_links")
-    .select("*")
-    .eq("id", shareLinkId)
-    .maybeSingle();
+  const { data: shareLinkRows, error } = await runQuery(
+    db
+      .select()
+      .from(share_links)
+      .where(eq(share_links.id, shareLinkId))
+      .limit(1),
+  );
 
   if (error) {
     console.error(
@@ -109,6 +113,7 @@ export async function validateShareLinkById(
     return { success: false, reason: "not_found" };
   }
 
+  const shareLink = shareLinkRows[0];
   if (!shareLink) {
     return { success: false, reason: "not_found" };
   }

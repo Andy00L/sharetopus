@@ -5,7 +5,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { resolveConfiguredProvider } from "@/lib/platforms/providers/registry";
 import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJson";
 import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/registryOAuthPlatforms";
@@ -115,25 +116,36 @@ export async function GET(
       ? null
       : new Date(Date.now() + connectResult.expiresIn * 1000).toISOString();
 
-  const { error: upsertError } = await adminSupabase
-    .from("social_accounts")
-    .upsert(
-      {
-        principal_id: userId,
-        platform: providerId,
-        account_identifier: connectResult.identity.accountIdentifier,
-        is_available: true,
-        display_name: connectResult.identity.displayName,
-        username: connectResult.identity.username,
-        avatar_url: connectResult.identity.avatarUrl,
-        access_token: connectResult.accessToken,
-        refresh_token: connectResult.refreshToken,
-        token_expires_at: tokenExpiresAt,
-        extra: providerConfigToJson(connectResult.config),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "principal_id, platform, account_identifier" },
-    );
+  const accountValues = {
+    principal_id: userId,
+    platform: providerId,
+    account_identifier: connectResult.identity.accountIdentifier,
+    is_available: true,
+    display_name: connectResult.identity.displayName,
+    username: connectResult.identity.username,
+    avatar_url: connectResult.identity.avatarUrl,
+    access_token: connectResult.accessToken,
+    refresh_token: connectResult.refreshToken,
+    token_expires_at: tokenExpiresAt,
+    extra: providerConfigToJson(connectResult.config),
+    updated_at: new Date().toISOString(),
+  } satisfies typeof social_accounts.$inferInsert;
+
+  // A reconnect of the same account (social_accounts_unique_per_principal)
+  // overwrites these columns in place instead of adding a second row.
+  const { error: upsertError } = await runQuery(
+    db
+      .insert(social_accounts)
+      .values(accountValues)
+      .onConflictDoUpdate({
+        target: [
+          social_accounts.principal_id,
+          social_accounts.platform,
+          social_accounts.account_identifier,
+        ],
+        set: accountValues,
+      }),
+  );
 
   if (upsertError) {
     console.error(

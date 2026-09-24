@@ -1,10 +1,12 @@
 // app/api/social/connect/instagram/route.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { exchangeInstagramCode } from "@/lib/api/instagram/data/exchangeInstagramCode";
 import { getInstagramProfile } from "@/lib/api/instagram/data/getInstagramProfile";
 import { toJsString } from "@/lib/api/oauth/escapeHtml";
 
 import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -28,7 +30,9 @@ export async function GET(request: NextRequest) {
 
     // En cas d'erreur retournée par Instagram
     if (error) {
-      console.error(`Instagram OAuth error: ${error} - ${errorDescription}`);
+      console.error(
+        `[Instagram] Instagram OAuth error: ${error} - ${errorDescription}`
+      );
       return new Response(
         `
         <!DOCTYPE html>
@@ -224,18 +228,25 @@ export async function GET(request: NextRequest) {
     };
 
     // Enregistrer le compte Instagram dans la base de données
-    const { data: existingAccount, error: fetchError } = await adminSupabase
-      .from("social_accounts")
-      .select("id")
-      .eq("principal_id", userId)
-      .eq("account_identifier", instagramProfile.data.id)
-      .eq("platform", "instagram")
-      .single();
+    const { data: existingAccountRows, error: fetchError } = await runQuery(
+      db
+        .select({ id: social_accounts.id })
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.principal_id, userId),
+            eq(social_accounts.account_identifier, instagramProfile.data.id),
+            eq(social_accounts.platform, "instagram"),
+          ),
+        )
+        .limit(1),
+    );
 
-    if (fetchError && fetchError.code !== "PGRST116") {
-      // PGRST116 signifie "pas de ligne trouvée", ce qui est attendu si le compte n'existe pas encore
+    // No row is the expected outcome for a first connection; only a failed
+    // lookup lands here.
+    if (fetchError) {
       console.error(
-        "Error checking for existing Instagram account:",
+        "[Instagram] Error checking for existing Instagram account:",
         fetchError
       );
       return new Response(
@@ -266,6 +277,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const existingAccount = existingAccountRows[0];
+
     // Calculer la date d'expiration du token (Instagram tokens last 60 days by default)
     const expiresInSeconds = tokenData.expires_in; // 60 days default
     const expiresAt = new Date(
@@ -274,28 +287,33 @@ export async function GET(request: NextRequest) {
 
     // Si le compte existe déjà, mettre à jour les informations
     if (existingAccount) {
-      const { error: updateError } = await adminSupabase
-        .from("social_accounts")
-        .update({
-          username: instagramProfile.data.username,
+      const { error: updateError } = await runQuery(
+        db
+          .update(social_accounts)
+          .set({
+            username: instagramProfile.data.username,
 
-          display_name:
-            instagramProfile.data.name || instagramProfile.data.username,
-          avatar_url: instagramProfile.data.profile_picture_url,
-          follower_count: instagramProfile.data.followers_count,
-          following_count: instagramProfile.data.followers_count,
+            display_name:
+              instagramProfile.data.name || instagramProfile.data.username,
+            avatar_url: instagramProfile.data.profile_picture_url,
+            follower_count: instagramProfile.data.followers_count,
+            following_count: instagramProfile.data.followers_count,
 
-          is_available: true,
-          access_token: tokenResponse.data.access_token,
-          refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens
-          token_expires_at: expiresAt,
-          updated_at: new Date().toISOString(),
-          extra: extraData,
-        })
-        .eq("id", existingAccount.id);
+            is_available: true,
+            access_token: tokenResponse.data.access_token,
+            refresh_token: null, // Instagram API with Instagram Login doesn't provide refresh tokens
+            token_expires_at: expiresAt,
+            updated_at: new Date().toISOString(),
+            extra: extraData,
+          })
+          .where(eq(social_accounts.id, existingAccount.id)),
+      );
 
       if (updateError) {
-        console.error("Error updating Instagram account:", updateError);
+        console.error(
+          "[Instagram] Error updating Instagram account:",
+          updateError
+        );
         return new Response(
           `
          <!DOCTYPE html>
@@ -325,11 +343,10 @@ export async function GET(request: NextRequest) {
       }
     } else {
       // Créer un nouveau compte
-      const { error: insertError } = await adminSupabase
-        .from("social_accounts")
-        .insert({
+      const { error: insertError } = await runQuery(
+        db.insert(social_accounts).values({
           principal_id: userId,
-          platform: "instagram" as const,
+          platform: "instagram",
           account_identifier: instagramProfile.data.id,
           is_available: true,
           username: instagramProfile.data.username,
@@ -344,10 +361,14 @@ export async function GET(request: NextRequest) {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           extra: extraData,
-        });
+        }),
+      );
 
       if (insertError) {
-        console.error("Error inserting Instagram account:", insertError);
+        console.error(
+          "[Instagram] Error inserting Instagram account:",
+          insertError
+        );
         return new Response(
           `
           <!DOCTYPE html>
@@ -405,7 +426,10 @@ export async function GET(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error("Unexpected error in Instagram auth callback:", error);
+    console.error(
+      "[Instagram] Unexpected error in Instagram auth callback:",
+      error
+    );
     return new Response(
       `
       <!DOCTYPE html>

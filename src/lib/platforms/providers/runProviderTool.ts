@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, isNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 
 import { resolveConfiguredProvider } from "./registry";
 import type { ProviderTool, ProviderToolResult } from "./types";
@@ -210,13 +213,23 @@ async function loadOwnedAccount(params: {
   principalId: string;
   socialAccountId: string;
 }): Promise<OwnedAccount> {
-  const { data: accountRow, error: lookupError } = await adminSupabase
-    .from("social_accounts")
-    .select("platform, access_token, extra")
-    .eq("id", params.socialAccountId)
-    .eq("principal_id", params.principalId)
-    .is("deleted_at", null)
-    .maybeSingle();
+  const { data: accountRows, error: lookupError } = await runQuery(
+    db
+      .select({
+        platform: social_accounts.platform,
+        access_token: social_accounts.access_token,
+        extra: social_accounts.extra,
+      })
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, params.socialAccountId),
+          eq(social_accounts.principal_id, params.principalId),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
 
   if (lookupError) {
     console.error(
@@ -225,6 +238,7 @@ async function loadOwnedAccount(params: {
     );
     return { ok: false };
   }
+  const accountRow = accountRows[0];
   if (!accountRow) return { ok: false };
 
   // extra is Json; narrow to a plain object so provider config reads are

@@ -1,7 +1,10 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import type {
   CreatedVia,
   MediaType,
@@ -189,15 +192,17 @@ async function ensureFreshRegistryToken(
       ? null
       : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
 
-  const { error: persistError } = await adminSupabase
-    .from("social_accounts")
-    .update({
-      access_token: refreshed.accessToken,
-      refresh_token: nextRefreshToken,
-      token_expires_at: nextExpiresAt,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", account.id);
+  const { error: persistError } = await runQuery(
+    db
+      .update(social_accounts)
+      .set({
+        access_token: refreshed.accessToken,
+        refresh_token: nextRefreshToken,
+        token_expires_at: nextExpiresAt,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(social_accounts.id, account.id)),
+  );
 
   if (persistError) {
     // Same asymmetry ensureValidToken documents: the in-hand token still

@@ -1,8 +1,10 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import {
   TIER_ACCOUNT_LIMITS,
   type PlanTier,
 } from "@/lib/types/plans";
+import { and, eq, isNull } from "drizzle-orm";
 import "server-only";
 
 export async function checkAccountLimits(
@@ -43,11 +45,17 @@ export async function checkAccountLimits(
   const isUnlimited = !Number.isFinite(maxAllowed);
 
   try {
-    const { data, error } = await adminSupabase
-      .from("social_accounts")
-      .select("id")
-      .eq("principal_id", userId)
-      .is("deleted_at", null);
+    const { data, error } = await runQuery(
+      db
+        .select({ id: social_accounts.id })
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.principal_id, userId),
+            isNull(social_accounts.deleted_at),
+          ),
+        ),
+    );
 
     if (error) {
       console.error("[checkAccountLimits] DB error:", error.message);
@@ -61,7 +69,7 @@ export async function checkAccountLimits(
       };
     }
 
-    const currentCount = data?.length ?? 0;
+    const currentCount = data.length;
     const canAddMore = isUnlimited || currentCount < maxAllowed;
 
     return {

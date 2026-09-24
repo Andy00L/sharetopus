@@ -1,9 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { generateShareToken } from "@/actions/server/share-link/lib/token";
+import { db, runQuery } from "@/db/client";
+import { share_links } from "@/db/schema";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { tierMeets } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
@@ -102,17 +103,19 @@ export async function createShareLink(
       : null;
 
   // 6. Insert share_links row
-  const { data: shareLink, error: insertError } = await adminSupabase
-    .from("share_links")
-    .insert({
-      owner_principal_id: userId,
-      platform: input.platform,
-      token,
-      expires_at: expiresAt,
-      max_uses: input.maxUses,
-    })
-    .select("id")
-    .single();
+  const { data: insertedShareLinks, error: insertError } = await runQuery(
+    db
+      .insert(share_links)
+      .values({
+        owner_principal_id: userId,
+        platform: input.platform,
+        token,
+        expires_at: expiresAt,
+        max_uses: input.maxUses,
+      })
+      .returning({ id: share_links.id }),
+  );
+  const shareLink = insertedShareLinks?.[0];
 
   if (insertError || !shareLink) {
     console.error(

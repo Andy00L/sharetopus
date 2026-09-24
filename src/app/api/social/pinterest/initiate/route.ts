@@ -1,8 +1,10 @@
 // app/api/social/initiate/pinterest/route.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -46,7 +48,7 @@ export async function POST() {
 
     if (!limitsCheck.canAddMore) {
       console.warn(
-        `L'utilisateur ${userId} a tenté de connecter un compte au-delà de sa limite`
+        `[Pinterest OAuth] L'utilisateur ${userId} a tenté de connecter un compte au-delà de sa limite`
       );
       return NextResponse.json(
         {
@@ -59,15 +61,21 @@ export async function POST() {
 
     // Count existing Pinterest accounts
     const { data: existingPinterestAccounts, error: countError } =
-      await adminSupabase
-        .from("social_accounts")
-        .select("id")
-        .eq("principal_id", userId)
-        .eq("platform", "pinterest");
+      await runQuery(
+        db
+          .select({ id: social_accounts.id })
+          .from(social_accounts)
+          .where(
+            and(
+              eq(social_accounts.principal_id, userId),
+              eq(social_accounts.platform, "pinterest"),
+            ),
+          ),
+      );
 
     if (countError) {
       console.error(
-        "Erreur lors du comptage des comptes Pinterest:",
+        "[Pinterest OAuth] Erreur lors du comptage des comptes Pinterest:",
         countError
       );
       return NextResponse.json(
@@ -104,7 +112,7 @@ export async function POST() {
 
     if (!redirectUri) {
       console.error(
-        "L'URL de redirection OAuth pour Pinterest n'est pas configurée"
+        "[Pinterest OAuth] L'URL de redirection OAuth pour Pinterest n'est pas configurée"
       );
       return NextResponse.json(
         {
@@ -130,7 +138,7 @@ export async function POST() {
     });
   } catch (error) {
     console.error(
-      "Erreur lors de l'initialisation de l'OAuth Pinterest:",
+      "[Pinterest OAuth] Erreur lors de l'initialisation de l'OAuth Pinterest:",
       error
     );
     return NextResponse.json(

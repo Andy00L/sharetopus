@@ -1,5 +1,7 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { authCheck } from "@/actions/server/authCheck";
+import { db, runQuery } from "@/db/client";
+import { scheduled_posts, social_accounts } from "@/db/schema";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import "server-only";
 import { deleteSupabaseFile } from "../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
@@ -25,7 +27,7 @@ export async function disconnectSocialAccount(
 ): Promise<{ success: boolean; message: string; resetIn?: number }> {
   try {
     console.log(
-      `[Disconnect Account] Processing account: ${accountId}, user: ${userId}`,
+      `[disconnectSocialAccount] Processing account: ${accountId}, user: ${userId}`,
     );
 
     // Verify user is properly authenticated
@@ -46,7 +48,7 @@ export async function disconnectSocialAccount(
 
     if (!rateCheck.success) {
       console.warn(
-        `[fetchSocialAccounts]: Rate limit exceeded for user: ${userId}. Reset in: ${
+        `[disconnectSocialAccount]: Rate limit exceeded for user: ${userId}. Reset in: ${
           rateCheck.resetIn ?? "unknown"
         } seconds`,
       );
@@ -58,11 +60,17 @@ export async function disconnectSocialAccount(
     }
 
     // Step 3: fetch account, verify ownership.
-    const { data: account, error: fetchError } = await adminSupabase
-      .from("social_accounts")
-      .select("principal_id, platform")
-      .eq("id", accountId)
-      .single();
+    const { data: accountRows, error: fetchError } = await runQuery(
+      db
+        .select({
+          principal_id: social_accounts.principal_id,
+          platform: social_accounts.platform,
+        })
+        .from(social_accounts)
+        .where(eq(social_accounts.id, accountId))
+        .limit(1),
+    );
+    const account = accountRows?.[0];
 
     if (fetchError || !account) {
       console.error(
@@ -88,12 +96,18 @@ export async function disconnectSocialAccount(
     }
 
     // Step 4: collect media paths from active scheduled posts BEFORE the cascade delete wipes them.
-    const { data: mediaPaths, error: postsError } = await adminSupabase
-      .from("scheduled_posts")
-      .select("media_storage_path")
-      .eq("social_account_id", accountId)
-      .in("status", ["scheduled", "processing"])
-      .not("media_storage_path", "is", null);
+    const { data: mediaPaths, error: postsError } = await runQuery(
+      db
+        .select({ media_storage_path: scheduled_posts.media_storage_path })
+        .from(scheduled_posts)
+        .where(
+          and(
+            eq(scheduled_posts.social_account_id, accountId),
+            inArray(scheduled_posts.status, ["scheduled", "processing"]),
+            isNotNull(scheduled_posts.media_storage_path),
+          ),
+        ),
+    );
 
     if (postsError) {
       console.error(
@@ -113,10 +127,9 @@ export async function disconnectSocialAccount(
     ];
 
     // Step 6: delete the account. FK CASCADE wipes scheduled_posts, pending_*, social_connections.
-    const { error: deleteError } = await adminSupabase
-      .from("social_accounts")
-      .delete()
-      .eq("id", accountId);
+    const { error: deleteError } = await runQuery(
+      db.delete(social_accounts).where(eq(social_accounts.id, accountId)),
+    );
 
     if (deleteError) {
       console.error(

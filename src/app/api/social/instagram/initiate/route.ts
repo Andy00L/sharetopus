@@ -1,8 +1,10 @@
 // app/api/social/initiate/instagram/route.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -46,7 +48,7 @@ export async function POST() {
 
     if (!limitsCheck.canAddMore) {
       console.warn(
-        `L'utilisateur ${userId} a tenté de connecter un compte au-delà de sa limite`
+        `[Instagram OAuth] L'utilisateur ${userId} a tenté de connecter un compte au-delà de sa limite`
       );
       return NextResponse.json(
         {
@@ -59,15 +61,21 @@ export async function POST() {
 
     // Count existing Instagram accounts
     const { data: existingInstagramAccounts, error: countError } =
-      await adminSupabase
-        .from("social_accounts")
-        .select("id")
-        .eq("principal_id", userId)
-        .eq("platform", "instagram");
+      await runQuery(
+        db
+          .select({ id: social_accounts.id })
+          .from(social_accounts)
+          .where(
+            and(
+              eq(social_accounts.principal_id, userId),
+              eq(social_accounts.platform, "instagram"),
+            ),
+          ),
+      );
 
     if (countError) {
       console.error(
-        "Erreur lors du comptage des comptes Instagram:",
+        "[Instagram OAuth] Erreur lors du comptage des comptes Instagram:",
         countError
       );
       return NextResponse.json(
@@ -100,7 +108,7 @@ export async function POST() {
     const redirectUri = process.env.INSTAGRAM_REDIRECT_URL;
 
     if (!clientId) {
-      console.error("L'ID client Instagram n'est pas configuré");
+      console.error("[Instagram OAuth] L'ID client Instagram n'est pas configuré");
       return NextResponse.json(
         {
           success: false,
@@ -112,7 +120,7 @@ export async function POST() {
 
     if (!redirectUri) {
       console.error(
-        "L'URL de redirection OAuth pour Instagram n'est pas configurée"
+        "[Instagram OAuth] L'URL de redirection OAuth pour Instagram n'est pas configurée"
       );
       return NextResponse.json(
         {
@@ -139,7 +147,7 @@ export async function POST() {
     });
   } catch (error) {
     console.error(
-      "Erreur lors de l'initialisation de l'OAuth Instagram:",
+      "[Instagram OAuth] Erreur lors de l'initialisation de l'OAuth Instagram:",
       error
     );
     return NextResponse.json(

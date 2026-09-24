@@ -1,8 +1,10 @@
 "use server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { share_links } from "@/db/schema";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { auth } from "@clerk/nextjs/server";
+import { and, eq, isNull } from "drizzle-orm";
 
 /**
  * Revokes a share link by setting revoked_at to now().
@@ -41,14 +43,18 @@ export async function revokeShareLink(
   // 2. Ownership check + revoke in one query
   //    WHERE owner_principal_id = userId ensures ownership.
   //    WHERE revoked_at IS NULL avoids re-revoking (idempotent: we still return success).
-  const { data: updatedRow, error: updateError } = await adminSupabase
-    .from("share_links")
-    .update({ revoked_at: new Date().toISOString() })
-    .eq("id", input.shareLinkId)
-    .eq("owner_principal_id", userId)
-    .is("revoked_at", null)
-    .select("id")
-    .maybeSingle();
+  const { error: updateError } = await runQuery(
+    db
+      .update(share_links)
+      .set({ revoked_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(share_links.id, input.shareLinkId),
+          eq(share_links.owner_principal_id, userId),
+          isNull(share_links.revoked_at),
+        ),
+      ),
+  );
 
   if (updateError) {
     console.error(

@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import type { CreatedVia, SocialAccount } from "@/lib/types/database.types";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
@@ -54,18 +57,21 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 2: Build and execute the database query
-    let query = adminSupabase
-      .from("social_accounts")
-      .select("*")
-      .eq("principal_id", principalId);
-
-    // Only apply the availability filter if requested
-    if (filterByAvailability) {
-      query = query.eq("is_available", true);
-    }
-
-    const { data, error } = await query;
+    // Step 2: Build and execute the database query. The availability
+    // filter only applies when requested (and() drops the undefined entry).
+    const { data, error } = await runQuery(
+      db
+        .select()
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.principal_id, principalId),
+            filterByAvailability
+              ? eq(social_accounts.is_available, true)
+              : undefined,
+          ),
+        ),
+    );
 
     if (error) {
       console.error("[fetchSocialAccounts] DB error:", error.message);
@@ -76,7 +82,7 @@ export async function fetchSocialAccounts(
     }
 
     // Step 3: Check if data exists
-    if (!data || data.length === 0) {
+    if (data.length === 0) {
       console.log(
         `[fetchSocialAccounts]: No social accounts found for principal: ${principalId}`,
       );
@@ -91,7 +97,7 @@ export async function fetchSocialAccounts(
     return {
       success: true,
       message: "Social accounts retrieved successfully.",
-      data: data as SocialAccount[],
+      data,
     };
   } catch (err) {
     // Step 5: Handle unexpected errors

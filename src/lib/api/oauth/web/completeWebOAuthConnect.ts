@@ -1,6 +1,7 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
 import type { Json, Platform } from "@/lib/types/database.types";
 import { auth } from "@clerk/nextjs/server";
@@ -175,34 +176,43 @@ export async function completeWebOAuthConnect(
     // (principal_id, platform, account_identifier) makes reconnects update
     // in place, mirroring handleOAuthCallback in the x402 flow.
     for (const connectedAccount of exchangeResult.accounts) {
-      const { error: upsertError } = await adminSupabase
-        .from("social_accounts")
-        .upsert(
-          {
-            principal_id: userId,
-            platform: config.platform,
-            account_identifier: connectedAccount.accountIdentifier,
-            is_available: true,
-            display_name: connectedAccount.displayName,
-            username: connectedAccount.username,
-            avatar_url: connectedAccount.avatarUrl,
-            email_address: connectedAccount.emailAddress,
-            access_token: connectedAccount.accessToken,
-            refresh_token: connectedAccount.refreshToken,
-            token_expires_at: connectedAccount.tokenExpiresAt,
-            extra: connectedAccount.extra,
-            updated_at: new Date().toISOString(),
-            ...(connectedAccount.profileStats
-              ? {
-                  is_verified: connectedAccount.profileStats.isVerified,
-                  bio_description: connectedAccount.profileStats.bioDescription,
-                  follower_count: connectedAccount.profileStats.followerCount,
-                  following_count: connectedAccount.profileStats.followingCount,
-                }
-              : {}),
-          },
-          { onConflict: "principal_id, platform, account_identifier" },
-        );
+      const accountValues = {
+        principal_id: userId,
+        platform: config.platform,
+        account_identifier: connectedAccount.accountIdentifier,
+        is_available: true,
+        display_name: connectedAccount.displayName,
+        username: connectedAccount.username,
+        avatar_url: connectedAccount.avatarUrl,
+        email_address: connectedAccount.emailAddress,
+        access_token: connectedAccount.accessToken,
+        refresh_token: connectedAccount.refreshToken,
+        token_expires_at: connectedAccount.tokenExpiresAt,
+        extra: connectedAccount.extra,
+        updated_at: new Date().toISOString(),
+        ...(connectedAccount.profileStats
+          ? {
+              is_verified: connectedAccount.profileStats.isVerified,
+              bio_description: connectedAccount.profileStats.bioDescription,
+              follower_count: connectedAccount.profileStats.followerCount,
+              following_count: connectedAccount.profileStats.followingCount,
+            }
+          : {}),
+      } satisfies typeof social_accounts.$inferInsert;
+
+      const { error: upsertError } = await runQuery(
+        db
+          .insert(social_accounts)
+          .values(accountValues)
+          .onConflictDoUpdate({
+            target: [
+              social_accounts.principal_id,
+              social_accounts.platform,
+              social_accounts.account_identifier,
+            ],
+            set: accountValues,
+          }),
+      );
 
       if (upsertError) {
         console.error(

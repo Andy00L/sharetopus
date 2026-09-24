@@ -1,5 +1,8 @@
 // lib/api/auth/ensureValidToken.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 import type { Platform } from "@/lib/types/database.types";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
@@ -203,11 +206,17 @@ async function handleRejectedRefresh(
   account: SocialAccount,
   staleAccessToken: string,
 ): Promise<EnsureValidTokenResult> {
-  const { data: currentRow, error: readError } = await adminSupabase
-    .from("social_accounts")
-    .select("access_token, token_expires_at")
-    .eq("id", account.id)
-    .maybeSingle();
+  const { data: currentRows, error: readError } = await runQuery(
+    db
+      .select({
+        access_token: social_accounts.access_token,
+        token_expires_at: social_accounts.token_expires_at,
+      })
+      .from(social_accounts)
+      .where(eq(social_accounts.id, account.id))
+      .limit(1),
+  );
+  const currentRow = currentRows?.[0];
 
   if (readError) {
     console.error(
@@ -223,11 +232,17 @@ async function handleRejectedRefresh(
 
   // Guarded on the token this call started from, so a refresh that lands
   // after the re-read is never overwritten with a stale flag.
-  const { error: flagError } = await adminSupabase
-    .from("social_accounts")
-    .update({ is_available: false, updated_at: new Date().toISOString() })
-    .eq("id", account.id)
-    .eq("access_token", staleAccessToken);
+  const { error: flagError } = await runQuery(
+    db
+      .update(social_accounts)
+      .set({ is_available: false, updated_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(social_accounts.id, account.id),
+          eq(social_accounts.access_token, staleAccessToken),
+        ),
+      ),
+  );
 
   if (flagError) {
     console.error(
@@ -311,17 +326,23 @@ async function updateTokenInDatabase(
     };
 
     const runUpdate = async (): Promise<string | null> => {
-      const { error } = await adminSupabase
-        .from("social_accounts")
-        .update(updatePayload)
-        .eq("id", accountId)
-        .eq("platform", platform);
+      const { error } = await runQuery(
+        db
+          .update(social_accounts)
+          .set(updatePayload)
+          .where(
+            and(
+              eq(social_accounts.id, accountId),
+              eq(social_accounts.platform, platform),
+            ),
+          ),
+      );
       return error ? error.message : null;
     };
 
     // One immediate retry. On platforms that rotate the refresh token, the
     // credential that produced these tokens is already spent, so losing
-    // this write costs the user a manual reconnect. A transient Supabase
+    // this write costs the user a manual reconnect. A transient database
     // error is worth a second attempt before accepting that.
     let updateError = await runUpdate();
     if (updateError) {

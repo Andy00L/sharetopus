@@ -1,8 +1,10 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
+import { db, runQuery } from "@/db/client";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { ConnectShareLinkButton } from "./ConnectShareLinkButton";
 
@@ -74,11 +76,18 @@ export default async function ShareLinkLandingPage({
   const shareLink = validation.data;
 
   // 2. Look up creator display info
-  const { data: creatorUser } = await adminSupabase
-    .from("users")
-    .select("first_name, last_name, email")
-    .eq("id", shareLink.owner_principal_id)
-    .single();
+  const { data: creatorRows } = await runQuery(
+    db
+      .select({
+        first_name: users.first_name,
+        last_name: users.last_name,
+        email: users.email,
+      })
+      .from(users)
+      .where(eq(users.id, shareLink.owner_principal_id))
+      .limit(1),
+  );
+  const creatorUser = creatorRows?.[0];
 
   const displayIdentity = creatorUser
     ? buildDisplayIdentity(creatorUser)

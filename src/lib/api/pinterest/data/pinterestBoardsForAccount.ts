@@ -1,9 +1,11 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { createPinterestBoard } from "./createPinterestBoard";
 import {
@@ -40,12 +42,19 @@ async function resolvePinterestAccessToken(
     };
   }
 
-  const { data: account, error: accountError } = await adminSupabase
-    .from("social_accounts")
-    .select("*")
-    .eq("id", socialAccountId)
-    .is("deleted_at", null)
-    .single();
+  const { data: accountRows, error: accountError } = await runQuery(
+    db
+      .select()
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, socialAccountId),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
+  const account = accountRows?.[0];
 
   if (accountError || !account) {
     console.error(

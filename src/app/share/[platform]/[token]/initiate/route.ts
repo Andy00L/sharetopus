@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
+import { db, runQuery } from "@/db/client";
+import { social_connections } from "@/db/schema";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
@@ -100,9 +101,8 @@ export async function POST(
     Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000,
   ).toISOString();
 
-  const { error: insertError } = await adminSupabase
-    .from("social_connections")
-    .insert({
+  const { error: insertError } = await runQuery(
+    db.insert(social_connections).values({
       id: connectionId,
       principal_id: shareLink.owner_principal_id,
       platform: "tiktok",
@@ -118,7 +118,8 @@ export async function POST(
         friend_ip_hash: ipHash,
         friend_user_agent: userAgent,
       },
-    });
+    }),
+  );
 
   if (insertError) {
     // Handle oauth_state unique constraint collision: retry once with new state
@@ -133,9 +134,8 @@ export async function POST(
         return redirectToError(platform, "configuration_error");
       }
 
-      const { error: retryError } = await adminSupabase
-        .from("social_connections")
-        .insert({
+      const { error: retryError } = await runQuery(
+        db.insert(social_connections).values({
           id: randomUUID(),
           principal_id: shareLink.owner_principal_id,
           platform: "tiktok",
@@ -151,7 +151,8 @@ export async function POST(
             friend_ip_hash: ipHash,
             friend_user_agent: userAgent,
           },
-        });
+        }),
+      );
 
       if (retryError) {
         console.error(

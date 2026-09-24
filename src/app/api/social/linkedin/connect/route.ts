@@ -1,9 +1,11 @@
 // app/api/auth/linkedin/route.ts
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { exchangeLinkedInCode } from "@/lib/api/linkedin/data/exchangeLinkedInCode";
 import { getLinkedInProfile } from "@/lib/api/linkedin/data/getLinkedInProfile";
 import { toJsString } from "@/lib/api/oauth/escapeHtml";
 import { auth } from "@clerk/nextjs/server";
+import { and, eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -27,7 +29,9 @@ export async function GET(request: NextRequest) {
 
     // En cas d'erreur retournée par LinkedIn
     if (error) {
-      console.error(`LinkedIn OAuth error: ${error} - ${errorDescription}`);
+      console.error(
+        `[LinkedIn Connect] LinkedIn OAuth error: ${error} - ${errorDescription}`
+      );
       return new Response(
         `
         <!DOCTYPE html>
@@ -178,18 +182,25 @@ export async function GET(request: NextRequest) {
     };
 
     // Enregistrer le compte LinkedIn dans la base de données
-    const { data: existingAccount, error: fetchError } = await adminSupabase
-      .from("social_accounts")
-      .select("id")
-      .eq("principal_id", userId)
-      .eq("account_identifier", linkedInProfile.id)
-      .eq("platform", "linkedin")
-      .single();
+    const { data: existingAccountRows, error: fetchError } = await runQuery(
+      db
+        .select({ id: social_accounts.id })
+        .from(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.principal_id, userId),
+            eq(social_accounts.account_identifier, linkedInProfile.id),
+            eq(social_accounts.platform, "linkedin"),
+          ),
+        )
+        .limit(1),
+    );
 
-    if (fetchError && fetchError.code !== "PGRST116") {
-      // PGRST116 signifie "pas de ligne trouvée", ce qui est attendu si le compte n'existe pas encore
+    // No row is the expected outcome for a first connection; only a failed
+    // lookup lands here.
+    if (fetchError) {
       console.error(
-        "Error checking for existing LinkedIn account:",
+        "[LinkedIn Connect] Error checking for existing LinkedIn account:",
         fetchError
       );
       return new Response(
@@ -220,6 +231,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const existingAccount = existingAccountRows[0];
+
     // Calculer la date d'expiration du token
     const expiresInSeconds = tokenResponse.expires_in ?? 3600; // Par défaut 1 heure
     const expiresAt = new Date(
@@ -228,24 +241,29 @@ export async function GET(request: NextRequest) {
 
     // Si le compte existe déjà, mettre à jour les informations
     if (existingAccount) {
-      const { error: updateError } = await adminSupabase
-        .from("social_accounts")
-        .update({
-          username: linkedInProfile.name,
-          display_name: linkedInProfile.name,
-          avatar_url: linkedInProfile.picture,
-          is_available: true,
-          access_token: tokenResponse.access_token,
-          refresh_token: tokenResponse.refresh_token ?? null,
-          token_expires_at: expiresAt,
-          email_address: linkedInProfile.email,
-          updated_at: new Date().toISOString(),
-          extra: extraData,
-        })
-        .eq("id", existingAccount.id);
+      const { error: updateError } = await runQuery(
+        db
+          .update(social_accounts)
+          .set({
+            username: linkedInProfile.name,
+            display_name: linkedInProfile.name,
+            avatar_url: linkedInProfile.picture,
+            is_available: true,
+            access_token: tokenResponse.access_token,
+            refresh_token: tokenResponse.refresh_token ?? null,
+            token_expires_at: expiresAt,
+            email_address: linkedInProfile.email,
+            updated_at: new Date().toISOString(),
+            extra: extraData,
+          })
+          .where(eq(social_accounts.id, existingAccount.id)),
+      );
 
       if (updateError) {
-        console.error("Error updating LinkedIn account:", updateError);
+        console.error(
+          "[LinkedIn Connect] Error updating LinkedIn account:",
+          updateError
+        );
         return new Response(
           `
          <!DOCTYPE html>
@@ -275,11 +293,10 @@ export async function GET(request: NextRequest) {
       }
     } else {
       // Créer un nouveau compte
-      const { error: insertError } = await adminSupabase
-        .from("social_accounts")
-        .insert({
+      const { error: insertError } = await runQuery(
+        db.insert(social_accounts).values({
           principal_id: userId,
-          platform: "linkedin" as const,
+          platform: "linkedin",
           account_identifier: linkedInProfile.id,
           is_available: true,
           username: linkedInProfile.name,
@@ -292,9 +309,13 @@ export async function GET(request: NextRequest) {
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           extra: extraData,
-        });
+        }),
+      );
       if (insertError) {
-        console.error("Error inserting LinkedIn account:", insertError);
+        console.error(
+          "[LinkedIn Connect] Error inserting LinkedIn account:",
+          insertError
+        );
         return new Response(
           `
           <!DOCTYPE html>
@@ -352,7 +373,10 @@ export async function GET(request: NextRequest) {
       }
     );
   } catch (error) {
-    console.error("Unexpected error in LinkedIn auth callback:", error);
+    console.error(
+      "[LinkedIn Connect] Unexpected error in LinkedIn auth callback:",
+      error
+    );
     return new Response(
       `
       <!DOCTYPE html>

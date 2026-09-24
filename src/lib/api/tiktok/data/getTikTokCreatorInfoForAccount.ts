@@ -1,8 +1,10 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
+import { and, eq, isNull } from "drizzle-orm";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts } from "@/db/schema";
 import { ensureValidToken } from "../../ensureValidToken";
 import {
   getTikTokCreatorInfo,
@@ -37,12 +39,19 @@ export async function getTikTokCreatorInfoForAccount(
     };
   }
 
-  const { data: account, error: accountError } = await adminSupabase
-    .from("social_accounts")
-    .select("*")
-    .eq("id", socialAccountId)
-    .is("deleted_at", null)
-    .single();
+  const { data: accountRows, error: accountError } = await runQuery(
+    db
+      .select()
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.id, socialAccountId),
+          isNull(social_accounts.deleted_at),
+        ),
+      )
+      .limit(1),
+  );
+  const account = accountRows?.[0];
 
   if (accountError || !account) {
     console.error(
