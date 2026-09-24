@@ -6,7 +6,8 @@ export type RestErrorCode =
   | "not_found"
   | "validation_error"
   | "rate_limited"
-  | "internal_error";
+  | "internal_error"
+  | "service_unavailable";
 
 const HTTP_STATUS_BY_CODE: Record<RestErrorCode, number> = {
   unauthorized: 401,
@@ -15,6 +16,7 @@ const HTTP_STATUS_BY_CODE: Record<RestErrorCode, number> = {
   validation_error: 400,
   rate_limited: 429,
   internal_error: 500,
+  service_unavailable: 503,
 };
 
 /**

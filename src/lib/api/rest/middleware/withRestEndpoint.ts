@@ -14,6 +14,9 @@ import {
 } from "../audit/writeRestAuditLog";
 import type { RestApiKeyContext } from "../auth/types";
 
+/** Seconds a caller waits before retrying when its API key could not be checked. */
+const AUTH_RETRY_AFTER_SECONDS = 30;
+
 /**
  * Union return type for REST handlers.
  *
@@ -89,15 +92,25 @@ export function withRestEndpoint(
     }
     const bearerToken = authorizationHeader.slice("Bearer ".length).trim();
 
-    // Step 3: resolve bearer to RestPrincipal.
-    const principal = await resolveRestApiKey(bearerToken);
-    if (!principal) {
+    // Step 3: resolve bearer to RestPrincipal. A database failure answers
+    // 503: a 401 would tell the caller a valid key is bad.
+    const resolution = await resolveRestApiKey(bearerToken);
+    if (resolution.status === "unavailable") {
+      return restErrorResponse(
+        "service_unavailable",
+        "Could not verify the API key right now. Retry shortly.",
+        requestId,
+        { retry_after_seconds: AUTH_RETRY_AFTER_SECONDS },
+      );
+    }
+    if (resolution.status === "rejected") {
       return restErrorResponse(
         "unauthorized",
         "Invalid or expired API key",
         requestId,
       );
     }
+    const principal = resolution.principal;
 
     const restRequestContext: RestApiKeyContext = {
       principal,

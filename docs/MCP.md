@@ -80,6 +80,7 @@ Two limits, both in `src/lib/mcp/rateLimits.ts` (the public docs read the same c
 
 - **1000 requests per 60 seconds per IP** (SHA-256 hashed, raw IP never stored), checked before any token handling, so token-probing attackers cannot bypass it. Hosted clients (Claude, ChatGPT) send every user's calls from a shared pool of egress IPs, so this is a flood guard, not a per-user budget. Over it the route answers 429 with `Retry-After` (503 when the limiter is down), never 401: a 401 tells an OAuth client its token is dead and starts a re-login.
 - **100 tool calls per 60 seconds per principal**, across all tools, enforced in `withMcpTool` (see below).
+- When a database read fails while checking the token (key lookup, subscription read, OAuth client lookup), the route answers 503 with `Retry-After: 30`, not 401, for the same reason. See [AUTH.md](./AUTH.md#fail-closed-design).
 - `MAX_CLIENT_INFO_BODY_BYTES`: 16 KB (bodies larger than this skip client name extraction)
 
 ### Generating an API key

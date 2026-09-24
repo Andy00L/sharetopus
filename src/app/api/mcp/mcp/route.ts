@@ -5,6 +5,7 @@ import {
   type AuthInfo,
 } from "@modelcontextprotocol/server";
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { NextResponse } from "next/server";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { resolveMcpPrincipal } from "@/lib/mcp/auth/resolve";
@@ -31,6 +32,14 @@ export const maxDuration = 300;
  * trivial OOM/DoS vector against the serverless function.
  */
 const MAX_CLIENT_INFO_BODY_BYTES = 16 * 1024;
+
+/** Seconds a client waits before retrying when its credentials could not be checked. */
+const AUTH_RETRY_AFTER_SECONDS = 30;
+
+const MCP_AUTH_OPTIONS = {
+  required: true,
+  resourceMetadataPath: "/.well-known/oauth-protected-resource",
+};
 
 /**
  * Strips control characters and HTML/JS injection characters from MCP
@@ -110,25 +119,57 @@ async function readClientNameFromRequest(req: Request): Promise<string | null> {
 }
 
 /**
- * Steps 2 to 5 of the auth flow: resolves the bearer token to a principal
- * and returns the AuthInfo the SDK hands every tool as
- * `ctx.http?.authInfo`. Returning undefined makes withMcpAuth answer 401.
+ * The bearer token from the Authorization header, parsed the way withMcpAuth
+ * parses it (sourceRef: node_modules/mcp-handler/dist/index.mjs, withMcpAuth).
  */
-async function verifyMcpBearerToken(
-  req: Request,
-  bearerToken?: string,
-): Promise<AuthInfo | undefined> {
-  if (!bearerToken) return undefined;
+function readBearerToken(authorizationHeader: string | null): string | undefined {
+  const [scheme, token] = authorizationHeader?.split(" ") ?? [];
+  return scheme?.toLowerCase() === "bearer" ? token : undefined;
+}
 
-  // Read before resolveMcpPrincipal: the OAuth trust check uses it for
-  // the first-sight INSERT into mcp_oauth_clients.
-  const clientName = await readClientNameFromRequest(req);
+/**
+ * Steps 2 to 5 of the auth flow. The token is resolved before withMcpAuth
+ * runs because withMcpAuth answers 401 to every failure, and a 401 tells an
+ * OAuth client its token is dead and starts a re-login: a database outage
+ * would have signed every connected client out. A resolution that could
+ * not read the database answers 503 with Retry-After instead. No AuthInfo
+ * makes withMcpAuth answer 401.
+ */
+async function authenticateMcpRequest(req: Request): Promise<Response> {
+  const bearerToken = readBearerToken(req.headers.get("authorization"));
+  let authInfo: AuthInfo | undefined;
 
-  // Handles both the API key and the Clerk OAuth paths, including the
-  // subscription gate and the OAuth client trust check.
-  const principal = await resolveMcpPrincipal(bearerToken, { clientName });
-  if (!principal) return undefined;
+  if (bearerToken) {
+    // Read before resolveMcpPrincipal: the OAuth trust check uses it for
+    // the first-sight INSERT into mcp_oauth_clients.
+    const clientName = await readClientNameFromRequest(req);
 
+    // Handles both the API key and the Clerk OAuth paths, including the
+    // subscription gate and the OAuth client trust check.
+    const resolution = await resolveMcpPrincipal(bearerToken, { clientName });
+    if (resolution.status === "unavailable") {
+      return NextResponse.json(
+        {
+          error: "auth_unavailable",
+          message: "Could not verify the credentials right now. Retry shortly.",
+          retryAfter: AUTH_RETRY_AFTER_SECONDS,
+        },
+        {
+          status: 503,
+          headers: { "Retry-After": String(AUTH_RETRY_AFTER_SECONDS) },
+        },
+      );
+    }
+    if (resolution.status === "resolved") {
+      authInfo = toAuthInfo(bearerToken, resolution.principal);
+    }
+  }
+
+  return withMcpAuth(mcpHandler, async () => authInfo, MCP_AUTH_OPTIONS)(req);
+}
+
+/** The AuthInfo the SDK hands every tool as `ctx.http?.authInfo`. */
+function toAuthInfo(bearerToken: string, principal: McpPrincipal): AuthInfo {
   return {
     token: bearerToken,
     scopes: principal.scopes,
@@ -162,7 +203,8 @@ async function verifyMcpBearerToken(
  *   4. Otherwise, it tries Clerk OAuth token verification. The user's
  *      Clerk userId becomes the principalId.
  *   5. If neither works, the request gets a 401 whose WWW-Authenticate
- *      header points at /.well-known/oauth-protected-resource.
+ *      header points at /.well-known/oauth-protected-resource. When a
+ *      database read fails on the way, it gets a 503 with Retry-After.
  *
  * Called by: MCP clients (Claude, Cursor, ChatGPT, etc.)
  * Tables touched: api_keys (read, via resolveMcpPrincipal),
@@ -191,11 +233,6 @@ const mcpHandler = createMcpHandler(
   },
 );
 
-const authenticatedMcpHandler = withMcpAuth(mcpHandler, verifyMcpBearerToken, {
-  required: true,
-  resourceMetadataPath: "/.well-known/oauth-protected-resource",
-});
-
 /**
  * Step 1 of the auth flow: the per-IP ceiling, applied before the request
  * reaches token verification. Requests with no resolvable IP (synthetic
@@ -222,7 +259,7 @@ async function handleMcpRequest(req: Request): Promise<Response> {
     }
   }
 
-  return authenticatedMcpHandler(req);
+  return authenticateMcpRequest(req);
 }
 
 export { handleMcpRequest as GET, handleMcpRequest as POST };

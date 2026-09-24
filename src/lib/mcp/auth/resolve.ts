@@ -1,6 +1,7 @@
 import "server-only";
 
 import { isApiKeyToken } from "@/lib/api/tokens";
+import type { PrincipalResolution } from "@/lib/types/principal";
 
 import { resolveApiKey } from "./resolvers/apiKey";
 import { applySubscriptionGate } from "./resolvers/applySubscriptionGate";
@@ -15,7 +16,9 @@ export type { ResolveHints } from "./resolvers/oauth";
 
 /**
  * Routes a bearer token to the correct auth strategy and applies the
- * shared subscription gate. Returns null on any failure (fails closed).
+ * shared subscription gate. Fails closed: "rejected" on any auth failure,
+ * "unavailable" when a database read failed on the way (the route answers
+ * 503 instead of a 401 that would make the client drop a valid token).
  *
  * Token dispatch:
  *   - "stp_mcp_..." -> API key resolver (single function, fully gated
@@ -31,28 +34,24 @@ export type { ResolveHints } from "./resolvers/oauth";
  * initialize handshake. Only used by the OAuth trust check on the
  * first-sight INSERT into mcp_oauth_clients.
  *
- * Phase 2 adds "stp_rest_" branch. Phase 4 adds "stp_wallet_" branch.
- *
  * Source: replaces resolveMcpPrincipal from src/lib/mcp/auth.ts:67-135.
  */
 export async function resolveMcpPrincipal(
-  bearerToken: string | null,
+  bearerToken: string,
   hints: ResolveHints = {},
-): Promise<McpPrincipal | null> {
-  if (!bearerToken) return null;
-
+): Promise<PrincipalResolution<McpPrincipal>> {
   // API key path: single resolver runs verify + (its own light)
   // tracking, then we apply the shared subscription gate.
   if (isApiKeyToken(bearerToken, "mcp")) {
-    const apiKeyCandidate = await resolveApiKey(bearerToken);
-    if (!apiKeyCandidate) return null;
-    return applySubscriptionGate(apiKeyCandidate);
+    const apiKeyResolution = await resolveApiKey(bearerToken);
+    if (apiKeyResolution.status !== "resolved") return apiKeyResolution;
+    return applySubscriptionGate(apiKeyResolution.principal);
   }
 
   // OAuth path: split into three steps so the subscription gate fires
   // before the trust-check side effect.
   const verifiedToken = await verifyOAuthToken(bearerToken);
-  if (!verifiedToken) return null;
+  if (!verifiedToken) return { status: "rejected" };
 
   // Build a candidate McpPrincipal for the subscription gate. Plan
   // starts at null and gets overwritten inside applySubscriptionGate
@@ -66,19 +65,20 @@ export async function resolveMcpPrincipal(
     priceId: null,
   };
 
-  const gatedCandidate = await applySubscriptionGate(oauthCandidate);
-  if (!gatedCandidate) return null;
+  const gateResolution = await applySubscriptionGate(oauthCandidate);
+  if (gateResolution.status !== "resolved") return gateResolution;
 
   // Subscription is active. Now safe to record/verify the OAuth client.
   // The trust check is the only step that can INSERT into
   // mcp_oauth_clients; running it last means non-paying users never
   // leave a row behind.
-  const trustOk = await assertOAuthClientTrust(
+  const trust = await assertOAuthClientTrust(
     verifiedToken.oauthClientId,
     verifiedToken.principalId,
     hints,
   );
-  if (!trustOk) return null;
+  if (trust === "unavailable") return { status: "unavailable" };
+  if (trust === "refused") return { status: "rejected" };
 
-  return gatedCandidate;
+  return gateResolution;
 }

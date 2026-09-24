@@ -118,7 +118,8 @@ Every route handler is wrapped by `withRestEndpoint` in `src/lib/api/rest/middle
 flowchart TD
     A[Incoming request] --> B[Extract Bearer token]
     B --> C{Valid stp_rest_ key?}
-    C -->|No| D[401 Unauthorized + audit log]
+    C -->|No| D[401 Unauthorized]
+    C -->|Could not check| D2[503 service_unavailable]
     C -->|Yes| E[Rate limit check]
     E -->|Exceeded| F[429 Too Many Requests + audit log]
     E -->|OK| G[Validate request body/query/params]
@@ -156,8 +157,9 @@ Error codes:
 | `validation_error` | 400 | Request body or parameters failed Zod validation |
 | `rate_limited` | 429 | Per-principal rate limit exceeded |
 | `internal_error` | 500 | Unexpected server error |
+| `service_unavailable` | 503 | The API key could not be checked (a database read failed). The key was not rejected; retry with it. |
 
-Rate limit responses include a `retry_after_seconds` field.
+Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
 ---
 

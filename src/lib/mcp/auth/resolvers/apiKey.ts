@@ -7,17 +7,19 @@ import { db, runQuery } from "@/db/client";
 import { api_keys, principals } from "@/db/schema";
 import { extractIpHash } from "@/lib/api/context";
 import { hashToken } from "@/lib/api/tokens";
+import type { PrincipalResolution } from "@/lib/types/principal";
 
 import type { McpPrincipal } from "../types";
 
 /**
  * Resolves a `stp_mcp_` API key token to an authenticated MCP principal.
  *
- * Returns null when:
+ * "rejected" when:
  *   - The token hash does not match any row
  *   - The row is revoked (revoked_at not null)
  *   - The row has expired (expires_at in the past)
  *   - The principal row is missing or not kind='clerk'
+ * "unavailable" when either lookup fails: the key may well be valid.
  *
  * Side effect: `last_used_at` and `last_used_ip` are updated on every
  * successful resolution. The UPDATE runs in the background via
@@ -30,7 +32,7 @@ import type { McpPrincipal } from "../types";
  */
 export async function resolveApiKey(
   rawToken: string,
-): Promise<McpPrincipal | null> {
+): Promise<PrincipalResolution<McpPrincipal>> {
   const tokenHash = hashToken(rawToken);
 
   const { data: apiKeyRows, error: apiKeyError } = await runQuery(
@@ -52,17 +54,22 @@ export async function resolveApiKey(
       .limit(1),
   );
 
-  const apiKeyRow = apiKeyRows?.[0];
-  if (apiKeyError || !apiKeyRow) return null;
+  if (apiKeyError) {
+    console.error(`[resolveApiKey] Key lookup failed: ${apiKeyError.message}`);
+    return { status: "unavailable" };
+  }
+
+  const apiKeyRow = apiKeyRows[0];
+  if (!apiKeyRow) return { status: "rejected" };
 
   if (apiKeyRow.expires_at && new Date(apiKeyRow.expires_at) < new Date()) {
-    return null;
+    return { status: "rejected" };
   }
 
   // Belt-and-suspenders: the api_keys.principal_id FK trigger already
   // enforces kind='clerk', but a defense-in-depth check here protects
   // against future schema drift. Costs one extra SELECT on the hot path.
-  const { data: principalRows } = await runQuery(
+  const { data: principalRows, error: principalError } = await runQuery(
     db
       .select({ id: principals.id })
       .from(principals)
@@ -75,7 +82,13 @@ export async function resolveApiKey(
       .limit(1),
   );
 
-  if (!principalRows?.[0]) return null;
+  if (principalError) {
+    console.error(
+      `[resolveApiKey] Principal lookup failed for key ${apiKeyRow.id}: ${principalError.message}`,
+    );
+    return { status: "unavailable" };
+  }
+  if (!principalRows[0]) return { status: "rejected" };
 
   // Fire-and-forget `last_used` tracking.
   //
@@ -112,11 +125,14 @@ export async function resolveApiKey(
   );
 
   return {
-    kind: "apikey",
-    principalId: apiKeyRow.principal_id,
-    apiKeyId: apiKeyRow.id,
-    scopes: apiKeyRow.scopes ?? [],
-    plan: null,
-    priceId: null,
+    status: "resolved",
+    principal: {
+      kind: "apikey",
+      principalId: apiKeyRow.principal_id,
+      apiKeyId: apiKeyRow.id,
+      scopes: apiKeyRow.scopes ?? [],
+      plan: null,
+      priceId: null,
+    },
   };
 }

@@ -81,10 +81,11 @@ export async function verifyOAuthToken(
  * Must be called AFTER the subscription gate has accepted the principal,
  * so that we never seed mcp_oauth_clients rows for non-paying users.
  *
- * Returns false when:
+ * "refused" when:
  *   - The client_id is explicitly revoked
  *   - The client_id is trust_level='blocked'
  *   - The first-sight INSERT was refused by the new-client rate limiter
+ * "unavailable" when the lookup or the first-sight INSERT failed.
  *
  * Called by: src/lib/mcp/auth/resolve.ts after applySubscriptionGate
  *   accepts an OAuth-kind principal.
@@ -93,19 +94,17 @@ export async function assertOAuthClientTrust(
   oauthClientId: string,
   principalId: string,
   hints: ResolveHints,
-): Promise<boolean> {
+): Promise<"allowed" | "refused" | "unavailable"> {
   const trust = await checkOAuthClientTrust(oauthClientId, principalId, {
     clientName: hints.clientName ?? null,
     softwareId: null,
     softwareVersion: null,
   });
 
-  if (!trust.allowed) {
-    console.log(
-      `[assertOAuthClientTrust] Trust check refused client ${oauthClientId}: ${trust.reason}`,
-    );
-    return false;
-  }
+  if (trust.allowed) return "allowed";
 
-  return true;
+  console.log(
+    `[assertOAuthClientTrust] Trust check refused client ${oauthClientId}: ${trust.reason}`,
+  );
+  return trust.reason === "lookup_failed" ? "unavailable" : "refused";
 }

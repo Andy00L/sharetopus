@@ -13,3 +13,15 @@ export interface GatablePrincipal {
   plan: PlanTier | null;
   priceId: string | null;
 }
+
+/**
+ * Outcome of turning a bearer token into a principal. "rejected" is a real
+ * auth failure (unknown, revoked or expired credentials, no subscription)
+ * and answers 401. "unavailable" means a database read failed: the route
+ * answers 503, so the client retries with the same credentials instead of
+ * dropping a token that is still valid.
+ */
+export type PrincipalResolution<Principal> =
+  | { status: "resolved"; principal: Principal }
+  | { status: "rejected" }
+  | { status: "unavailable" };

@@ -138,7 +138,7 @@ flowchart TD
     C --> C1[SHA-256 hash the token]
     C1 --> C2[SELECT api_keys WHERE token_hash = hash]
     C2 --> C3{row found, not revoked, not expired?}
-    C3 -- No --> FAIL[return null]
+    C3 -- No --> FAIL[rejected: 401]
     C3 -- Yes --> C4[verify principal kind=clerk]
     C4 --> C5[fire-and-forget: update last_used_at, last_used_ip]
     C5 --> GATE
@@ -193,7 +193,12 @@ The `plan` field starts as `null` and is populated by `applySubscriptionGate` fr
 
 ### Fail-closed design
 
-`resolveMcpPrincipal` returns `null` on any failure. Callers treat `null` as a 401. There is no fallback or degraded-access mode.
+`resolveMcpPrincipal` returns a `PrincipalResolution` (`src/lib/types/principal.ts`): `resolved`, `rejected` or `unavailable`. There is no fallback or degraded-access mode.
+
+- `rejected` means the token is unknown, revoked or expired, the user has no subscription, or the OAuth client is revoked, blocked or rate limited. The route answers 401.
+- `unavailable` means a database read failed on the way: the key lookup, the subscription read, or the OAuth client lookup or first-sight insert. The route answers 503 with `Retry-After: 30` before `withMcpAuth` runs, because `withMcpAuth` answers 401 to every failure. A 401 tells an OAuth client its token is dead and starts a re-login, so a database outage used to sign every connected client out.
+
+REST keys work the same way through `resolveRestApiKey`, which answers 503 `service_unavailable`.
 
 `applySubscriptionGate` caches each completed subscription read for 60 seconds, a "no subscription" answer included. A read that fails (`checkActiveSubscription` status `unavailable`) is not cached, so a database blip denies one request instead of locking a paying user out for the whole window.
 
@@ -284,7 +289,7 @@ The `mcp_oauth_clients` table tracks every OAuth client that has authenticated a
 
 ### Trust state transitions
 
-**First sight (new client_id):** The system upserts a row into `mcp_oauth_clients`. If the registering user has fewer than 5 verified clients, the new client is auto-verified. Otherwise it is inserted as unverified.
+**First sight (new client_id):** The system upserts a row into `mcp_oauth_clients`. If the registering user has fewer than 5 verified clients, the new client is auto-verified. Otherwise, or when the count cannot be read, it is inserted as unverified.
 
 **Subscription cancel:** When a `customer.subscription.deleted` event leaves the user without access, all `verified` clients belonging to the user are demoted to `unverified` (see `demoteOauthClientsOnCancel`). Revoked clients (`revoked_at IS NOT NULL`) are excluded from demotion.
 

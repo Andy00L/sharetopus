@@ -7,11 +7,12 @@ import { api_keys } from "@/db/schema";
 import { hashToken, isApiKeyToken } from "@/lib/api/tokens";
 import { applySubscriptionGate } from "@/lib/mcp/auth/resolvers/applySubscriptionGate";
 import { extractIpHash } from "@/lib/api/context";
+import type { PrincipalResolution } from "@/lib/types/principal";
 import { waitUntil } from "@vercel/functions";
 import type { RestPrincipal } from "./types";
 
 /**
- * Resolves a Bearer token into a RestPrincipal, or null if any check fails.
+ * Resolves a Bearer token into a RestPrincipal.
  *
  * Pipeline:
  *   1. Format check (must start with "stp_rest_")
@@ -20,8 +21,8 @@ import type { RestPrincipal } from "./types";
  *   4. Subscription gate (active subscription required)
  *   5. Background last_used_at + last_used_ip update (fire-and-forget)
  *
- * Returns null on ANY failure. Never throws. The caller (HOF) maps null
- * to a 401 response.
+ * "rejected" when a check fails, "unavailable" when a database read failed
+ * on the way. Never throws. The caller (HOF) answers 401 and 503.
  *
  * Side effects:
  *   - Updates api_keys.last_used_at and last_used_ip via waitUntil
@@ -35,11 +36,11 @@ import type { RestPrincipal } from "./types";
  */
 export async function resolveRestApiKey(
   bearerToken: string,
-): Promise<RestPrincipal | null> {
+): Promise<PrincipalResolution<RestPrincipal>> {
   try {
     // Step 1: Format check. Cheap, no DB. Reject foreign tokens early.
     if (!isApiKeyToken(bearerToken, "rest")) {
-      return null;
+      return { status: "rejected" };
     }
 
     const restApiKeyHashed = hashToken(bearerToken);
@@ -71,12 +72,12 @@ export async function resolveRestApiKey(
         "[resolveRestApiKey] DB lookup failed:",
         lookupError.message,
       );
-      return null;
+      return { status: "unavailable" };
     }
 
     const apiKeyRow = apiKeyRows[0];
     if (!apiKeyRow) {
-      return null;
+      return { status: "rejected" };
     }
 
     // Step 3: Expiry check.
@@ -87,11 +88,11 @@ export async function resolveRestApiKey(
       console.warn(
         `[resolveRestApiKey] Key ${apiKeyRow.id} (prefix=${apiKeyRow.prefix}) is expired`,
       );
-      return null;
+      return { status: "rejected" };
     }
 
-    // Step 4: Subscription gate. Returns null if no active subscription.
-    // The generic preserves RestPrincipal on the return type.
+    // Step 4: Subscription gate. Rejects without an active subscription.
+    // The generic preserves RestPrincipal on the resolved principal.
     const principalCandidate: RestPrincipal = {
       kind: "rest",
       principalId: apiKeyRow.principal_id,
@@ -101,9 +102,9 @@ export async function resolveRestApiKey(
       priceId: null,
     };
 
-    const gatedPrincipal = await applySubscriptionGate(principalCandidate);
-    if (!gatedPrincipal) {
-      return null;
+    const gateResolution = await applySubscriptionGate(principalCandidate);
+    if (gateResolution.status !== "resolved") {
+      return gateResolution;
     }
 
     // Step 5: Fire-and-forget last_used_at + last_used_ip update.
@@ -111,7 +112,7 @@ export async function resolveRestApiKey(
     // to complete after we return the response.
     waitUntil(updateLastUsedFields(apiKeyRow.id));
 
-    return gatedPrincipal;
+    return gateResolution;
   } catch (unexpectedError) {
     console.error(
       "[resolveRestApiKey] Unexpected error:",
@@ -119,7 +120,8 @@ export async function resolveRestApiKey(
         ? unexpectedError.message
         : unexpectedError,
     );
-    return null;
+    // Our failure, not the key's: a 401 would tell the caller the key is bad.
+    return { status: "unavailable" };
   }
 }
 

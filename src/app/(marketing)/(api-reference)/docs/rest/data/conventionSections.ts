@@ -109,7 +109,7 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
     navLabel: "Errors",
     title: "Error codes",
     summary:
-      "Every error response uses one envelope: { error: { code, message, details? }, request_id }. details appears only on validation errors and rate limits.",
+      "Every error response uses one envelope: { error: { code, message, details? }, request_id }. details appears only on validation errors, rate limits and 503s.",
     sourceRef: "src/lib/api/rest/errors/restErrorResponse.ts",
     table: {
       columns: ["Status", "Code", "Meaning"],
@@ -139,6 +139,11 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
           "500",
           "internal_error",
           "Server-side failure. Retry with backoff; include request_id when reporting.",
+        ],
+        [
+          "503",
+          "service_unavailable",
+          "The API key could not be checked because of a server-side failure. The key was not rejected: retry with the same key after retry_after_seconds (in details).",
         ],
       ],
     },

@@ -186,12 +186,13 @@ async function firstSightInsert(
       `[firstSightInsert] Verified-count query failed for ${principalId}:`,
       countErr.message,
     );
-    // Fall through; defaults to unverified
+    // Falls through to unverified: an unknown count grants no verified slot.
   }
 
-  const verifiedCount = count ?? 0;
   const trustLevel: "verified" | "unverified" =
-    verifiedCount < MAX_VERIFIED_CLIENTS_PER_USER ? "verified" : "unverified";
+    count !== null && count < MAX_VERIFIED_CLIENTS_PER_USER
+      ? "verified"
+      : "unverified";
 
   // ON CONFLICT DO NOTHING handles the race: two simultaneous requests
   // for the same new client_id resolve to one row.
@@ -229,7 +230,7 @@ async function firstSightInsert(
 
   console.log(
     `[firstSightInsert] Inserted ${clientId} as ${trustLevel} ` +
-      `(registered_by ${principalId}, verified_count_before ${verifiedCount})`,
+      `(registered_by ${principalId}, verified_count_before ${count ?? "unknown"})`,
   );
   return { allowed: true };
 }
