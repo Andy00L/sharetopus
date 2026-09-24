@@ -8,7 +8,7 @@ import type { SettleResponse } from "@x402/core/types";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
-import type { Json } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
 import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";

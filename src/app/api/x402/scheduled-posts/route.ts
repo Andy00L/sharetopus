@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 
 import { x402PaidEndpoint } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { getScheduledPosts } from "@/actions/server/scheduleActions/getScheduledPosts";
-import type { PostStatus } from "@/lib/types/database.types";
+import { POST_STATUSES, type PostStatus } from "@/db/schema";
 import {
   isSchedulablePlatform,
   type SchedulablePlatform,
@@ -28,17 +28,7 @@ export const maxDuration = 60;
 const DEFAULT_POSTS_LIMIT = 20;
 const MAX_POSTS_LIMIT = 100;
 
-/** sourceRef: database.types.ts PostStatus. */
-const POST_STATUSES = [
-  "scheduled",
-  "queued",
-  "processing",
-  "posted",
-  "failed",
-  "cancelled",
-] as const satisfies readonly PostStatus[];
-
-function isPostStatus(value: string): value is (typeof POST_STATUSES)[number] {
+function isPostStatus(value: string): value is PostStatus {
   return POST_STATUSES.some((status) => status === value);
 }
 

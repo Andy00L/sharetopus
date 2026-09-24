@@ -5,7 +5,7 @@
 import "server-only";
 import { createVideoPin } from "./createVideoPin";
 import { createImagePin } from "./postImage";
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 
 // Define return type for Pinterest posts
 export interface PinterestPostResult {

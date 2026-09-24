@@ -12,7 +12,7 @@ import {
   platformSupportsMediaType,
   type PostingPlatform,
 } from "@/lib/platforms/capabilities";
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";

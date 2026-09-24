@@ -1,10 +1,6 @@
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import type {
-  CreatedVia,
-  MediaType,
-  Platform,
-} from "@/lib/types/database.types";
+import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 

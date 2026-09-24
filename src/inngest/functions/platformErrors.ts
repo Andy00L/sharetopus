@@ -47,7 +47,7 @@ export function isSafeToRetryPost(reason: PlatformErrorReason): boolean {
  * save Pins.") is policy_rejected, NOT transient.
  */
 export function classifyDirectPostFailure(
-  platform: import("@/lib/types/database.types").Platform,
+  platform: import("@/db/schema").Platform,
   message: string | undefined
 ): PlatformErrorReason {
   const m = (message ?? "").toLowerCase();

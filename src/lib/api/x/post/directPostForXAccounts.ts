@@ -7,7 +7,7 @@ import {
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
 import { postToX } from "@/lib/api/x/post/postToX";
 import type { XPostResult } from "@/lib/api/x/post/postToX";
-import type { CreatedVia, MediaType } from "@/lib/types/database.types";
+import type { CreatedVia, MediaType } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 interface XDirectPostConfig {

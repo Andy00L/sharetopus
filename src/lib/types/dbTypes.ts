@@ -1,14 +1,19 @@
-import type { Tables, Json, MediaType } from "./database.types";
+import type {
+  content_history,
+  pending_tiktok_pulls,
+  scheduled_posts,
+  social_accounts,
+} from "@/db/schema";
 
 // Re-export for consumers
-export type { Json, MediaType };
+export type { Json, MediaType } from "@/db/schema";
 
 // ─────────────────────────────────────────────────────────────────────
-// Table type aliases (row shapes come from src/db/schema.ts through
-// database.types.ts)
+// Table type aliases (row shapes inferred from the Drizzle tables in
+// src/db/schema.ts)
 // ─────────────────────────────────────────────────────────────────────
 
-export type SocialAccount = Tables<"social_accounts">;
+export type SocialAccount = typeof social_accounts.$inferSelect;
 
 /**
  * The social_accounts projection that may cross to client components.
@@ -37,7 +42,7 @@ export type ClientSocialAccount = Pick<
  * src/actions/server/scheduleActions/getScheduledPosts.ts (select string).
  */
 export type ScheduledPostListItem = Pick<
-  Tables<"scheduled_posts">,
+  typeof scheduled_posts.$inferSelect,
   | "id"
   | "scheduled_at"
   | "status"
@@ -57,11 +62,11 @@ export type ScheduledPostListItem = Pick<
   } | null;
 };
 
-export type ContentHistory = Tables<"content_history"> & {
+export type ContentHistory = typeof content_history.$inferSelect & {
   social_accounts?: { avatar_url: string | null } | null;
 };
 
-export type PendingTikTokPull = Tables<"pending_tiktok_pulls">;
+export type PendingTikTokPull = typeof pending_tiktok_pulls.$inferSelect;
 
 // ─────────────────────────────────────────────────────────────────────
 // Platform-specific option types

@@ -7,7 +7,7 @@ import {
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
 import { postToYouTube } from "@/lib/api/youtube/post/postToYouTube";
 import type { YouTubePostResult } from "@/lib/api/youtube/post/postToYouTube";
-import type { CreatedVia, MediaType } from "@/lib/types/database.types";
+import type { CreatedVia, MediaType } from "@/db/schema";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 /** YouTube video titles are capped at 100 characters. sourceRef: postToYouTube.ts */

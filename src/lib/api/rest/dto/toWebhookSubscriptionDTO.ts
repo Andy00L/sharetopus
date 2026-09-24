@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { webhook_subscriptions } from "@/db/schema";
 
-type WebhookSubscriptionRow =
-  Database["public"]["Tables"]["webhook_subscriptions"]["Row"];
+type WebhookSubscriptionRow = typeof webhook_subscriptions.$inferSelect;
 
 /**
  * Public DTO for a webhook subscription. The raw `secret` is NEVER

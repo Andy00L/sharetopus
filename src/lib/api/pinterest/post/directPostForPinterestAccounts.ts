@@ -6,7 +6,7 @@ import {
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import { CreatedVia, MediaType } from "@/lib/types/database.types";
+import type { CreatedVia, MediaType } from "@/db/schema";
 
 interface PinterestDirectPostConfig {
   account: SocialAccount;

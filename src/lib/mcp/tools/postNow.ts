@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
-import { MediaType, Platform } from "@/lib/types/database.types";
+import type { MediaType, Platform } from "@/db/schema";
 import { withMcpTool } from "../withMcpTool";
 
 type PostNowArgs = {

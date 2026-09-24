@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { x402_charges } from "@/db/schema";
-import type { Json } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
   markChargeFailed,

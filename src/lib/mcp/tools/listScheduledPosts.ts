@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
-import { Platform, PostStatus } from "@/lib/types/database.types";
+import type { Platform, PostStatus } from "@/db/schema";
 
 type ListScheduledPostsArgs = {
   platform?: Platform;

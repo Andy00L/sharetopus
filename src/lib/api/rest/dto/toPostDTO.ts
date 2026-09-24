@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { scheduled_posts } from "@/db/schema";
 
-type ScheduledPostRow =
-  Database["public"]["Tables"]["scheduled_posts"]["Row"];
+type ScheduledPostRow = typeof scheduled_posts.$inferSelect;
 
 /**
  * Public DTO for a post. Only fields part of the external contract.

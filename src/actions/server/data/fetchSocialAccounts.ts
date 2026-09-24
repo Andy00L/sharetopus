@@ -4,7 +4,8 @@ import { and, eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import type { CreatedVia, SocialAccount } from "@/lib/types/database.types";
+import type { CreatedVia } from "@/db/schema";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**

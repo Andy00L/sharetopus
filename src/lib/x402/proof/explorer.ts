@@ -8,7 +8,7 @@
  * Pure URL builders, no secrets, safe to import from any component.
  */
 
-import type { WalletChain } from "@/lib/types/database.types";
+import type { WalletChain } from "@/db/schema";
 
 /**
  * Explorer roots and their path vocabulary. EVM explorers say /address and

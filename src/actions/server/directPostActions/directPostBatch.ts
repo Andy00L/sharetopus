@@ -9,14 +9,10 @@ import {
 } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts, social_accounts } from "@/db/schema";
+import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
 import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
-import type {
-  CreatedVia,
-  MediaType,
-  Platform,
-} from "@/lib/types/database.types";
 import type { PlatformOptions } from "@/lib/types/dbTypes";
 import type { PreflightResult } from "@/lib/types/preflight";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";

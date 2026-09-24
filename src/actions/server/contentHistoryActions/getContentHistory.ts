@@ -5,11 +5,8 @@ import { and, desc, eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { content_history, social_accounts } from "@/db/schema";
-import type {
-  ContentHistory,
-  CreatedVia,
-  Platform,
-} from "@/lib/types/database.types";
+import type { CreatedVia, Platform } from "@/db/schema";
+import type { ContentHistory } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**

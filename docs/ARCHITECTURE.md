@@ -267,7 +267,7 @@ src/
       tools/                    # 18 tool definitions (one file per tool, Zod 4 schemas)
       prompts/                  # 3 prompt definitions (auditCalendar, planWeekForPlatform, repurposePost)
     types/
-      database.types.ts         # Row and Insert types derived from src/db/schema.ts
+      dbTypes.ts                # App row aliases inferred from src/db/schema.ts, platform option types
       plans.ts                  # Plan tiers (Starter, Creator, Pro), price IDs, account/storage limits
     utils/
       generateRequestId.ts      # Web requestId tracing for server actions
@@ -586,7 +586,7 @@ The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the reques
 | `src/db/schema.ts` | Drizzle schema, the source of truth for every table |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client, used for Storage only |
 | `src/lib/utils/generateRequestId.ts` | Web requestId tracing for server actions |
-| `src/lib/types/database.types.ts` | Row and Insert types derived from the Drizzle schema |
+| `src/lib/types/dbTypes.ts` | App row aliases (`SocialAccount`, `ContentHistory`, ...) inferred from the Drizzle tables |
 | `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper (auth, validation, audit, rate limit) |
 | `src/lib/api/rest/webhooks/dispatch.ts` | Webhook event dispatch to Inngest |
 | `src/lib/api/rest/openapi/buildDocument.ts` | OpenAPI 3.1 document generation |

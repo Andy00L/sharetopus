@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { analytics_metrics } from "@/db/schema";
 
-type AnalyticsMetricsRow =
-  Database["public"]["Tables"]["analytics_metrics"]["Row"];
+type AnalyticsMetricsRow = typeof analytics_metrics.$inferSelect;
 
 /**
  * Public DTO for an analytics metrics row. Excludes internal

@@ -6,7 +6,7 @@ import {
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
 import { postToFacebook } from "@/lib/api/facebook/post/postToFacebook";
 import type { FacebookPostResult } from "@/lib/api/facebook/post/postToFacebook";
-import type { CreatedVia, MediaType } from "@/lib/types/database.types";
+import type { CreatedVia, MediaType } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 interface FacebookDirectPostConfig {

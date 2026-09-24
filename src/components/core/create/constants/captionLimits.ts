@@ -2,7 +2,7 @@ import { getProviderMetadata } from "@/lib/platforms/providers/catalog";
 
 /**
  * Max caption/description length per platform, in characters. Keys are the
- * DB platform values (database.types.ts Platform alias): lookups everywhere
+ * DB platform values (Platform in src/db/schema.ts): lookups everywhere
  * use `CAPTION_LIMITS[post.platform]`, so a key that is not a DB platform
  * value is unreachable. sourceRefs:
  *   - x: 280 (standard tweet length, docs.x.com POST /2/tweets)

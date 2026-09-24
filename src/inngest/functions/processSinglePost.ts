@@ -1,7 +1,7 @@
 import { inngest } from "@/inngest/client";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
-import type { Platform } from "@/lib/types/database.types";
+import type { Platform } from "@/db/schema";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { isSafeToRetryPost, type PlatformPostOutcome } from "./platformErrors";
 import {

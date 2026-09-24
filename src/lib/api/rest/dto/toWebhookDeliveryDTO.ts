@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { webhook_deliveries } from "@/db/schema";
 
-type WebhookDeliveryRow =
-  Database["public"]["Tables"]["webhook_deliveries"]["Row"];
+type WebhookDeliveryRow = typeof webhook_deliveries.$inferSelect;
 
 /**
  * Public DTO for a webhook delivery log entry. Excludes the full

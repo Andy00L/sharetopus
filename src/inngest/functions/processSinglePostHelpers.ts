@@ -5,6 +5,7 @@ import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedVie
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts, social_accounts } from "@/db/schema";
+import type { Platform, PostStatus } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -23,18 +24,20 @@ import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type {
-  Platform,
-  PostStatus,
-  ScheduledPost,
+  PlatformOptions,
+  PrivacyLevel,
   SocialAccount,
-} from "@/lib/types/database.types";
-import type { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
+} from "@/lib/types/dbTypes";
 import "server-only";
 import {
   classifyDirectPostFailure,
   type PlatformErrorReason,
   type PlatformPostOutcome,
 } from "./platformErrors";
+
+/** A scheduled_posts row as the worker reads it. */
+type ScheduledPost = typeof scheduled_posts.$inferSelect;
+
 // ---------- fetch-post-and-account ----------
 
 export type FetchPostResult =

@@ -1,4 +1,4 @@
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 import { AlertCircle } from "lucide-react";
 import Image from "next/image";
 

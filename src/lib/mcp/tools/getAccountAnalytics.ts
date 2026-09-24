@@ -2,13 +2,13 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { analytics_metrics } from "@/db/schema";
+import type { Platform } from "@/db/schema";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 
 import { withMcpTool } from "../withMcpTool";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
-import { Platform } from "@/lib/types/database.types";
 
 type GetAccountAnalyticsArgs = {
   platform?: Platform;

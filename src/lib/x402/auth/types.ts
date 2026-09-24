@@ -10,7 +10,7 @@ import "server-only";
  * Tables touched: none (type definitions only)
  */
 
-import type { WalletChain, SanctionsStatus } from "@/lib/types/database.types";
+import type { WalletChain, SanctionsStatus } from "@/db/schema";
 
 /**
  * Identity for an x402 wallet caller. Created on the wallet's first verified

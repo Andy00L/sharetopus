@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { wallets } from "@/db/schema";
-import type { SanctionsStatus, WalletChain } from "@/lib/types/database.types";
+import type { SanctionsStatus, WalletChain } from "@/db/schema";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import type { WalletPrincipal } from "./types";
 

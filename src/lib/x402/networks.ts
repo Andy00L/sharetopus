@@ -15,7 +15,7 @@ import "server-only";
  * Tables touched: none (pure configuration)
  */
 
-import type { WalletChain } from "@/lib/types/database.types";
+import type { WalletChain } from "@/db/schema";
 
 /**
  * Who verifies and settles payments on a network. Stored verbatim in

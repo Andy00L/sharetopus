@@ -2,7 +2,7 @@
 
 37 Postgres tables in Supabase, organized around a principal-centric model. Every user-scoped table foreign-keys to `principals.id` (not `users.id`) so that both Clerk-based users and wallet-based identities share one identity root.
 
-`src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. All server code queries through the Drizzle client in `src/db/client.ts`; supabase-js (`adminSupabase`) is used for Storage only. The row and insert types app code imports from `src/lib/types/database.types.ts` are derived from the schema, so a column change in `src/db/schema.ts` reaches them without a separate edit.
+`src/db/schema.ts` declares the schema with [Drizzle](https://orm.drizzle.team) and is the source of truth for every table, column, index, foreign key, CHECK constraint and RLS policy. All server code queries through the Drizzle client in `src/db/client.ts`; supabase-js (`adminSupabase`) is used for Storage only, and its type has no tables, so a `.from()` query through it does not compile. Row and insert types come from the tables themselves (`typeof scheduled_posts.$inferSelect`, `$inferInsert`), and the value unions (`Platform`, `PostStatus`, `MediaType`, ...) are exported next to their lists in `src/db/schema.ts`, so a column change reaches every type without a separate edit.
 
 [Back to README](../README.md)
 
@@ -369,7 +369,7 @@ stateDiagram-v2
 | `src/db/client.ts` | Drizzle client (`db`) and `runQuery`, which returns `{ data, error }` instead of throwing |
 | `drizzle.config.ts` | drizzle-kit settings for `db:pull`, `db:generate`, `db:migrate` |
 | `drizzle/` | Migrations and their snapshots, starting with `0000_baseline.sql` |
-| `src/lib/types/database.types.ts` | Row and Insert types for app code, derived from `src/db/schema.ts`; only the not-yet-created teams and channel-group tables are written by hand |
+| `src/lib/types/dbTypes.ts` | App row aliases (`SocialAccount`, `ContentHistory`, ...) inferred from the Drizzle tables |
 | `src/actions/api/adminSupabase.ts` | Service-role Supabase client, used for Storage only |
 | `src/lib/mcp/audit.ts` | `logToolCall`, the awaited insert into `mcp_audit_log` |
 | `src/lib/api/rest/audit/writeRestAuditLog.ts` | Audit log writer for REST API requests |

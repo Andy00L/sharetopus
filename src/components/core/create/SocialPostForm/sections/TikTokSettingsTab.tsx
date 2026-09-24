@@ -17,7 +17,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 import type {
   ClientSocialAccount,
   PrivacyLevel,

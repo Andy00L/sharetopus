@@ -5,7 +5,7 @@ import { and, asc, eq, ne } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts, social_accounts } from "@/db/schema";
-import type { CreatedVia, PostStatus } from "@/lib/types/database.types";
+import type { CreatedVia, PostStatus } from "@/db/schema";
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 

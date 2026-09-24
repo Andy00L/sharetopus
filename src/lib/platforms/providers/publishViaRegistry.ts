@@ -5,11 +5,8 @@ import { eq } from "drizzle-orm";
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import type {
-  CreatedVia,
-  MediaType,
-  SocialAccount,
-} from "@/lib/types/database.types";
+import type { CreatedVia, MediaType } from "@/db/schema";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 
 import { resolveConfiguredProvider } from "./registry";
 import type { ProviderDefinition } from "./types";

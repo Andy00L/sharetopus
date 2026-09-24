@@ -4,7 +4,7 @@ import { and, asc, gt, inArray, isNull, lte, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pricing_actions } from "@/db/schema";
-import type { PricingRecurrence } from "@/lib/types/database.types";
+import type { PricingRecurrence } from "@/db/schema";
 
 /**
  * Action ids charged by the public x402 endpoints, and nothing else.

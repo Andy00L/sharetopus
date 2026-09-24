@@ -1,4 +1,4 @@
-import type { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 
 /**
  * Provider contract for every publishing target.

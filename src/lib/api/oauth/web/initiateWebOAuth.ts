@@ -4,7 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
-import type { Platform } from "@/lib/types/database.types";
+import type { Platform } from "@/db/schema";
 import { auth } from "@clerk/nextjs/server";
 import { nanoid } from "nanoid";
 import { cookies } from "next/headers";

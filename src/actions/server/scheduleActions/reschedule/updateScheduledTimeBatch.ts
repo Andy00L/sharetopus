@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
-import type { CreatedVia } from "@/lib/types/database.types";
+import type { CreatedVia } from "@/db/schema";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
 const RATE_LIMIT = 30;

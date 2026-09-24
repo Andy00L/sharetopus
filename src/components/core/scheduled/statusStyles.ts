@@ -1,4 +1,4 @@
-import type { PostStatus } from "@/lib/types/database.types";
+import type { PostStatus } from "@/db/schema";
 
 /**
  * One canonical style per post status, shared by the batch card badge, the

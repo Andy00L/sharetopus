@@ -4,7 +4,6 @@ import { eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
-import type { ShareLink } from "@/lib/types/database.types";
 
 /**
  * Read-only validation of a share link token.
@@ -22,7 +21,7 @@ import type { ShareLink } from "@/lib/types/database.types";
 
 type ValidateSuccess = {
   success: true;
-  data: ShareLink;
+  data: typeof share_links.$inferSelect;
 };
 
 type ValidateFailure = {

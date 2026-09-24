@@ -3,8 +3,8 @@ import { and, eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import type { Platform } from "@/db/schema";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
-import type { Platform } from "@/lib/types/database.types";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
 import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
 import refreshLinkedInToken from "./linkedin/data/refreshLinkedinToken";

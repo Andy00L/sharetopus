@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 
 /**
  * Maps a post_type field from the request body to the corresponding

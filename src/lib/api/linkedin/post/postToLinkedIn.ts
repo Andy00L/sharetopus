@@ -1,4 +1,4 @@
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 import { ContentHistory } from "@/lib/types/dbTypes";
 import "server-only";
 
@@ -153,13 +153,16 @@ export async function postToLinkedIn({
 
           // 3. Uploader le média
           const uploadMethod = postType === "video" ? "POST" : "PUT"; // LinkedIn utilise généralement PUT pour les images et POST pour les vidéos
+          // Copy into a plain Uint8Array, as postToYouTube does: Buffer's
+          // ArrayBufferLike backing is not assignable to fetch's BodyInit
+          // without a type suppression.
           const uploadResponse = await fetch(uploadUrl, {
             method: uploadMethod,
             headers: {
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": mediaType,
             },
-            body: buffer as unknown as BodyInit,
+            body: new Uint8Array(buffer),
           });
 
           if (!uploadResponse.ok) {

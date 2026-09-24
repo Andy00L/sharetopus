@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { social_accounts } from "@/db/schema";
 
-type SocialAccountRow =
-  Database["public"]["Tables"]["social_accounts"]["Row"];
+type SocialAccountRow = typeof social_accounts.$inferSelect;
 
 /**
  * Public DTO for a connected social account. Tokens and internal

@@ -1,4 +1,4 @@
-import type { Json } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 
 /**
  * Narrows a provider config (Record<string, unknown>) to the Json shape

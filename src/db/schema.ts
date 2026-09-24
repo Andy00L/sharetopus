@@ -53,7 +53,7 @@ const timestamptz = customType<{ data: string; driverData: string }>({
   },
 });
 
-/** A jsonb value, the shape supabase-js typed jsonb with. database.types.ts re-exports it. */
+/** A jsonb value, the shape supabase-js typed jsonb with. */
 export type Json =
   | string
   | number
@@ -142,6 +142,18 @@ export const REST_AUDIT_OUTCOMES = ["success", "validation_error", "auth_error",
 
 /** Why an x402 payment needs a manual look. */
 export const X402_RECONCILIATION_KINDS = ["settle_unrecorded", "settle_indeterminate", "refund_failed"] as const;
+
+// Value unions of the lists above, for code that holds a column value
+// (`platform: Platform`). Adding a value to a list updates its union. Row
+// shapes come from the tables: `typeof scheduled_posts.$inferSelect`.
+export type Platform = (typeof SOCIAL_PLATFORMS)[number];
+export type PostStatus = (typeof POST_STATUSES)[number];
+export type MediaType = (typeof MEDIA_TYPES)[number];
+export type CreatedVia = (typeof CREATED_VIA_CHANNELS)[number];
+export type TrustLevel = (typeof OAUTH_CLIENT_TRUST_LEVELS)[number];
+export type WalletChain = (typeof WALLET_CHAINS)[number];
+export type SanctionsStatus = (typeof SANCTIONS_STATUSES)[number];
+export type PricingRecurrence = (typeof PRICING_RECURRENCES)[number];
 
 export const referral_status = pgEnum("referral_status", ["pending", "verified", "redeemed", "void"]);
 

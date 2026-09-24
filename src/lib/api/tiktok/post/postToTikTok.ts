@@ -1,5 +1,5 @@
 // lib/api/tiktok/post/postToTikTok.ts
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
 import fetch from "node-fetch";
 import "server-only";

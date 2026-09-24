@@ -4,6 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import type { MediaType, Platform } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -18,7 +19,6 @@ import {
   HOTLINK_SIGNED_URL_TTL_S,
 } from "@/inngest/functions/processSinglePostHelpers";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
-import { MediaType, Platform } from "@/lib/types/database.types";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 // ---------- event data type ----------

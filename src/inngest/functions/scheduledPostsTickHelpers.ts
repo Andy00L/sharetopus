@@ -4,7 +4,7 @@ import { and, asc, eq, inArray, lte } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
-import type { Platform, PostStatus } from "@/lib/types/database.types";
+import type { Platform, PostStatus } from "@/db/schema";
 
 export type DuePost = {
   id: string;

@@ -48,8 +48,8 @@ function buildBrandIconFromTabler(GlyphIcon: TablerIcon): BrandIconComponent {
 }
 
 /**
- * Keys are DB platform values (database.types.ts Platform alias plus the
- * registry ids from src/lib/platforms/providers/catalog.ts). Platforms
+ * Keys are DB platform values (Platform in src/db/schema.ts, which covers
+ * the registry ids from src/lib/platforms/providers/catalog.ts). Platforms
  * absent here (devto, hashnode, lemmy, farcaster, listmonk, nostr) have no
  * brand glyph in @tabler/icons-react 3.43; they render the letter badge.
  */

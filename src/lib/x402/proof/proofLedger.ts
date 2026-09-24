@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { content_history, failed_posts, scheduled_posts, x402_charges } from "@/db/schema";
-import type { Json } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 
 /**
  * Public proof ledger behind /proof and the per-network pages.

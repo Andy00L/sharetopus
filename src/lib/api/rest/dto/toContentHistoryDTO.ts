@@ -1,7 +1,6 @@
-import type { Database } from "@/lib/types/database.types";
+import type { content_history } from "@/db/schema";
 
-type ContentHistoryRow =
-  Database["public"]["Tables"]["content_history"]["Row"];
+type ContentHistoryRow = typeof content_history.$inferSelect;
 
 /**
  * Public DTO for a content history row. Excludes internal `extra`

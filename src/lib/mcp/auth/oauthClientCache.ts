@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { TrustLevel } from "@/lib/types/database.types";
+import type { TrustLevel } from "@/db/schema";
 
 /**
  * Per-instance in-memory cache for OAuth client trust lookups. Replaces

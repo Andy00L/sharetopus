@@ -3,7 +3,7 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { failed_posts } from "@/db/schema";
-import type { Json, MediaType, TablesInsert } from "@/lib/types/database.types";
+import type { Json, MediaType } from "@/db/schema";
 
 type FailedPostData = {
   principal_id: string | null;
@@ -47,7 +47,7 @@ export async function storeFailedPost(
         ? data.extra_data.message
         : "Failed to post";
 
-    const insertData: TablesInsert<"failed_posts"> = {
+    const insertData: typeof failed_posts.$inferInsert = {
       principal_id: data.principal_id,
       social_account_id: data.social_account_id,
       platform: data.platform,

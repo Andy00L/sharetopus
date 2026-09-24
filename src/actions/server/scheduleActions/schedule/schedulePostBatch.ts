@@ -6,12 +6,8 @@ import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts, social_accounts } from "@/db/schema";
+import type { CreatedVia, Json } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
-import type {
-  CreatedVia,
-  Json,
-  TablesInsert,
-} from "@/lib/types/database.types";
 import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
@@ -22,7 +18,7 @@ const RATE_LIMIT = 10;
 const RATE_WINDOW_SECONDS = 60;
 const DEFAULT_PLATFORM_DAILY_CAP = 50;
 
-type ScheduledPostInsertRow = TablesInsert<"scheduled_posts">;
+type ScheduledPostInsertRow = typeof scheduled_posts.$inferInsert;
 
 export type SchedulePostBatchResult = {
   success: boolean;

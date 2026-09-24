@@ -1,15 +1,13 @@
-import type { Database } from "@/lib/types/database.types";
+import type { Platform } from "@/db/schema";
 
 /**
  * Registry providers that connect through OAuth, typed against the DB
- * platform union so a provider id that drifts from the schema fails
- * compilation instead of failing at insert time.
+ * platform union (social_accounts.platform) so a provider id that drifts
+ * from the schema fails compilation instead of failing at insert time.
  *
- * Client-safe: a constant and a guard, nothing else.
+ * Client-safe: a constant and a guard, nothing else. The schema import is
+ * type-only and erased from the bundle.
  */
-
-type SocialAccountPlatform =
-  Database["public"]["Tables"]["social_accounts"]["Insert"]["platform"];
 
 export const REGISTRY_OAUTH_PLATFORM_IDS = [
   "reddit",
@@ -20,7 +18,7 @@ export const REGISTRY_OAUTH_PLATFORM_IDS = [
   "linkedin_page",
   "dribbble",
   "gmb",
-] as const satisfies readonly SocialAccountPlatform[];
+] as const satisfies readonly Platform[];
 
 export type RegistryOAuthPlatform =
   (typeof REGISTRY_OAUTH_PLATFORM_IDS)[number];

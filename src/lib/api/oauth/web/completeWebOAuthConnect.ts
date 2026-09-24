@@ -2,8 +2,8 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import type { Json, Platform } from "@/db/schema";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
-import type { Json, Platform } from "@/lib/types/database.types";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";

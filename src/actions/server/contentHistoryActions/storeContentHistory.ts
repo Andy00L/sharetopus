@@ -3,7 +3,7 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { content_history } from "@/db/schema";
-import type { Json, TablesInsert } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 
 export type StoreContentHistoryInput = {
   platform: string;
@@ -50,7 +50,7 @@ export async function storeContentHistory(
     }
 
     // Prepare data for insertion
-    const insertData: TablesInsert<"content_history"> = {
+    const insertData: typeof content_history.$inferInsert = {
       principal_id: userId,
       platform: data.platform,
       content_id: data.content_id,

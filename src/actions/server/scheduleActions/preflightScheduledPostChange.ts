@@ -4,7 +4,7 @@ import { inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
-import type { PostStatus } from "@/lib/types/database.types";
+import type { PostStatus } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
 
 /**

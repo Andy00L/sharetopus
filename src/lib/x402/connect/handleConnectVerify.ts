@@ -9,7 +9,7 @@ import { z } from "zod";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
-import type { Json } from "@/lib/types/database.types";
+import type { Json } from "@/db/schema";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";

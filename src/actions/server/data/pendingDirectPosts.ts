@@ -2,7 +2,7 @@ import { and, eq, lt } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
-import { Platform } from "@/lib/types/database.types";
+import type { Platform } from "@/db/schema";
 import "server-only";
 
 export type PendingDirectPostInput = {

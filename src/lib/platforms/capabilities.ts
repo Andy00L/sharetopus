@@ -1,4 +1,4 @@
-import type { MediaType, Platform } from "@/lib/types/database.types";
+import type { MediaType, Platform } from "@/db/schema";
 
 import {
   getProviderMetadata,
@@ -17,8 +17,8 @@ import {
  * the REST post schema superRefine, and the create page. Those all read
  * from here now.
  *
- * PostingPlatform is Extract-ed from the DB Platform union
- * (src/lib/types/database.types.ts, Platform alias) so a platform removed
+ * PostingPlatform is Extract-ed from the DB Platform union (Platform in
+ * src/db/schema.ts, built from SOCIAL_PLATFORMS) so a platform removed
  * from the schema fails compilation here. "threads" is in the DB union but
  * has no posting implementation yet, so it is not listed.
  */

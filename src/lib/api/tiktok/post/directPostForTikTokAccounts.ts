@@ -8,7 +8,7 @@ import {
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import { MediaType } from "@/lib/types/database.types";
+import type { MediaType } from "@/db/schema";
 
 interface TikTokDirectPostConfig {
   account: SocialAccount;
