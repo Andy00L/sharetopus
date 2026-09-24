@@ -7,9 +7,9 @@ import postgres from "postgres";
 /*
  * The Drizzle client for server code. DATABASE_URL is the Supabase
  * transaction pooler connection string (port 6543), which suits short-lived
- * serverless functions. It connects as the database owner and bypasses
- * row-level security the way the service-role key does, so this module must
- * never reach the browser.
+ * serverless functions. It connects over TLS as the database owner and
+ * bypasses row-level security the way the service-role key does, so this
+ * module must never reach the browser.
  *
  * Tables and value lists live in src/db/schema.ts. Queries use the core
  * builder (db.select / insert / update / delete), wrapped in runQuery.
@@ -17,6 +17,15 @@ import postgres from "postgres";
 
 /** Seconds an unused connection stays open before postgres.js closes it, so an idle warm function does not hold pooler slots. */
 const IDLE_CONNECTION_TIMEOUT_SECONDS = 20;
+
+/**
+ * Database connections per function instance. Every invocation on a warm
+ * instance shares this client, so the cap applies to the instance, not the
+ * request; concurrent queries wait their turn on the one connection.
+ * sourceRef: https://supabase.com/docs/guides/database/connecting-to-postgres
+ * (serverless functions, Postgres.js example).
+ */
+const MAX_CONNECTIONS_PER_INSTANCE = 1;
 
 function createDatabaseClient() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -28,6 +37,12 @@ function createDatabaseClient() {
     );
   }
   const queryClient = postgres(databaseUrl, {
+    // postgres.js only negotiates TLS when asked, and the pooler also
+    // accepts unencrypted connections, so without this every query and row
+    // crossed the network in clear text. "require" encrypts without checking
+    // the certificate chain, like Supabase's Postgres.js example.
+    ssl: "require",
+    max: MAX_CONNECTIONS_PER_INSTANCE,
     // The transaction pooler hands each transaction to any server
     // connection, so a statement prepared on one is gone on the next.
     prepare: false,

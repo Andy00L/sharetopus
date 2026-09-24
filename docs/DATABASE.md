@@ -45,10 +45,10 @@ To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review
 
 | Variable | Pooler | Used by |
 |----------|--------|---------|
-| `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`. Prepared statements are off because this pooler does not keep them between transactions. |
+| `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`, with one connection per function instance (Supabase's serverless setting). Prepared statements are off because this pooler does not keep them between transactions. |
 | `SUPABASE_DB_URL` | Session pooler, port 5432 | drizzle-kit, through `drizzle.config.ts`. |
 
-Both connect as the `postgres` role, which bypasses RLS the way the service-role key does.
+Both connect as the `postgres` role, which bypasses RLS the way the service-role key does. Both require TLS (`ssl: "require"` in `src/db/client.ts`, `sslmode=require` added in `drizzle.config.ts`): the pooler also accepts unencrypted connections, and postgres.js only encrypts when asked.
 
 Rows read through Drizzle have the shape supabase-js rows had: snake_case keys, timestamps as ISO strings (`2026-09-23T20:26:45.1234+00:00`), and numeric and bigint columns as numbers. The `timestamptz` column type in `src/db/schema.ts` converts Postgres' own text form to the ISO one. Raw SQL through `db.execute` skips that column mapping: bigint and numeric values come back as strings and timestamps in Postgres' text form, so read timestamp columns through the query builder and parse numbers explicitly.
 

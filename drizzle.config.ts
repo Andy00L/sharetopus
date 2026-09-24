@@ -17,11 +17,18 @@ if (!sessionPoolerUrl) {
   );
 }
 
+// drizzle-kit opens the connection with postgres.js, which only negotiates
+// TLS when asked, and the pooler also accepts unencrypted connections.
+// sslmode=require makes postgres.js encrypt, as ssl: "require" does in
+// src/db/client.ts.
+const encryptedSessionPoolerUrl = new URL(sessionPoolerUrl);
+encryptedSessionPoolerUrl.searchParams.set("sslmode", "require");
+
 export default defineConfig({
   dialect: "postgresql",
   schema: "./src/db/schema.ts",
   out: "./drizzle",
-  dbCredentials: { url: sessionPoolerUrl },
+  dbCredentials: { url: encryptedSessionPoolerUrl.toString() },
   // Only the app's tables. auth, storage and the other schemas belong to Supabase.
   schemaFilter: ["public"],
   // anon, authenticated and service_role are Supabase's roles: never create or drop them.
