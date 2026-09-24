@@ -1,4 +1,7 @@
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, asc, inArray, lt } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { social_connections } from "@/db/schema";
 import { inngest } from "@/inngest/client";
 
 const RETENTION_DAYS = 30;
@@ -15,11 +18,11 @@ const MAX_ITERATIONS = 5;
  * Runs at 02:00 UTC to avoid overlap with the existing cron jobs at
  * 03:00 (stripe webhook cleanup) and 04:00 (stale OAuth clients).
  *
- * Batched: each delete is ordered by id and bounded to 1000 rows per
- * iteration, up to 5 iterations per run. The explicit order is what lets
- * PostgREST honor the per-iteration limit (see the .order call below). If
- * rows remain after 5 iterations, the run logs that the per-run cap was hit
- * and the next daily run clears the rest.
+ * Batched: each iteration deletes at most 1000 rows, lowest ids first, up to
+ * 5 iterations per run. Postgres has no DELETE ... LIMIT, so each batch is
+ * the id-ordered, limited subquery below. If rows remain after 5
+ * iterations, the run logs that the per-run cap was hit and the next daily
+ * run clears the rest.
  *
  * Retries: 0 (next daily run handles transient failures).
  */
@@ -39,18 +42,26 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
       let totalDeleted = 0;
       let capReached = false;
 
+      const isStaleConnection = and(
+        inArray(social_connections.status, ["pending", "failed", "expired"]),
+        lt(social_connections.created_at, cutoff),
+      );
+      const staleBatchIds = db
+        .select({ id: social_connections.id })
+        .from(social_connections)
+        .where(isStaleConnection)
+        .orderBy(asc(social_connections.id))
+        .limit(BATCH_SIZE);
+
       for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-        const { count, error } = await adminSupabase
-          .from("social_connections")
-          .delete({ count: "exact" })
-          .in("status", ["pending", "failed", "expired"])
-          .lt("created_at", cutoff)
-          // PostgREST honors a limited delete only when an explicit order on a
-          // unique column is present; without it the .limit is ignored and
-          // every matching row is deleted in a single statement. Order by the
-          // PK so each iteration removes at most BATCH_SIZE rows.
-          .order("id", { ascending: true })
-          .limit(BATCH_SIZE);
+        // The outer WHERE repeats the stale filter. Postgres re-checks it on
+        // the current row version, so a row that turned connected after the
+        // subquery read it is not deleted.
+        const { data: deleteResult, error } = await runQuery(
+          db
+            .delete(social_connections)
+            .where(and(inArray(social_connections.id, staleBatchIds), isStaleConnection)),
+        );
 
         if (error) {
           console.error(
@@ -62,7 +73,7 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
           return { deleted: totalDeleted, cutoff, error: error.message };
         }
 
-        const deletedInBatch = count ?? 0;
+        const deletedInBatch = deleteResult.count;
         totalDeleted += deletedInBatch;
 
         // A short batch (fewer than BATCH_SIZE rows) means every remaining

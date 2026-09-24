@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, asc, gt, inArray, isNull, lte, or } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pricing_actions } from "@/db/schema";
 import type { PricingRecurrence } from "@/lib/types/database.types";
 
 /**
@@ -51,13 +54,25 @@ export type PricingResult =
 export async function fetchX402Pricing(): Promise<PricingResult> {
   const nowIso = new Date().toISOString();
 
-  const { data, error } = await adminSupabase
-    .from("pricing_actions")
-    .select("action, display_name, usdc_price, description, recurrence")
-    .in("action", [...PUBLIC_X402_ACTIONS])
-    .lte("effective_from", nowIso)
-    .or(`effective_until.is.null,effective_until.gt.${nowIso}`)
-    .order("action");
+  const { data: pricingRows, error } = await runQuery(
+    db
+      .select({
+        action: pricing_actions.action,
+        display_name: pricing_actions.display_name,
+        usdc_price: pricing_actions.usdc_price,
+        description: pricing_actions.description,
+        recurrence: pricing_actions.recurrence,
+      })
+      .from(pricing_actions)
+      .where(
+        and(
+          inArray(pricing_actions.action, [...PUBLIC_X402_ACTIONS]),
+          lte(pricing_actions.effective_from, nowIso),
+          or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso))
+        )
+      )
+      .orderBy(asc(pricing_actions.action))
+  );
 
   if (error) {
     console.error(
@@ -66,7 +81,7 @@ export async function fetchX402Pricing(): Promise<PricingResult> {
     return { ok: false, reason: "pricing_read_failed" };
   }
 
-  const rows: PricingRow[] = (data ?? []).map((row) => ({
+  const rows: PricingRow[] = pricingRows.map((row) => ({
     action: row.action,
     displayName: row.display_name,
     usdcPrice: row.usdc_price,

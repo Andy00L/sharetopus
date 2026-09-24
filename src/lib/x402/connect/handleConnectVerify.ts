@@ -3,10 +3,12 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { encodePaymentResponseHeader } from "@x402/core/http";
 import type { SettleResponse } from "@x402/core/types";
+import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { db, runQuery } from "@/db/client";
+import { social_accounts, social_connections } from "@/db/schema";
 import type { Json } from "@/lib/types/database.types";
 import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
@@ -201,15 +203,25 @@ export async function handleConnectVerify(
   //       non-expiring token (Facebook Page tokens) and counts as healthy;
   //       DESC ordering puts nulls first, so those win deterministically.
   const nowIso = new Date().toISOString();
-  const { data: existingAccounts, error: existingError } = await adminSupabase
-    .from("social_accounts")
-    .select("id, account_identifier, token_expires_at, connection_id")
-    .eq("principal_id", wallet.principalId)
-    .eq("platform", context.platform)
-    .is("deleted_at", null)
-    .or(`token_expires_at.gt.${nowIso},token_expires_at.is.null`)
-    .order("token_expires_at", { ascending: false })
-    .limit(1);
+  const { data: existingAccounts, error: existingError } = await runQuery(
+    db
+      .select({
+        id: social_accounts.id,
+        token_expires_at: social_accounts.token_expires_at,
+        connection_id: social_accounts.connection_id,
+      })
+      .from(social_accounts)
+      .where(
+        and(
+          eq(social_accounts.principal_id, wallet.principalId),
+          eq(social_accounts.platform, context.platform),
+          isNull(social_accounts.deleted_at),
+          or(gt(social_accounts.token_expires_at, nowIso), isNull(social_accounts.token_expires_at)),
+        ),
+      )
+      .orderBy(desc(social_accounts.token_expires_at))
+      .limit(1),
+  );
 
   if (existingError) {
     // Fail closed: charging a wallet that may own a healthy connection
@@ -223,7 +235,7 @@ export async function handleConnectVerify(
     };
   }
 
-  const existingAccount = existingAccounts?.[0];
+  const existingAccount = existingAccounts[0];
   if (existingAccount) {
     console.log(
       `[handleConnectVerify] Wallet ${wallet.principalId} already has a healthy ${context.platform} connection. Returning idempotent.`,
@@ -310,18 +322,20 @@ export async function handleConnectVerify(
 
   // -- 9. The connection row. The PKCE verifier (X) is written with it, so no
   //       callback can arrive before it exists.
-  const { error: insertError } = await adminSupabase.from("social_connections").insert({
-    id: connectionId,
-    principal_id: wallet.principalId,
-    initiated_via: "x402",
-    initiated_x402_charge_id: chargeId,
-    platform: context.platform,
-    oauth_state: oauthState,
-    oauth_code_verifier: oauthResult.codeVerifier,
-    redirect_uri: redirectUri,
-    status: "pending",
-    expires_at: expiresAt,
-  });
+  const { error: insertError } = await runQuery(
+    db.insert(social_connections).values({
+      id: connectionId,
+      principal_id: wallet.principalId,
+      initiated_via: "x402",
+      initiated_x402_charge_id: chargeId,
+      platform: context.platform,
+      oauth_state: oauthState,
+      oauth_code_verifier: oauthResult.codeVerifier,
+      redirect_uri: redirectUri,
+      status: "pending",
+      expires_at: expiresAt,
+    }),
+  );
 
   if (insertError) {
     console.error(

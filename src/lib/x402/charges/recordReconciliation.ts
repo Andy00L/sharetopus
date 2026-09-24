@@ -1,6 +1,7 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { x402_reconciliation } from "@/db/schema";
 
 /**
  * Durable trail for every money window the request path cannot close by
@@ -38,14 +39,16 @@ export async function recordX402Reconciliation(entry: {
   network?: string | null;
 }): Promise<void> {
   try {
-    const { error } = await adminSupabase.from("x402_reconciliation").insert({
-      kind: entry.kind,
-      charge_id: entry.chargeId ?? null,
-      tx_hash: entry.txHash ?? null,
-      payer_address: entry.payerAddress ?? null,
-      amount_atomic: entry.amountAtomic ?? null,
-      network: entry.network ?? null,
-    });
+    const { error } = await runQuery(
+      db.insert(x402_reconciliation).values({
+        kind: entry.kind,
+        charge_id: entry.chargeId ?? null,
+        tx_hash: entry.txHash ?? null,
+        payer_address: entry.payerAddress ?? null,
+        amount_atomic: entry.amountAtomic ?? null,
+        network: entry.network ?? null,
+      }),
+    );
     if (error) {
       console.error(
         `[recordX402Reconciliation] insert failed for kind=${entry.kind} charge=${entry.chargeId ?? "n/a"}: ${error.message}`,

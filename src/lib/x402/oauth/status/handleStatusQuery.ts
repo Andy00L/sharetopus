@@ -1,8 +1,11 @@
 import "server-only";
 
+import { and, eq } from "drizzle-orm";
+
 import { verifyConnectionToken } from "@/lib/x402/oauth/connectionToken";
 import { MAX_POLLS_PER_CONNECTION } from "@/lib/x402/config";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_connections } from "@/db/schema";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -95,13 +98,23 @@ export async function handleStatusQuery(
   const { connectionId } = tokenResult.payload;
 
   // -- 2. Look up connection
-  const { data: connection, error: dbError } = await adminSupabase
-    .from("social_connections")
-    .select(
-      "id, platform, status, connected_at, expires_at, social_account_id, poll_count, error_code, error_message"
-    )
-    .eq("id", connectionId)
-    .maybeSingle();
+  const { data: connectionRows, error: dbError } = await runQuery(
+    db
+      .select({
+        id: social_connections.id,
+        platform: social_connections.platform,
+        status: social_connections.status,
+        connected_at: social_connections.connected_at,
+        expires_at: social_connections.expires_at,
+        social_account_id: social_connections.social_account_id,
+        poll_count: social_connections.poll_count,
+        error_code: social_connections.error_code,
+        error_message: social_connections.error_message,
+      })
+      .from(social_connections)
+      .where(eq(social_connections.id, connectionId))
+      .limit(1)
+  );
 
   if (dbError) {
     console.error(`[handleStatusQuery] DB error: ${dbError.message}`);
@@ -111,6 +124,7 @@ export async function handleStatusQuery(
     };
   }
 
+  const connection = connectionRows[0];
   if (!connection) {
     return {
       ok: false,
@@ -137,15 +151,17 @@ export async function handleStatusQuery(
   //       read-then-write: concurrent polls may lose an increment, which is
   //       acceptable for telemetry and only ever under-counts toward the cap.
   const newPollCount = connection.poll_count + 1;
-  const { error: pollUpdateError } = await adminSupabase
-    .from("social_connections")
-    .update({
-      poll_count: newPollCount,
-      last_polled_at: new Date().toISOString(),
-      last_polled_ip_hash: ipHash,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", connectionId);
+  const { error: pollUpdateError } = await runQuery(
+    db
+      .update(social_connections)
+      .set({
+        poll_count: newPollCount,
+        last_polled_at: new Date().toISOString(),
+        last_polled_ip_hash: ipHash,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(social_connections.id, connectionId))
+  );
   if (pollUpdateError) {
     // Best-effort telemetry write; the poll itself still succeeds.
     console.error(`[handleStatusQuery] poll_count update failed for ${connectionId}: ${pollUpdateError.message}`);
@@ -158,11 +174,12 @@ export async function handleStatusQuery(
     new Date(connection.expires_at) < new Date()
   ) {
     status = "expired";
-    const { error: expireError } = await adminSupabase
-      .from("social_connections")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("id", connectionId)
-      .eq("status", "pending");
+    const { error: expireError } = await runQuery(
+      db
+        .update(social_connections)
+        .set({ status: "expired", updated_at: new Date().toISOString() })
+        .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending")))
+    );
     if (expireError) {
       // Best-effort: the response already reports expired; the row catches
       // up on the next poll or via the cleanup cron.

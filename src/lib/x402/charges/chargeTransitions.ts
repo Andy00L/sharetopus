@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { x402_charges, x402_refunds } from "@/db/schema";
 import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 
 /**
@@ -34,23 +37,24 @@ export async function markChargeSettled(params: {
   settledAt: string;
   blockNumber?: number;
 }): Promise<ChargeTransitionResult> {
-  const { data: updatedRows, error } = await adminSupabase
-    .from("x402_charges")
-    .update({
-      status: "settled",
-      tx_hash: params.txHash,
-      settled_at: params.settledAt,
-      ...(params.blockNumber === undefined ? {} : { block_number: params.blockNumber }),
-    })
-    .eq("id", params.chargeId)
-    .eq("status", "pending")
-    .select("id");
+  const { data: updatedRows, error } = await runQuery(
+    db
+      .update(x402_charges)
+      .set({
+        status: "settled",
+        tx_hash: params.txHash,
+        settled_at: params.settledAt,
+        ...(params.blockNumber === undefined ? {} : { block_number: params.blockNumber }),
+      })
+      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, "pending")))
+      .returning({ id: x402_charges.id }),
+  );
 
   if (error) {
     console.error(`[markChargeSettled] Update failed for charge ${params.chargeId}: ${error.message}`);
     return { success: false, reason: "db_error", message: error.message };
   }
-  if (!updatedRows || updatedRows.length === 0) {
+  if (updatedRows.length === 0) {
     console.error(`[markChargeSettled] Charge ${params.chargeId} was not in status "pending".`);
     return {
       success: false,
@@ -67,18 +71,19 @@ export async function markChargeFailed(params: {
   fromStatus: "pending" | "settled";
   errorMessage: string;
 }): Promise<ChargeTransitionResult> {
-  const { data: updatedRows, error } = await adminSupabase
-    .from("x402_charges")
-    .update({ status: "failed", error_message: params.errorMessage })
-    .eq("id", params.chargeId)
-    .eq("status", params.fromStatus)
-    .select("id");
+  const { data: updatedRows, error } = await runQuery(
+    db
+      .update(x402_charges)
+      .set({ status: "failed", error_message: params.errorMessage })
+      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, params.fromStatus)))
+      .returning({ id: x402_charges.id }),
+  );
 
   if (error) {
     console.error(`[markChargeFailed] Update failed for charge ${params.chargeId}: ${error.message}`);
     return { success: false, reason: "db_error", message: error.message };
   }
-  if (!updatedRows || updatedRows.length === 0) {
+  if (updatedRows.length === 0) {
     console.error(`[markChargeFailed] Charge ${params.chargeId} was not in status "${params.fromStatus}".`);
     return {
       success: false,
@@ -103,18 +108,19 @@ export async function markChargeRefunded(params: {
   refundTxHash: string;
   initiatedBy: string;
 }): Promise<ChargeTransitionResult> {
-  const { data: updatedRows, error: updateError } = await adminSupabase
-    .from("x402_charges")
-    .update({ status: "refunded", error_message: params.reason })
-    .eq("id", params.chargeId)
-    .eq("status", "settled")
-    .select("id");
+  const { data: updatedRows, error: updateError } = await runQuery(
+    db
+      .update(x402_charges)
+      .set({ status: "refunded", error_message: params.reason })
+      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, "settled")))
+      .returning({ id: x402_charges.id }),
+  );
 
   if (updateError) {
     console.error(`[markChargeRefunded] Update failed for charge ${params.chargeId}: ${updateError.message}`);
     return { success: false, reason: "db_error", message: updateError.message };
   }
-  if (!updatedRows || updatedRows.length === 0) {
+  if (updatedRows.length === 0) {
     console.error(`[markChargeRefunded] Charge ${params.chargeId} was not in status "settled".`);
     return {
       success: false,
@@ -123,15 +129,15 @@ export async function markChargeRefunded(params: {
     };
   }
 
-  const { error: refundInsertError } = await adminSupabase
-    .from("x402_refunds")
-    .insert({
+  const { error: refundInsertError } = await runQuery(
+    db.insert(x402_refunds).values({
       charge_id: params.chargeId,
       reason: params.reason,
       refunded_usdc: params.refundedUsdc,
       refund_tx_hash: params.refundTxHash,
       initiated_by: params.initiatedBy,
-    });
+    }),
+  );
 
   if (refundInsertError) {
     // The charge already says "refunded" and the refund landed; losing the

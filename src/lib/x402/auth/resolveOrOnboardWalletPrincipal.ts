@@ -1,11 +1,12 @@
 import "server-only";
 
 import { randomBytes } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { wallets } from "@/db/schema";
 import type { SanctionsStatus, WalletChain } from "@/lib/types/database.types";
 import type { NetworkConfig } from "@/lib/x402/networks";
-import { callPostgrestRpc } from "@/lib/x402/rpc/callPostgrestRpc";
 import type { WalletPrincipal } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -122,16 +123,16 @@ export async function resolveOrOnboardWalletPrincipal(params: {
   // First contact: onboard atomically. The RPC adopts by address when a
   // concurrent call created the row between the lookup above and this call.
   const principalId = `wallet_${randomBytes(16).toString("hex")}`;
-  const rpcResult = await callPostgrestRpc("onboard_wallet_atomic", {
-    p_principal_id: principalId,
-    p_address: normalizedAddress,
-    p_chain: params.network.name,
-    p_sanctions_source: sanctionsSourceForNetwork(params.network),
-  });
+  const sanctionsSource = sanctionsSourceForNetwork(params.network);
+  const { data: onboardRows, error: onboardError } = await runQuery(
+    db.execute(
+      sql`select public.onboard_wallet_atomic(${principalId}, ${normalizedAddress}, ${params.network.name}, ${sanctionsSource}) as result`
+    )
+  );
 
-  if (!rpcResult.ok) {
+  if (onboardError) {
     console.error(
-      `[resolveOrOnboardWalletPrincipal] onboard_wallet_atomic failed (code=${rpcResult.error.code}): ${rpcResult.error.message}`
+      `[resolveOrOnboardWalletPrincipal] onboard_wallet_atomic failed (code=${onboardError.code}): ${onboardError.message}`
     );
     return {
       ok: false,
@@ -140,18 +141,8 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     };
   }
 
-  const row = rpcResult.row as {
-    principal_id?: unknown;
-    wallet_id?: unknown;
-    is_new?: unknown;
-  } | null;
-
-  if (
-    !row ||
-    typeof row.principal_id !== "string" ||
-    typeof row.wallet_id !== "string" ||
-    typeof row.is_new !== "boolean"
-  ) {
+  const row = parseOnboardWalletResult(onboardRows[0]?.result);
+  if (!row) {
     console.error(
       "[resolveOrOnboardWalletPrincipal] onboard_wallet_atomic returned unexpected data shape."
     );
@@ -175,10 +166,12 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     // and failing the payment here would punish the agent for our bookkeeping.
     const screened = hasFacilitatorScreening(params.network);
     if (!screened) {
-      const { error: unscreenedError } = await adminSupabase
-        .from("wallets")
-        .update({ sanctions_status: "unchecked" })
-        .eq("id", row.wallet_id);
+      const { error: unscreenedError } = await runQuery(
+        db
+          .update(wallets)
+          .set({ sanctions_status: "unchecked" })
+          .where(eq(wallets.id, row.wallet_id))
+      );
       if (unscreenedError) {
         console.error(
           `[resolveOrOnboardWalletPrincipal] Could not mark wallet ${row.wallet_id} unchecked on ${params.network.name}: ${unscreenedError.message}`
@@ -271,11 +264,18 @@ interface WalletRow {
 async function lookupWalletByAddress(
   normalizedAddress: string
 ): Promise<{ ok: true; wallet: WalletRow | null } | { ok: false }> {
-  const { data: wallet, error } = await adminSupabase
-    .from("wallets")
-    .select("id, address, chain, sanctions_status")
-    .eq("address", normalizedAddress)
-    .maybeSingle();
+  const { data: walletRows, error } = await runQuery(
+    db
+      .select({
+        id: wallets.id,
+        address: wallets.address,
+        chain: wallets.chain,
+        sanctions_status: wallets.sanctions_status,
+      })
+      .from(wallets)
+      .where(eq(wallets.address, normalizedAddress))
+      .limit(1)
+  );
 
   if (error) {
     console.error(
@@ -283,7 +283,39 @@ async function lookupWalletByAddress(
     );
     return { ok: false };
   }
-  return { ok: true, wallet };
+  return { ok: true, wallet: walletRows[0] ?? null };
+}
+
+/** The jsonb object onboard_wallet_atomic returns. sourceRef: docs/DATABASE.md (functions table) */
+interface OnboardWalletResult {
+  principal_id: string;
+  wallet_id: string;
+  is_new: boolean;
+}
+
+/**
+ * Validates the onboard_wallet_atomic result, which the driver hands back as
+ * a parsed jsonb value. Null when a field is missing or has the wrong type.
+ */
+function parseOnboardWalletResult(result: unknown): OnboardWalletResult | null {
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    !("principal_id" in result) ||
+    !("wallet_id" in result) ||
+    !("is_new" in result)
+  ) {
+    return null;
+  }
+  const { principal_id: principalId, wallet_id: walletId, is_new: isNew } = result;
+  if (
+    typeof principalId !== "string" ||
+    typeof walletId !== "string" ||
+    typeof isNew !== "boolean"
+  ) {
+    return null;
+  }
+  return { principal_id: principalId, wallet_id: walletId, is_new: isNew };
 }
 
 /** Sanctioned wallets are rejected; clean and unchecked wallets pass. */

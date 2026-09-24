@@ -3,12 +3,14 @@ import "server-only";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { and, eq, isNull } from "drizzle-orm";
 
 import {
   x402PaidEndpoint,
   type X402Precheck,
 } from "@/lib/x402/middleware/x402PaidEndpoint";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts, social_connections } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
 import { updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
@@ -69,17 +71,23 @@ async function loadReauthTarget(
   socialAccountId: string,
   principalId: string,
 ): Promise<ReauthTargetResult> {
-  const { data: account, error: accountError } = await adminSupabase
-    .from("social_accounts")
-    .select("id, platform, principal_id, is_available")
-    .eq("id", socialAccountId)
-    .is("deleted_at", null)
-    .maybeSingle();
+  const { data: accountRows, error: accountError } = await runQuery(
+    db
+      .select({
+        platform: social_accounts.platform,
+        principal_id: social_accounts.principal_id,
+        is_available: social_accounts.is_available,
+      })
+      .from(social_accounts)
+      .where(and(eq(social_accounts.id, socialAccountId), isNull(social_accounts.deleted_at)))
+      .limit(1),
+  );
 
   if (accountError) {
     console.error(`[loadReauthTarget] social_accounts read failed: ${accountError.message}`);
     return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: "Could not look up the social account." };
   }
+  const account = accountRows[0];
   if (!account) {
     return { ok: false, httpStatus: 404, errorKind: "account_not_found", message: "Social account not found." };
   }
@@ -214,9 +222,8 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
 
     // The PKCE verifier (X) is written with the row, so no callback can
     // arrive before it exists.
-    const { error: insertError } = await adminSupabase
-      .from("social_connections")
-      .insert({
+    const { error: insertError } = await runQuery(
+      db.insert(social_connections).values({
         id: connectionId,
         principal_id: principal.principalId,
         initiated_via: "x402",
@@ -227,7 +234,8 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         redirect_uri: target.redirectUri,
         status: "pending",
         expires_at: expiresAt,
-      });
+      }),
+    );
 
     if (insertError) {
       return {

@@ -1,6 +1,9 @@
 import "server-only";
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { content_history, failed_posts, scheduled_posts, x402_charges } from "@/db/schema";
 import type { Json } from "@/lib/types/database.types";
 
 /**
@@ -84,19 +87,30 @@ type LookupResult<Value> =
 export async function loadProofLedger(options?: {
   networkName?: string;
 }): Promise<ProofLedgerResult> {
-  const baseQuery = adminSupabase
-    .from("x402_charges")
-    .select(
-      "id, network, action, amount_usdc, status, tx_hash, payer_address, settled_at, created_at, metadata, scheduled_post_id",
-    )
-    .not("tx_hash", "is", null);
-  const scopedQuery = options?.networkName
-    ? baseQuery.eq("network", options.networkName)
-    : baseQuery;
-
-  const { data: chargeRows, error: chargesError } = await scopedQuery
-    .order("created_at", { ascending: false })
-    .limit(LEDGER_LIMIT);
+  const { data: charges, error: chargesError } = await runQuery(
+    db
+      .select({
+        network: x402_charges.network,
+        action: x402_charges.action,
+        amount_usdc: x402_charges.amount_usdc,
+        status: x402_charges.status,
+        tx_hash: x402_charges.tx_hash,
+        payer_address: x402_charges.payer_address,
+        settled_at: x402_charges.settled_at,
+        created_at: x402_charges.created_at,
+        metadata: x402_charges.metadata,
+        scheduled_post_id: x402_charges.scheduled_post_id,
+      })
+      .from(x402_charges)
+      .where(
+        and(
+          isNotNull(x402_charges.tx_hash),
+          options?.networkName ? eq(x402_charges.network, options.networkName) : undefined,
+        ),
+      )
+      .orderBy(desc(x402_charges.created_at))
+      .limit(LEDGER_LIMIT),
+  );
 
   if (chargesError) {
     console.error(
@@ -105,7 +119,6 @@ export async function loadProofLedger(options?: {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
-  const charges = chargeRows ?? [];
   const batchIds = charges
     .map((charge) => readBatchId(charge.metadata))
     .filter((batchId): batchId is string => batchId !== null);
@@ -229,18 +242,21 @@ async function fetchPublishedPlatformsByBatch(
   const platformByBatch: PlatformByKey = new Map();
   if (batchIds.length === 0) return { ok: true, value: platformByBatch };
 
-  const { data, error } = await adminSupabase
-    .from("content_history")
-    .select("batch_id, platform")
-    .in("batch_id", batchIds)
-    .eq("created_via", "x402");
+  const { data: historyRows, error } = await runQuery(
+    db
+      .select({ batch_id: content_history.batch_id, platform: content_history.platform })
+      .from(content_history)
+      .where(
+        and(inArray(content_history.batch_id, batchIds), eq(content_history.created_via, "x402")),
+      ),
+  );
   if (error) {
     console.error(
       `[fetchPublishedPlatformsByBatch] content_history read failed: ${error.message}`,
     );
     return { ok: false };
   }
-  for (const row of data ?? []) {
+  for (const row of historyRows) {
     if (row.batch_id !== null) platformByBatch.set(row.batch_id, row.platform);
   }
   return { ok: true, value: platformByBatch };
@@ -252,17 +268,19 @@ async function fetchFailedPlatformsByBatch(
   const platformByBatch: PlatformByKey = new Map();
   if (batchIds.length === 0) return { ok: true, value: platformByBatch };
 
-  const { data, error } = await adminSupabase
-    .from("failed_posts")
-    .select("batch_id, platform")
-    .in("batch_id", batchIds);
+  const { data: failedRows, error } = await runQuery(
+    db
+      .select({ batch_id: failed_posts.batch_id, platform: failed_posts.platform })
+      .from(failed_posts)
+      .where(inArray(failed_posts.batch_id, batchIds)),
+  );
   if (error) {
     console.error(
       `[fetchFailedPlatformsByBatch] failed_posts read failed: ${error.message}`,
     );
     return { ok: false };
   }
-  for (const row of data ?? []) {
+  for (const row of failedRows) {
     if (row.batch_id !== null) platformByBatch.set(row.batch_id, row.platform);
   }
   return { ok: true, value: platformByBatch };
@@ -274,17 +292,23 @@ async function fetchScheduledOutcomesById(
   const outcomeById = new Map<string, ScheduledOutcome>();
   if (scheduledPostIds.length === 0) return { ok: true, value: outcomeById };
 
-  const { data, error } = await adminSupabase
-    .from("scheduled_posts")
-    .select("id, status, platform")
-    .in("id", scheduledPostIds);
+  const { data: scheduledRows, error } = await runQuery(
+    db
+      .select({
+        id: scheduled_posts.id,
+        status: scheduled_posts.status,
+        platform: scheduled_posts.platform,
+      })
+      .from(scheduled_posts)
+      .where(inArray(scheduled_posts.id, scheduledPostIds)),
+  );
   if (error) {
     console.error(
       `[fetchScheduledOutcomesById] scheduled_posts read failed: ${error.message}`,
     );
     return { ok: false };
   }
-  for (const row of data ?? []) {
+  for (const row of scheduledRows) {
     outcomeById.set(row.id, { status: row.status, platform: row.platform });
   }
   return { ok: true, value: outcomeById };

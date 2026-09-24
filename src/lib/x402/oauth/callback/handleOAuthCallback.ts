@@ -1,9 +1,11 @@
 import "server-only";
 
+import { and, eq, sql } from "drizzle-orm";
 import { after } from "next/server";
 
 import type { Platform } from "@/lib/x402/connect/types";
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { social_accounts, social_connections } from "@/db/schema";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { validateShareLinkById } from "@/actions/server/share-link/validateShareToken";
@@ -85,13 +87,22 @@ export async function handleOAuthCallback(
 ): Promise<OAuthCallbackResult> {
   // -- 1. Look up connection by oauth_state. oauth_code_verifier carries
   //       the PKCE verifier for platforms that mandate it (X).
-  const { data: connection, error: lookupError } = await adminSupabase
-    .from("social_connections")
-    .select(
-      "id, principal_id, platform, status, expires_at, share_link_id, initiated_via, oauth_code_verifier"
-    )
-    .eq("oauth_state", input.state)
-    .maybeSingle();
+  const { data: connectionRows, error: lookupError } = await runQuery(
+    db
+      .select({
+        id: social_connections.id,
+        principal_id: social_connections.principal_id,
+        platform: social_connections.platform,
+        status: social_connections.status,
+        expires_at: social_connections.expires_at,
+        share_link_id: social_connections.share_link_id,
+        initiated_via: social_connections.initiated_via,
+        oauth_code_verifier: social_connections.oauth_code_verifier,
+      })
+      .from(social_connections)
+      .where(eq(social_connections.oauth_state, input.state))
+      .limit(1)
+  );
 
   if (lookupError) {
     console.error(`[handleOAuthCallback] DB error looking up state: ${lookupError.message}`);
@@ -104,6 +115,7 @@ export async function handleOAuthCallback(
     };
   }
 
+  const connection = connectionRows[0];
   if (!connection) {
     return {
       ok: false,
@@ -261,16 +273,19 @@ export async function handleOAuthCallback(
   //    a use. Called BEFORE social_accounts upsert so we don't create an
   //    account if the link was fully consumed by a concurrent request.
   if (shareLinkId !== null) {
-    const { data: consumeRows, error: consumeError } = await adminSupabase.rpc(
-      "consume_share_link",
-      { p_share_link_id: shareLinkId },
+    const { data: consumeRows, error: consumeError } = await runQuery(
+      db.execute(sql`select * from public.consume_share_link(${shareLinkId}::uuid)`),
     );
 
-    const consumeResult =
-      consumeRows && consumeRows.length > 0 ? consumeRows[0] : null;
+    // One (success boolean, reason text) row; any other shape is a failure.
+    const consumeResult = consumeRows?.[0];
+    const consumeReason = consumeResult?.reason;
 
-    if (consumeError || !consumeResult || !consumeResult.success) {
-      const reason = consumeResult?.reason ?? consumeError?.message ?? "unknown";
+    if (consumeError || consumeResult?.success !== true) {
+      const reason =
+        (typeof consumeReason === "string" ? consumeReason : null) ??
+        consumeError?.message ??
+        "unknown";
       console.error(
         `[handleOAuthCallback] consume_share_link failed: ${reason}`,
       );
@@ -309,28 +324,36 @@ export async function handleOAuthCallback(
       ? null
       : new Date(Date.now() + exchangeResult.expiresIn * 1000).toISOString();
 
-  const { data: socialAccount, error: upsertError } = await adminSupabase
-    .from("social_accounts")
-    .upsert(
-      {
-        principal_id: connection.principal_id,
-        platform: input.platform,
-        account_identifier: exchangeResult.accountIdentifier,
-        is_available: true,
-        display_name: exchangeResult.profile.name ?? null,
-        username: exchangeResult.profile.username ?? exchangeResult.profile.name ?? null,
-        avatar_url: exchangeResult.profile.avatarUrl ?? null,
-        access_token: exchangeResult.accessToken,
-        refresh_token: exchangeResult.refreshToken,
-        token_expires_at: tokenExpiresAt,
-        connection_id: connection.id,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "principal_id, platform, account_identifier" }
-    )
-    .select("id")
-    .single();
+  const socialAccountValues = {
+    principal_id: connection.principal_id,
+    platform: input.platform,
+    account_identifier: exchangeResult.accountIdentifier,
+    is_available: true,
+    display_name: exchangeResult.profile.name ?? null,
+    username: exchangeResult.profile.username ?? exchangeResult.profile.name ?? null,
+    avatar_url: exchangeResult.profile.avatarUrl ?? null,
+    access_token: exchangeResult.accessToken,
+    refresh_token: exchangeResult.refreshToken,
+    token_expires_at: tokenExpiresAt,
+    connection_id: connection.id,
+    updated_at: new Date().toISOString(),
+  };
+  const { data: upsertedAccounts, error: upsertError } = await runQuery(
+    db
+      .insert(social_accounts)
+      .values(socialAccountValues)
+      .onConflictDoUpdate({
+        target: [
+          social_accounts.principal_id,
+          social_accounts.platform,
+          social_accounts.account_identifier,
+        ],
+        set: socialAccountValues,
+      })
+      .returning({ id: social_accounts.id })
+  );
 
+  const socialAccount = upsertedAccounts?.[0];
   if (upsertError || !socialAccount) {
     console.error(`[handleOAuthCallback] Failed to upsert social_accounts: ${upsertError?.message}`);
     await transitionPendingTo(connection.id, {
@@ -349,17 +372,18 @@ export async function handleOAuthCallback(
   }
 
   // -- 7. Transition pending -> connected (status-scoped)
-  const { data: connectedRows, error: connectError } = await adminSupabase
-    .from("social_connections")
-    .update({
-      status: "connected",
-      connected_at: new Date().toISOString(),
-      social_account_id: socialAccount.id,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", connection.id)
-    .eq("status", "pending")
-    .select("id");
+  const { data: connectedRows, error: connectError } = await runQuery(
+    db
+      .update(social_connections)
+      .set({
+        status: "connected",
+        connected_at: new Date().toISOString(),
+        social_account_id: socialAccount.id,
+        updated_at: new Date().toISOString(),
+      })
+      .where(and(eq(social_connections.id, connection.id), eq(social_connections.status, "pending")))
+      .returning({ id: social_connections.id })
+  );
 
   if (connectError) {
     console.error(`[handleOAuthCallback] Failed to update social_connections: ${connectError.message}`);
@@ -381,7 +405,7 @@ export async function handleOAuthCallback(
     };
   }
 
-  if (!connectedRows || connectedRows.length === 0) {
+  if (connectedRows.length === 0) {
     // A concurrent duplicate callback won the transition; this delivery is
     // the loser and must not double-fire the webhook.
     return {
@@ -464,11 +488,12 @@ async function transitionPendingTo(
     updateFields.error_message = fields.error_message;
   }
 
-  const { error } = await adminSupabase
-    .from("social_connections")
-    .update(updateFields)
-    .eq("id", connectionId)
-    .eq("status", "pending");
+  const { error } = await runQuery(
+    db
+      .update(social_connections)
+      .set(updateFields)
+      .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending")))
+  );
 
   if (error) {
     console.error(

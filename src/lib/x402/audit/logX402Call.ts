@@ -19,7 +19,8 @@ import "server-only";
  * This function does not import the hash helpers directly.
  */
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { db, runQuery } from "@/db/client";
+import { x402_access_log } from "@/db/schema";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
 /** Max User-Agent length stored. Matches mcp_audit_log column behavior. */
@@ -69,19 +70,21 @@ export async function logX402Call(entry: X402AuditEntry): Promise<void> {
         ? entry.userAgent.slice(0, MAX_USER_AGENT_LENGTH)
         : entry.userAgent ?? null;
 
-    const { error } = await adminSupabase.from("x402_access_log").insert({
-      principal_id: entry.principal?.principalId ?? null,
-      wallet_id: entry.principal?.walletId ?? null,
-      endpoint: entry.endpoint,
-      action: entry.action,
-      charge_id: entry.chargeId,
-      result_status: entry.resultStatus,
-      latency_ms: entry.latencyMs ?? null,
-      ip_hash: entry.ipHash ?? null,
-      user_agent: truncatedUserAgent,
-      // Do NOT pass `month` (GENERATED column).
-      // Do NOT pass `created_at` (defaults to now()).
-    });
+    const { error } = await runQuery(
+      db.insert(x402_access_log).values({
+        principal_id: entry.principal?.principalId ?? null,
+        wallet_id: entry.principal?.walletId ?? null,
+        endpoint: entry.endpoint,
+        action: entry.action,
+        charge_id: entry.chargeId,
+        result_status: entry.resultStatus,
+        latency_ms: entry.latencyMs ?? null,
+        ip_hash: entry.ipHash ?? null,
+        user_agent: truncatedUserAgent,
+        // Do NOT pass `month` (GENERATED column).
+        // Do NOT pass `created_at` (defaults to now()).
+      }),
+    );
 
     if (error) {
       console.error(`[logX402Call] Failed to insert audit row for ${entry.endpoint}: ${error.message}`);

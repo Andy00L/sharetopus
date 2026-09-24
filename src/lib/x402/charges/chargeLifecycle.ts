@@ -16,7 +16,10 @@ import "server-only";
  *                 x402_reconciliation (insert)
  */
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { eq } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { x402_charges } from "@/db/schema";
 import type { Json } from "@/lib/types/database.types";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
@@ -185,12 +188,23 @@ async function loadChargeReplay(params: {
   action: string;
   network: NetworkConfig;
 }): Promise<ChargeReplay> {
-  const { data: charge, error } = await adminSupabase
-    .from("x402_charges")
-    .select("id, status, action, tx_hash, payer_address, metadata, created_at")
-    .eq("nonce", params.nonce)
-    .maybeSingle();
+  const { data: chargeRows, error } = await runQuery(
+    db
+      .select({
+        id: x402_charges.id,
+        status: x402_charges.status,
+        action: x402_charges.action,
+        tx_hash: x402_charges.tx_hash,
+        payer_address: x402_charges.payer_address,
+        metadata: x402_charges.metadata,
+        created_at: x402_charges.created_at,
+      })
+      .from(x402_charges)
+      .where(eq(x402_charges.nonce, params.nonce))
+      .limit(1),
+  );
 
+  const charge = chargeRows?.[0];
   if (error || !charge) {
     if (error) console.error(`[loadChargeReplay] Lookup failed: ${error.message}`);
     return { state: "closed", chargeId: null };
@@ -246,16 +260,20 @@ export async function updateChargeRecord(
   chargeId: string,
   fields: ChargeRecordFields,
 ): Promise<void> {
-  const { error } = await adminSupabase
-    .from("x402_charges")
-    .update({
-      ...(fields.metadata === undefined ? {} : { metadata: fields.metadata }),
-      ...(fields.scheduledPostId === undefined ? {} : { scheduled_post_id: fields.scheduledPostId }),
-      ...(fields.socialConnectionId === undefined
-        ? {}
-        : { social_connection_id: fields.socialConnectionId }),
-    })
-    .eq("id", chargeId);
+  const chargeUpdate = {
+    ...(fields.metadata === undefined ? {} : { metadata: fields.metadata }),
+    ...(fields.scheduledPostId === undefined ? {} : { scheduled_post_id: fields.scheduledPostId }),
+    ...(fields.socialConnectionId === undefined
+      ? {}
+      : { social_connection_id: fields.socialConnectionId }),
+  };
+  // Drizzle throws on an empty SET before the query runs; with no field to
+  // write there is nothing to update.
+  if (Object.keys(chargeUpdate).length === 0) return;
+
+  const { error } = await runQuery(
+    db.update(x402_charges).set(chargeUpdate).where(eq(x402_charges.id, chargeId)),
+  );
   if (error) {
     console.error(`[updateChargeRecord] Failed to update charge ${chargeId}: ${error.message}`);
   }

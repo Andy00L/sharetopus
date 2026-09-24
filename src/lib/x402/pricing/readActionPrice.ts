@@ -22,7 +22,10 @@ import "server-only";
  * Tables touched: pricing_actions (read)
  */
 
-import { adminSupabase } from "@/actions/api/adminSupabase";
+import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pricing_actions } from "@/db/schema";
 
 /** Per-instance price cache lifetime, in milliseconds. */
 const PRICE_CACHE_TTL_MS = 60_000;
@@ -48,13 +51,19 @@ export async function readActionPrice(
   }
 
   const nowIso = new Date().toISOString();
-  const { data: pricingRow, error: pricingError } = await adminSupabase
-    .from("pricing_actions")
-    .select("usdc_price")
-    .eq("action", action)
-    .lte("effective_from", nowIso)
-    .or(`effective_until.is.null,effective_until.gt.${nowIso}`)
-    .maybeSingle();
+  const { data: pricingRows, error: pricingError } = await runQuery(
+    db
+      .select({ usdc_price: pricing_actions.usdc_price })
+      .from(pricing_actions)
+      .where(
+        and(
+          eq(pricing_actions.action, action),
+          lte(pricing_actions.effective_from, nowIso),
+          or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso)),
+        ),
+      )
+      .limit(1),
+  );
 
   if (pricingError) {
     console.error(
@@ -63,6 +72,7 @@ export async function readActionPrice(
     return { ok: false, message: "Failed to read pricing." };
   }
 
+  const pricingRow = pricingRows[0];
   if (!pricingRow) {
     return { ok: false, message: `No active pricing for action "${action}".` };
   }
