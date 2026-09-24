@@ -115,7 +115,7 @@ pause
 stage "The recorded mainnet run"
 say "Start recording, then run these from the repo root. Lines marked PAID spend real USDC."
 say ""
-say "  cd demo && npm install && cd .."
+say "  cd demo && bun install && cd .."
 say "  set -a; source demo/.env; set +a"
 say "  node demo/x402-demo.mjs challenge                          # free: the Solana 402"
 say "  node demo/x402-demo.mjs connect linkedin                   # PAID 0.50: oauthUrl + connectionToken"

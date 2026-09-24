@@ -28,7 +28,7 @@ export const metadata: Metadata = {
 
 // The calls a judge can run themselves. Mirrors demo/x402-demo.mjs; the
 // last line is the Blink, for a wallet with no code at all.
-const WAY_IN_COMMANDS = `cd demo && npm install
+const WAY_IN_COMMANDS = `cd demo && bun install
 export SOLANA_PRIVATE_KEY=<base58 secret key of a wallet holding USDC>
 
 node x402-demo.mjs challenge

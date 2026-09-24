@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 };
 
 // The calls a judge can run themselves. Mirrors demo/x402-demo.mjs.
-const WAY_IN_COMMANDS = `cd demo && npm install
+const WAY_IN_COMMANDS = `cd demo && bun install
 
 # Solana: the wallet signs, the CDP facilitator pays the network fee
 export X402_NETWORK=solana
