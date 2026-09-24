@@ -3,13 +3,13 @@ import { currentUser } from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { after } from "next/server";
+import type Stripe from "stripe";
 import { db, runQuery } from "@/db/client";
+import { principals, stripe_subscriptions, users } from "@/db/schema";
 import {
-  principals,
-  stripe_invoices,
-  stripe_subscriptions,
-  users,
-} from "@/db/schema";
+  recordInvoicePayment,
+  type InvoicePaymentOutcome,
+} from "@/actions/server/stripe/recordInvoicePayment";
 import { toSubscriptionRow } from "@/actions/server/stripe/toSubscriptionRow";
 import { invalidateCachedSubscription } from "@/lib/mcp/auth/resolvers/subscriptionCache";
 import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
@@ -243,8 +243,9 @@ async function syncStripeSubscriptions(
 }
 
 /**
- * Syncs Stripe invoices into the stripe_invoices table.
- * Mirrors the Stripe webhook behavior: invoice.payment_succeeded / .payment_failed
+ * Syncs Stripe invoices into the stripe_invoices table through the writer
+ * the webhook's invoice.payment_succeeded / .payment_failed use, so an
+ * invoice paid after a failed attempt ends up succeeded here too.
  */
 async function syncStripeInvoices(
   userId: string,
@@ -256,56 +257,34 @@ async function syncStripeInvoices(
       limit: 20,
     });
 
-    if (invoices.data.length === 0) return;
-
     for (const invoice of invoices.data) {
-      if (!invoice.id) continue;
+      const outcome = toPaymentOutcome(invoice);
+      if (!invoice.id || !outcome) continue;
 
-      // Check if this invoice already exists in Supabase
-      const { data: existingRows, error: lookupError } = await runQuery(
-        db
-          .select({ id: stripe_invoices.id })
-          .from(stripe_invoices)
-          .where(eq(stripe_invoices.stripe_invoice_id, invoice.id))
-          .limit(1)
-      );
-
-      if (lookupError) {
-        console.error(
-          `[ensureUserExists] Lookup failed for invoice ${invoice.id}:`,
-          lookupError.message
-        );
-        continue;
-      }
-
-      const existing = existingRows[0];
-      if (existing) continue;
-
-      const status = invoice.status === "paid" ? "succeeded" : "failed";
-
-      // An undefined amount_paid_cents inserts the column default (NULL).
-      const { error } = await runQuery(
-        db.insert(stripe_invoices).values({
-          user_id: userId,
-          stripe_invoice_id: invoice.id,
-          amount_paid_cents: status === "succeeded" ? (invoice.amount_paid ?? 0) : undefined,
-          currency: invoice.currency,
-          status,
-        })
-      );
-
-      if (error) {
-        console.error(
-          `[ensureUserExists] Erreur sync invoice ${invoice.id}:`,
-          error
-        );
-      } else {
-        console.log(
-          `[ensureUserExists] Invoice ${invoice.id} synced for user ${userId}`
-        );
+      const recorded = await recordInvoicePayment({
+        userId,
+        stripeInvoiceId: invoice.id,
+        outcome,
+        amountPaidCents: invoice.amount_paid,
+        currency: invoice.currency,
+      });
+      if (!recorded.ok) {
+        console.error(`[ensureUserExists] Could not sync invoice ${invoice.id}`);
       }
     }
   } catch (err) {
     console.error("[ensureUserExists] Erreur sync invoices:", err);
   }
+}
+
+/**
+ * The payment outcome an invoice shows: paid, or tried and failed. Drafts,
+ * voided invoices and open ones not charged yet have none. This sync used to
+ * record every unpaid invoice as failed, a draft included.
+ */
+function toPaymentOutcome(invoice: Stripe.Invoice): InvoicePaymentOutcome | null {
+  if (invoice.status === "paid") return "succeeded";
+  if (invoice.status === "uncollectible") return "failed";
+  if (invoice.status === "open" && invoice.attempted) return "failed";
+  return null;
 }

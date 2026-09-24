@@ -162,8 +162,8 @@ src/
       mcp/                      # createApiKey, listApiKeys, revokeApiKey
       rateLimit/                # checkRateLimit (Upstash sliding window)
       scheduleActions/          # Public wrappers: auth + rate limit + delegate to _internal
-      stripe/                   # checkOutSession, customerPortal, claimWebhookEvent,
-                                # toSubscriptionRow
+      stripe/                   # checkOutSession, customerPortal, stripeEventLog,
+                                # recordInvoicePayment, toSubscriptionRow
     checkActiveSubscription.ts  # Server-only subscription reader (pages, MCP, REST)
   app/
     (marketing)/                # Landing page, Privacy Policy, ToS

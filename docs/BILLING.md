@@ -55,15 +55,19 @@ sequenceDiagram
     Action-->>User: Redirect to Stripe Checkout
     User->>Stripe: Complete payment
     Stripe->>Webhook: customer.subscription.created
-    Webhook->>Webhook: claimWebhookEvent (idempotency)
+    Webhook->>DB: Event already processed? (stripe_webhook_events)
+    Webhook->>Stripe: Retrieve the subscription as it is now
     Webhook->>DB: UPSERT stripe_subscriptions
-    Webhook->>DB: Resume cancelled posts, promote OAuth clients
+    Webhook->>DB: User has access: resume cancelled posts, promote OAuth clients
     Webhook->>Webhook: Invalidate caches
+    Webhook->>DB: Log the event as processed
     Stripe->>Webhook: invoice.payment_succeeded
-    Webhook->>DB: INSERT stripe_invoices (amount_paid_cents)
+    Webhook->>DB: Record the payment in stripe_invoices
 ```
 
-Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to guarantee idempotent handling of each Stripe event. When a database step fails, the user lookup included, the handler releases the claim and answers 500, so Stripe delivers the event again. An event whose customer matches no user answers 200 with `no_user_match`, because no retry can change that.
+The webhook logs an event in `stripe_webhook_events` only after processing it succeeded (`src/actions/server/stripe/stripeEventLog.ts`). Every failed step, the user lookup and each side effect included, answers 500, and Stripe delivers the event again for up to three days. Nothing is logged before that point, so a failure can never mark an unprocessed event as done. Every step is idempotent, so a redelivery, or a duplicate that arrives while the first delivery runs, repeats nothing. An event whose customer matches no user answers 200 with `no_user_match`, because no retry can change that.
+
+Stripe does not deliver events in order. A subscription event therefore stores the subscription as Stripe has it now, retrieved from the API, not the payload, which may be older than a row a later event already wrote. A subscription Stripe no longer has keeps its payload's state.
 
 ## Webhook events
 
@@ -71,11 +75,14 @@ Webhook processing uses a `claimWebhookEvent`/`releaseWebhookEvent` pattern to g
 
 | Event | Action |
 |-------|--------|
-| `customer.subscription.created` | Upsert `stripe_subscriptions`, resume system-cancelled posts, promote OAuth clients, invalidate caches |
-| `customer.subscription.updated` | Upsert `stripe_subscriptions` (plan changes, status changes), invalidate cache |
-| `customer.subscription.deleted` | Set status to `cancelled`, demote OAuth clients, cancel future scheduled posts, invalidate caches |
-| `invoice.payment_succeeded` | Upsert `stripe_invoices` with `amount_paid_cents` |
-| `invoice.payment_failed` | Upsert `stripe_invoices` with status `failed` |
+| `customer.subscription.created`, `customer.subscription.updated` | Upsert `stripe_subscriptions` from the retrieved subscription, invalidate caches. If the user has access afterwards, resume system-cancelled posts and promote OAuth clients. |
+| `customer.subscription.deleted` | Same upsert (the retrieved status is `canceled`). If the user has no access left, demote OAuth clients and cancel future scheduled posts. |
+| `invoice.payment_succeeded` | Record the payment in `stripe_invoices` with `amount_paid_cents`. It replaces an earlier `failed` row for the same invoice. |
+| `invoice.payment_failed` | Record `failed` in `stripe_invoices`, unless the invoice already has a row: a failure never replaces a success. |
+
+What happens to posts and OAuth clients follows the user's access after the write (`checkActiveSubscription`), not the event type. A late `deleted` for a subscription the user already replaced leaves the new plan's posts alone, and a `created` for a subscription still waiting on its first payment (`incomplete`) grants nothing until the `updated` event that makes it active. A failed access check answers 500.
+
+`recordInvoicePayment` (`src/actions/server/stripe/recordInvoicePayment.ts`) writes invoices for both the webhook and the `ensureUserExists` sync. The sync records paid invoices and invoices whose payment was tried and failed (`uncollectible`, or `open` after an attempt); drafts, voided invoices and open ones not charged yet are skipped.
 
 ## Subscription status
 
@@ -177,19 +184,20 @@ Incremented atomically by `atomic_increment_quota` on every quota-gated MCP tool
 
 When a user's Stripe subscription reaches period_end, the webhook handler:
 
-1. Sets `stripe_subscriptions.status = 'cancelled'`
-2. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`)
-3. Cancels all future scheduled posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
-4. Invalidates subscription and entitlement caches
+1. Stores the subscription with Stripe's status, `canceled`
+2. Checks the user's access. With another active subscription or banked referral weeks, it stops here.
+3. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`)
+4. Cancels all future scheduled posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
+5. Invalidates subscription and entitlement caches
 
 The user retains access to the dashboard and can resubscribe. Manual cancellations of posts made before the sub cancel are left untouched (they have `cancelled_by_sub_at IS NULL`). A manual cancel, resume or reschedule clears the tag, so a post the user handled after the lapse is never removed by the grace cleanup.
 
-### Resubscribe (customer.subscription.created)
+### Resubscribe (customer.subscription.created or .updated)
 
-When the user resubscribes, the webhook handler:
+When a subscription event leaves the user with access (a new subscription, or one whose first payment went through), the webhook handler:
 
-1. INSERTs the new `stripe_subscriptions` row
-2. Resumes system-cancelled posts (`resumeCancelledPostsOnResubscribe`). Posts whose original `scheduled_at` has elapsed are bumped to `now() + 1 hour` via `bumpPastScheduleToFuture`.
+1. Upserts the `stripe_subscriptions` row
+2. Resumes system-cancelled posts (`resumeCancelledPostsOnResubscribe`). Posts whose original `scheduled_at` has elapsed are bumped to `now() + 1 hour` via `bumpPastScheduleToFuture`. A post that fails to resume fails the event, and the redelivery resumes whatever is still tagged.
 3. Re-promotes previously-demoted OAuth clients (`promoteOauthClientsOnResubscribe`) up to the per-user cap of 5.
 
 ### Grace period (7 days)
@@ -256,6 +264,8 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 |------|---------|
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
+| `src/actions/server/stripe/stripeEventLog.ts` | `isStripeEventProcessed`, `markStripeEventProcessed`: the processed-event log |
+| `src/actions/server/stripe/recordInvoicePayment.ts` | Writes an invoice's payment outcome, for the webhook and the `ensureUserExists` sync |
 | `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by both the webhook and the `ensureUserExists` sync |
 | `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, the server-only subscription reader |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |

@@ -26,7 +26,9 @@ export type ResumeResult =
  * touched by this helper.
  *
  * Idempotent: re-running yields zero changes because the WHERE clause
- * requires `cancelled_by_sub_at IS NOT NULL`.
+ * requires `cancelled_by_sub_at IS NOT NULL`. A post that fails to resume
+ * fails the whole call, so the Stripe webhook answers 500 and its retry
+ * resumes whatever is still tagged.
  */
 export async function resumeCancelledPostsOnResubscribe(
   principalId: string,
@@ -61,6 +63,7 @@ export async function resumeCancelledPostsOnResubscribe(
 
     let bumped = 0;
     let resumed = 0;
+    let failedToResume = 0;
 
     for (const row of candidates) {
       const original = new Date(row.scheduled_at);
@@ -82,6 +85,7 @@ export async function resumeCancelledPostsOnResubscribe(
         console.error(
           `[resumeCancelledPostsOnResubscribe] Failed to resume ${row.id}: ${updateErr.message}`,
         );
+        failedToResume += 1;
         continue;
       }
       resumed += 1;
@@ -92,6 +96,12 @@ export async function resumeCancelledPostsOnResubscribe(
       console.log(
         `[resumeCancelledPostsOnResubscribe] Resumed ${resumed} posts for ${principalId} (${bumped} bumped to future)`,
       );
+    }
+    if (failedToResume > 0) {
+      return {
+        success: false,
+        message: `[resumeCancelledPostsOnResubscribe] ${failedToResume} of ${candidates.length} posts could not be resumed`,
+      };
     }
     return { success: true, resumed, bumped };
   } catch (err) {
