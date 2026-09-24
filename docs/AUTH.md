@@ -118,11 +118,11 @@ sequenceDiagram
 
 | Event | Action |
 |-------|--------|
-| `user.created` | Upsert into `principals` (kind=clerk), insert into `users`, create Stripe customer |
-| `user.updated` | Update `users` (email, name), update Stripe customer metadata |
-| `user.deleted` | Delete from `users`, delete Stripe customer, delete storage folder |
+| `user.created` | Create the Stripe customer, upsert into `principals` (kind=clerk), insert into `users` |
+| `user.updated` | Update `users` (email, name), update the Stripe customer's email |
+| `user.deleted` | Delete the Stripe customer, delete from `users`, delete the storage folder |
 
-**Rollback behavior:** If the Stripe customer creation fails during `user.created`, the handler returns early (no DB records created). If the Supabase insert fails after Stripe creation, the Stripe customer is deleted. This keeps the two systems consistent.
+**Failures and retries:** a step that fails answers 500, so Svix delivers the event again, and each handler is safe to run twice. `user.created` deletes the Stripe customer it just made when the `principals` or `users` write fails; a `users` row that already exists (`ensureUserExists` got there first) ends the event with 200. `user.deleted` deletes the Stripe customer before the `users` row, because that row holds the only copy of the customer id; a customer Stripe no longer has counts as deleted.
 
 ---
 
