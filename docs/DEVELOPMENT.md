@@ -68,7 +68,7 @@ The Next.js dev server talks to remote Supabase, Clerk, and Upstash instances. S
 | [Stripe](https://stripe.com) account | Subscription billing (3 products with price IDs) |
 | [Inngest](https://www.inngest.com) account | Background job processing |
 | [Upstash](https://upstash.com) Redis instance | API rate limiting |
-| Platform OAuth apps (one per platform) | LinkedIn, TikTok, Pinterest, Instagram |
+| Platform OAuth apps (one per platform) | LinkedIn, TikTok, Pinterest, Instagram, YouTube, X, Facebook, plus any registry provider you enable |
 
 ## Setup
 
@@ -90,7 +90,7 @@ bun run dev    # http://localhost:3000
 1. Create a Supabase project.
 2. Create the tables, indexes and RLS policies declared in `src/db/schema.ts` (`bunx drizzle-kit push` against the new database). The Postgres functions and triggers listed in [DATABASE.md](./DATABASE.md#functions-and-triggers) are not in that file yet and exist only in the production database.
 3. Create a storage bucket named `scheduled-videos` (or set `SUPABASE_BUCKET_NAME` to your chosen name).
-4. Copy the project URL, anon key, service role key, and the transaction and session pooler connection strings (dashboard, Connect) into `.env.local`.
+4. Copy the project URL, service role key, and the transaction and session pooler connection strings (dashboard, Connect) into `.env.local`.
 
 ### Clerk
 
@@ -105,7 +105,7 @@ bun run dev    # http://localhost:3000
 1. Create 3 products with monthly and yearly prices matching the plan config in `src/lib/types/plans.ts`.
 2. Add a webhook endpoint: `{FRONTEND_URL}/api/webhooks/stripe`.
 3. Subscribe to events: `customer.subscription.*`, `invoice.payment_succeeded`, `invoice.payment_failed`.
-4. Copy the secret key, publishable key, and webhook signing secret into `.env.local`.
+4. Copy the secret key and webhook signing secret into `.env.local`. Checkout is Stripe-hosted, so no publishable key is needed.
 5. For local webhook testing, install the [Stripe CLI](https://stripe.com/docs/stripe-cli) and run:
 
 ```bash
@@ -133,6 +133,11 @@ Each platform requires an OAuth app with its redirect URL set to `{FRONTEND_URL}
 | TikTok | `http://localhost:3000/api/social/tiktok/connect` | Requires separate dev/prod credentials (`TIKTOK_CLIENT_KEY_DEV`, `TIKTOK_CLIENT_SECRET_DEV`) |
 | Pinterest | `http://localhost:3000/api/social/pinterest/connect` | Standard OAuth |
 | Instagram | `http://localhost:3000/api/social/instagram/connect` | Use the "Instagram Login" product on Meta, not "Facebook Login" |
+| YouTube | `http://localhost:3000/api/social/youtube/connect` | Google Cloud OAuth client, YouTube Data API v3 enabled |
+| X | `http://localhost:3000/api/social/x/connect` | OAuth 2.0 confidential client (PKCE) |
+| Facebook | `http://localhost:3000/api/social/facebook/connect` | Meta app with Facebook Login (Pages) |
+
+Registry OAuth providers (Reddit, Threads, Tumblr, Twitch, Kick, Dribbble, Google Business) use `{FRONTEND_URL}/api/social/registry/{provider}/callback`; LinkedIn Pages reuses the LinkedIn app. Connections started through x402 or the REST API come back to `{FRONTEND_URL}/api/oauth/callback/{platform}`, so register that URL too (`X402_*_REDIRECT_URI`).
 
 ## Environment variables
 
@@ -152,8 +157,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | Variable | Required | Notes |
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Anon/public key |
-| `SUPABASE_SERVICE_ROLE` | Yes | Service role key (server-only) |
+| `SUPABASE_SERVICE_ROLE` | Yes | Service role key (server-only), used for Storage |
 | `DATABASE_URL` | Yes | Transaction pooler connection string (port 6543), used by the Drizzle client in `src/db/client.ts`. Server-only |
 | `SUPABASE_DB_URL` | For `db:*` scripts | Session pooler connection string (port 5432), used by drizzle-kit (`drizzle.config.ts`) |
 | `SUPABASE_BUCKET_NAME` | No | Default: `scheduled-videos` |
@@ -164,7 +168,6 @@ All variables are documented in `.env.example`. The tables below group them by s
 | Variable | Required | Notes |
 |---|---|---|
 | `STRIPE_SECRET_KEY` | Yes | Stripe dashboard |
-| `STRIPE_PUBLISHABLE_KEY` | Yes | Stripe dashboard |
 | `STRIPE_WEBHOOK_SECRET` | Prod | Webhook signing secret |
 | `STRIPE_WEBHOOK_SECRET_DEV` | Dev | Local dev override |
 
@@ -201,6 +204,11 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `INSTAGRAM_CLIENT_ID` | Per platform | Meta app with Instagram Login |
 | `INSTAGRAM_CLIENT_SECRET` | Per platform | Meta app with Instagram Login |
 | `INSTAGRAM_REDIRECT_URL` | Per platform | Default: `http://localhost:3000/api/social/instagram/connect` |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URL` | Per platform | Google Cloud OAuth client |
+| `X_CLIENT_ID`, `X_CLIENT_SECRET`, `X_REDIRECT_URL` | Per platform | X OAuth 2.0 app |
+| `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`, `FACEBOOK_REDIRECT_URL` | Per platform | Meta app with Facebook Login |
+| `REDDIT_*`, `THREADS_*`, `TUMBLR_*`, `TWITCH_*`, `KICK_*`, `DRIBBBLE_*`, `GMB_*` (`_CLIENT_ID` and `_CLIENT_SECRET`) | Per provider | A registry provider is available only when both of its variables are set |
+| `X402_{PLATFORM}_REDIRECT_URI` | For x402 and REST connects | One per legacy platform: `{FRONTEND_URL}/api/oauth/callback/{platform}` |
 
 ### x402 / Coinbase CDP
 
@@ -218,7 +226,11 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `X402_ARC_KEY` | For Arc | Private key of `X402_RECIPIENT_ARC`. Sharetopus is its own facilitator on Arc, so it signs there itself; no CDP wallet can |
 | `X402_ARC_RPC_URL` | No | Dedicated Arc RPC (https). Unset uses Arc's own public endpoint, which needs no key |
 | `X402_FACILITATOR_SETTLE_KEY` | No | Opens `POST /api/x402/facilitator/settle` to the holder. Unset keeps settling closed to outside callers; `/supported` and `/verify` stay open either way |
-| `CDP_WEBHOOK_SIGNING_SECRET` | For x402 | HMAC verification of CDP webhook events |
+| `X402_HMAC_SECRET` | For x402 connect | Signs the connection tokens of the x402 connect and reauth flows; without it they refuse before charging. 32 random bytes, hex |
+| `X402_RECIPIENT_CELO` | For Celo | Celo wallet that receives payments and sends refunds |
+| `X402_CELO_FACILITATOR_API_KEY` | For Celo | Celo facilitator settle key (x402.celo.org) |
+| `X402_CELO_REFUND_KEY` | For Celo | Private key of `X402_RECIPIENT_CELO` |
+| `X402_CELO_FACILITATOR_URL`, `X402_CELO_ATTRIBUTION_TAG` | No | Facilitator URL override; ERC-8021 attribution code on refunds |
 
 ### App config
 
@@ -226,6 +238,8 @@ All variables are documented in `.env.example`. The tables below group them by s
 |---|---|---|
 | `FRONTEND_URL` | Yes | Default: `http://localhost:3000` |
 | `NEXT_PUBLIC_BASE_URL` | No | Default: `https://sharetopus.com` |
+| `NEXT_PUBLIC_APP_URL` | No | Origin for share links and OAuth callback redirects. Default: `NEXT_PUBLIC_BASE_URL` |
+| `MAX_DURATION_S`, `MAX_FILE_MB`, `POLL_WINDOW_S`, `WORKER_MAX_RETRIES`, `DISPATCHER_BATCH_SIZE`, `SIGNED_URL_TTL_S` | No | Background job tuning, see [INNGEST.md](./INNGEST.md#runtime-configuration) |
 | `CRON_SECRET_KEY` | Yes | Shared secret for cron auth bypass |
 | `MEDIA_PROXY_HMAC_SECRET` | Yes | 64 hex chars. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `MCP_IP_HASH_SALT` | Prod | 32 bytes base64. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
