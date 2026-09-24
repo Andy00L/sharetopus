@@ -264,6 +264,12 @@ Pages in `src/content/docs/*.mdx` are served at `/docs/<slug>`. The `@next/mdx` 
 bunx tsc --noEmit
 ```
 
+`scripts/x402-smoke` is a separate package with its own `tsconfig.json` (ES2022 target, its own dependencies), so the root check excludes it. Check it on its own:
+
+```bash
+cd scripts/x402-smoke && bunx tsc -p tsconfig.json
+```
+
 No test framework is configured. Type checking is the primary automated verification step.
 
 ## Code conventions
