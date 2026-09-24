@@ -228,8 +228,10 @@ export const DELETE = withRestEndpoint({
       ),
     );
 
-    // Delete subscription (FK cascade removes deliveries).
-    const { error: deleteError } = await runQuery(
+    // Delete subscription (FK cascade removes deliveries). RETURNING tells a
+    // real deletion apart from an id that is missing or belongs to another
+    // principal, which deletes nothing and used to answer 200 as well.
+    const { data: deletedRows, error: deleteError } = await runQuery(
       db
         .delete(webhook_subscriptions)
         .where(
@@ -237,13 +239,25 @@ export const DELETE = withRestEndpoint({
             eq(webhook_subscriptions.id, subscriptionId),
             eq(webhook_subscriptions.principal_id, ctx.principal.principalId),
           ),
-        ),
+        )
+        .returning({ id: webhook_subscriptions.id }),
     );
 
     if (deleteError) {
+      console.error(
+        `[v1/webhooks/[id] DELETE] delete failed (request_id=${ctx.requestId}):`,
+        deleteError.message,
+      );
       return restErrorResponse(
         "internal_error",
         "Webhook subscription deletion failed",
+        ctx.requestId,
+      );
+    }
+    if (!deletedRows[0]) {
+      return restErrorResponse(
+        "not_found",
+        "Webhook subscription not found",
         ctx.requestId,
       );
     }
