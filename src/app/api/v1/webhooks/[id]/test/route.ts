@@ -25,7 +25,7 @@ export const POST = withRestEndpoint({
   handler: async (ctx, request) => {
     // Step 1: extract subscription ID from URL.
     const urlSegments = new URL(request.url).pathname.split("/");
-    // Path: /api/v1/webhooks/[id]/test -> id is third-to-last.
+    // Path: /api/v1/webhooks/[id]/test -> id is second-to-last.
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
     const idParseResult = SubscriptionIdSchema.safeParse(idCandidate);
@@ -68,8 +68,19 @@ export const POST = withRestEndpoint({
         .limit(1),
     );
 
-    const subscriptionRow = subscriptionRows?.[0];
-    if (loadError || !subscriptionRow) {
+    if (loadError) {
+      console.error(
+        `[v1/webhooks/[id]/test POST] lookup failed (request_id=${ctx.requestId}):`,
+        loadError.message,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Webhook subscription lookup failed",
+        ctx.requestId,
+      );
+    }
+    const subscriptionRow = subscriptionRows[0];
+    if (!subscriptionRow) {
       return restErrorResponse(
         "not_found",
         "Webhook subscription not found",
@@ -110,8 +121,10 @@ export const POST = withRestEndpoint({
     const wasSuccess =
       statusCode !== null && statusCode >= 200 && statusCode < 300;
 
-    // Step 6: persist delivery record.
-    await runQuery(
+    // Step 6: persist delivery record. The receiver already got the event,
+    // so a failed insert is logged and the response still reports the
+    // delivery outcome.
+    const { error: deliveryLogError } = await runQuery(
       db.insert(webhook_deliveries).values({
         id: deliveryId,
         subscription_id: subscriptionId,
@@ -130,6 +143,12 @@ export const POST = withRestEndpoint({
         error_message: errorMessage,
       }),
     );
+    if (deliveryLogError) {
+      console.error(
+        `[v1/webhooks/[id]/test POST] delivery log insert failed (request_id=${ctx.requestId}):`,
+        deliveryLogError.message,
+      );
+    }
 
     return {
       response: NextResponse.json(
@@ -148,6 +167,7 @@ export const POST = withRestEndpoint({
         delivery_id: deliveryId,
         status_code: statusCode,
         latency_ms: latencyMs,
+        delivery_logged: deliveryLogError === null,
       },
     };
   },

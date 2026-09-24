@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { inngest } from "../client";
 import { db, runQuery } from "@/db/client";
@@ -42,16 +42,24 @@ type WebhookDispatchEventData = {
  *   6. On failure: increment failure_count, auto-disable at threshold
  *   7. On retryable failure (5xx, 408, 429, network): throw to trigger Inngest retry
  *
- * The throw on retryable failures is the ONE permitted throw in this
- * phase (Inngest retry contract). Terminal failures (4xx except 408/429)
- * return cleanly.
+ * Two throws drive Inngest retries (its retry contract): a failed
+ * subscription lookup in step 1, before anything was sent, and a retryable
+ * delivery failure in step 7. Terminal failures (4xx except 408/429)
+ * return cleanly. Write failures after the POST are logged, never thrown:
+ * a retry would send the subscriber the same event again.
  */
 export const deliverWebhook = inngest.createFunction(
   {
     id: "deliver-webhook",
     name: "Deliver Webhook",
     retries: MAX_DELIVERY_RETRIES,
-    throttle: { limit: 100, period: "60s" },
+    // Keyed per subscription, so one busy subscriber cannot use up the
+    // budget and delay every other subscriber's deliveries.
+    throttle: {
+      limit: 100,
+      period: "60s",
+      key: "event.data.subscription_id",
+    },
     triggers: [{ event: "webhook.dispatch.v1" }],
   },
   async ({ event, attempt }) => {
@@ -64,7 +72,6 @@ export const deliverWebhook = inngest.createFunction(
         .select({
           url: webhook_subscriptions.url,
           secret: webhook_subscriptions.secret,
-          failure_count: webhook_subscriptions.failure_count,
         })
         .from(webhook_subscriptions)
         .where(
@@ -76,8 +83,16 @@ export const deliverWebhook = inngest.createFunction(
         .limit(1),
     );
 
-    const subscriptionRow = subscriptionRows?.[0];
-    if (loadError || !subscriptionRow) {
+    // A failed lookup is not a deleted subscription. Returning "skipped"
+    // here dropped the event for good; nothing was sent yet, so a retry
+    // is safe.
+    if (loadError) {
+      throw new Error(
+        `[deliverWebhook] Subscription lookup failed for ${subscription_id}: ${loadError.message}`,
+      );
+    }
+    const subscriptionRow = subscriptionRows[0];
+    if (!subscriptionRow) {
       return { skipped: true, reason: "subscription_inactive_or_deleted" };
     }
 
@@ -115,7 +130,7 @@ export const deliverWebhook = inngest.createFunction(
       statusCode !== null && statusCode >= 200 && statusCode < 300;
 
     // Step 4: persist delivery record.
-    await runQuery(
+    const { error: deliveryLogError } = await runQuery(
       db.insert(webhook_deliveries).values({
         id: deliveryId,
         subscription_id,
@@ -134,10 +149,16 @@ export const deliverWebhook = inngest.createFunction(
         error_message: errorMessage,
       }),
     );
+    if (deliveryLogError) {
+      console.error(
+        `[deliverWebhook] delivery log insert failed (subscription=${subscription_id}, delivery=${deliveryId}):`,
+        deliveryLogError.message,
+      );
+    }
 
     // Step 5: update subscription stats on success.
     if (wasSuccess) {
-      await runQuery(
+      const { error: resetError } = await runQuery(
         db
           .update(webhook_subscriptions)
           .set({
@@ -147,6 +168,12 @@ export const deliverWebhook = inngest.createFunction(
           })
           .where(eq(webhook_subscriptions.id, subscription_id)),
       );
+      if (resetError) {
+        console.error(
+          `[deliverWebhook] failure count reset failed (subscription=${subscription_id}):`,
+          resetError.message,
+        );
+      }
 
       return { delivered: true, status_code: statusCode };
     }
@@ -163,22 +190,29 @@ export const deliverWebhook = inngest.createFunction(
     const isFinalAttempt = attempt >= MAX_DELIVERY_RETRIES;
 
     if (!failureIsRetryable || isFinalAttempt) {
-      const newFailureCount = subscriptionRow.failure_count + 1;
-      const shouldAutoDisable = newFailureCount >= AUTO_DISABLE_THRESHOLD;
-
-      await runQuery(
+      // Computed from the stored row in one statement. Writing a count read
+      // in step 1 lost increments from concurrent deliveries, and writing
+      // `active: true` below the threshold re-enabled a subscription the
+      // user disabled while this delivery was in flight.
+      const reachesAutoDisable = sql`${webhook_subscriptions.failure_count} + 1 >= ${AUTO_DISABLE_THRESHOLD}`;
+      const nowIso = new Date().toISOString();
+      const { error: failureCountError } = await runQuery(
         db
           .update(webhook_subscriptions)
           .set({
-            failure_count: newFailureCount,
-            active: !shouldAutoDisable,
-            ...(shouldAutoDisable
-              ? { last_disabled_at: new Date().toISOString() }
-              : {}),
-            updated_at: new Date().toISOString(),
+            failure_count: sql`${webhook_subscriptions.failure_count} + 1`,
+            active: sql`${webhook_subscriptions.active} and not (${reachesAutoDisable})`,
+            last_disabled_at: sql`case when ${webhook_subscriptions.active} and ${reachesAutoDisable} then ${nowIso}::timestamptz else ${webhook_subscriptions.last_disabled_at} end`,
+            updated_at: nowIso,
           })
           .where(eq(webhook_subscriptions.id, subscription_id)),
       );
+      if (failureCountError) {
+        console.error(
+          `[deliverWebhook] failure count update failed (subscription=${subscription_id}):`,
+          failureCountError.message,
+        );
+      }
     }
 
     // Step 7: retryable failures throw for Inngest backoff. Terminal

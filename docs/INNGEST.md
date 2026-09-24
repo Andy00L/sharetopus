@@ -231,16 +231,17 @@ Truncates MCP audit log entries older than 90 days. Uses the service-role client
 
 ## deliver-webhook
 
-**File:** `src/inngest/functions/deliverWebhook.ts` (166 lines)
+**File:** `src/inngest/functions/deliverWebhook.ts` (232 lines)
 **Trigger:** Event `webhook.dispatch.v1`
 **Retries:** 3
-**Throttle:** 100 per 60s
+**Throttle:** 100 per 60s per `subscription_id`
 
 Delivers a single webhook event to one subscriber endpoint.
 
 ```mermaid
 flowchart TD
     A[Event: webhook.dispatch.v1] --> B[Load subscription]
+    B -->|Lookup failed| R[throw for Inngest retry\nnothing sent yet]
     B --> C{Active?}
     C -->|No| D[Return skipped]
     C -->|Yes| E[Build JSON payload + HMAC-SHA256 signature]
@@ -257,7 +258,9 @@ flowchart TD
 
 Headers sent: `X-Sharetopus-Event`, `X-Sharetopus-Delivery`, `X-Sharetopus-Signature` (`sha256=<hex>`), `User-Agent: Sharetopus-Webhook/1.0`.
 
-Auto-disable threshold: 10 consecutive failures (`AUTO_DISABLE_THRESHOLD`). Re-enabling via PATCH `/api/v1/webhooks/:id` resets `failure_count` to 0.
+Auto-disable threshold: 10 consecutive failures (`AUTO_DISABLE_THRESHOLD`). The increment is one UPDATE computed from the stored count, and it never re-enables a subscription the user disabled. Re-enabling via PATCH `/api/v1/webhooks/:id` resets `failure_count` to 0.
+
+Write failures after the POST (delivery log, failure count) are logged with the `[deliverWebhook]` prefix and not retried, because a retry would deliver the event twice.
 
 Retryable status codes: 408, 429, 500, 502, 503, 504. Terminal failures (other 4xx) are recorded but do not trigger Inngest retry.
 

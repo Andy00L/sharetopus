@@ -138,7 +138,7 @@ Delivery retries are handled by Inngest, not inline in the HTTP request.
 
 - **Max retries:** 3 (configured on the `deliver-webhook` Inngest function)
 - **Backoff:** Inngest default exponential backoff
-- **Throttle:** 100 deliveries per 60 seconds (global, across all subscriptions)
+- **Throttle:** 100 deliveries per 60 seconds per subscription (keyed on `event.data.subscription_id`)
 - **Timeout:** 10 seconds per delivery attempt (`DELIVERY_TIMEOUT_MS` in `deliverWebhook.ts`)
 
 **Retryable failures** (trigger Inngest retry):
@@ -149,11 +149,13 @@ Delivery retries are handled by Inngest, not inline in the HTTP request.
 - All other 4xx status codes (400, 401, 403, 404, etc.)
 - Recorded in `webhook_deliveries` but do not trigger Inngest retry
 
+**Database errors:** a failed subscription lookup throws before anything is sent, so Inngest retries the event. A failed write after the POST (the delivery log row or the failure count) is logged and not retried, because a retry would send the subscriber the same event again.
+
 ---
 
 ## Auto-disable
 
-Subscriptions are automatically disabled after 10 consecutive delivery failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`).
+Subscriptions are automatically disabled after 10 consecutive delivery failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`). The worker increments `failure_count` in a single UPDATE from the stored value, so concurrent deliveries do not overwrite each other's counts, and a subscription the user disabled while a delivery was running stays disabled.
 
 When disabled:
 - `active` is set to `false`
@@ -182,7 +184,7 @@ curl -X POST https://sharetopus.com/api/v1/webhooks/SUB_ID/deliveries/DELIVERY_I
   -H "Authorization: Bearer stp_rest_YOUR_KEY"
 ```
 
-The replay endpoint dispatches a new `webhook.dispatch.v1` Inngest event using the original delivery's payload. The new delivery gets its own delivery ID, signature, and delivery record.
+The replay endpoint queues one `webhook.dispatch.v1` Inngest event for that subscription only, carrying the original delivery's `event_id` and payload, so a receiver that deduplicates on `event_id` can recognize it. The new delivery gets its own delivery ID, signature, and delivery record. If the event cannot be queued, the endpoint returns 500.
 
 ---
 
@@ -195,7 +197,7 @@ curl -X POST https://sharetopus.com/api/v1/webhooks/SUB_ID/test \
   -H "Authorization: Bearer stp_rest_YOUR_KEY"
 ```
 
-This creates a synthetic delivery with a test payload and dispatches it through the normal delivery pipeline.
+This sends a synthetic event synchronously (10 second timeout, no Inngest) and returns the actual delivery result. The attempt is recorded in `webhook_deliveries`; if that insert fails, the response still reports the delivery and the error is logged.
 
 ---
 
@@ -256,7 +258,6 @@ Connection expiry events (`connection.expired`) are dispatched when token refres
 ## Tradeoffs and limitations
 
 - **Secret not hashed in DB.** The subscription secret is stored raw because the delivery worker needs it to compute the HMAC signature. If the DB is compromised, secrets are exposed. Mitigation: secrets are per-subscription and can be rotated by deleting and recreating the subscription.
-- **No per-subscription rate limiting.** The 100/60s throttle is global across all subscriptions. A single subscription with a slow endpoint could delay deliveries to other subscriptions.
 - **No cleanup cron for `webhook_deliveries`.** The delivery log grows indefinitely. A retention cron (similar to `cleanup-mcp-audit-log`) would be a future addition.
 - **Delivery timeout is fixed at 10 seconds.** Not configurable per subscription.
 - **`rest_audit_log` has no cleanup cron yet.** Unlike `mcp_audit_log` (90-day retention), REST audit logs grow indefinitely.
@@ -267,7 +268,7 @@ Connection expiry events (`connection.expired`) are dispatched when token refres
 
 | File | Description |
 |------|-------------|
-| `src/lib/api/rest/webhooks/dispatch.ts` | `dispatchWebhook()` fire-and-forget dispatcher |
+| `src/lib/api/rest/webhooks/dispatch.ts` | `dispatchWebhook()` fire-and-forget dispatcher, `sendWebhookDispatchEvent()` (one event to one subscription, also used by replay) |
 | `src/lib/api/rest/webhooks/eventTypes.ts` | `WEBHOOK_EVENT_TYPES` array (5 events) |
 | `src/lib/api/rest/webhooks/signWebhookPayload.ts` | HMAC-SHA256 signing function |
 | `src/lib/api/rest/webhooks/secretGenerator.ts` | `generateWebhookSecret()` (`whsec_` prefix + 32 bytes hex) |

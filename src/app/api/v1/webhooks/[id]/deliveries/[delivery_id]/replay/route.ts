@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
-import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
+import { sendWebhookDispatchEvent } from "@/lib/api/rest/webhooks/dispatch";
 import { db, runQuery } from "@/db/client";
 import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
@@ -13,22 +13,27 @@ const UuidSchema = z.guid();
 /**
  * POST /v1/webhooks/[id]/deliveries/[delivery_id]/replay
  *
- * Re-dispatches a past delivery's event through the same Inngest
- * pipeline as live events. Reuses dispatchWebhook (single source).
+ * Re-dispatches a past delivery's event, with its original event_id and
+ * payload, to this subscription only, through the same Inngest pipeline
+ * as live events (sendWebhookDispatchEvent).
  *
  * - Deleted subscription: 404
- * - Disabled subscription: 409 (re-enable first)
+ * - Disabled subscription: 403 (re-enable first)
  * - Delivery not found or not owned: 404
+ * - Database lookup or Inngest send failure: 500
  */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.replay",
   handler: async (ctx, request) => {
     // Step 1: extract IDs from URL path.
-    // Path: /api/v1/webhooks/[id]/deliveries/[delivery_id]/replay
+    // Path: /api/v1/webhooks/[id]/deliveries/[delivery_id]/replay, so the
+    // delivery id is second-to-last and the subscription id fourth-to-last.
+    // Reading fifth-to-last picked up "webhooks" and rejected every replay
+    // as an invalid id.
     const urlSegments = new URL(request.url).pathname.split("/");
     const deliveryIdCandidate = urlSegments[urlSegments.length - 2] ?? "";
-    const subscriptionIdCandidate = urlSegments[urlSegments.length - 5] ?? "";
+    const subscriptionIdCandidate = urlSegments[urlSegments.length - 4] ?? "";
 
     const subscriptionIdResult = UuidSchema.safeParse(subscriptionIdCandidate);
     const deliveryIdResult = UuidSchema.safeParse(deliveryIdCandidate);
@@ -57,8 +62,19 @@ export const POST = withRestEndpoint({
         .limit(1),
     );
 
-    const subscriptionRow = subscriptionRows?.[0];
-    if (subError || !subscriptionRow) {
+    if (subError) {
+      console.error(
+        `[v1/webhooks/[id]/deliveries/[delivery_id]/replay POST] subscription lookup failed (request_id=${ctx.requestId}):`,
+        subError.message,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Webhook subscription lookup failed",
+        ctx.requestId,
+      );
+    }
+    const subscriptionRow = subscriptionRows[0];
+    if (!subscriptionRow) {
       return restErrorResponse(
         "not_found",
         "Webhook subscription not found",
@@ -79,6 +95,7 @@ export const POST = withRestEndpoint({
       db
         .select({
           event_type: webhook_deliveries.event_type,
+          event_id: webhook_deliveries.event_id,
           payload: webhook_deliveries.payload,
         })
         .from(webhook_deliveries)
@@ -91,8 +108,19 @@ export const POST = withRestEndpoint({
         .limit(1),
     );
 
-    const originalDeliveryRow = deliveryRows?.[0];
-    if (deliveryError || !originalDeliveryRow) {
+    if (deliveryError) {
+      console.error(
+        `[v1/webhooks/[id]/deliveries/[delivery_id]/replay POST] delivery lookup failed (request_id=${ctx.requestId}):`,
+        deliveryError.message,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Delivery lookup failed",
+        ctx.requestId,
+      );
+    }
+    const originalDeliveryRow = deliveryRows[0];
+    if (!originalDeliveryRow) {
       return restErrorResponse(
         "not_found",
         "Delivery not found",
@@ -100,7 +128,9 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: re-dispatch through the same Inngest pipeline as live events.
+    // Step 4: queue one delivery for this subscription. dispatchWebhook
+    // would send the event to every active subscription of the principal
+    // that listens for this event type, not only the one being replayed.
     const replayPayload =
       typeof originalDeliveryRow.payload === "object" &&
       originalDeliveryRow.payload !== null &&
@@ -108,11 +138,23 @@ export const POST = withRestEndpoint({
         ? (originalDeliveryRow.payload as Record<string, unknown>)
         : {};
 
-    await dispatchWebhook(
-      ctx.principal.principalId,
-      originalDeliveryRow.event_type,
-      replayPayload,
-    );
+    const replaySendResult = await sendWebhookDispatchEvent({
+      subscriptionId,
+      eventType: originalDeliveryRow.event_type,
+      eventId: originalDeliveryRow.event_id,
+      payload: replayPayload,
+    });
+    if (!replaySendResult.ok) {
+      console.error(
+        `[v1/webhooks/[id]/deliveries/[delivery_id]/replay POST] dispatch failed (request_id=${ctx.requestId}):`,
+        replaySendResult.message,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Replay could not be dispatched",
+        ctx.requestId,
+      );
+    }
 
     return {
       response: NextResponse.json(

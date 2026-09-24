@@ -49,7 +49,18 @@ export const GET = withRestEndpoint({
         .limit(1),
     );
 
-    if (ownershipError || !subscriptionRows[0]) {
+    if (ownershipError) {
+      console.error(
+        `[v1/webhooks/[id]/deliveries GET] lookup failed (request_id=${ctx.requestId}):`,
+        ownershipError.message,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Webhook subscription lookup failed",
+        ctx.requestId,
+      );
+    }
+    if (!subscriptionRows[0]) {
       return restErrorResponse(
         "not_found",
         "Webhook subscription not found",
@@ -90,6 +101,10 @@ export const GET = withRestEndpoint({
         .limit(query.limit + 1),
     );
     if (queryError) {
+      console.error(
+        `[v1/webhooks/[id]/deliveries GET] query failed (request_id=${ctx.requestId}):`,
+        queryError.message,
+      );
       return restErrorResponse(
         "internal_error",
         "Delivery log query failed",
