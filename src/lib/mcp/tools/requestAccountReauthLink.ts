@@ -63,8 +63,26 @@ export function registerRequestAccountReauthLink(server: McpServer): void {
               .limit(1),
           );
 
-        const socialAccount = socialAccounts?.[0];
-        if (accountFetchError || !socialAccount) {
+        // A failed read is not a missing account: telling the agent the
+        // account does not exist would end the reconnect it came for.
+        if (accountFetchError) {
+          console.error(
+            "[requestAccountReauthLink] Account fetch failed:",
+            accountFetchError.message,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Could not load the social account. Please try again.",
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const socialAccount = socialAccounts[0];
+        if (!socialAccount) {
           return {
             content: [
               {

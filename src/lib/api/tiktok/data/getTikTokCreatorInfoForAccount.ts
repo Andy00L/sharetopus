@@ -51,13 +51,22 @@ export async function getTikTokCreatorInfoForAccount(
       )
       .limit(1),
   );
-  const account = accountRows?.[0];
-
-  if (accountError || !account) {
+  // A failed read is not a missing account: "not found or deleted" would
+  // send the user off to reconnect an account that is still connected.
+  if (accountError) {
     console.error(
       "[getTikTokCreatorInfoForAccount] Account fetch failed:",
-      accountError?.message ?? "not found",
+      accountError.message,
     );
+    return {
+      success: false,
+      message: "Could not load your TikTok account. Please try again.",
+    };
+  }
+
+  const account = accountRows[0];
+  if (!account) {
+    console.error("[getTikTokCreatorInfoForAccount] Account not found");
     return {
       success: false,
       message: "TikTok account not found or deleted.",

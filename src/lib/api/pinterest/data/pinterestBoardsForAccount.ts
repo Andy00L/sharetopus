@@ -54,13 +54,22 @@ async function resolvePinterestAccessToken(
       )
       .limit(1),
   );
-  const account = accountRows?.[0];
-
-  if (accountError || !account) {
+  // A failed read is not a missing account: "not found" would send the
+  // user off to reconnect an account that is still connected.
+  if (accountError) {
     console.error(
       "[resolvePinterestAccessToken] Account fetch failed:",
-      accountError?.message ?? "not found",
+      accountError.message,
     );
+    return {
+      success: false,
+      message: "Could not load your Pinterest account. Please try again.",
+    };
+  }
+
+  const account = accountRows[0];
+  if (!account) {
+    console.error("[resolvePinterestAccessToken] Account not found");
     return { success: false, message: "Pinterest account not found." };
   }
 
