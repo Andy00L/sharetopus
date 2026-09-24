@@ -68,7 +68,7 @@ export async function recordReferralOnSignup(params: {
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    const { data: referrerUserRows } = await runQuery(
+    const { data: referrerUserRows, error: referrerError } = await runQuery(
       db
         .select({ email: users.email })
         .from(users)
@@ -76,7 +76,18 @@ export async function recordReferralOnSignup(params: {
         .limit(1),
     );
 
-    const referrerUser = referrerUserRows?.[0];
+    // Without the referrer's email the self-referral check cannot run, and
+    // recording the referral anyway let a second account of the referrer
+    // earn the reward. The attribution is dropped instead.
+    if (referrerError) {
+      console.error(
+        `[recordReferralOnSignup] Referrer lookup failed for ${referrerId}:`,
+        referrerError.message,
+      );
+      return { success: false, message: "Failed to verify the referrer" };
+    }
+
+    const referrerUser = referrerUserRows[0];
     if (
       referrerUser?.email &&
       referrerUser.email.toLowerCase() === newUserEmail.toLowerCase()
