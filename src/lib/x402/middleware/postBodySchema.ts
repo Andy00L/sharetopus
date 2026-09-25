@@ -2,7 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { X402_PLATFORMS } from "@/lib/x402/config";
 
 /**
  * Shared request-body schema for the two posting endpoints (post-now and
@@ -19,7 +19,7 @@ import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
  */
 export const PostBodyBaseSchema = z.object({
   social_account_id: z.string().uuid(),
-  platform: z.enum(POSTING_PLATFORMS),
+  platform: z.enum(X402_PLATFORMS),
   post_type: z.enum(["text", "image", "video"]),
   description: z.string().nullable(),
   media_storage_path: z.string().optional(),

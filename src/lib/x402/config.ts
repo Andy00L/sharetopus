@@ -16,7 +16,7 @@ import "server-only";
  * Tables touched: none (pure configuration)
  */
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import type { PostingPlatform } from "@/lib/platforms/capabilities";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import type { Platform } from "@/lib/x402/connect/types";
 
@@ -57,14 +57,24 @@ export const CONNECTION_TOKEN_GRACE_MS = 60 * 60 * 1000;
  */
 export const MAX_POLLS_PER_CONNECTION = 720;
 
-/** Platforms purchasable through x402 connect/reauth (shared registry). */
-export const X402_PLATFORMS: ReadonlySet<string> = new Set<string>(
-  POSTING_PLATFORMS,
-);
+/**
+ * Platforms sold through x402 (connect, reauth, post-now, schedule): the
+ * ones that work end to end in production, with connected accounts and
+ * published posts. YouTube, X and Facebook have adapters but no API keys,
+ * and Instagram has never had an account connected, so an agent cannot pay
+ * for them (decision 2026-09-25). Add a platform once it works end to end.
+ */
+export const X402_PLATFORMS = [
+  "linkedin",
+  "tiktok",
+  "pinterest",
+] as const satisfies readonly PostingPlatform[];
+
+export type X402Platform = (typeof X402_PLATFORMS)[number];
 
 /** Type guard for query/body platform values against the x402 subset. */
-export function isX402Platform(value: string): value is Platform {
-  return X402_PLATFORMS.has(value);
+export function isX402Platform(value: string): value is X402Platform {
+  return (X402_PLATFORMS as readonly string[]).includes(value);
 }
 
 /**

@@ -142,7 +142,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
     navLabel: "Connect account",
     title: "Connect a social account",
     summary:
-      "Paid OAuth initiation for linkedin, tiktok, pinterest, instagram, youtube, x, and facebook. No request body: the wallet is identified by the payment signature alone.",
+      "Paid OAuth initiation for linkedin, tiktok, and pinterest. No request body: the wallet is identified by the payment signature alone.",
     sourceRef:
       "src/app/api/x402/connect/route.ts, src/lib/x402/connect/handleConnectChallenge.ts, handleConnectVerify.ts, src/lib/x402/config.ts",
     operations: [
@@ -163,7 +163,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "string",
                 required: true,
                 description:
-                  "One of linkedin, tiktok, pinterest, instagram, youtube, x, facebook. Anything else returns 400 invalid_platform.",
+                  "One of linkedin, tiktok, pinterest. Anything else returns 400 invalid_platform.",
               },
               {
                 name: "network",
@@ -535,7 +535,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "string",
                 required: true,
                 description:
-                  "linkedin, tiktok, pinterest, instagram, youtube, x, or facebook. Must match the account.",
+                  "linkedin, tiktok, or pinterest. Must match the account.",
               },
               {
                 name: "post_type",
