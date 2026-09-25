@@ -381,7 +381,7 @@ export const share_links = pgTable("share_links", {
   // Encrypted, so the owner can copy the link again; lookups use token_hash.
   token: encryptedText().notNull(),
   // SHA-256 hex of the token (hashToken in src/lib/api/tokens.ts).
-  token_hash: text(),
+  token_hash: text().notNull(),
   expires_at: timestamptz(),
   max_uses: integer(),
   used_count: integer().default(0).notNull(),
@@ -396,7 +396,6 @@ export const share_links = pgTable("share_links", {
     foreignColumns: [users.id],
     name: "share_links_owner_principal_id_fkey",
   }).onDelete("cascade"),
-  unique("share_links_token_key").on(table.token),
   unique("share_links_token_hash_key").on(table.token_hash),
   check("share_links_max_uses_positive", sql`(max_uses IS NULL) OR (max_uses > 0)`),
   check("share_links_used_count_nonneg", sql`used_count >= 0`),
