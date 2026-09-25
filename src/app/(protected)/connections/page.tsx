@@ -18,8 +18,8 @@ import PinterestSVGIcon, {
   TwitterVGIcon,
   YoutubeSVGIcon,
 } from "@/components/icons/allPlatformsIcons";
+import { AccountsLoadError } from "@/components/AccountsLoadError";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
-import RateLimitError from "@/components/RateLimitError";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { tierMeets } from "@/lib/types/plans";
@@ -44,7 +44,7 @@ const AccountsPageWithData = async () => {
 
   const fetchResult = await fetchSocialAccounts(userId, "web", false);
   if (!fetchResult.success) {
-    return <RateLimitError resetIn={fetchResult.resetIn} />;
+    return <AccountsLoadError resetIn={fetchResult.resetIn} />;
   }
 
   // Client-safe projection: badges only need identity fields, and full

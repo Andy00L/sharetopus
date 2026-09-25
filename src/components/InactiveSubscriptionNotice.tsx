@@ -1,5 +1,5 @@
 import type { InactiveSubscriptionStatus } from "@/actions/checkActiveSubscription";
-import { RefreshPageButton } from "@/components/RefreshPageButton";
+import { LoadFailedNotice } from "@/components/LoadFailedNotice";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 
 /**
@@ -16,20 +16,9 @@ export function InactiveSubscriptionNotice({
   if (status === "none") return <SubscriptionPrompt />;
 
   return (
-    <article
-      role="alert"
-      className="mx-4 mt-6 max-w-md rounded-xl border border-border bg-card p-6 sm:mx-auto"
-    >
-      <h2 className="text-lg font-semibold text-foreground">
-        We couldn&apos;t check your plan
-      </h2>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-        Something failed on our side, not with your subscription. Try again in
-        a moment.
-      </p>
-      <div className="mt-5">
-        <RefreshPageButton />
-      </div>
-    </article>
+    <LoadFailedNotice
+      title="We couldn't check your plan"
+      description="Something failed on our side, not with your subscription. Try again in a moment."
+    />
   );
 }

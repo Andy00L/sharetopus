@@ -5,8 +5,8 @@ import {
   parseSchedulePrefill,
   type SchedulePrefill,
 } from "@/components/core/create/SocialPostForm/state/parseSchedulePrefill";
+import { AccountsLoadError } from "@/components/AccountsLoadError";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
-import RateLimitError from "@/components/RateLimitError";
 import SocialPostFormSkeleton from "@/components/suspense/create/SocialPostFormSkeleton";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
@@ -31,7 +31,7 @@ async function SocialPostFormWithData({
   const accounts = await fetchSocialAccounts(userId, "web", false);
 
   if (!accounts.success) {
-    return <RateLimitError resetIn={accounts.resetIn} />;
+    return <AccountsLoadError resetIn={accounts.resetIn} />;
   }
 
   return (
