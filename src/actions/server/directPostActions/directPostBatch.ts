@@ -329,9 +329,11 @@ export async function preflightDirectPost(
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
   }
 
+  // A paying agent sees these messages: the database text stays in the log.
   const ownership = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
   if (!ownership.success) {
-    return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: ownership.message };
+    console.error(`[preflightDirectPost] ${ownership.message}`);
+    return { ok: false, httpStatus: 500, errorKind: "precheck_failed", message: "Could not check account ownership." };
   }
   const accountPlatform = ownership.platformByAccountId.get(post.socialAccountId);
   if (!accountPlatform) {
@@ -367,11 +369,12 @@ export async function preflightDirectPost(
         .limit(1),
     );
     if (lockLookupError) {
+      console.error(`[preflightDirectPost] Idempotency lookup failed: ${lockLookupError.message}`);
       return {
         ok: false,
         httpStatus: 500,
         errorKind: "precheck_failed",
-        message: `Idempotency lookup failed: ${lockLookupError.message}`,
+        message: "Could not check the idempotency key.",
       };
     }
     if (existingLocks.length > 0) {

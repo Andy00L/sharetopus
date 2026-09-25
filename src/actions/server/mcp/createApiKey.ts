@@ -108,11 +108,10 @@ export async function createApiKey(
 
     const newKey = insertedKeys?.[0];
     if (error || !newKey) {
-      const failureMessage = error?.message ?? "no row returned";
-      console.error("[createApiKey] Insert failed:", failureMessage);
+      console.error("[createApiKey] Insert failed:", error?.message ?? "no row returned");
       return {
         success: false,
-        message: `Failed to create API key: ${failureMessage}`,
+        message: "Could not create the API key. Please try again.",
       };
     }
 

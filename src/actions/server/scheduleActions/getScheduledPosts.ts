@@ -112,7 +112,7 @@ export async function getScheduledPosts(
       console.error("[getScheduledPosts] DB error:", error.message);
       return {
         success: false,
-        message: `Failed to retrieve scheduled posts: ${error.message}`,
+        message: "Could not load your scheduled posts. Please try again.",
       };
     }
 

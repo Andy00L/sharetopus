@@ -148,10 +148,15 @@ export const DELETE = withRestEndpoint({
       deleteResult.success &&
       deleteResult.message.includes("deleted successfully");
 
+    // The helper's failure message can carry database text: log it, answer
+    // the caller with a plain one.
     if (!deleteResult.success) {
+      console.error(
+        `[v1/media DELETE] delete failed (request_id=${ctx.requestId}): ${deleteResult.message}`,
+      );
       return restErrorResponse(
         "internal_error",
-        deleteResult.message,
+        "Could not delete the file. Please try again.",
         ctx.requestId,
       );
     }
