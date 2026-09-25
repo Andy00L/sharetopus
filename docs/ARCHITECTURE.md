@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-35 database tables. 18 MCP tools. 28 REST API endpoints. 18 Inngest functions.
+35 database tables. 18 MCP tools. 32 REST API handlers. 18 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -49,7 +49,7 @@ graph TD
             PostStatus["Post Status Polling"]
             X402Routes["x402 Routes (deferred)"]
         end
-        subgraph RESTAPI["REST API v1 (28 endpoints)"]
+        subgraph RESTAPI["REST API v1 (32 handlers)"]
             RESTRoute["/api/v1/* (posts, connections, media, webhooks, analytics)"]
             RESTAuth["withRestEndpoint (Bearer stp_rest_*)"]
             RESTAudit["rest_audit_log (append-only)"]
@@ -186,7 +186,7 @@ src/
       auth/[clerk]/             # Clerk auth UI
       inngest/                  # Inngest serve() endpoint (18 functions)
       mcp/mcp/                  # MCP server (mcp-handler 2.x: protocol 2026-07-28 + 2025-era clients)
-      v1/                       # REST API v1 (28 endpoints)
+      v1/                       # REST API v1 (32 handlers)
         posts/                  # CRUD + bulk schedule
         connections/            # List, get, initiate, reauth, boards
         media/                  # Upload URL, attach from URL, serve, delete

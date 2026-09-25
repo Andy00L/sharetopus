@@ -1,6 +1,6 @@
 # REST API
 
-28 HTTP endpoint handlers across 21 route files under `/api/v1/`. 27 use Bearer authentication via `withRestEndpoint`. 1 (`GET /api/v1/openapi.json`) is public with no auth. Every request is audited to the append-only `rest_audit_log` table. Rate limiting is per-principal via Upstash Redis.
+32 HTTP endpoint handlers across 23 route files under `/api/v1/`. 31 use Bearer authentication via `withRestEndpoint`. 1 (`GET /api/v1/openapi.json`) is public with no auth. Every request is audited to the append-only `rest_audit_log` table. Rate limiting is per-principal via Upstash Redis.
 
 Built with Zod 4 for request validation and `zod-openapi@5.4.6` for OpenAPI 3.1 spec generation.
 
@@ -46,7 +46,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 
 ## Endpoint inventory
 
-28 handlers across posts, connections, media, webhooks, analytics, usage, content history, and OpenAPI.
+32 handlers across posts, connections, media, webhooks, analytics, usage, content history, and OpenAPI.
 
 ### Posts
 
@@ -69,6 +69,10 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 | POST | `/api/v1/connections/initiate` | Initiate OAuth connection flow |
 | POST | `/api/v1/connections/:id/reauth` | Get re-auth URL for expired token |
 | GET | `/api/v1/connections/:id/boards` | List Pinterest boards for a connection |
+| GET | `/api/v1/connections/credentials` | List the providers connected by pasted credentials, with their fields |
+| POST | `/api/v1/connections/credentials` | Verify pasted credentials with the provider and store the connection |
+| GET | `/api/v1/connections/:id/tools` | List the provider tools a connection can trigger |
+| POST | `/api/v1/connections/:id/tools` | Trigger one provider tool (for example, list Discord or Slack channels) |
 
 ### Media
 

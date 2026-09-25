@@ -22,7 +22,7 @@ Stripe handles subscriptions and payments. Three tiers with monthly and yearly p
   - [Cancel](#cancel-period_end-customersubscriptiondeleted)
   - [Resubscribe](#resubscribe-customersubscriptioncreated)
   - [Grace period](#grace-period-7-days)
-- [Future: x402 (deferred)](#future-x402-deferred)
+- [x402 Pay-Per-Call](#x402-pay-per-call)
 - [Source files referenced](#source-files-referenced)
 
 ## Plan tiers
@@ -228,26 +228,25 @@ flowchart TD
 
 ## x402 Pay-Per-Call
 
-AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base or Solana. No Stripe subscription required. Auth is via X-PAYMENT header (signed wallet payment).
+AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`). No Stripe subscription required. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`). Auth is via X-PAYMENT header (signed wallet payment).
 
 ### Pricing
 
 | Action | USDC | Description |
 |--------|------|-------------|
-| `register` | $1.00 | One-time wallet registration |
 | `connect_account` | $0.50 | OAuth connection or re-auth |
 | `post.text` | $0.50 | Single text post |
 | `post.image` | $0.75 | Single image post |
 | `post.video` | $1.00 | Single video post |
 | `upload_url` | $0.10 | Mint signed upload URL |
 | `reschedule` | $0.10 | Reschedule one post |
-| `cancel` | $0.001 | Cancel scheduled posts |
-| `delete` | $0.001 | Hard delete posts |
-| `list_connections` | $0.001 | Read social connections |
-| `list_posts` | $0.001 | Read scheduled posts |
-| `list_history` | $0.001 | Read content history |
+| `cancel` | $0.01 | Cancel scheduled posts |
+| `delete` | $0.01 | Hard delete posts |
+| `list_connections` | $0.01 | Read social connections |
+| `list_posts` | $0.01 | Read scheduled posts |
+| `list_history` | $0.01 | Read content history |
 
-Prices are stored in the `pricing_actions` table. Seed SQL: `/x402_pricing_actions_seed.sql`.
+Prices are stored in the `pricing_actions` table (this table matches it on 2026-09-25; the `/docs/x402` page reads it live). The `register` price was retired on 2026-06-10. Seed SQL: `/x402_pricing_actions_seed.sql`.
 
 ### Refund Policy
 

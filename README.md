@@ -13,9 +13,9 @@
 [![Web App](https://img.shields.io/badge/Surface-Web_App-22c55e)]()
 [![MCP Server](https://img.shields.io/badge/Surface-MCP_Server-8b5cf6)]()
 [![REST API](https://img.shields.io/badge/Surface-REST_API-22c55e)]()
-[![x402](https://img.shields.io/badge/Surface-x402_USDC_(planned)-3b82f6)]()
+[![x402](https://img.shields.io/badge/Surface-x402_USDC-3b82f6)]()
 
-Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Instagram. One dashboard, one MCP server, one REST API, four platforms. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools. The REST API exposes 28 endpoints with Bearer auth, webhook subscriptions, and OpenAPI docs.
+Social media scheduling and publishing from one dashboard, one MCP server, one REST API, and one pay-per-call x402 API. Posting runs end to end on LinkedIn, TikTok, and Pinterest; Instagram, YouTube, X, and Facebook have OAuth and publish code that is not yet verified in production. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools. The REST API exposes 31 endpoints with Bearer auth, webhook subscriptions, and OpenAPI docs.
 
 **Production:** [sharetopus.com](https://sharetopus.com)
 
@@ -25,7 +25,7 @@ Social media scheduling and publishing for LinkedIn, TikTok, Pinterest, and Inst
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, Pinterest, and Instagram. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 28-endpoint REST API. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, and Pinterest. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 31-endpoint REST API. Agents without a subscription pay per action in USDC through x402. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
 
 ## ✨ Surfaces
 
@@ -33,16 +33,16 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 |---------|--------|------|-------------|
 | Web UI | Shipped | Clerk session | Browser dashboard at sharetopus.com |
 | MCP | Shipped | Clerk OAuth / API key | 18 tools for AI agents (Claude Desktop, Cursor) |
-| REST API | Shipped | `stp_rest_*` Bearer token | 28 endpoints, webhooks, OpenAPI docs |
-| x402 Wallet | Planned | SIWE signature | Per-action USDC payments. Schema ready, code not built. |
+| REST API | Shipped | `stp_rest_*` Bearer token | 31 endpoints, webhooks, OpenAPI docs |
+| x402 | Shipped | USDC payment per request | Pay-per-action API for agents, 6 networks, no account needed |
 
 **Web App.** Clerk authentication, Stripe billing, post creation with per-platform customization, scheduling calendar, content history. See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
 **MCP Server.** Streamable HTTP at `/api/mcp/mcp`. Requires Creator plan or above ($18/mo). 18 tools across read (list connections, posts, analytics) and write (schedule, post now, bulk operations, media upload). See [docs/MCP.md](./docs/MCP.md).
 
-**REST API.** 28 endpoints under `/api/v1/` with Bearer auth via `stp_rest_*` keys. Every request audited to `rest_audit_log`. Rate-limited per principal. Webhook subscriptions with HMAC-SHA256 signing (5 event types, auto-disable after 10 failures). OpenAPI spec at `/api/v1/openapi.json`, interactive docs at `/docs/api` (Scalar). See [docs/REST.md](./docs/REST.md).
+**REST API.** 31 endpoints under `/api/v1/` with Bearer auth via `stp_rest_*` keys. Every request audited to `rest_audit_log`. Rate-limited per principal. Webhook subscriptions with HMAC-SHA256 signing (5 event types, auto-disable after 10 failures). OpenAPI spec at `/api/v1/openapi.json`, interactive docs at `/docs/api` (Scalar). See [docs/REST.md](./docs/REST.md).
 
-**x402 Wallet** (planned). Pay-per-action with USDC credits via SIWE wallet authentication. Schema tables exist, code path not built. See [docs/ROADMAP.md](./docs/ROADMAP.md).
+**x402.** Pay-per-action endpoints under `/api/x402/`: connect and reauth an account, post now, schedule, reschedule, cancel, delete, list connections, scheduled posts and history, and mint an upload URL. Each request carries a USDC payment on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`), and the paying wallet becomes the account. Prices come from the `pricing_actions` table. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`). Reference at `/docs/x402`.
 
 ## 🛠️ Tech Stack
 
@@ -154,7 +154,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
 | [docs/INNGEST.md](./docs/INNGEST.md) | 16 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |
-| [docs/REST.md](./docs/REST.md) | REST API: 28 endpoints, withRestEndpoint HOF, validation, audit |
+| [docs/REST.md](./docs/REST.md) | REST API: 32 handlers, withRestEndpoint HOF, validation, audit |
 | [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Webhook subsystem: signing, retry, replay, auto-disable |
 | [docs/PLATFORMS.md](./docs/PLATFORMS.md) | Per-platform OAuth, posting flows, quirks |
 | [docs/ROADMAP.md](./docs/ROADMAP.md) | Shipped features, deferred work, open issues |
@@ -185,16 +185,15 @@ Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 
 ## 🛣️ Roadmap
 
-**Recently shipped:** REST API v1 (28 endpoints), webhook subsystem (HMAC + delivery + replay), OpenAPI + Scalar docs, MDX doc pages, Zod 4 upgrade, TikTok webhook integration, hybrid pricing, withMcpTool HOF, API key expiry, generic adapter pattern, OAuth client trust enforcement, data retention crons.
+**Recently shipped:** x402 pay-per-action API on 6 networks, REST API v1 (32 handlers), webhook subsystem (HMAC + delivery + replay), OpenAPI + Scalar docs, MDX doc pages, Zod 4 upgrade, TikTok webhook integration, hybrid pricing, withMcpTool HOF, API key expiry, generic adapter pattern, OAuth client trust enforcement, data retention crons.
 
-**Mid-term:** x402 wallet access, additional platforms. **Long-term:** Analytics pipeline, federated agent features.
+**Mid-term:** Instagram, YouTube, X, and Facebook verified in production, additional platforms. **Long-term:** Analytics pipeline, federated agent features.
 
 Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 
 ## ⚠️ Known Limitations
 
-- Threads, YouTube, X/Twitter, and Facebook are in type definitions but have no backend code.
-- Instagram connect button is commented out in the UI (backend OAuth and posting work).
+- Instagram, YouTube, X, and Facebook have OAuth and publish code but are not yet verified in production, so x402 does not sell them.
 - i18n is declared (fr, en, es) but no translation files exist. UI is English only.
 - Studio/Analytics page shows "Coming Soon". The analytics_metrics table exists but has no data pipeline.
 - TikTok default privacy is SELF_ONLY (private). Users must select a public level.
