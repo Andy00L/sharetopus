@@ -216,7 +216,8 @@ export function withRestEndpoint(
         ? null
         : handlerResult.auditSummary;
 
-    // Step 7: audit the outcome derived from handler's status code.
+    // Step 7: audit the outcome derived from handler's status code. Any
+    // other 4xx (404, 409) is the caller's, not an internal error.
     const responseStatusCode = handlerResponse.status;
     const outcome: RestAuditOutcome =
       responseStatusCode >= 200 && responseStatusCode < 300
@@ -227,7 +228,9 @@ export function withRestEndpoint(
             ? "auth_error"
             : responseStatusCode === 429
               ? "rate_limited"
-              : "internal_error";
+              : responseStatusCode >= 400 && responseStatusCode < 500
+                ? "client_error"
+                : "internal_error";
 
     await writeRestAuditLog({
       context: restRequestContext,

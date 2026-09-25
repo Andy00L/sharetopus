@@ -161,8 +161,11 @@ export const X402_ACCESS_RESULT_STATUSES = ["ok", "402_required", "sanctioned", 
 /** How often an x402 action is billed. */
 export const PRICING_RECURRENCES = ["one_time", "monthly"] as const;
 
-/** Outcome of one REST API call. */
-export const REST_AUDIT_OUTCOMES = ["success", "validation_error", "auth_error", "rate_limited", "internal_error"] as const;
+/**
+ * Outcome of one REST API call. client_error is any other 4xx (404 not
+ * found, 409 conflict): the caller's request, not a server failure.
+ */
+export const REST_AUDIT_OUTCOMES = ["success", "validation_error", "auth_error", "rate_limited", "client_error", "internal_error"] as const;
 
 /** Why an x402 payment needs a manual look. */
 export const X402_RECONCILIATION_KINDS = ["settle_unrecorded", "settle_indeterminate", "refund_failed"] as const;

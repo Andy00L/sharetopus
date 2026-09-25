@@ -1,16 +1,12 @@
 import "server-only";
 
 import { db, runQuery } from "@/db/client";
-import { rest_audit_log, type Json } from "@/db/schema";
+import { rest_audit_log, type Json, type REST_AUDIT_OUTCOMES } from "@/db/schema";
 import { redactSecrets } from "@/lib/api/audit/redactPatterns";
 import type { RestApiKeyContext } from "../auth/types";
 
-export type RestAuditOutcome =
-  | "success"
-  | "validation_error"
-  | "auth_error"
-  | "rate_limited"
-  | "internal_error";
+/** The rest_audit_log.outcome values, from the column's CHECK list. */
+export type RestAuditOutcome = (typeof REST_AUDIT_OUTCOMES)[number];
 
 export type RestAuditWriteInput = {
   context: RestApiKeyContext;

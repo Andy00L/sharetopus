@@ -210,7 +210,7 @@ Fields logged:
 | `ip_hash` | SHA-256 of client IP |
 | `user_agent` | Client User-Agent |
 | `status_code` | HTTP response status |
-| `outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `internal_error` |
+| `outcome` | `success`, `validation_error` (400), `auth_error` (401, 403), `rate_limited` (429), `client_error` (any other 4xx, such as 404 or 409), `internal_error` (5xx) |
 | `error_code` | Error code string (null on success) |
 | `latency_ms` | Request duration |
 | `args_redacted` | Request body with sensitive values redacted |

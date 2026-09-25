@@ -167,7 +167,7 @@ erDiagram
 
 | Table | Purpose | Columns |
 |-------|---------|---------|
-| `rest_audit_log` | Append-only log of every REST API request. | id, principal_id, api_key_id, endpoint, http_method, request_id, ip_hash, user_agent, status_code, outcome (`success` &#124; `validation_error` &#124; `auth_error` &#124; `rate_limited` &#124; `internal_error`), error_code, latency_ms, args_redacted, response_summary, created_at |
+| `rest_audit_log` | Append-only log of every REST API request. | id, principal_id, api_key_id, endpoint, http_method, request_id, ip_hash, user_agent, status_code, outcome (`success` &#124; `validation_error` &#124; `auth_error` &#124; `rate_limited` &#124; `client_error` &#124; `internal_error`), error_code, latency_ms, args_redacted, response_summary, created_at |
 
 ### Webhooks
 
@@ -228,7 +228,7 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 | `x402_access_log.result_status` | `ok`, `402_required`, `sanctioned`, `rate_limited`, `error` |
 | `pricing_actions.recurrence` | `one_time`, `monthly` |
 | `sanctions_screenings.result` | `clean`, `sanctioned`, `error` |
-| `rest_audit_log.outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `internal_error` |
+| `rest_audit_log.outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `client_error` (any other 4xx), `internal_error` |
 | `x402_reconciliation.kind` | `settle_unrecorded`, `settle_indeterminate`, `refund_failed` |
 
 ---
