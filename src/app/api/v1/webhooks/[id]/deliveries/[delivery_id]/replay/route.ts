@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { sendWebhookDispatchEvent } from "@/lib/api/rest/webhooks/dispatch";
+import type { WebhookReplayResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { db, runQuery } from "@/db/client";
 import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
@@ -163,7 +164,7 @@ export const POST = withRestEndpoint({
           original_delivery_id: deliveryId,
           event_type: originalDeliveryRow.event_type,
           message: "Replay dispatched. A new delivery will appear shortly.",
-        },
+        } satisfies WebhookReplayResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

@@ -5,7 +5,9 @@
  * - not_owned: the account is not the caller's, or was deleted
  * - platform_mismatch: the account is on another platform than the post
  */
-export type PostRejectionCode = "invalid_input" | "not_owned" | "platform_mismatch";
+export const POST_REJECTION_CODES = ["invalid_input", "not_owned", "platform_mismatch"] as const;
+
+export type PostRejectionCode = (typeof POST_REJECTION_CODES)[number];
 
 /**
  * One refused post. The web UI, the MCP tools and x402 show `reason`; the

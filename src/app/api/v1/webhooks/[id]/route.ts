@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toWebhookSubscriptionDTO } from "@/lib/api/rest/dto/toWebhookSubscriptionDTO";
+import type { WebhookDeleteResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { WebhookPatchInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { verifyWebhookUrl } from "@/lib/api/rest/webhooks/verifyWebhookConfig";
 import { db, runQuery } from "@/db/client";
@@ -264,7 +265,7 @@ export const DELETE = withRestEndpoint({
 
     return {
       response: NextResponse.json(
-        { id: subscriptionId, deleted: true },
+        { id: subscriptionId, deleted: true } satisfies WebhookDeleteResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

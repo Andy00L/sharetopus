@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toWebhookSubscriptionDTO } from "@/lib/api/rest/dto/toWebhookSubscriptionDTO";
+import type {
+  WebhookSubscriptionCreated,
+  WebhookSubscriptionList,
+} from "@/lib/api/rest/openapi/responseSchemas";
 import { WebhookCreateInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
 import { generateWebhookSecret } from "@/lib/api/rest/webhooks/secretGenerator";
 import { verifyWebhookUrl } from "@/lib/api/rest/webhooks/verifyWebhookConfig";
@@ -86,7 +90,7 @@ export const POST = withRestEndpoint({
 
     return {
       response: NextResponse.json(
-        { ...subscriptionDto, secret: webhookSecret },
+        { ...subscriptionDto, secret: webhookSecret } satisfies WebhookSubscriptionCreated,
         { status: 201, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {
@@ -131,7 +135,7 @@ export const GET = withRestEndpoint({
 
     return {
       response: NextResponse.json(
-        { data: subscriptionDtos },
+        { data: subscriptionDtos } satisfies WebhookSubscriptionList,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

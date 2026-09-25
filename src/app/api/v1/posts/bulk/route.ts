@@ -6,6 +6,7 @@ import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { restInputToSchedulePostData } from "@/lib/api/rest/adapters/restInputToScheduledPost";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
+import type { PostBulkResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { PostBulkInputSchema } from "@/lib/api/rest/validation/postPatchSchemas";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import { db, runQuery } from "@/db/client";
@@ -107,7 +108,7 @@ export const POST = withRestEndpoint({
       duplicates: batchResult.details.duplicates,
       rejected: batchResult.details.rejected,
       posts: postDtos,
-    };
+    } satisfies PostBulkResult;
 
     return {
       response: NextResponse.json(responsePayload, {

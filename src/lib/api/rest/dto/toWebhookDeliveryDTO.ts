@@ -1,25 +1,14 @@
 import type { webhook_deliveries } from "@/db/schema";
+import type { WebhookDeliveryDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
 type WebhookDeliveryRow = typeof webhook_deliveries.$inferSelect;
 
 /**
- * Public DTO for a webhook delivery log entry. Excludes the full
- * response_body (can be large) and the raw payload jsonb.
- * Includes status_code, latency, timestamps, and error info.
+ * Public DTO for a webhook delivery log entry; its shape is
+ * WebhookDeliveryDTOSchema (responseSchemas.ts), the same schema the
+ * OpenAPI spec renders. Excludes the full response_body (can be large) and
+ * the raw payload jsonb.
  */
-export type WebhookDeliveryDTO = {
-  id: string;
-  event_type: string;
-  event_id: string;
-  status_code: number | null;
-  attempt: number;
-  latency_ms: number | null;
-  delivered_at: string | null;
-  failed_at: string | null;
-  error_message: string | null;
-  created_at: string;
-};
-
 export function toWebhookDeliveryDTO(
   row: WebhookDeliveryRow,
 ): WebhookDeliveryDTO {

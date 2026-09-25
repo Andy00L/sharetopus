@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toAnalyticsDTO } from "@/lib/api/rest/dto/toAnalyticsDTO";
+import type { PostAnalyticsResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { db, runQuery } from "@/db/client";
 import {
   analytics_metrics,
@@ -152,7 +153,7 @@ export const GET = withRestEndpoint({
           post_id: postId,
           content_id: contentRow.content_id,
           metrics: metricDtos,
-        },
+        } satisfies PostAnalyticsResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

@@ -4,6 +4,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { AttachFromUrlInputSchema } from "@/lib/api/rest/validation/mediaSchemas";
+import type { MediaAttachResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { buildAttachedMediaPath } from "@/lib/mcp/_shared/buildAttachedMediaPath";
 import { safeUserFetch } from "@/lib/mcp/_shared/safeUserFetch";
 import { getUploadLimitsForPrincipal } from "@/lib/mcp/_shared/getUploadLimitsForPrincipal";
@@ -144,7 +145,7 @@ export const POST = withRestEndpoint({
           storage_path: storagePath,
           content_type: fetchResult.contentType,
           size_bytes: fetchResult.bytes.length,
-        },
+        } satisfies MediaAttachResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

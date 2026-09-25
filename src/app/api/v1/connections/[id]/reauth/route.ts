@@ -7,6 +7,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toConnectionDTO } from "@/lib/api/rest/dto/toConnectionDTO";
+import type { ConnectionReauthResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { db, runQuery } from "@/db/client";
@@ -146,7 +147,7 @@ export const POST = withRestEndpoint({
         {
           reauth_url: oauthResult.url,
           account: toConnectionDTO(accountRow),
-        },
+        } satisfies ConnectionReauthResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

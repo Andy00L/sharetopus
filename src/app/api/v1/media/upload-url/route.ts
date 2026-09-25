@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { UploadUrlInputSchema } from "@/lib/api/rest/validation/mediaSchemas";
+import type { MediaUploadUrl } from "@/lib/api/rest/openapi/responseSchemas";
 import { generateServerSignedUploadUrl } from "@/actions/server/data/generateServerSignedUploadUrl";
 
 const UPLOAD_URL_EXPIRY_SECONDS = 7200;
@@ -76,7 +77,7 @@ export const POST = withRestEndpoint({
           storage_path: uploadResult.path,
           token: uploadResult.token,
           expires_in_seconds: UPLOAD_URL_EXPIRY_SECONDS,
-        },
+        } satisfies MediaUploadUrl,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

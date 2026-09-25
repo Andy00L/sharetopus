@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { ConnectionInitiateInputSchema } from "@/lib/api/rest/validation/connectionSchemas";
+import type { ConnectionInitiateResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { db, runQuery } from "@/db/client";
@@ -125,7 +126,7 @@ export const POST = withRestEndpoint({
           state: oauthState,
           expires_at: expiresAt,
           connection_id: connectionRow.id,
-        },
+        } satisfies ConnectionInitiateResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

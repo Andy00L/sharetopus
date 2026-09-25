@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { ViewUrlQuerySchema } from "@/lib/api/rest/validation/mediaSchemas";
+import type {
+  MediaDeleteResult,
+  MediaViewUrl,
+} from "@/lib/api/rest/openapi/responseSchemas";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 
@@ -88,7 +92,7 @@ export const GET = withRestEndpoint({
         {
           view_url: viewUrlResult.url,
           expires_in_seconds: expiresInSeconds,
-        },
+        } satisfies MediaViewUrl,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {
@@ -157,7 +161,7 @@ export const DELETE = withRestEndpoint({
         {
           storage_path: storagePath,
           deleted: wasDeleted,
-        },
+        } satisfies MediaDeleteResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

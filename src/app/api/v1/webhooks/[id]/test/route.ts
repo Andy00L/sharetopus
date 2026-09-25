@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { WebhookTestInputSchema } from "@/lib/api/rest/validation/webhookSchemas";
+import type { WebhookTestResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 import { db, runQuery } from "@/db/client";
@@ -159,7 +160,7 @@ export const POST = withRestEndpoint({
           latency_ms: latencyMs,
           delivered_at: wasSuccess ? new Date().toISOString() : null,
           error_message: errorMessage,
-        },
+        } satisfies WebhookTestResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

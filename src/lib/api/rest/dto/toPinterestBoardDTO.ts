@@ -1,3 +1,5 @@
+import type { PinterestBoardDTO } from "@/lib/api/rest/openapi/responseSchemas";
+
 /**
  * Shape returned by getPinterestBoards. Defined here to decouple
  * the REST DTO from the internal Pinterest API client shape.
@@ -11,18 +13,11 @@ interface PinterestBoardRow {
 }
 
 /**
- * Public DTO for a Pinterest board. Mirrors the internal shape
- * but is explicit so new fields from the Pinterest API do not
- * auto-leak into the REST contract.
+ * Public DTO for a Pinterest board; its shape is PinterestBoardDTOSchema
+ * (responseSchemas.ts), the same schema the OpenAPI spec renders. Explicit
+ * so new fields from the Pinterest API do not auto-leak into the REST
+ * contract.
  */
-export type PinterestBoardDTO = {
-  id: string;
-  name: string;
-  description: string | null;
-  privacy: string | null;
-  pin_count: number | null;
-};
-
 export function toPinterestBoardDTO(
   board: PinterestBoardRow,
 ): PinterestBoardDTO {

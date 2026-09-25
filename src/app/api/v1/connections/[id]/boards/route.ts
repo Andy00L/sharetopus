@@ -5,6 +5,7 @@ import { z } from "zod";
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { toPinterestBoardDTO } from "@/lib/api/rest/dto/toPinterestBoardDTO";
+import type { PinterestBoardPage } from "@/lib/api/rest/openapi/responseSchemas";
 import { PinterestBoardsQuerySchema } from "@/lib/api/rest/validation/connectionSchemas";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
@@ -158,7 +159,7 @@ export const GET = withRestEndpoint({
         {
           data: boardDtos,
           bookmark: boardsResult.bookmark ?? null,
-        },
+        } satisfies PinterestBoardPage,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

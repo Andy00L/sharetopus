@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
+import type { PostDeleteResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { db, runQuery } from "@/db/client";
@@ -253,7 +254,7 @@ export const DELETE = withRestEndpoint({
 
     return {
       response: NextResponse.json(
-        { id: postId, action, details: changeResult.details },
+        { id: postId, action, details: changeResult.details } satisfies PostDeleteResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: { post_id: postId, action },

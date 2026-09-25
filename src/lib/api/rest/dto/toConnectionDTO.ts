@@ -1,30 +1,18 @@
 import type { social_accounts } from "@/db/schema";
+import type { ConnectionDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
 type SocialAccountRow = typeof social_accounts.$inferSelect;
 
 /**
- * Public DTO for a connected social account. Tokens and internal
- * fields are stripped. Explicit field-by-field copy prevents leaking
- * new columns added to social_accounts.
+ * Public DTO for a connected social account; its shape is
+ * ConnectionDTOSchema (responseSchemas.ts), the same schema the OpenAPI
+ * spec renders. Tokens and internal fields are stripped. Explicit
+ * field-by-field copy prevents leaking new columns added to social_accounts.
  *
  * Excluded: access_token, refresh_token, extra, email_address,
  * deleted_at, connection_id, following_count, bio_description,
  * updated_at.
  */
-export type ConnectionDTO = {
-  id: string;
-  platform: string;
-  account_identifier: string;
-  display_name: string | null;
-  username: string | null;
-  avatar_url: string | null;
-  is_verified: boolean | null;
-  follower_count: number | null;
-  is_available: boolean;
-  token_expires_at: string | null;
-  created_at: string;
-};
-
 export function toConnectionDTO(row: SocialAccountRow): ConnectionDTO {
   return {
     id: row.id,

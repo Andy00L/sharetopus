@@ -1,26 +1,14 @@
 import type { content_history } from "@/db/schema";
+import type { ContentHistoryDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
 type ContentHistoryRow = typeof content_history.$inferSelect;
 
 /**
- * Public DTO for a content history row. Excludes internal `extra`
- * jsonb and `social_account_id`. Explicit field-by-field copy.
+ * Public DTO for a content history row; its shape is
+ * ContentHistoryDTOSchema (responseSchemas.ts), the same schema the
+ * OpenAPI spec renders. Excludes internal `extra` jsonb and
+ * `social_account_id`. Explicit field-by-field copy.
  */
-export type ContentHistoryDTO = {
-  id: string;
-  platform: string;
-  content_id: string;
-  scheduled_post_id: string | null;
-  title: string | null;
-  description: string | null;
-  media_url: string | null;
-  media_type: string | null;
-  status: string | null;
-  batch_id: string | null;
-  created_via: string;
-  created_at: string;
-};
-
 export function toContentHistoryDTO(
   row: ContentHistoryRow,
 ): ContentHistoryDTO {

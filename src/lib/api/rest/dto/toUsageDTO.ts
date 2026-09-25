@@ -1,23 +1,6 @@
+import type { UsageDTO } from "@/lib/api/rest/openapi/responseSchemas";
 import type { PlanTier } from "@/lib/types/plans";
 import { TIER_STORAGE_LIMITS, DEFAULT_STORAGE_LIMIT } from "@/lib/types/plans";
-
-/**
- * Public DTO for usage/billing. Excludes Stripe internal fields
- * (stripe_customer_id, stripe_price_id, stripe_subscription_id).
- */
-export type UsageDTO = {
-  plan: PlanTier | null;
-  status: string;
-  current_period_end: string | null;
-  period: string;
-  actions: Record<string, number>;
-  storage: {
-    used_bytes: number;
-    cap_bytes: number;
-    used_human: string;
-    cap_human: string;
-  };
-};
 
 /** Formats bytes as a human-readable string (e.g. "2.3 GB"). */
 function formatBytes(bytes: number): string {
@@ -29,7 +12,10 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Builds a UsageDTO from resolved subscription, quota rows, and storage RPC result.
+ * Builds a UsageDTO from resolved subscription, quota rows, and storage RPC
+ * result. Its shape is UsageDTOSchema (responseSchemas.ts), the same schema
+ * the OpenAPI spec renders; Stripe internal fields (stripe_customer_id,
+ * stripe_price_id, stripe_subscription_id) stay out.
  */
 export function buildUsageDTO(input: {
   tier: PlanTier | null;

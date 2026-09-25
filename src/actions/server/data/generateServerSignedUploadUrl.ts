@@ -40,14 +40,10 @@ export type GenerateUploadUrlReason =
   | "storage_quota_exceeded"
   | "supabase_error";
 
-export interface GenerateUploadUrlResult {
-  success: boolean;
-  message: string;
-  uploadUrl?: string;
-  path?: string;
-  token?: string;
-  reason?: GenerateUploadUrlReason;
-}
+/** A minted URL always carries all three fields; a refusal carries its reason. */
+export type GenerateUploadUrlResult =
+  | { success: true; message: string; uploadUrl: string; path: string; token: string }
+  | { success: false; message: string; reason: GenerateUploadUrlReason };
 
 export type UploadRequestCheck =
   | { ok: true }
