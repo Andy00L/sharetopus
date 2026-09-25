@@ -280,7 +280,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
       path: "/api/v1/connections/{id}/boards",
       title: "List Pinterest boards",
       description:
-        "Boards of a connected Pinterest account, for the pinterest_board_id field when posting. 400 when the account is not Pinterest; 401 with a reauth_url when the Pinterest token expired and could not be refreshed.",
+        "Boards of a connected Pinterest account, for the pinterest_board_id field when posting. 400 when the account is not Pinterest; 401 with a reauth_url when the Pinterest token expired and could not be refreshed; 429 when board lookups are rate limited (ours, 15 a minute per account owner, or Pinterest's); 503 when the rate limiter cannot answer.",
       sourceRef:
         "src/app/api/v1/connections/[id]/boards/route.ts, connectionSchemas.ts (PinterestBoardsQuerySchema)",
       paramTables: [

@@ -155,9 +155,14 @@ export function registerListPinterestBoards(server: McpServer): void {
         );
 
         if (!boardsResult.success) {
-          const failureMessage = boardsResult.expired
+          const isExpired = boardsResult.failure === "token_expired";
+          const failureMessage = isExpired
             ? "Pinterest token is no longer valid. The user needs to reconnect."
-            : "Failed to fetch Pinterest boards. Pinterest API may be unavailable.";
+            : boardsResult.failure === "rate_limited"
+              ? `Too many Pinterest board requests. Retry in ${boardsResult.resetIn ?? 60} s.`
+              : boardsResult.failure === "unavailable"
+                ? "Could not check the rate limit. Please try again."
+                : "Failed to fetch Pinterest boards. Pinterest API may be unavailable.";
 
           return {
             content: [
@@ -167,8 +172,8 @@ export function registerListPinterestBoards(server: McpServer): void {
                   {
                     success: false,
                     message: failureMessage,
-                    expired: boardsResult.expired ?? false,
-                    ...(boardsResult.expired
+                    expired: isExpired,
+                    ...(isExpired
                       ? { reauth_url: `${baseUrl}/connections` }
                       : {}),
                   },
@@ -178,6 +183,8 @@ export function registerListPinterestBoards(server: McpServer): void {
               },
             ],
             isError: true,
+            auditStatus:
+              boardsResult.failure === "rate_limited" ? "rate_limited" : "error",
           };
         }
 
@@ -190,7 +197,7 @@ export function registerListPinterestBoards(server: McpServer): void {
                 {
                   success: true,
                   boards: boardsResult.boards,
-                  bookmark: boardsResult.bookmark ?? null,
+                  bookmark: boardsResult.bookmark,
                 },
                 null,
                 2,

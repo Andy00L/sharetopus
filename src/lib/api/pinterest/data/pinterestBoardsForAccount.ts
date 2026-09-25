@@ -114,7 +114,7 @@ export async function getPinterestBoardsForAccount(
 ): Promise<PinterestBoardsResponse> {
   const resolved = await resolvePinterestAccessToken(socialAccountId);
   if (!resolved.success) {
-    return { boards: [], success: false };
+    return { success: false, failure: "token_missing" };
   }
   return getPinterestBoards(resolved.accessToken, resolved.userId, options);
 }

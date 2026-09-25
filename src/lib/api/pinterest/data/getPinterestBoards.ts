@@ -15,12 +15,25 @@ export interface PinterestBoard {
   pin_count?: number;
 }
 
-export interface PinterestBoardsResponse {
-  boards: PinterestBoard[];
-  success: boolean;
-  expired?: boolean;
-  bookmark?: string | null;
-}
+/**
+ * Why no boards came back, so each caller can answer truthfully:
+ *   - token_missing: no usable token for the account
+ *   - token_expired: Pinterest refused the token (401); the user reconnects
+ *   - rate_limited: our per-user limit or Pinterest's own 429; resetIn
+ *     carries our wait when we know it
+ *   - unavailable: our rate limiter could not answer; retry
+ *   - upstream_error: Pinterest failed or could not be reached
+ */
+export type PinterestBoardsFailure =
+  | "token_missing"
+  | "token_expired"
+  | "rate_limited"
+  | "unavailable"
+  | "upstream_error";
+
+export type PinterestBoardsResponse =
+  | { success: true; boards: PinterestBoard[]; bookmark: string | null }
+  | { success: false; failure: PinterestBoardsFailure; resetIn?: number };
 
 /**
  * Fetches Pinterest boards for the user via Pinterest API v5.
@@ -28,7 +41,7 @@ export interface PinterestBoardsResponse {
  * @param accessToken Pinterest API access token
  * @param userId User identifier for rate limiting (required)
  * @param options Optional pagination params (pageSize 1-100, bookmark cursor)
- * @returns Boards array with success/expired status and optional bookmark cursor
+ * @returns The boards and the next bookmark, or the failure reason
  */
 export async function getPinterestBoards(
   accessToken: string | null,
@@ -37,17 +50,17 @@ export async function getPinterestBoards(
 ): Promise<PinterestBoardsResponse> {
   if (!accessToken) {
     console.error("[GetPinterestBoards] No access token provided");
-    return { boards: [], success: false };
+    return { success: false, failure: "token_missing" };
   }
 
   const rateCheck = await checkRateLimit("getPinterestBoards", userId, 15, 60);
   if (!rateCheck.success) {
     console.warn(
-      `[GetPinterestBoards] Rate limit exceeded for user: ${userId}. Reset in: ${
-        rateCheck.resetIn ?? "unknown"
-      } seconds`
+      `[GetPinterestBoards] Rate limit refused (${rateCheck.reason}) for user: ${userId}`
     );
-    return { boards: [], success: false };
+    return rateCheck.reason === "limited"
+      ? { success: false, failure: "rate_limited", resetIn: rateCheck.resetIn }
+      : { success: false, failure: "unavailable" };
   }
 
   const pageSize = Math.max(1, Math.min(options?.pageSize ?? 25, 100));
@@ -70,14 +83,14 @@ export async function getPinterestBoards(
       console.error(
         "[GetPinterestBoards] 401 Unauthorized. Token may be expired or revoked."
       );
-      return { boards: [], success: false, expired: true };
+      return { success: false, failure: "token_expired" };
     }
 
     if (response.status === 429) {
       console.warn(
         "[GetPinterestBoards] 429 Rate limited by Pinterest API. Retry later."
       );
-      return { boards: [], success: false, expired: false };
+      return { success: false, failure: "rate_limited" };
     }
 
     if (!response.ok) {
@@ -86,7 +99,7 @@ export async function getPinterestBoards(
         `[GetPinterestBoards] API error: ${response.status} ${response.statusText}. ` +
           `Body: ${body.slice(0, 200)}`
       );
-      return { boards: [], success: false, expired: false };
+      return { success: false, failure: "upstream_error" };
     }
 
     const data = (await response.json()) as {
@@ -120,6 +133,6 @@ export async function getPinterestBoards(
     };
   } catch (error) {
     console.error("[GetPinterestBoards] Network or unexpected error:", error);
-    return { boards: [], success: false, expired: false };
+    return { success: false, failure: "upstream_error" };
   }
 }

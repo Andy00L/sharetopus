@@ -3,7 +3,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
-import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import {
+  restErrorResponse,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from "@/lib/api/rest/errors/restErrorResponse";
 import { toPinterestBoardDTO } from "@/lib/api/rest/dto/toPinterestBoardDTO";
 import type { PinterestBoardPage } from "@/lib/api/rest/openapi/responseSchemas";
 import { PinterestBoardsQuerySchema } from "@/lib/api/rest/validation/connectionSchemas";
@@ -132,24 +135,44 @@ export const GET = withRestEndpoint({
       { pageSize: query.page_size, bookmark: query.bookmark },
     );
 
+    // Step 7: a refusal answers what the caller can act on; a rate limit
+    // is a 429, not a 500.
     if (!boardsResult.success) {
-      if (boardsResult.expired) {
-        const baseUrl =
-          process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-        return restErrorResponse(
-          "unauthorized",
-          "Pinterest token is no longer valid",
-          ctx.requestId,
-          {
-            reauth_url: `${baseUrl}/api/v1/connections/${connectionId}/reauth`,
-          },
-        );
+      switch (boardsResult.failure) {
+        case "token_expired": {
+          const baseUrl =
+            process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
+          return restErrorResponse(
+            "unauthorized",
+            "Pinterest token is no longer valid",
+            ctx.requestId,
+            {
+              reauth_url: `${baseUrl}/api/v1/connections/${connectionId}/reauth`,
+            },
+          );
+        }
+        case "rate_limited":
+          return restErrorResponse(
+            "rate_limited",
+            "Too many Pinterest board requests. Retry shortly.",
+            ctx.requestId,
+            { retry_after_seconds: boardsResult.resetIn ?? null },
+          );
+        case "unavailable":
+          return restErrorResponse(
+            "service_unavailable",
+            "Could not check the rate limit right now. Retry shortly.",
+            ctx.requestId,
+            { retry_after_seconds: SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS },
+          );
+        case "token_missing":
+        case "upstream_error":
+          return restErrorResponse(
+            "internal_error",
+            "Failed to fetch Pinterest boards",
+            ctx.requestId,
+          );
       }
-      return restErrorResponse(
-        "internal_error",
-        "Failed to fetch Pinterest boards",
-        ctx.requestId,
-      );
     }
 
     const boardDtos = boardsResult.boards.map(toPinterestBoardDTO);
@@ -158,7 +181,7 @@ export const GET = withRestEndpoint({
       response: NextResponse.json(
         {
           data: boardDtos,
-          bookmark: boardsResult.bookmark ?? null,
+          bookmark: boardsResult.bookmark,
         } satisfies PinterestBoardPage,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
