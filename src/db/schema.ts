@@ -75,7 +75,8 @@ const citext = customType<{ data: string }>({
 /**
  * Text encrypted with AES-256-GCM on write and decrypted on read
  * (src/lib/crypto/tokenEncryption.ts), for the OAuth tokens and API
- * credentials in social_accounts. The column stays `text`, so no migration.
+ * credentials in social_accounts, the webhook signing secrets and the
+ * share-link tokens. The column stays `text`, so no migration.
  * Values written before encryption shipped read back unchanged until the
  * encrypt-social-tokens cron rewrites them.
  *
@@ -377,7 +378,10 @@ export const share_links = pgTable("share_links", {
   id: uuid().defaultRandom().primaryKey(),
   owner_principal_id: text().notNull(),
   platform: text().notNull(),
-  token: text().notNull(),
+  // Encrypted, so the owner can copy the link again; lookups use token_hash.
+  token: encryptedText().notNull(),
+  // SHA-256 hex of the token (hashToken in src/lib/api/tokens.ts).
+  token_hash: text(),
   expires_at: timestamptz(),
   max_uses: integer(),
   used_count: integer().default(0).notNull(),
@@ -393,6 +397,7 @@ export const share_links = pgTable("share_links", {
     name: "share_links_owner_principal_id_fkey",
   }).onDelete("cascade"),
   unique("share_links_token_key").on(table.token),
+  unique("share_links_token_hash_key").on(table.token_hash),
   check("share_links_max_uses_positive", sql`(max_uses IS NULL) OR (max_uses > 0)`),
   check("share_links_used_count_nonneg", sql`used_count >= 0`),
 ]).enableRLS();
@@ -1075,7 +1080,8 @@ export const webhook_subscriptions = pgTable("webhook_subscriptions", {
   principal_id: text().notNull(),
   url: text().notNull(),
   events: text().array().notNull(),
-  secret: text().notNull(),
+  // Encrypted at rest; decrypted on read to sign each delivery.
+  secret: encryptedText().notNull(),
   active: boolean().default(true).notNull(),
   failure_count: integer().default(0).notNull(),
   last_delivery_at: timestamptz(),

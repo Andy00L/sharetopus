@@ -5,6 +5,7 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { generateShareToken } from "@/actions/server/share-link/lib/token";
 import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
+import { hashToken } from "@/lib/api/tokens";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { tierMeets } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
@@ -13,7 +14,9 @@ import { auth } from "@clerk/nextjs/server";
  * Creates a new share link for a given platform.
  *
  * Gated to Creator+ tier. Validates inputs, generates a secure token,
- * inserts a share_links row, and returns the public URL.
+ * inserts a share_links row, and returns the public URL. The token is
+ * stored encrypted, so the owner can copy the link again, and hashed in
+ * token_hash, which validateShareToken looks it up by.
  *
  * Called by: CreateShareLinkDialog client component
  * Tables touched: share_links (insert)
@@ -113,6 +116,7 @@ export async function createShareLink(
         owner_principal_id: userId,
         platform: input.platform,
         token,
+        token_hash: hashToken(token),
         expires_at: expiresAt,
         max_uses: input.maxUses,
       })

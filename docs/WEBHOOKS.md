@@ -50,7 +50,7 @@ stateDiagram-v2
     deleted --> [*]
 ```
 
-On creation, the API generates a `whsec_` prefixed secret (32 bytes hex, 64 chars) via `generateWebhookSecret()` in `src/lib/api/rest/webhooks/secretGenerator.ts`. The secret is shown once in the response and stored in the DB as-is (not hashed, because the delivery worker needs the raw secret to sign outbound payloads).
+On creation, the API generates a `whsec_` prefixed secret (32 bytes hex, 64 chars) via `generateWebhookSecret()` in `src/lib/api/rest/webhooks/secretGenerator.ts`. The secret is shown once in the response and stored AES-256-GCM encrypted (not hashed, because the delivery worker needs the raw secret to sign outbound payloads; see [SECURITY.md](./SECURITY.md#tokens-and-secrets-at-rest)).
 
 ---
 
@@ -213,7 +213,7 @@ Two tables in Supabase:
 | principal_id | UUID | FK to principals |
 | url | text | HTTPS endpoint URL |
 | events | text[] | Array of subscribed event types |
-| secret | text | `whsec_` prefixed HMAC secret (stored raw) |
+| secret | text | `whsec_` prefixed HMAC secret (stored encrypted, decrypted on read) |
 | active | boolean | Default true, set false on auto-disable |
 | failure_count | integer | Consecutive failures, reset on success |
 | last_delivery_at | timestamptz | Last successful delivery |
@@ -257,10 +257,9 @@ Connection expiry events (`connection.expired`) are dispatched when token refres
 
 ## Tradeoffs and limitations
 
-- **Secret not hashed in DB.** The subscription secret is stored raw because the delivery worker needs it to compute the HMAC signature. If the DB is compromised, secrets are exposed. Mitigation: secrets are per-subscription and can be rotated by deleting and recreating the subscription.
+- **Secret encrypted, not hashed.** The delivery worker needs the raw secret to compute the HMAC signature, so the secret is encrypted with the deployment's `SOCIAL_TOKEN_ENCRYPTION_KEY` instead of hashed. A database dump alone yields ciphertext; a leak of both the database and the key exposes every secret. Secrets are per-subscription and can be rotated by deleting and recreating the subscription.
 - **No cleanup cron for `webhook_deliveries`.** The delivery log grows indefinitely. A retention cron (similar to `cleanup-mcp-audit-log`) would be a future addition.
 - **Delivery timeout is fixed at 10 seconds.** Not configurable per subscription.
-- **`rest_audit_log` has no cleanup cron yet.** Unlike `mcp_audit_log` (90-day retention), REST audit logs grow indefinitely.
 
 ---
 

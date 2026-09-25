@@ -129,9 +129,9 @@ erDiagram
 
 | Table | Purpose | Columns |
 |-------|---------|---------|
-| `social_accounts` | Connected OAuth accounts for each principal. | id, principal_id, platform, account_identifier, display_name, username, email_address (citext), avatar_url, is_verified, follower_count, following_count, bio_description, is_available, access_token and refresh_token (stored AES-256-GCM encrypted, see [SECURITY.md](./SECURITY.md#social-account-tokens-at-rest)), token_expires_at, connection_id, extra, created_at, updated_at, deleted_at |
+| `social_accounts` | Connected OAuth accounts for each principal. | id, principal_id, platform, account_identifier, display_name, username, email_address (citext), avatar_url, is_verified, follower_count, following_count, bio_description, is_available, access_token and refresh_token (stored AES-256-GCM encrypted, see [SECURITY.md](./SECURITY.md#tokens-and-secrets-at-rest)), token_expires_at, connection_id, extra, created_at, updated_at, deleted_at |
 | `social_connections` | OAuth connection lifecycle records. | id, principal_id, initiated_via (`web` &#124; `mcp` &#124; `api` &#124; `x402` &#124; `share_link`), initiated_x402_charge_id, platform, oauth_state, oauth_code_verifier, redirect_uri, status (`pending` &#124; `connected` &#124; `expired` &#124; `failed` &#124; `revoked`), expires_at, connected_at, failed_at, error_code, error_message, social_account_id, share_link_id, poll_count, last_polled_at, last_polled_ip_hash, metadata, created_at, updated_at |
-| `share_links` | Links a user sends to someone else so that person can connect an account for them. | id, owner_principal_id, platform, token, expires_at, max_uses, used_count, revoked_at, last_used_at, created_at |
+| `share_links` | Links a user sends to someone else so that person can connect an account for them. | id, owner_principal_id, platform, token (stored AES-256-GCM encrypted), token_hash (SHA-256 of the token, unique, used for lookups), expires_at, max_uses, used_count, revoked_at, last_used_at, created_at |
 
 ### Posts
 

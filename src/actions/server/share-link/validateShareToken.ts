@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
+import { hashToken } from "@/lib/api/tokens";
 
 /**
  * Read-only validation of a share link token.
@@ -57,8 +58,14 @@ export async function validateShareToken(
     return { success: false, reason: "invalid_format" };
   }
 
+  // The token column is encrypted with a random IV, so an equality on it
+  // can never match; token_hash holds its SHA-256 (createShareLink).
   const { data: shareLinkRows, error } = await runQuery(
-    db.select().from(share_links).where(eq(share_links.token, token)).limit(1),
+    db
+      .select()
+      .from(share_links)
+      .where(eq(share_links.token_hash, hashToken(token)))
+      .limit(1),
   );
 
   if (error) {

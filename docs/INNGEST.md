@@ -51,7 +51,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | cleanup-tiktok-webhook-events | Cron `0 8 * * *` | default | 0 | Purge logged TikTok webhook events (>90 days) |
 | cleanup-social-connections | Cron `0 2 * * *` | default | 0 | Delete pending, failed and expired OAuth connection rows (>30 days) |
 | sweep-x402-reconciliation | Cron `20 * * * *` | default | 0 | Resolve or report x402 payments that need a manual look |
-| encrypt-social-tokens | Cron `0 9 * * *`, Event `social-tokens.encrypt` | default | 1 | Encrypt social account tokens still stored in plaintext |
+| encrypt-social-tokens | Cron `0 9 * * *`, Event `social-tokens.encrypt` | default | 1 | Encrypt social account tokens, webhook secrets and share-link tokens still stored in plaintext |
 | deliver-webhook | Event `webhook.dispatch.v1` | default | 3 | Deliver one webhook event to a subscriber (HMAC signed) |
 
 ## scheduled-posts-tick
@@ -276,11 +276,11 @@ Deletes `tiktok_webhook_events` rows older than 90 days, added on 2026-09-24 (th
 **File:** `src/inngest/functions/encryptSocialTokensCron.ts`
 **Schedule:** Daily at 09:00 UTC, and on the `social-tokens.encrypt` event
 **Retries:** 1
-**Batch:** `BATCH_SIZE` = 500 rows per run
+**Batch:** `BATCH_SIZE` = 500 rows per table per run
 
-Rewrites every `social_accounts` token still stored in plaintext through the encrypting column (see [SECURITY.md](./SECURITY.md#social-account-tokens-at-rest)). After the deploy that ships encryption, send `social-tokens.encrypt` from the Inngest dashboard to encrypt the existing rows at once instead of waiting for 09:00. It runs inside the deployment on purpose: a backfill run from a laptop with a different key would leave every token unreadable.
+Rewrites every value still stored in plaintext through its encrypting column (see [SECURITY.md](./SECURITY.md#tokens-and-secrets-at-rest)), in one step per table: `social_accounts` tokens, `webhook_subscriptions.secret` and `share_links.token`. The share-link step also writes `token_hash`, so a link created before hashing shipped stays reachable. The id and event name predate the two newer tables. After the deploy that ships encryption, send `social-tokens.encrypt` from the Inngest dashboard to encrypt the existing rows at once instead of waiting for 09:00. It runs inside the deployment on purpose: a backfill run from a laptop with a different key would leave every token unreadable.
 
-Each row update is guarded on the stored values it read, so a token refreshed meanwhile (already encrypted by its own write) is left alone. The step returns counts only, since Inngest stores step results. Once every row is encrypted, a run is one query that finds nothing; the job also catches a row written in plaintext by an instance still running the old code during the rollout.
+Each row update is guarded on the stored values it read, so a token refreshed meanwhile (already encrypted by its own write) is left alone. Each step returns counts only, since Inngest stores step results. Once every row is encrypted, a run is three queries that find nothing; the job also catches a row written in plaintext by an instance still running the old code during the rollout.
 
 ## deliver-webhook
 
