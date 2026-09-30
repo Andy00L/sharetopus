@@ -1,7 +1,7 @@
 "use client";
 import { Slider } from "@/components/ui/slider";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 interface VideoCoverSelectorProps {
   readonly videoFile: File;
@@ -45,17 +45,21 @@ export function VideoCoverSelector({
 
       setDuration(videoDuration);
 
-      // Set initial time to 10% of video duration
+      // Initial cover at 10% of the video, queued through the same debounce
+      // as a slider move.
       const initialTime = videoDuration * 0.1;
       setCurrentTime(initialTime);
-      // Note: do NOT pre-seek here. generateThumbnail (called by the
-      // useEffect on [duration]) is the sole seeker. A pre-seek to the
-      // same value causes the browser to skip generateThumbnail's seek,
-      // leaving onseeked to never fire, leaving onCoverChange at 0.
+      setPendingTime(initialTime);
+      // Note: do NOT pre-seek here. generateThumbnail (run by the
+      // pendingTime effect) is the sole seeker. A pre-seek to the same value
+      // causes the browser to skip generateThumbnail's seek, leaving
+      // onseeked to never fire, leaving onCoverChange at 0.
     }
   };
 
-  const generateThumbnail = async (time: number) => {
+  // An effect event: only the pendingTime effect calls it, and it always
+  // sees the latest onCoverChange without restarting that effect.
+  const generateThumbnail = useEffectEvent(async (time: number) => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -86,14 +90,16 @@ export function VideoCoverSelector({
       setCoverPreview(frameData);
       onCoverChange(time * 1000);
     }, 50);
-  };
+  });
 
   const handleSliderChange = (values: number[]) => {
     const newTime = values[0];
     setCurrentTime(newTime);
     setPendingTime(newTime);
   };
-  // Add debounced thumbnail generation
+
+  // Synchronizes the hidden video and canvas with the chosen time,
+  // debounced so dragging the slider does not seek on every step.
   useEffect(() => {
     if (pendingTime === null) return;
 
@@ -104,13 +110,6 @@ export function VideoCoverSelector({
 
     return () => clearTimeout(timer);
   }, [pendingTime]);
-
-  // Generate initial thumbnail
-  useEffect(() => {
-    if (duration > 0) {
-      generateThumbnail(currentTime);
-    }
-  }, [duration]);
 
   return (
     <div className="space-y-4 border-2 border-dashed border-chart-1 bg-card rounded-lg p-12 text-center transition-colors hover:border-chart-1/80 hover:bg-accent">

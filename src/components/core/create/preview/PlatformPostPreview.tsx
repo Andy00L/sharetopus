@@ -4,10 +4,7 @@ import { ImageIcon, Video } from "lucide-react";
 
 import AvatarWithFallback from "@/components/AvatarWithFallback";
 import FilePreview from "@/components/renderFilePreview";
-import {
-  getPlatformBrandIcon,
-  PlatformLetterBadge,
-} from "@/components/icons/platformBrandIcons";
+import { PlatformBrandIcon } from "@/components/icons/platformBrandIcons";
 import { getPlatformDisplayLabel } from "@/lib/platforms/capabilities";
 import type { MediaType, SocialAccount } from "@/lib/types/dbTypes";
 
@@ -58,7 +55,6 @@ export default function PlatformPostPreview({
   previewUrl,
   pinterestLink,
 }: PlatformPostPreviewProps) {
-  const PlatformIcon = getPlatformBrandIcon(account.platform);
   const platformLabel = getPlatformDisplayLabel(account.platform);
   const showTitle =
     title.length > 0 && TITLE_PLATFORMS.includes(account.platform);
@@ -86,11 +82,7 @@ export default function PlatformPostPreview({
           )}
         </div>
         <span className="ml-auto flex flex-shrink-0 items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-          {PlatformIcon ? (
-            <PlatformIcon />
-          ) : (
-            <PlatformLetterBadge platform={account.platform} />
-          )}
+          <PlatformBrandIcon platform={account.platform} />
           {platformLabel}
         </span>
       </div>

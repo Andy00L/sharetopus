@@ -7,59 +7,68 @@ import { useEffect, useRef, useState } from "react";
 
 export type { CreatorInfoData };
 
+type CreatorInfoOutcome =
+  | { ok: true; data: CreatorInfoData }
+  | { ok: false; message: string };
+
+/** One creator-info lookup, with a rejected server action reported as a failure. */
+async function fetchCreatorInfoOutcome(
+  accountId: string,
+): Promise<CreatorInfoOutcome> {
+  try {
+    const result = await getTikTokCreatorInfoForAccount(accountId);
+    return result.success
+      ? { ok: true, data: result.data }
+      : { ok: false, message: result.message };
+  } catch (error) {
+    console.error("[fetchCreatorInfoOutcome] Creator info request failed:", error);
+    return { ok: false, message: "Could not load TikTok creator info." };
+  }
+}
+
+/**
+ * TikTok creator info (privacy levels, interaction toggles, duration cap)
+ * for each selected TikTok account, fetched once per account while
+ * enabled. An account is loading until its outcome arrives.
+ */
 export function useTikTokCreatorInfo(
   socialAccounts: ClientSocialAccount[],
   enabled: boolean,
 ) {
-  const [creatorInfo, setCreatorInfo] = useState<
-    Record<string, CreatorInfoData>
-  >({});
-  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
-  const [errors, setErrors] = useState<Record<string, string | null>>({});
-  const fetchedRef = useRef(new Set<string>());
+  const [outcomes, setOutcomes] = useState<Record<string, CreatorInfoOutcome>>(
+    {},
+  );
+  const requestedAccountIdsRef = useRef(new Set<string>());
 
+  // Synchronizes with the TikTok creator-info API. Outcomes are stored when
+  // the request settles; nothing is set synchronously here.
   useEffect(() => {
     if (!enabled) return;
 
     for (const account of socialAccounts) {
-      if (fetchedRef.current.has(account.id)) continue;
-      fetchedRef.current.add(account.id);
+      if (requestedAccountIdsRef.current.has(account.id)) continue;
+      requestedAccountIdsRef.current.add(account.id);
 
-      setIsLoading((prev) => ({ ...prev, [account.id]: true }));
-
-      getTikTokCreatorInfoForAccount(account.id).then((result) => {
-        if (result.success) {
-          setCreatorInfo((prev) => ({ ...prev, [account.id]: result.data }));
-          setErrors((prev) => ({ ...prev, [account.id]: null }));
-        } else {
-          setErrors((prev) => ({ ...prev, [account.id]: result.message }));
-        }
-        setIsLoading((prev) => ({ ...prev, [account.id]: false }));
+      fetchCreatorInfoOutcome(account.id).then((outcome) => {
+        setOutcomes((previousOutcomes) => ({
+          ...previousOutcomes,
+          [account.id]: outcome,
+        }));
       });
     }
   }, [enabled, socialAccounts]);
 
-  function refetch(accountId: string) {
-    fetchedRef.current.delete(accountId);
-    const account = socialAccounts.find(
-      (candidateAccount) => candidateAccount.id === accountId,
-    );
-    if (!account) return;
-
-    fetchedRef.current.add(accountId);
-    setIsLoading((prev) => ({ ...prev, [accountId]: true }));
-    setErrors((prev) => ({ ...prev, [accountId]: null }));
-
-    getTikTokCreatorInfoForAccount(accountId).then((result) => {
-      if (result.success) {
-        setCreatorInfo((prev) => ({ ...prev, [accountId]: result.data }));
-        setErrors((prev) => ({ ...prev, [accountId]: null }));
-      } else {
-        setErrors((prev) => ({ ...prev, [accountId]: result.message }));
-      }
-      setIsLoading((prev) => ({ ...prev, [accountId]: false }));
-    });
+  const creatorInfo: Record<string, CreatorInfoData> = {};
+  const isLoading: Record<string, boolean> = {};
+  const errors: Record<string, string | null> = {};
+  for (const account of socialAccounts) {
+    const outcome = outcomes[account.id];
+    isLoading[account.id] = enabled && outcome === undefined;
+    errors[account.id] = outcome && !outcome.ok ? outcome.message : null;
+    if (outcome?.ok) {
+      creatorInfo[account.id] = outcome.data;
+    }
   }
 
-  return { creatorInfo, isLoading, errors, refetch };
+  return { creatorInfo, isLoading, errors };
 }

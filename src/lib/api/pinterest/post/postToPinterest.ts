@@ -42,7 +42,6 @@ export async function postToPinterest({
   mediaPath,
   mediaType,
   fileName,
-  userId,
   coverTimestamp,
   postType,
   mediaUrl,
@@ -55,7 +54,6 @@ export async function postToPinterest({
   mediaPath: string;
   mediaType: string;
   fileName: string;
-  userId: string;
   coverTimestamp: number;
   postType: MediaType;
   mediaUrl: string;
@@ -94,7 +92,6 @@ export async function postToPinterest({
       mediaPath,
       mediaType,
       fileName,
-      userId,
       coverTimestamp,
     });
   } catch (error) {

@@ -37,7 +37,6 @@ export const processDirectPost = inngest.createFunction(
   },
   async ({ event, step }) => {
     const data = event.data as PostNowEventData;
-    const requestId = data.request_id ?? null;
 
     // Steps 1-2: load the account and publish, in one step. Inngest stores
     // every step result and the account row carries the OAuth tokens, so the

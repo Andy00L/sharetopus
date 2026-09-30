@@ -2,10 +2,7 @@
 "use client";
 
 import AvatarWithFallback from "./AvatarWithFallback";
-import {
-  getPlatformBrandIcon,
-  PlatformLetterBadge,
-} from "./icons/platformBrandIcons";
+import { PlatformBrandIcon } from "./icons/platformBrandIcons";
 
 interface SocialAvatarWrapperProps {
   /** Image URL for the avatar */
@@ -29,13 +26,8 @@ export default function SocialAvatarWrapper({
   size = 64,
   isSelected = false,
 }: SocialAvatarWrapperProps) {
-  // Calculate icon size (approximately 1/3 of the avatar size)
+  // Badge diameter: half the avatar size.
   const iconSize = Math.floor(size / 2);
-
-  // Shared registry covers legacy and registry platforms alike; platforms
-  // without a brand glyph fall back to the letter badge so every connected
-  // account carries a platform marker.
-  const IconComponent = getPlatformBrandIcon(platform);
 
   return (
     <div className="relative inline-flex">
@@ -57,16 +49,11 @@ export default function SocialAvatarWrapper({
           transform: "translate(-30%, -30%)",
         }}
       >
-        {/* Instead of cloning and modifying, wrap the icon in a sized container */}
         <div
           style={{ width: iconSize * 0.6, height: iconSize * 0.6 }}
           className="flex items-center justify-center text-primary"
         >
-          {IconComponent ? (
-            <IconComponent />
-          ) : (
-            <PlatformLetterBadge platform={platform} />
-          )}
+          <PlatformBrandIcon platform={platform} />
         </div>
       </div>
     </div>

@@ -2,6 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
+function isMountedElement(
+  element: HTMLDivElement | null,
+): element is HTMLDivElement {
+  return element !== null;
+}
+
 export function EyeTracker({
   cardId,
   ctaId,
@@ -9,16 +15,12 @@ export function EyeTracker({
   cardId: string;
   ctaId: string;
 }) {
-  const eyeRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
-  const pupilRefs = [
-    useRef<HTMLDivElement>(null),
-    useRef<HTMLDivElement>(null),
-  ];
-  const dilateRefs = [
-    useRef<HTMLDivElement>(null),
-    useRef<HTMLDivElement>(null),
-  ];
-  const lidRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)];
+  // One stable ref per element group, filled by the callback refs below, so
+  // the effect depends on nothing that changes between renders.
+  const eyeElementsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const pupilElementsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const dilateElementsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const lidElementsRef = useRef<(HTMLDivElement | null)[]>([]);
 
   useEffect(() => {
     const reduce = window.matchMedia(
@@ -27,18 +29,10 @@ export function EyeTracker({
     if (reduce) return;
     const isCoarse = window.matchMedia("(pointer: coarse)").matches;
 
-    const eyes = eyeRefs
-      .map((r) => r.current)
-      .filter(Boolean) as HTMLDivElement[];
-    const pupils = pupilRefs
-      .map((r) => r.current)
-      .filter(Boolean) as HTMLDivElement[];
-    const dilates = dilateRefs
-      .map((r) => r.current)
-      .filter(Boolean) as HTMLDivElement[];
-    const lids = lidRefs
-      .map((r) => r.current)
-      .filter(Boolean) as HTMLDivElement[];
+    const eyes = eyeElementsRef.current.filter(isMountedElement);
+    const pupils = pupilElementsRef.current.filter(isMountedElement);
+    const dilates = dilateElementsRef.current.filter(isMountedElement);
+    const lids = lidElementsRef.current.filter(isMountedElement);
     const card = document.getElementById(cardId);
     const cta = document.getElementById(ctaId);
     if (!card || !cta || eyes.length !== 2) return;
@@ -276,12 +270,33 @@ export function EyeTracker({
 
   return (
     <div className="subprompt-eyes" aria-hidden="true">
-      {[0, 1].map((i) => (
-        <div key={i} className="subprompt-eye" ref={eyeRefs[i]}>
-          <div className="subprompt-pupil" ref={pupilRefs[i]}>
-            <div className="subprompt-pupil-inner" ref={dilateRefs[i]} />
+      {[0, 1].map((eyeIndex) => (
+        <div
+          key={eyeIndex}
+          className="subprompt-eye"
+          ref={(element) => {
+            eyeElementsRef.current[eyeIndex] = element;
+          }}
+        >
+          <div
+            className="subprompt-pupil"
+            ref={(element) => {
+              pupilElementsRef.current[eyeIndex] = element;
+            }}
+          >
+            <div
+              className="subprompt-pupil-inner"
+              ref={(element) => {
+                dilateElementsRef.current[eyeIndex] = element;
+              }}
+            />
           </div>
-          <div className="subprompt-lid" ref={lidRefs[i]} />
+          <div
+            className="subprompt-lid"
+            ref={(element) => {
+              lidElementsRef.current[eyeIndex] = element;
+            }}
+          />
         </div>
       ))}
     </div>

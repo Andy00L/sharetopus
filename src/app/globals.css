@@ -415,3 +415,16 @@
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
+
+/* Confetti on /payment/success: each piece falls 240vh (off screen from any
+   start position) and spins; durations are set per piece inline. */
+@keyframes confetti-fall {
+  to {
+    translate: 0 240vh;
+  }
+}
+@keyframes confetti-spin {
+  to {
+    rotate: 360deg;
+  }
+}

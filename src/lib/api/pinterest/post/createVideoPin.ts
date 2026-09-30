@@ -40,7 +40,6 @@ export async function createVideoPin({
   mediaPath,
   mediaType,
   fileName,
-  userId,
   coverTimestamp,
 }: {
   accessToken: string;
@@ -51,7 +50,6 @@ export async function createVideoPin({
   mediaPath: string;
   mediaType: string;
   fileName: string;
-  userId: string;
   coverTimestamp: number;
 }): Promise<PinterestPostResult> {
   try {
@@ -68,7 +66,6 @@ export async function createVideoPin({
       uploadUrl: upload_url,
       uploadParameters: upload_parameters,
       mediaPath,
-      userId,
       mediaType,
       fileName,
     });
@@ -161,14 +158,12 @@ async function uploadVideoFileStreaming({
   uploadUrl,
   uploadParameters,
   mediaPath,
-  userId,
   mediaType,
   fileName,
 }: {
   uploadUrl: string;
   uploadParameters: Record<string, string>;
   mediaPath: string;
-  userId: string;
   mediaType: string;
   fileName: string;
 }): Promise<PinterestPostResult> {

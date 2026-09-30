@@ -31,7 +31,6 @@ export async function directPostForInstagramAccounts(config: {
 }): Promise<ScheduleResult> {
   const {
     account,
-    mediaPath,
     postType,
     mediaType,
     accountContent,

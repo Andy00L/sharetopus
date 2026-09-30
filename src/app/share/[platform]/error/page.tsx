@@ -45,13 +45,10 @@ const DEFAULT_MESSAGE =
   "Something went wrong. Please contact the person who shared this link.";
 
 export default async function ShareErrorPage({
-  params,
   searchParams,
 }: {
-  params: Promise<{ platform: string }>;
   searchParams: Promise<{ reason?: string }>;
 }) {
-  const { platform } = await params;
   const { reason } = await searchParams;
 
   const message =

@@ -305,8 +305,8 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 6: mime type derivation (used by direct path only)
-  let mediaType = "";
+  // Step 6: reject a file whose type cannot be derived from its name, and
+  // clean up its upload.
   if (mediaPath && fileName) {
     const mimeResult = getMimeTypeFromFileName(fileName);
     if (!mimeResult.success) {
@@ -330,7 +330,6 @@ export async function handleSocialMediaPost(config: {
         errors: [],
       };
     }
-    mediaType = mimeResult.mimeType;
   }
 
   // Step 7: content validation (Pinterest board, LinkedIn identifier, etc.)

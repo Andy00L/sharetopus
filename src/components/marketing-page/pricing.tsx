@@ -44,7 +44,7 @@ export default function PricingSection() {
 
   /* The SAVE badge displays the featured tier's savings percentage.
      Creator = ~40%. Computed, not hardcoded. */
-  const featuredPlan = planPrices.find((p) => p.popular);
+  const featuredPlan = planPrices.find((plan) => plan.popular);
   const badgePct = featuredPlan ? savingsPct(featuredPlan) : 40;
 
   /* CTA handler. Routes through existing Stripe server actions.
@@ -55,10 +55,10 @@ export default function PricingSection() {
      a subscription it could not check included, stops here, so a paying
      user is never sent to a second checkout. */
   const handleSubscribe = async (plan: Plan) => {
+    if (!isLoaded) return;
+
     try {
       setLoadingPlan(plan.title);
-
-      if (!isLoaded) return;
 
       if (!isSignedIn) {
         router.push("/create");
@@ -67,7 +67,7 @@ export default function PricingSection() {
 
       const portal = await createCustomerPortal();
       if (portal.success) {
-        window.location.href = portal.data;
+        window.location.assign(portal.data);
         return;
       }
       if (portal.reason !== "no_subscription") {
@@ -84,7 +84,7 @@ export default function PricingSection() {
         return;
       }
       if (session.data) {
-        window.location.href = session.data;
+        window.location.assign(session.data);
       }
     } catch (error) {
       console.error("[PricingSection] Subscription error:", error);
@@ -192,13 +192,13 @@ export default function PricingSection() {
 
               {/* Feature list with orange checkmarks. */}
               <ul className="mt-5 mb-6 flex flex-col gap-2.5 flex-1">
-                {plan.features.map((f) => (
-                  <li key={f} className="flex gap-2 text-sm items-start">
+                {plan.features.map((feature) => (
+                  <li key={feature} className="flex gap-2 text-sm items-start">
                     <Check
                       className="size-4 shrink-0 text-primary mt-0.5"
                       strokeWidth={2.5}
                     />
-                    <span>{renderFeature(f)}</span>
+                    <span>{renderFeature(feature)}</span>
                   </li>
                 ))}
               </ul>

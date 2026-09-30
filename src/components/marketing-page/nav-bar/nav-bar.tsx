@@ -3,47 +3,12 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
-import {
-  ArrowRight,
-  Globe,
-  LineChart,
-  Menu,
-  PenLine,
-  Repeat,
-  X,
-} from "lucide-react";
+import { ArrowRight, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 const NAV_LINK_CLASS =
   "inline-flex h-9 items-center justify-center rounded-md bg-transparent px-4 py-2 text-[#545454] font-medium text-[15px] transition-colors hover:opacity-50 focus:opacity-50 focus:outline-none";
-
-const FEATURES_ITEMS = [
-  {
-    icon: Repeat,
-    title: "Set-and-forget cross-posting",
-    desc: "One post to every platform in 30s",
-    href: "#platforms",
-  },
-  {
-    icon: PenLine,
-    title: "The Composer",
-    desc: "Native previews for every network",
-    href: "#composer",
-  },
-  {
-    icon: LineChart,
-    title: "Smart scheduling",
-    desc: "Auto-post at the best time",
-    href: "#features",
-  },
-  {
-    icon: Globe,
-    title: "9 platforms supported",
-    desc: "X, IG, TikTok, LinkedIn + more",
-    href: "#platforms",
-  },
-];
 
 const NAV_LINKS = [
   { label: "Pricing", href: "#pricing" },
@@ -188,7 +153,7 @@ export default function Navbar() {
               </Link>
             )}
             <Link
-              href={isSignedIn ? "/create" : "/create"}
+              href="/create"
               onClick={() => setMobileOpen(false)}
               className="flex w-full items-center justify-center gap-1.5 rounded-full bg-[#FF5A36] py-3 text-[16px] font-medium text-white hover:bg-[#E84A26]"
             >

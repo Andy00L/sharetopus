@@ -4,10 +4,7 @@ import { addDays, format, startOfWeek } from "date-fns";
 import { ChevronLeft, ChevronRight, ListFilter, Rows3 } from "lucide-react";
 import Link from "next/link";
 
-import {
-  getPlatformBrandIcon,
-  PlatformLetterBadge,
-} from "@/components/icons/platformBrandIcons";
+import { PlatformBrandIcon } from "@/components/icons/platformBrandIcons";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -125,28 +122,21 @@ export default function CalendarToolbar({
             <DropdownMenuContent align="end" className="w-52">
               <DropdownMenuLabel>Filter by platform</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {availablePlatforms.map((platform) => {
-                const PlatformIcon = getPlatformBrandIcon(platform);
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={platform}
-                    checked={
-                      selectedPlatforms === null ||
-                      selectedPlatforms.has(platform)
-                    }
-                    onCheckedChange={() => onTogglePlatform(platform)}
-                  >
-                    <span className="mr-2 inline-flex w-3 justify-center text-muted-foreground">
-                      {PlatformIcon ? (
-                        <PlatformIcon />
-                      ) : (
-                        <PlatformLetterBadge platform={platform} />
-                      )}
-                    </span>
-                    {getPlatformDisplayLabel(platform)}
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
+              {availablePlatforms.map((platform) => (
+                <DropdownMenuCheckboxItem
+                  key={platform}
+                  checked={
+                    selectedPlatforms === null ||
+                    selectedPlatforms.has(platform)
+                  }
+                  onCheckedChange={() => onTogglePlatform(platform)}
+                >
+                  <span className="mr-2 inline-flex w-3 justify-center text-muted-foreground">
+                    <PlatformBrandIcon platform={platform} />
+                  </span>
+                  {getPlatformDisplayLabel(platform)}
+                </DropdownMenuCheckboxItem>
+              ))}
               {selectedPlatforms !== null && (
                 <>
                   <DropdownMenuSeparator />

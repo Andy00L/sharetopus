@@ -1,7 +1,4 @@
-import {
-  getPlatformBrandIcon,
-  PlatformLetterBadge,
-} from "@/components/icons/platformBrandIcons";
+import { PlatformBrandIcon } from "@/components/icons/platformBrandIcons";
 import { Card } from "@/components/ui/card";
 import { SidebarContent } from "@/components/ui/sidebar";
 import { parseSchedulePrefill } from "@/components/core/create/SocialPostForm/state/parseSchedulePrefill";
@@ -75,21 +72,14 @@ export default async function CreatePostPage({
               {/* Platform icons section */}
               <div className="mt-auto w-full">
                 <div className="flex flex-wrap items-center justify-center gap-3">
-                  {type.platforms.map((platform) => {
-                    const PlatformIcon = getPlatformBrandIcon(platform);
-                    return (
-                      <span
-                        key={platform}
-                        className="text-muted-foreground transition-colors [&>svg]:!w-4 [&>svg]:!h-4 duration-200 group-hover:text-primary/80 flex-shrink-0"
-                      >
-                        {PlatformIcon ? (
-                          <PlatformIcon />
-                        ) : (
-                          <PlatformLetterBadge platform={platform} />
-                        )}
-                      </span>
-                    );
-                  })}
+                  {type.platforms.map((platform) => (
+                    <span
+                      key={platform}
+                      className="text-muted-foreground transition-colors [&>svg]:!w-4 [&>svg]:!h-4 duration-200 group-hover:text-primary/80 flex-shrink-0"
+                    >
+                      <PlatformBrandIcon platform={platform} />
+                    </span>
+                  ))}
                 </div>
               </div>
             </Card>

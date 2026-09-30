@@ -70,7 +70,6 @@ export async function directPostForPinterestAccounts(
           mediaPath: pt.config.mediaPath,
           mediaType: pt.config.mediaType,
           fileName: pt.config.fileName,
-          userId: pt.config.userId ?? "",
           coverTimestamp: pt.config.coverTimestamp,
           postType: pt.config.postType,
           mediaUrl: pt.config.mediaUrl,

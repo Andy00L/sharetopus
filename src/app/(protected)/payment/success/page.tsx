@@ -1,102 +1,76 @@
-"use client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Check, ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
 
-// Define the type for confetti particles
-interface ConfettiParticle {
-  id: number;
-  x: number;
-  y: number;
-  size: number;
-  color: string;
-  rotation: number;
-  speed: number;
+const CONFETTI_COLORS = [
+  "#FF5252",
+  "#FFD740",
+  "#64FFDA",
+  "#448AFF",
+  "#E040FB",
+  "#69F0AE",
+];
+
+/** Number of confetti pieces dropped once when the page opens. */
+const CONFETTI_PARTICLE_COUNT = 150;
+
+/**
+ * Deterministic value in [0, 1) for a particle index and a salt, rounded to
+ * 4 decimals. Seeded instead of Math.random so the server render and the
+ * client hydration produce identical particles.
+ */
+function seededFraction(index: number, salt: number): number {
+  const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+  return Math.round((value - Math.floor(value)) * 10_000) / 10_000;
 }
 
-const SimplePaymentSuccess = () => {
-  // Properly type the state
-  const [confetti, setConfetti] = useState<ConfettiParticle[]>([]);
+/**
+ * Computed once at module load. The fall and the spin run in CSS
+ * (confetti-fall and confetti-spin in globals.css), so nothing re-renders
+ * while the pieces move.
+ */
+const CONFETTI_PARTICLES = Array.from(
+  { length: CONFETTI_PARTICLE_COUNT },
+  (_emptySlot, index) => {
+    // 2 to 8 seconds to fall the keyframe's 240vh.
+    const fallSeconds = 2 + seededFraction(index, 6) * 6;
+    return {
+      id: index,
+      leftPercent: seededFraction(index, 1) * 100,
+      topPercent: -20 - seededFraction(index, 2) * 100,
+      sizePx: 5 + seededFraction(index, 3) * 10,
+      color:
+        CONFETTI_COLORS[
+          Math.floor(seededFraction(index, 4) * CONFETTI_COLORS.length)
+        ],
+      rotationDeg: seededFraction(index, 5) * 360,
+      fallSeconds,
+      // One turn per 3 seconds; stop once the piece has left the screen.
+      spinTurns: Math.ceil(fallSeconds / 3),
+    };
+  },
+);
 
-  // Confetti animation
-  useEffect(() => {
-    // Create confetti particles
-    const colors = [
-      "#FF5252",
-      "#FFD740",
-      "#64FFDA",
-      "#448AFF",
-      "#E040FB",
-      "#69F0AE",
-    ];
-    const newConfetti: ConfettiParticle[] = [];
-
-    for (let i = 0; i < 150; i++) {
-      newConfetti.push({
-        id: i,
-        x: Math.random() * 100,
-        y: -20 - Math.random() * 100,
-        size: 5 + Math.random() * 10,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        rotation: Math.random() * 360,
-        speed: 2 + Math.random() * 6,
-      });
-    }
-
-    setConfetti(newConfetti);
-
-    // Clean up animation after 6 seconds
-    const timer = setTimeout(() => {
-      setConfetti([]);
-    }, 6000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Animation frame to update confetti positions
-  useEffect(() => {
-    if (confetti.length === 0) return;
-
-    const animationFrame = requestAnimationFrame(() => {
-      setConfetti(
-        (prevConfetti) =>
-          prevConfetti
-            .map((particle) => {
-              if (particle.y > 120) return null;
-
-              return {
-                ...particle,
-                y: particle.y + particle.speed / 4,
-                rotation: particle.rotation + 2,
-              };
-            })
-            .filter(Boolean) as ConfettiParticle[]
-      );
-    });
-
-    return () => cancelAnimationFrame(animationFrame);
-  }, [confetti]);
-
+export default function SimplePaymentSuccess() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-slate-50 px-4 py-6">
-      {/* Confetti animation */}
-      {confetti.map((particle) => (
+      {CONFETTI_PARTICLES.map((particle) => (
         <div
           key={particle.id}
-          className="fixed"
+          aria-hidden="true"
+          className="pointer-events-none fixed motion-reduce:hidden"
           style={{
-            left: `${particle.x}%`,
-            top: `${particle.y}%`,
-            width: `${particle.size}px`,
-            height: `${particle.size}px`,
+            left: `${particle.leftPercent}%`,
+            top: `${particle.topPercent}%`,
+            width: `${particle.sizePx}px`,
+            height: `${particle.sizePx}px`,
             backgroundColor: particle.color,
             borderRadius: "2px",
-            transform: `rotate(${particle.rotation}deg)`,
+            transform: `rotate(${particle.rotationDeg}deg)`,
             zIndex: 10,
             opacity: 0.8,
-            transition: "transform 0.1s linear",
+            animation: `confetti-fall ${particle.fallSeconds}s linear forwards, confetti-spin 3s linear ${particle.spinTurns}`,
           }}
         />
       ))}
@@ -117,6 +91,4 @@ const SimplePaymentSuccess = () => {
       </Card>
     </div>
   );
-};
-
-export default SimplePaymentSuccess;
+}

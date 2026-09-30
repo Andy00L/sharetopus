@@ -720,7 +720,7 @@ export const platform_quotas = pgTable("platform_quotas", {
   burst_cap_60s: integer().notNull(),
   notes: text(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
-}, (table) => [
+}, () => [
   pgPolicy("platform_quotas_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]).enableRLS();
 
@@ -792,7 +792,7 @@ export const pricing_actions = pgTable("pricing_actions", {
   metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
-}, (table) => [
+}, () => [
   pgPolicy("pricing_actions_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
   check("pricing_actions_recurrence_check", isOneOf("recurrence", PRICING_RECURRENCES)),
   check("pricing_actions_usdc_price_check", sql`usdc_price >= (0)::numeric`),
@@ -894,7 +894,7 @@ export const x402_reconciliation = pgTable("x402_reconciliation", {
   amount_atomic: text(),
   network: text(),
   created_at: timestamptz().default(sql`now()`).notNull(),
-}, (table) => [
+}, () => [
   check("x402_reconciliation_kind_check", isOneOf("kind", X402_RECONCILIATION_KINDS)),
 ]).enableRLS();
 

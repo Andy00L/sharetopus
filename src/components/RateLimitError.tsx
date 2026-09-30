@@ -4,11 +4,21 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Clock, Loader } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 interface RateLimitErrorProps {
   readonly redirectPath?: string;
   readonly resetIn?: string | number;
+}
+
+/** Wait shown when resetIn is missing, zero, or not a number. */
+const DEFAULT_WAIT_SECONDS = 60;
+
+function parseWaitSeconds(resetIn: string | number | undefined): number {
+  const parsedSeconds = Number.parseInt(String(resetIn ?? ""), 10);
+  return Number.isFinite(parsedSeconds) && parsedSeconds > 0
+    ? parsedSeconds
+    : DEFAULT_WAIT_SECONDS;
 }
 
 export default function RateLimitError({
@@ -17,8 +27,8 @@ export default function RateLimitError({
 }: RateLimitErrorProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
-  const [countdown, setCountdown] = useState<number>(
-    resetIn ? parseInt(String(resetIn), 10) : 60
+  const [countdown, setCountdown] = useState<number>(() =>
+    parseWaitSeconds(resetIn)
   );
 
   const handleRetry = () => {
@@ -39,30 +49,24 @@ export default function RateLimitError({
       .padStart(2, "0")}`;
   };
 
-  // Set up countdown effect
-  useEffect(() => {
-    // Only start countdown if we have a valid number greater than zero
-    if (countdown <= 0) {
-      return;
-    }
+  // Lets the countdown effect call the latest handleRetry without
+  // restarting every time the component renders.
+  const retryWhenCountdownEnds = useEffectEvent(handleRetry);
 
-    // Create interval to update countdown
-    const timer = setInterval(() => {
-      setCountdown((prevCount) => {
-        // If we've reached zero, clear the interval and trigger retry
-        if (prevCount <= 1) {
-          clearInterval(timer);
-          // Small delay before triggering retry to let UI update
-          setTimeout(handleRetry, 500);
-          return 0;
-        }
-        return prevCount - 1;
-      });
+  // Synchronizes with the browser clock: one tick per second until zero,
+  // then the automatic retry.
+  useEffect(() => {
+    if (countdown <= 0) return;
+
+    const tickTimer = setTimeout(() => {
+      setCountdown(countdown - 1);
+      if (countdown === 1) {
+        retryWhenCountdownEnds();
+      }
     }, 1000);
 
-    // Clean up interval on unmount
-    return () => clearInterval(timer);
-  }, [countdown]); // Only re-run if countdown changes
+    return () => clearTimeout(tickTimer);
+  }, [countdown]);
 
   return (
     <div className="flex flex-col w-full items-center justify-center py-12 px-4">

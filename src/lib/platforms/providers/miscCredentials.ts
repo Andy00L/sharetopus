@@ -7,11 +7,7 @@ import type {
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
-import {
-  parseJsonBody,
-  providerFetch,
-  readStringField,
-} from "./_shared/providerFetch";
+import { parseJsonBody, providerFetch } from "./_shared/providerFetch";
 
 /**
  * Credentials-based providers: Farcaster (via a Neynar managed signer) and
