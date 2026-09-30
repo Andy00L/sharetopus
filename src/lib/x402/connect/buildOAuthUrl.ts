@@ -114,6 +114,10 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
   const scopes =
     "user.info.basic,user.info.profile,video.publish,video.upload,user.info.stats";
 
+  // disable_auto_auth=1 makes TikTok show its authorization page on every
+  // connect; without it a creator with a live TikTok session is sent
+  // straight back without seeing it. sourceRef:
+  // developers.tiktok.com/doc/login-kit-web (authorize URL parameters).
   const url =
     `https://www.tiktok.com/v2/auth/authorize/` +
     `?client_key=${clientKey}` +
@@ -121,9 +125,7 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
     `&state=${input.state}` +
     `&response_type=code` +
-    `&force_login=true` +
-    `&auth_type=reauthenticate` +
-    `&timestamp=${Date.now()}`;
+    `&disable_auto_auth=1`;
 
   return { ok: true, url, codeVerifier: null };
 }
