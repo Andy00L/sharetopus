@@ -49,6 +49,18 @@ const nextConfig: NextConfig = {
     ],
   },
 
+  async redirects() {
+    return [
+      // The terms page (and any listing that copied its link) points at the
+      // lowercase URL; the page itself lives at /PrivacyPolicy.
+      {
+        source: "/privacy-policy",
+        destination: "/PrivacyPolicy",
+        permanent: true,
+      },
+    ];
+  },
+
   async rewrites() {
     return [
       // Serve MDX docs as raw markdown for AI agents and CLI tools.
