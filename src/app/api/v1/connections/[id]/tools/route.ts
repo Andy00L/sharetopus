@@ -3,6 +3,11 @@ import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import { ConnectionToolTriggerInputSchema } from "@/lib/api/rest/validation/connectionSchemas";
+import type {
+  ConnectionToolList,
+  ConnectionToolResult,
+} from "@/lib/api/rest/openapi/responseSchemas";
 import {
   listProviderToolsForAccount,
   runProviderToolForAccount,
@@ -31,11 +36,6 @@ function extractConnectionId(requestUrl: string): string {
   const segments = new URL(requestUrl).pathname.split("/");
   return segments[segments.length - 2] ?? "";
 }
-
-const TriggerBodySchema = z.object({
-  method_name: z.string().min(1).max(100),
-  parameters: z.record(z.string(), z.unknown()).default({}),
-});
 
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
@@ -82,7 +82,7 @@ export const GET = withRestEndpoint({
               description: parameter.description,
             })),
           })),
-        },
+        } satisfies ConnectionToolList,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {
@@ -120,7 +120,7 @@ export const POST = withRestEndpoint({
       );
     }
 
-    const bodyParseResult = TriggerBodySchema.safeParse(rawBody);
+    const bodyParseResult = ConnectionToolTriggerInputSchema.safeParse(rawBody);
     if (!bodyParseResult.success) {
       return restErrorResponse(
         "validation_error",
@@ -168,7 +168,7 @@ export const POST = withRestEndpoint({
         {
           method_name: bodyParseResult.data.method_name,
           result: toolResult.data,
-        },
+        } satisfies ConnectionToolResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import { CredentialsConnectInputSchema } from "@/lib/api/rest/validation/connectionSchemas";
+import type {
+  CredentialConnectResult,
+  CredentialProviderList,
+} from "@/lib/api/rest/openapi/responseSchemas";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import {
@@ -29,48 +33,6 @@ import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJs
  * credentials.
  */
 
-/** Column type for social_accounts.platform, from the schema the insert below writes through. */
-type SocialAccountPlatform = (typeof social_accounts.$inferInsert)["platform"];
-
-/**
- * Credentials providers currently servable, as DB platform values. The
- * satisfies clause makes this list fail compilation if a provider id ever
- * drifts from the platform union, instead of failing at insert time.
- */
-const CREDENTIAL_PLATFORM_IDS = [
-  "bluesky",
-  "mastodon",
-  "telegram",
-  "discord",
-  "slack",
-  "devto",
-  "wordpress",
-  "hashnode",
-  "medium",
-  "lemmy",
-  "farcaster",
-  "listmonk",
-  "nostr",
-] as const satisfies readonly SocialAccountPlatform[];
-
-/**
- * Ceiling on submitted form entries. The largest declared field set today
- * is Listmonk's four; 20 leaves headroom while stopping a caller from
- * posting thousands of keys per request.
- */
-const MAX_CREDENTIAL_VALUE_ENTRIES = 20;
-
-const ConnectBodySchema = z.object({
-  provider: z.enum(CREDENTIAL_PLATFORM_IDS),
-  /** Raw form values keyed by ProviderCredentialField.key. */
-  values: z
-    .record(z.string().max(64), z.string().max(2048))
-    .refine(
-      (record) => Object.keys(record).length <= MAX_CREDENTIAL_VALUE_ENTRIES,
-      { message: `At most ${MAX_CREDENTIAL_VALUE_ENTRIES} values are accepted.` },
-    ),
-});
-
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.credentials.list",
@@ -93,7 +55,7 @@ export const GET = withRestEndpoint({
 
     return {
       response: NextResponse.json(
-        { providers },
+        { providers } satisfies CredentialProviderList,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: { provider_count: providers.length },
@@ -116,7 +78,7 @@ export const POST = withRestEndpoint({
       );
     }
 
-    const bodyParseResult = ConnectBodySchema.safeParse(rawBody);
+    const bodyParseResult = CredentialsConnectInputSchema.safeParse(rawBody);
     if (!bodyParseResult.success) {
       return restErrorResponse(
         "validation_error",
@@ -231,7 +193,7 @@ export const POST = withRestEndpoint({
           account_identifier: connectResult.identity.accountIdentifier,
           display_name: connectResult.identity.displayName,
           username: connectResult.identity.username,
-        },
+        } satisfies CredentialConnectResult,
         { status: 201, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {

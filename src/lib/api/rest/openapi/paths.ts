@@ -13,6 +13,8 @@ import {
 import {
   ConnectionInitiateInputSchema,
   ConnectionListQuerySchema,
+  ConnectionToolTriggerInputSchema,
+  CredentialsConnectInputSchema,
   PinterestBoardsQuerySchema,
 } from "../validation/connectionSchemas";
 import {
@@ -34,6 +36,10 @@ import {
   ConnectionDTOSchema,
   ConnectionInitiateResultSchema,
   ConnectionReauthResultSchema,
+  ConnectionToolListSchema,
+  ConnectionToolResultSchema,
+  CredentialProviderListSchema,
+  CredentialConnectResultSchema,
   PinterestBoardPageSchema,
   MediaUploadUrlSchema,
   MediaAttachResultSchema,
@@ -192,6 +198,23 @@ export const restPaths = {
       responses: { "200": jsonResponse("OAuth URL", ConnectionInitiateResultSchema), ...errorResponses },
     },
   },
+  "/api/v1/connections/credentials": {
+    get: {
+      tags: ["Connections"],
+      summary: "List credentials providers",
+      description: "Providers connected by pasted credentials (API key, bot token, app password), with the form fields each one needs.",
+      operationId: "listCredentialProviders",
+      responses: { "200": jsonResponse("Providers and their fields", CredentialProviderListSchema), ...errorResponses },
+    },
+    post: {
+      tags: ["Connections"],
+      summary: "Connect with credentials",
+      description: "Verifies the credentials with the provider, then stores the connection. The response never echoes the credentials.",
+      operationId: "connectWithCredentials",
+      requestBody: jsonBody(CredentialsConnectInputSchema),
+      responses: { "201": jsonResponse("Stored connection", CredentialConnectResultSchema), ...errorResponses },
+    },
+  },
   "/api/v1/connections/{id}": {
     get: {
       tags: ["Connections"],
@@ -218,6 +241,24 @@ export const restPaths = {
       parameters: [pathParam("id", "Pinterest connection UUID")],
       requestParams: { query: PinterestBoardsQuerySchema },
       responses: { "200": jsonResponse("Boards", PinterestBoardPageSchema), ...errorResponses },
+    },
+  },
+  "/api/v1/connections/{id}/tools": {
+    get: {
+      tags: ["Connections"],
+      summary: "List provider tools",
+      description: "Helpers this connection can trigger, for example listing Discord or Slack channels.",
+      operationId: "listConnectionTools",
+      parameters: [pathParam("id", "Connection UUID")],
+      responses: { "200": jsonResponse("Tools and their parameters", ConnectionToolListSchema), ...errorResponses },
+    },
+    post: {
+      tags: ["Connections"],
+      summary: "Trigger a provider tool",
+      operationId: "triggerConnectionTool",
+      parameters: [pathParam("id", "Connection UUID")],
+      requestBody: jsonBody(ConnectionToolTriggerInputSchema),
+      responses: { "200": jsonResponse("Tool result", ConnectionToolResultSchema), ...errorResponses },
     },
   },
   "/api/v1/media/upload-url": {

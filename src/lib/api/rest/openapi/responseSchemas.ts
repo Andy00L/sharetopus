@@ -129,6 +129,54 @@ export const PinterestBoardDTOSchema = z.object({
   pin_count: z.number().nullable(),
 }).meta({ id: "PinterestBoardDTO" });
 
+/** GET /v1/connections/credentials: each provider and the form fields it needs. */
+export const CredentialProviderListSchema = z.object({
+  providers: z.array(z.object({
+    provider: z.string(),
+    label: z.string(),
+    category: z.string(),
+    fields: z.array(z.object({
+      key: z.string(),
+      label: z.string(),
+      kind: z.string(),
+      required: z.boolean(),
+      placeholder: z.string(),
+      help_text: z.string(),
+    })),
+  })),
+}).meta({ id: "CredentialProviderList" });
+
+/** POST /v1/connections/credentials: identity fields only, never the credentials. */
+export const CredentialConnectResultSchema = z.object({
+  id: z.string(),
+  provider: z.string(),
+  account_identifier: z.string(),
+  display_name: z.string().nullable(),
+  username: z.string().nullable(),
+}).meta({ id: "CredentialConnectResult" });
+
+/** GET /v1/connections/{id}/tools. */
+export const ConnectionToolListSchema = z.object({
+  provider: z.string(),
+  provider_label: z.string(),
+  tools: z.array(z.object({
+    method_name: z.string(),
+    description: z.string(),
+    parameters: z.array(z.object({
+      name: z.string(),
+      type: z.string(),
+      required: z.boolean(),
+      description: z.string(),
+    })),
+  })),
+}).meta({ id: "ConnectionToolList" });
+
+/** POST /v1/connections/{id}/tools: result is whatever the provider tool returns. */
+export const ConnectionToolResultSchema = z.object({
+  method_name: z.string(),
+  result: z.unknown(),
+}).meta({ id: "ConnectionToolResult" });
+
 /** GET /v1/connections/{id}/boards: one page; bookmark fetches the next. */
 export const PinterestBoardPageSchema = z.object({
   data: z.array(PinterestBoardDTOSchema),
@@ -280,6 +328,10 @@ export type ConnectionInitiateResult = z.infer<typeof ConnectionInitiateResultSc
 export type ConnectionReauthResult = z.infer<typeof ConnectionReauthResultSchema>;
 export type ContentHistoryDTO = z.infer<typeof ContentHistoryDTOSchema>;
 export type AnalyticsDTO = z.infer<typeof AnalyticsDTOSchema>;
+export type CredentialProviderList = z.infer<typeof CredentialProviderListSchema>;
+export type CredentialConnectResult = z.infer<typeof CredentialConnectResultSchema>;
+export type ConnectionToolList = z.infer<typeof ConnectionToolListSchema>;
+export type ConnectionToolResult = z.infer<typeof ConnectionToolResultSchema>;
 export type PinterestBoardDTO = z.infer<typeof PinterestBoardDTOSchema>;
 export type PinterestBoardPage = z.infer<typeof PinterestBoardPageSchema>;
 export type MediaUploadUrl = z.infer<typeof MediaUploadUrlSchema>;
