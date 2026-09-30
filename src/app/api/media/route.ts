@@ -1,4 +1,5 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import { fitPhotoForTikTok } from "@/lib/api/tiktok/fitPhotoForTikTok";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -177,7 +178,33 @@ export async function GET(request: NextRequest) {
     };
 
     const contentType = upstream.headers.get("content-type") ?? "";
-    if (/^(image|video)\//i.test(contentType)) {
+
+    // Only TikTok fetches this route (buildProxiedTikTokMediaUrl, and
+    // buildTikTokMediaUrl in proxy mode), and TikTok refuses photos over
+    // 1080p with picture_size_check_failed. Photos are fitted here, at the
+    // TikTok boundary, so the stored file other platforms use keeps its
+    // full resolution.
+    if (/^image\//i.test(contentType)) {
+      const fitResult = await fitPhotoForTikTok(
+        Buffer.from(await upstream.arrayBuffer()),
+      );
+      if (!fitResult.ok) {
+        return new Response(fitResult.message, {
+          status: 422,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      return new Response(new Uint8Array(fitResult.bytes), {
+        status: 200,
+        headers: {
+          ...responseHeaders,
+          "Content-Type": "image/jpeg",
+          "Content-Length": String(fitResult.bytes.length),
+        },
+      });
+    }
+
+    if (/^video\//i.test(contentType)) {
       responseHeaders["Content-Type"] = contentType;
     } else {
       responseHeaders["Content-Type"] = "application/octet-stream";
