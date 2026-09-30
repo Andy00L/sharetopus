@@ -45,7 +45,13 @@ function emitToastForJob(job: PostStatusJob, toasted: Set<string>): void {
   if (!isJobTerminal(job.status)) return;
 
   const name = platformDisplay(job.platform);
-  if (job.status === "success") {
+  if (job.status === "success" && job.platform === "tiktok") {
+    // Success here means TikTok accepted the post; it then processes it.
+    // The Content Sharing Guidelines require telling the user so.
+    toast.success(
+      "Sent to TikTok. It may take a few minutes for your post to process and be visible on your profile.",
+    );
+  } else if (job.status === "success") {
     toast.success(`Posted to ${name}`);
   } else {
     const reason = job.error_message?.trim() || "post failed";

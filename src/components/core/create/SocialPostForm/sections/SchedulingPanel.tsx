@@ -23,9 +23,13 @@ interface SchedulingPanelProps {
   readonly uploadProgress: number;
   readonly onSubmit: () => void;
   readonly disabled: boolean;
-  readonly tiktokComplianceEnabled: boolean;
   readonly hasTikTokAccounts: boolean;
   readonly tikTokOptions?: TikTokOptions;
+  /**
+   * Why the post cannot go to TikTok yet (findTikTokPublishBlocker), shown
+   * under the disabled button. Null when nothing blocks it.
+   */
+  readonly publishBlocker: string | null;
 }
 
 export default function SchedulingPanel({
@@ -41,12 +45,12 @@ export default function SchedulingPanel({
   uploadProgress,
   onSubmit,
   disabled,
-  tiktokComplianceEnabled,
   hasTikTokAccounts,
   tikTokOptions,
+  publishBlocker,
 }: SchedulingPanelProps) {
-  // TikTok declaration text (compliance mode only)
-  const showTikTokDeclaration = tiktokComplianceEnabled && hasTikTokAccounts;
+  // TikTok's required declaration: the Branded Content Policy joins the
+  // Music Usage Confirmation once branded content is disclosed.
   const showBrandedPolicyLink =
     tikTokOptions?.brandContentToggle === true &&
     tikTokOptions?.brandedContent === true;
@@ -120,9 +124,8 @@ export default function SchedulingPanel({
           </div>
         )}
 
-        {/* TikTok declaration text */}
-        {showTikTokDeclaration && (
-          <p className="text-xs text-muted-foreground pt-2">
+        {hasTikTokAccounts && (
+          <p className="pt-2 text-xs text-foreground">
             By posting, you agree to TikTok&apos;s{" "}
             {showBrandedPolicyLink && (
               <>
@@ -149,10 +152,15 @@ export default function SchedulingPanel({
         )}
 
         {!isLoading && (
-          <div className="pt-4 flex justify-between">
+          // The wrapper carries the hover text: a disabled button gets no
+          // pointer events, so its own title would never show.
+          <div
+            className="pt-4 flex justify-between"
+            title={publishBlocker ?? undefined}
+          >
             <Button
               onClick={onSubmit}
-              disabled={isLoading || disabled}
+              disabled={isLoading || disabled || publishBlocker !== null}
               className="w-full"
             >
               {isLoading ? (
@@ -177,6 +185,12 @@ export default function SchedulingPanel({
               )}
             </Button>
           </div>
+        )}
+
+        {publishBlocker && !isLoading && !disabled && (
+          <p role="status" className="pt-2 text-xs text-foreground">
+            {publishBlocker}
+          </p>
         )}
       </div>
     </>

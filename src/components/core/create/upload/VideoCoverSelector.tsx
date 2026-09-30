@@ -7,12 +7,15 @@ interface VideoCoverSelectorProps {
   readonly videoFile: File;
   readonly onCoverChange: (timestamp: number) => void;
   readonly onError?: (errorMessage: string) => void;
+  /** The video's length in seconds, once its metadata has loaded. */
+  readonly onDurationLoaded?: (durationSec: number) => void;
 }
 
 export function VideoCoverSelector({
   videoFile,
   onCoverChange,
   onError,
+  onDurationLoaded,
 }: VideoCoverSelectorProps) {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -44,6 +47,7 @@ export function VideoCoverSelector({
       }
 
       setDuration(videoDuration);
+      onDurationLoaded?.(videoDuration);
 
       // Initial cover at 10% of the video, queued through the same debounce
       // as a slider move.

@@ -15,8 +15,8 @@ export type CreatorInfoData = {
 };
 
 type CreatorInfoApiResponse = {
-  data: CreatorInfoData;
-  error: {
+  data?: CreatorInfoData;
+  error?: {
     code: string;
     message: string;
     log_id: string;
@@ -26,6 +26,38 @@ type CreatorInfoApiResponse = {
 type GetCreatorInfoResult =
   | { success: true; data: CreatorInfoData }
   | { success: false; message: string };
+
+/**
+ * User-facing messages for the creator_info error codes a creator can act
+ * on. The three posting-limit codes mean the post must stop and the user
+ * try again later (Content Sharing Guidelines). sourceRef:
+ * developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
+ */
+const CREATOR_INFO_ERROR_MESSAGES: Record<string, string> = {
+  spam_risk_too_many_posts:
+    "This account has reached TikTok's daily posting limit. Please try again later.",
+  spam_risk_user_banned_from_posting:
+    "TikTok is not allowing this account to post right now. Please try again later.",
+  reached_active_user_cap:
+    "TikTok's daily publishing limit for Sharetopus is reached. Please try again later.",
+  access_token_invalid:
+    "Your TikTok connection has expired. Please reconnect the account.",
+  scope_not_authorized:
+    "This TikTok connection is missing the posting permission. Please reconnect the account.",
+  rate_limit_exceeded:
+    "TikTok is receiving too many requests. Please wait a minute and try again.",
+};
+
+/** Reads the TikTok error envelope from any response, 2xx or not. */
+async function readCreatorInfoResponse(
+  response: Response,
+): Promise<CreatorInfoApiResponse | null> {
+  try {
+    return (await response.json()) as CreatorInfoApiResponse;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Fetches TikTok creator info for the Content Posting API.
@@ -52,30 +84,27 @@ export async function getTikTokCreatorInfo(
       }
     );
 
-    if (!response.ok) {
-      const errorBody = await response.text();
+    // TikTok answers errors with a 4xx status AND the error envelope, so the
+    // code is read before the status decides anything.
+    const json = await readCreatorInfoResponse(response);
+    const errorCode = json?.error?.code;
+
+    if (!response.ok || (errorCode && errorCode !== "ok")) {
       console.error(
-        "[getTikTokCreatorInfo] HTTP error:",
+        "[getTikTokCreatorInfo] API error:",
         response.status,
-        errorBody
+        json?.error ?? "unreadable body",
       );
       return {
         success: false,
-        message: `TikTok API returned ${response.status}`,
+        message:
+          (errorCode && CREATOR_INFO_ERROR_MESSAGES[errorCode]) ??
+          json?.error?.message ??
+          `TikTok API returned ${response.status}`,
       };
     }
 
-    const json = (await response.json()) as CreatorInfoApiResponse;
-
-    if (json.error && json.error.code !== "ok") {
-      console.error("[getTikTokCreatorInfo] API error:", json.error);
-      return {
-        success: false,
-        message: json.error.message || "TikTok creator info query failed",
-      };
-    }
-
-    if (!json.data) {
+    if (!json?.data) {
       console.error("[getTikTokCreatorInfo] No data in response");
       return { success: false, message: "No creator info data returned" };
     }

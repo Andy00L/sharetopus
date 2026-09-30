@@ -28,13 +28,10 @@ async function fetchCreatorInfoOutcome(
 
 /**
  * TikTok creator info (privacy levels, interaction toggles, duration cap)
- * for each selected TikTok account, fetched once per account while
- * enabled. An account is loading until its outcome arrives.
+ * for each selected TikTok account, fetched once per account. An account
+ * is loading until its outcome arrives.
  */
-export function useTikTokCreatorInfo(
-  socialAccounts: ClientSocialAccount[],
-  enabled: boolean,
-) {
+export function useTikTokCreatorInfo(socialAccounts: ClientSocialAccount[]) {
   const [outcomes, setOutcomes] = useState<Record<string, CreatorInfoOutcome>>(
     {},
   );
@@ -43,8 +40,6 @@ export function useTikTokCreatorInfo(
   // Synchronizes with the TikTok creator-info API. Outcomes are stored when
   // the request settles; nothing is set synchronously here.
   useEffect(() => {
-    if (!enabled) return;
-
     for (const account of socialAccounts) {
       if (requestedAccountIdsRef.current.has(account.id)) continue;
       requestedAccountIdsRef.current.add(account.id);
@@ -56,14 +51,14 @@ export function useTikTokCreatorInfo(
         }));
       });
     }
-  }, [enabled, socialAccounts]);
+  }, [socialAccounts]);
 
   const creatorInfo: Record<string, CreatorInfoData> = {};
   const isLoading: Record<string, boolean> = {};
   const errors: Record<string, string | null> = {};
   for (const account of socialAccounts) {
     const outcome = outcomes[account.id];
-    isLoading[account.id] = enabled && outcome === undefined;
+    isLoading[account.id] = outcome === undefined;
     errors[account.id] = outcome && !outcome.ok ? outcome.message : null;
     if (outcome?.ok) {
       creatorInfo[account.id] = outcome.data;
