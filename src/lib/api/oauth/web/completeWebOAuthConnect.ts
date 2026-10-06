@@ -7,6 +7,7 @@ import {
   connectPlatformAccounts,
 } from "@/lib/api/oauth/connectPlatformAccounts";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
+import { popupCallbackNames } from "@/lib/api/oauth/web/popupCallbackNames";
 import type { PostingPlatform } from "@/lib/platforms/capabilities";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
@@ -18,24 +19,13 @@ export interface WebOAuthCallbackConfig {
   /** Must match the initiate route's cookie names. */
   stateCookieName: string;
   verifierCookieName?: string;
-  /** window.opener callback the popup invokes, e.g. "onYouTubeConnectSuccess". */
-  successCallbackName: string;
-  failureCallbackName: string;
-  /**
-   * The redirect URI the initiate route put in the authorize URL (its env
-   * var); the token exchange must send the same value.
-   */
+  /** Same value the initiate route put in the authorize URL. */
   redirectUri: string | undefined;
 }
 
 /**
- * Shared body of every /api/social/<platform>/connect callback route:
- * Clerk auth, provider-error handling, CSRF state verification, PKCE
- * verifier retrieval, the code exchange and profile read
- * (connectPlatformAccounts), the social_accounts upsert (one row per
- * returned account), and the popup HTML that notifies the opener window.
- *
- * Called by: /api/social/{linkedin,tiktok,pinterest,instagram,youtube,x,facebook}/connect
+ * Body of every /api/social/<platform>/connect route: verifies state, exchanges
+ * the code, upserts the accounts, and answers with the popup page.
  */
 export async function completeWebOAuthConnect(
   request: NextRequest,
@@ -85,8 +75,7 @@ export async function completeWebOAuthConnect(
       });
     }
 
-    // Clear both cookies immediately after verification; the PKCE verifier
-    // is single use by definition.
+    // Both cookies are single use.
     cookieStore.delete(config.stateCookieName);
     let codeVerifier: string | null = null;
     if (config.verifierCookieName) {
@@ -155,9 +144,7 @@ export async function completeWebOAuthConnect(
       });
     }
 
-    // Upsert one social_accounts row per returned account. The unique key
-    // (principal_id, platform, account_identifier) makes reconnects update
-    // in place, mirroring handleOAuthCallback in the x402 flow.
+    // The unique key (principal_id, platform, account_identifier) makes a reconnect update in place.
     for (const connectedAccount of exchangeResult.accounts) {
       const accountValues = buildSocialAccountValues(
         userId,
@@ -217,14 +204,7 @@ export async function completeWebOAuthConnect(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Popup HTML
-// ---------------------------------------------------------------------------
-
-/**
- * The popup result page invokes the opener callback by name and closes
- * itself, matching the contract of the platform Connect buttons.
- */
+/** Popup page that calls the opener's callback (see popupCallbackNames) and closes itself. */
 function buildPopupResponse(
   config: WebOAuthCallbackConfig,
   page: {
@@ -235,9 +215,8 @@ function buildPopupResponse(
     status: number;
   },
 ): NextResponse {
-  const callbackName = page.ok
-    ? config.successCallbackName
-    : config.failureCallbackName;
+  const callbackNames = popupCallbackNames(config.platform);
+  const callbackName = page.ok ? callbackNames.success : callbackNames.failure;
   const callbackArgs = page.ok ? "" : toJsString(page.errorMessage ?? "");
 
   const html = `<!DOCTYPE html>
