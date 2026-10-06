@@ -10,11 +10,10 @@ import { buildAttachedMediaPath } from "../_shared/buildAttachedMediaPath";
 import { enforceStorageQuota } from "../_shared/enforceStorageQuota";
 import { getUploadLimitsForPrincipal } from "../_shared/getUploadLimitsForPrincipal";
 import { safeUserFetch } from "../_shared/safeUserFetch";
-import { withMcpTool } from "../withMcpTool";
+import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
 type AttachMediaFromUrlArgs = {
   url: string;
-  filename?: string;
 };
 
 const ALLOWED_CONTENT_TYPES = [
@@ -29,26 +28,15 @@ const ALLOWED_CONTENT_TYPES = [
 
 const ALLOWED_CONTENT_TYPE_PREFIXES = ["image/", "video/"];
 
+const AttachMediaFromUrlOutputSchema = z.object({
+  storage_path: z.string(),
+  content_type: z.string(),
+  size_bytes: z.number(),
+});
+
 /**
- * Fetches a media file from a public URL and uploads it to Supabase
- * Storage.
- *
- * Plan gate: starter+ (entitlement gate + monthly quota enforced by HOF).
- * Tables touched: none (writes to Supabase Storage, not a table).
- *
- * The returned storage path can be passed to schedule_post or
- * bulk_schedule as the media_storage_path field.
- *
- * Only accepts image and video content types. Per-user size caps are
- * enforced via streaming byte count (Content-Length is not trusted).
- * URLs are validated against SSRF attacks: DNS-resolved IPs are checked
- * against private/reserved ranges, redirects are rejected, and
- * non-http(s) schemes are blocked.
- *
- * Audit: full args include only `url` for deny / rate_limited / error
- * paths via auditArgsBuilder. On success, the handler-returned
- * auditArgs adds the resolved storage_path so analytics can correlate
- * uploads with downstream schedule_post / post_now calls.
+ * Downloads a public image or video (SSRF-guarded, size-capped by plan) into
+ * storage and returns the path publish_posts takes as media_storage_path.
  */
 export function registerAttachMediaFromUrl(server: McpServer): void {
   server.registerTool(
@@ -56,16 +44,11 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
     {
       title: "Attach Media From URL",
       description:
-        "Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with schedule_post.",
+        "Copy an image or video from a public URL into storage (JPEG, PNG, GIF, WebP, MP4, MOV, WebM; no redirects). Returns storage_path to pass as media_storage_path in publish_posts.",
       inputSchema: z.object({
-        url: z.url().describe("Public HTTP(S) URL of the media file"),
-        filename: z
-          .string()
-          .optional()
-          .describe(
-            "Optional label, retained for compatibility. The stored object name is always a random id; this value is not used to build the storage path.",
-          ),
+        url: z.url().describe("Public http(s) URL of the file."),
       }),
+      outputSchema: AttachMediaFromUrlOutputSchema,
       annotations: {
         title: "Attach Media From URL",
         readOnlyHint: false,
@@ -77,7 +60,6 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
     withMcpTool(
       "attach_media_from_url",
       async (ctx, args: AttachMediaFromUrlArgs) => {
-        // Rate limit before any network I/O.
         const rateLimitResult = await checkRateLimit(
           "mcp_attach_media_from_url",
           ctx.principal.principalId,
@@ -85,15 +67,12 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
           60,
         );
         if (!rateLimitResult.success) {
-          return {
-            content: [{ type: "text", text: rateLimitResult.message }],
-            isError: true,
-            auditStatus:
-              rateLimitResult.reason === "limited" ? "rate_limited" : "error",
-          };
+          return errorResult(
+            rateLimitResult.message,
+            rateLimitResult.reason === "limited" ? "rate_limited" : "error",
+          );
         }
 
-        // Per-user upload size caps (MB -> bytes).
         const uploadLimits = getUploadLimitsForPrincipal(ctx.principal.plan);
         const maxBytes =
           Math.max(uploadLimits.image, uploadLimits.video) * 1024 * 1024;
@@ -116,45 +95,30 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
             fetchResult.reason === "too_large" ||
             fetchResult.reason === "invalid_url";
 
-          return {
-            content: [{ type: "text", text: fetchResult.message }],
-            isError: true,
-            auditStatus: isDenied ? "denied" : "error",
-          };
+          return errorResult(fetchResult.message, isDenied ? "denied" : "error");
         }
 
-        // Type-specific size cap (image vs video).
         const isVideo = fetchResult.contentType.startsWith("video/");
         const specificCapMb = isVideo ? uploadLimits.video : uploadLimits.image;
         const specificCapBytes = specificCapMb * 1024 * 1024;
         if (fetchResult.bytes.length > specificCapBytes) {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  `File too large: ${Math.round(fetchResult.bytes.length / 1024 / 1024)} MB. ` +
-                  `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
-              },
-            ],
-            isError: true,
-            auditStatus: "denied",
-          };
+          return errorResult(
+            `File too large: ${Math.round(fetchResult.bytes.length / 1024 / 1024)} MB. ` +
+              `${isVideo ? "Video" : "Image"} limit is ${specificCapMb} MB.`,
+            "denied",
+          );
         }
 
-        // Aggregate storage quota check (after download, before upload).
         const quotaResult = await enforceStorageQuota(
           ctx.principal.principalId,
           ctx.principal.plan,
           fetchResult.bytes.length,
         );
         if (!quotaResult.success) {
-          return {
-            content: [{ type: "text", text: quotaResult.message }],
-            isError: true,
-            auditStatus:
-              quotaResult.reason === "quota_exceeded" ? "denied" : "error",
-          };
+          return errorResult(
+            quotaResult.message,
+            quotaResult.reason === "quota_exceeded" ? "denied" : "error",
+          );
         }
 
         // The key never includes the filename or the URL basename.
@@ -172,55 +136,27 @@ export function registerAttachMediaFromUrl(server: McpServer): void {
             });
 
           if (uploadError) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Storage upload failed: ${uploadError.message}`,
-                },
-              ],
-              isError: true,
-            };
+            console.error("[attach_media_from_url] Storage upload failed:", uploadError.message);
+            return errorResult("Could not store the file. Retry in a moment.");
           }
         } catch (uploadThrown) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Failed to upload media: ${uploadThrown instanceof Error ? uploadThrown.message : "unknown error"}`,
-              },
-            ],
-            isError: true,
-          };
+          console.error(
+            "[attach_media_from_url] Storage upload threw:",
+            uploadThrown instanceof Error ? uploadThrown.message : uploadThrown,
+          );
+          return errorResult("Could not store the file. Retry in a moment.");
         }
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  storage_path: storagePath,
-                  content_type: fetchResult.contentType,
-                  size_bytes: fetchResult.bytes.length,
-                  message:
-                    "Media uploaded. Use this storage_path as media_storage_path in schedule_post.",
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-          auditArgs: { url: args.url, storagePath },
-        };
+        return jsonResult(
+          {
+            storage_path: storagePath,
+            content_type: fetchResult.contentType,
+            size_bytes: fetchResult.bytes.length,
+          } satisfies z.infer<typeof AttachMediaFromUrlOutputSchema>,
+          { url: args.url, storagePath },
+        );
       },
-      {
-        // Default for deny / rate_limited / denied / error / thrown paths.
-        // Success path overrides via handler-returned auditArgs to include
-        // the resolved storage_path.
-        auditArgsBuilder: (args) => ({ url: args.url }),
-      },
+      { auditArgsBuilder: (args) => ({ url: args.url }) },
     ),
   );
 }

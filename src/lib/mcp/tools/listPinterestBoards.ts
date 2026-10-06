@@ -1,16 +1,15 @@
 import "server-only";
 
+import type { McpServer } from "@modelcontextprotocol/server";
 import { and, eq, isNull } from "drizzle-orm";
+import { z } from "zod";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
-import type { SocialAccount } from "@/lib/types/dbTypes";
-import type { McpServer } from "@modelcontextprotocol/server";
-import { z } from "zod";
 
-import { withMcpTool } from "../withMcpTool";
+import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
 type ListPinterestBoardsArgs = {
   social_account_id: string;
@@ -18,194 +17,106 @@ type ListPinterestBoardsArgs = {
   bookmark?: string;
 };
 
-/**
- * Lists Pinterest boards for a connected Pinterest account.
- *
- * Plan gate: free (read-only).
- * Tables read: social_accounts.
- * External call: GET https://api.pinterest.com/v5/boards (via getPinterestBoards).
- *
- * Token refresh is delegated to ensureValidToken so this tool never
- * runs Pinterest's auth flow itself. If the refresh fails, the tool
- * returns a reauth_url so the agent can ask the user to reconnect.
- *
- * Pagination: pass `bookmark` from the previous response to fetch the
- * next page. Page size defaults to 25 (Pinterest default), max 100.
- */
+const ListPinterestBoardsOutputSchema = z.object({
+  boards: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      description: z.string().optional(),
+      privacy: z.string().optional(),
+      pin_count: z.number().optional(),
+    }),
+  ),
+  bookmark: z.string().nullable(),
+});
+
+/** Lists a Pinterest account's boards, one page at a time (bookmark cursor). */
 export function registerListPinterestBoards(server: McpServer): void {
   server.registerTool(
     "list_pinterest_boards",
     {
       title: "List Pinterest Boards",
       description:
-        "List Pinterest boards for a connected Pinterest account. Returns board id, name, description, privacy, and pin_count. Supports pagination via the bookmark cursor.",
+        "List the boards of a connected Pinterest account. A Pinterest post needs one board id as pinterest_board_id. Pass the returned bookmark to get the next page.",
       inputSchema: z.object({
-        social_account_id: z
-          .guid()
-          .describe("ID of the Pinterest social_accounts row"),
-        page_size: z
-          .number()
-          .int()
-          .min(1)
-          .max(100)
-          .optional()
-          .default(25)
-          .describe("Number of boards to return per page (1-100, default 25)"),
-        bookmark: z
-          .string()
-          .optional()
-          .describe("Pagination cursor from a previous response"),
+        social_account_id: z.guid().describe("A Pinterest account id from list_connections."),
+        page_size: z.number().int().min(1).max(100).optional().default(25),
+        bookmark: z.string().optional(),
       }),
-      annotations: {
-        title: "List Pinterest Boards",
-        readOnlyHint: true,
-        openWorldHint: true,
-      },
+      outputSchema: ListPinterestBoardsOutputSchema,
+      annotations: { title: "List Pinterest Boards", readOnlyHint: true, openWorldHint: true },
     },
-    withMcpTool(
-      "list_pinterest_boards",
-      async (ctx, args: ListPinterestBoardsArgs) => {
-        const baseUrl =
-          process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
+    withMcpTool("list_pinterest_boards", async (ctx, args: ListPinterestBoardsArgs) => {
+      const reconnectUrl = `${process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com"}/connections`;
 
-        // 1. Resolve the account, scoped to principal + platform=pinterest.
-        const { data: pinterestAccounts, error: accountFetchError } =
-          await runQuery(
-            db
-              .select({
-                id: social_accounts.id,
-                platform: social_accounts.platform,
-                principal_id: social_accounts.principal_id,
-                access_token: social_accounts.access_token,
-                refresh_token: social_accounts.refresh_token,
-                token_expires_at: social_accounts.token_expires_at,
-              })
-              .from(social_accounts)
-              .where(
-                and(
-                  eq(social_accounts.id, args.social_account_id),
-                  eq(social_accounts.principal_id, ctx.principal.principalId),
-                  eq(social_accounts.platform, "pinterest"),
-                  isNull(social_accounts.deleted_at),
-                ),
-              )
-              .limit(1),
-          );
-
-        if (accountFetchError) {
-          console.error(
-            `[mcp/list_pinterest_boards] [req=${ctx.requestId ?? "?"}] Account fetch error:`,
-            accountFetchError.message,
-          );
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Failed to look up the Pinterest account.",
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const pinterestAccount = pinterestAccounts[0];
-        if (!pinterestAccount) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "Pinterest account not found for this principal. Use list_connections to see your connected accounts.",
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        // 2. Ensure the token is fresh (refresh if expired).
-        const tokenRefreshResult = await ensureValidToken(
-          pinterestAccount as SocialAccount,
+      const { data: pinterestAccounts, error: accountFetchError } = await runQuery(
+        db
+          .select()
+          .from(social_accounts)
+          .where(
+            and(
+              eq(social_accounts.id, args.social_account_id),
+              eq(social_accounts.principal_id, ctx.principal.principalId),
+              eq(social_accounts.platform, "pinterest"),
+              isNull(social_accounts.deleted_at),
+            ),
+          )
+          .limit(1),
+      );
+      if (accountFetchError) {
+        console.error(
+          `[list_pinterest_boards] [req=${ctx.requestId ?? "?"}] Account fetch error:`,
+          accountFetchError.message,
         );
-        if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: false,
-                    message:
-                      tokenRefreshResult.error ??
-                      "Pinterest token cannot be refreshed. User must reconnect.",
-                    reauth_url: `${baseUrl}/connections`,
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-            isError: true,
-          };
-        }
+        return errorResult("Could not look up the Pinterest account. Retry in a moment.");
+      }
 
-        // 3. Call the shared helper.
-        const boardsResult = await getPinterestBoards(
-          tokenRefreshResult.token,
-          ctx.principal.principalId,
-          { pageSize: args.page_size, bookmark: args.bookmark },
+      const pinterestAccount = pinterestAccounts[0];
+      if (!pinterestAccount) {
+        return errorResult(
+          "No Pinterest account with that id. Call list_connections for your Pinterest account ids.",
         );
+      }
 
-        if (!boardsResult.success) {
-          const isExpired = boardsResult.failure === "token_expired";
-          const failureMessage = isExpired
-            ? "Pinterest token is no longer valid. The user needs to reconnect."
-            : boardsResult.failure === "rate_limited"
-              ? `Too many Pinterest board requests. Retry in ${boardsResult.resetIn ?? 60} s.`
-              : boardsResult.failure === "unavailable"
-                ? "Could not check the rate limit. Please try again."
-                : "Failed to fetch Pinterest boards. Pinterest API may be unavailable.";
+      const tokenRefreshResult = await ensureValidToken(pinterestAccount);
+      if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
+        return errorResult(
+          `This Pinterest account needs to be reconnected: ask the user to open ${reconnectUrl}.`,
+        );
+      }
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify(
-                  {
-                    success: false,
-                    message: failureMessage,
-                    expired: isExpired,
-                    ...(isExpired
-                      ? { reauth_url: `${baseUrl}/connections` }
-                      : {}),
-                  },
-                  null,
-                  2,
-                ),
-              },
-            ],
-            isError: true,
-            auditStatus:
-              boardsResult.failure === "rate_limited" ? "rate_limited" : "error",
-          };
+      const boardsResult = await getPinterestBoards(
+        tokenRefreshResult.token,
+        ctx.principal.principalId,
+        { pageSize: args.page_size, bookmark: args.bookmark },
+      );
+      if (!boardsResult.success) {
+        switch (boardsResult.failure) {
+          case "token_missing":
+          case "token_expired":
+            return errorResult(
+              `Pinterest refused the account's token: ask the user to reconnect at ${reconnectUrl}.`,
+            );
+          case "rate_limited":
+            return errorResult(
+              `Too many Pinterest board requests. Retry in ${boardsResult.resetIn ?? 60} s.`,
+              "rate_limited",
+            );
+          case "unavailable":
+            return errorResult("Could not check the rate limit. Retry in a moment.");
+          case "upstream_error":
+            return errorResult("Pinterest did not answer. Retry in a moment.");
+          default: {
+            const unhandledFailure: never = boardsResult.failure;
+            return errorResult(`Unexpected failure ${String(unhandledFailure)}.`);
+          }
         }
+      }
 
-        // 4. Success.
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  boards: boardsResult.boards,
-                  bookmark: boardsResult.bookmark,
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-        };
-      },
-    ),
+      return jsonResult({
+        boards: boardsResult.boards,
+        bookmark: boardsResult.bookmark,
+      } satisfies z.infer<typeof ListPinterestBoardsOutputSchema>);
+    }),
   );
 }

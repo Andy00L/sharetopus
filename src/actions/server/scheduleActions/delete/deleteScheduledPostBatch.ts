@@ -125,7 +125,7 @@ export async function deleteScheduledPostBatch(
       return {
         success: false,
         failure: "not_found",
-        message: "You do not own some of these posts.",
+        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
       };
     }
 

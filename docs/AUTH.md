@@ -332,12 +332,11 @@ A limiter outage lets the request through. Limit hits are logged to the `rate_li
 
 | Tool | Creator cap | Pro cap |
 |------|-------------|---------|
-| `schedule_post` | 500 | unlimited |
-| `post_now` | 500 | unlimited |
-| `bulk_schedule` | 200 | unlimited |
-| `generate_post_draft` | 100 | unlimited |
+| `publish_posts` | 500 | unlimited |
+| `request_upload_url` | 500 | unlimited |
+| `attach_media_from_url` | 500 | unlimited |
 
-Read-only tools (`list_connections`, `list_scheduled_posts`, etc.) have no monthly cap.
+Read-only tools (`list_connections`, `list_posts`, etc.) and `update_scheduled_posts` / `delete_scheduled_posts` have no monthly cap.
 
 ---
 

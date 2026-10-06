@@ -15,7 +15,7 @@
 [![REST API](https://img.shields.io/badge/Surface-REST_API-22c55e)]()
 [![x402](https://img.shields.io/badge/Surface-x402_USDC-3b82f6)]()
 
-Social media scheduling and publishing from one dashboard, one MCP server, one REST API, and one pay-per-call x402 API. Posting runs end to end on LinkedIn, TikTok, and Pinterest; Instagram, YouTube, X, and Facebook have OAuth and publish code that is not yet verified in production. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 18 MCP tools. The REST API exposes 31 endpoints with Bearer auth, webhook subscriptions, and OpenAPI docs.
+Social media scheduling and publishing from one dashboard, one MCP server, one REST API, and one pay-per-call x402 API. Posting runs end to end on LinkedIn, TikTok, and Pinterest; Instagram, YouTube, X, and Facebook have OAuth and publish code that is not yet verified in production. AI agents (Claude Desktop, Cursor) manage posts on behalf of subscribers through 10 MCP tools. The REST API exposes 31 endpoints with Bearer auth, webhook subscriptions, and OpenAPI docs.
 
 **Production:** [sharetopus.com](https://sharetopus.com)
 
@@ -25,20 +25,20 @@ Social media scheduling and publishing from one dashboard, one MCP server, one R
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, and Pinterest. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 18 MCP tools and a 31-endpoint REST API. Agents without a subscription pay per action in USDC through x402. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, and Pinterest. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 10 MCP tools and a 31-endpoint REST API. Agents without a subscription pay per action in USDC through x402. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
 
 ## ✨ Surfaces
 
 | Surface | Status | Auth | Description |
 |---------|--------|------|-------------|
 | Web UI | Shipped | Clerk session | Browser dashboard at sharetopus.com |
-| MCP | Shipped | Clerk OAuth / API key | 18 tools for AI agents (Claude Desktop, Cursor) |
+| MCP | Shipped | Clerk OAuth / API key | 10 tools for AI agents (Claude Desktop, Cursor) |
 | REST API | Shipped | `stp_rest_*` Bearer token | 31 endpoints, webhooks, OpenAPI docs |
 | x402 | Shipped | USDC payment per request | Pay-per-action API for agents, 6 networks, no account needed |
 
 **Web App.** Clerk authentication, Stripe billing, post creation with per-platform customization, scheduling calendar, content history. See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
-**MCP Server.** Streamable HTTP at `/api/mcp/mcp`. Requires Creator plan or above ($18/mo). 18 tools across read (list connections, posts, analytics) and write (schedule, post now, bulk operations, media upload). See [docs/MCP.md](./docs/MCP.md).
+**MCP Server.** Streamable HTTP at `/api/mcp/mcp`. Requires Creator plan or above ($18/mo). 10 tools: read (connections, posts, analytics), media upload, and posting (one `publish_posts` call publishes now or schedules up to 30 posts). See [docs/MCP.md](./docs/MCP.md).
 
 **REST API.** 31 endpoints under `/api/v1/` with Bearer auth via `stp_rest_*` keys. Every request audited to `rest_audit_log`. Rate-limited per principal. Webhook subscriptions with HMAC-SHA256 signing (5 event types, auto-disable after 10 failures). OpenAPI spec at `/api/v1/openapi.json`, interactive docs at `/docs/api` (Scalar). See [docs/REST.md](./docs/REST.md).
 
@@ -95,14 +95,15 @@ Details per platform: [docs/PLATFORMS.md](./docs/PLATFORMS.md).
 
 Streamable HTTP at `/api/mcp/mcp`, stateless: mcp-handler 2.x serves protocol 2026-07-28 and 2025-era clients from the same URL. Authenticated via Clerk OAuth tokens or `stp_mcp_*` API keys. Both resolve to a `principal_id` with a cached subscription tier.
 
-18 tools, all requiring Creator plan ($18/mo) or above:
+10 tools, all requiring Creator plan ($18/mo) or above. A text post takes two calls: `list_connections`, then `publish_posts`.
 
 | Category | Tools |
 |----------|-------|
-| Read | list_connections, list_pinterest_boards, list_scheduled_posts, list_content_history, list_billing_summary, request_account_reauth_link, get_account_analytics, generate_post_draft |
-| Write (quota-gated) | schedule_post, post_now, cancel_scheduled_posts, resume_scheduled_posts, reschedule_posts, delete_scheduled_posts, attach_media_from_url, request_upload_url, bulk_schedule, bulk_post_now |
+| Read | list_connections, list_pinterest_boards, list_posts, list_billing_summary, get_account_analytics |
+| Media (quota-gated) | attach_media_from_url, request_upload_url |
+| Posting | publish_posts (quota-gated), update_scheduled_posts, delete_scheduled_posts |
 
-Write tools support idempotent retries via `idempotency_key`. See [docs/MCP.md](./docs/MCP.md) for the full tool inventory, parameter schemas, and usage examples.
+`publish_posts` takes 1 to 30 posts: a post with `scheduled_at` is scheduled, one without it publishes now. Passing the same `batch_id` again makes a retry safe. See [docs/MCP.md](./docs/MCP.md) for parameters and examples.
 
 ## ⚡ Background Jobs
 
@@ -138,8 +139,8 @@ Three Stripe subscription tiers. MCP access starts at Creator.
 | Tier | Monthly | Yearly | Accounts | Storage | MCP Access |
 |------|---------|--------|----------|---------|------------|
 | Starter | $9 | $64 | 5 | 5 GB | Web only |
-| Creator | $18 | $129 | 15 | 15 GB | All 18 tools (quotas apply) |
-| Pro | $27 | $194 | Unlimited | 45 GB | All 18 tools (unlimited) |
+| Creator | $18 | $129 | 15 | 15 GB | All 10 tools (quotas apply) |
+| Pro | $27 | $194 | Unlimited | 45 GB | All 10 tools (unlimited) |
 
 See [docs/BILLING.md](./docs/BILLING.md).
 
@@ -153,7 +154,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/DATABASE.md](./docs/DATABASE.md) | All 35 tables, schema changes with Drizzle, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
 | [docs/INNGEST.md](./docs/INNGEST.md) | 16 background functions, cron schedules, sweep jobs |
-| [docs/MCP.md](./docs/MCP.md) | MCP server: 18 tools, auth, withMcpTool HOF, usage examples |
+| [docs/MCP.md](./docs/MCP.md) | MCP server: 10 tools, auth, withMcpTool HOF, usage examples |
 | [docs/REST.md](./docs/REST.md) | REST API: 32 handlers, withRestEndpoint HOF, validation, audit |
 | [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Webhook subsystem: signing, retry, replay, auto-disable |
 | [docs/PLATFORMS.md](./docs/PLATFORMS.md) | Per-platform OAuth, posting flows, quirks |

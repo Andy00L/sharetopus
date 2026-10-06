@@ -13,13 +13,7 @@ import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
-/**
- * POST /v1/posts/bulk -- schedule up to 30 posts in one call.
- *
- * Reuses schedulePostBatch (same function MCP bulk_schedule calls).
- * Each item goes through restInputToSchedulePostData for shape
- * translation. A shared batch_id groups all posts.
- */
+/** POST /v1/posts/bulk: schedules up to 30 posts under one batch_id through schedulePostBatch, like publish_posts. */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.bulk",

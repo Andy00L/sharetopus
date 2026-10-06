@@ -3,12 +3,7 @@ import { z } from "zod";
 
 import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 
-/**
- * Prompt: plan a week of content for a specific platform.
- *
- * Returns a structured user message that asks the agent to plan
- * 5-7 posts around a theme for the given platform.
- */
+/** Prompt: plan 5 to 7 posts for one platform around a theme. */
 export function registerPlanWeekForPlatform(server: McpServer): void {
   server.registerPrompt(
     "plan_week_for_platform",
@@ -38,7 +33,7 @@ export function registerPlanWeekForPlatform(server: McpServer): void {
               "4. Note whether it needs an image, video, or is text-only",
               "",
               "After drafting the plan, ask me which posts I want to schedule.",
-              "For the ones I approve, use the schedule_post or bulk_schedule tool.",
+              "Schedule the ones I approve in one publish_posts call, each with its scheduled_at.",
               "",
               `Keep the tone appropriate for ${platform}. If it's LinkedIn, keep it professional.`,
               "If it's TikTok, make it punchy and short. You get the idea.",

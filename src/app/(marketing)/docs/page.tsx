@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 
+import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
+
 export const metadata: Metadata = {
   title: "Docs - Sharetopus",
   description:
@@ -38,7 +40,7 @@ const references = [
   },
   {
     title: "MCP Server Reference",
-    description: "18 tools for Claude Desktop, Cursor, and other MCP clients",
+    description: `${MCP_TOOL_NAMES.length} tools for Claude Desktop, Cursor, and other MCP clients`,
     href: "/docs/mcp",
   },
   {

@@ -3,12 +3,7 @@ import "server-only";
 import { MCP_TOOL_NAMES, type McpToolName } from "@/lib/mcp/toolNames";
 import { SITE_ORIGIN } from "./markdownPrimitives";
 
-/**
- * Shared catalog behind the two MCP doc surfaces: the markdown twin
- * (buildMcpDocMarkdown.ts, served at /docs/mcp.md) and the HTML
- * reference page (src/app/(marketing)/(api-reference)/docs/mcp). One
- * source so the surfaces cannot drift.
- */
+// Shared by the /docs/mcp page and its markdown twin (/docs/mcp.md), so the two cannot drift.
 
 export const MCP_ENDPOINTS = {
   // sourceRef: src/app/api/mcp/mcp/route.ts (the only MCP route),
@@ -16,126 +11,67 @@ export const MCP_ENDPOINTS = {
   streamableHttp: `${SITE_ORIGIN}/api/mcp/mcp`,
 } as const;
 
-export type McpToolGroup =
-  | "Read tools"
-  | "Write tools"
-  | "Advanced tools"
-  | "AI tools";
+export type McpToolGroup = "Read tools" | "Media tools" | "Posting tools";
 
 export interface McpToolDocEntry {
   group: McpToolGroup;
   summary: string;
 }
 
-/**
- * One-line documentation per MCP tool, keyed by McpToolName so the
- * compiler forces both doc surfaces to be updated whenever a tool is
- * added to MCP_TOOL_NAMES. Summaries mirror the description strings
- * passed to registerTool in each handler; groups mirror the
- * toolNames.ts comments.
- * sourceRef: src/lib/mcp/tools/<toolFile>.ts (description fields),
- *            src/lib/mcp/toolNames.ts (grouping)
- */
+/** One line per tool, keyed by McpToolName so a new tool cannot ship undocumented. */
 export const MCP_TOOL_DOCS: Record<McpToolName, McpToolDocEntry> = {
   list_connections: {
     group: "Read tools",
     summary:
-      "List your connected social accounts with platform, display name, and availability status.",
+      "Your connected accounts with id, platform and status; an account in needs_reconnect status is fixed at reconnect_url.",
   },
   list_pinterest_boards: {
     group: "Read tools",
+    summary: "The boards of a Pinterest account, paged with a bookmark cursor.",
+  },
+  list_posts: {
+    group: "Read tools",
     summary:
-      "List Pinterest boards for a connected Pinterest account, with pagination via the bookmark cursor.",
-  },
-  list_scheduled_posts: {
-    group: "Read tools",
-    summary: "List your scheduled posts, with optional platform or status filter.",
-  },
-  list_content_history: {
-    group: "Read tools",
-    summary: "View your posted content history, with optional platform filter.",
+      "Posts by status (upcoming, published, failed, cancelled), or every post of one publish_posts call by batch_id.",
   },
   list_billing_summary: {
     group: "Read tools",
-    summary:
-      "View your current subscription plan, status, and monthly usage quota counts.",
-  },
-  request_account_reauth_link: {
-    group: "Read tools",
-    summary:
-      "Get a re-authentication link for a social account with an expired token. The user opens it in a browser.",
-  },
-  attach_media_from_url: {
-    group: "Write tools",
-    summary:
-      "Download media from a public URL into Sharetopus storage. Returns a storage path for posting tools.",
-  },
-  request_upload_url: {
-    group: "Write tools",
-    summary:
-      "Get a signed URL for uploading media directly to Sharetopus storage.",
-  },
-  schedule_post: {
-    group: "Write tools",
-    summary:
-      "Schedule one post for a future time. Upload media first; use list_connections to find account ids.",
-  },
-  post_now: {
-    group: "Write tools",
-    summary:
-      "Publish one post to one platform immediately. Returns an event id; confirm via list_content_history after 30 to 60 seconds.",
-  },
-  cancel_scheduled_posts: {
-    group: "Write tools",
-    summary:
-      "Cancel scheduled posts. Only posts with status scheduled can be cancelled.",
-  },
-  resume_scheduled_posts: {
-    group: "Write tools",
-    summary:
-      "Resume cancelled posts. Past-dated posts are rescheduled to one hour from now.",
-  },
-  reschedule_posts: {
-    group: "Write tools",
-    summary:
-      "Change the scheduled time of up to 50 posts. Cancelled posts are resumed by the move.",
-  },
-  delete_scheduled_posts: {
-    group: "Write tools",
-    summary: "Permanently delete scheduled posts. Not reversible.",
-  },
-  bulk_schedule: {
-    group: "Advanced tools",
-    summary:
-      "Schedule up to 30 posts in one call, for cross-posting or a content series. Supply batch_id to make retries safe.",
-  },
-  bulk_post_now: {
-    group: "Advanced tools",
-    summary:
-      "Publish up to 30 posts immediately across platforms and accounts, reusing one media upload.",
+    summary: "Your plan, its status, and this month's calls of each capped tool against its limit.",
   },
   get_account_analytics: {
-    group: "Advanced tools",
-    summary:
-      "Fetch performance metrics (views, likes, comments, shares) for your content. Data may lag up to 24 hours.",
+    group: "Read tools",
+    summary: "Daily views, likes, comments, shares and subscribers for your content; up to 24 hours old.",
   },
-  generate_post_draft: {
-    group: "AI tools",
+  attach_media_from_url: {
+    group: "Media tools",
+    summary: "Copies an image or video from a public URL into storage and returns its storage_path.",
+  },
+  request_upload_url: {
+    group: "Media tools",
+    summary: "A signed URL to PUT a local image or video; returns the storage_path to post it.",
+  },
+  publish_posts: {
+    group: "Posting tools",
     summary:
-      "Generate a draft post using the connected client's own LLM, at no Sharetopus inference cost.",
+      "Publishes or schedules 1 to 30 posts in one call: scheduled_at schedules a post, no scheduled_at publishes it now.",
+  },
+  update_scheduled_posts: {
+    group: "Posting tools",
+    summary: "Cancels, resumes or reschedules up to 50 scheduled posts.",
+  },
+  delete_scheduled_posts: {
+    group: "Posting tools",
+    summary: "Permanently deletes up to 50 scheduled posts.",
   },
 };
 
 export const MCP_TOOL_GROUP_ORDER: readonly McpToolGroup[] = [
   "Read tools",
-  "Write tools",
-  "Advanced tools",
-  "AI tools",
+  "Media tools",
+  "Posting tools",
 ];
 
-/**
- * Lists the tools of one group in the canonical MCP_TOOL_NAMES order.
- */
+/** The tools of one group, in MCP_TOOL_NAMES order. */
 export function listMcpToolsInGroup(
   group: McpToolGroup,
 ): { name: McpToolName; summary: string }[] {
@@ -147,12 +83,7 @@ export function listMcpToolsInGroup(
   }));
 }
 
-/**
- * Prompt templates registered on the server, with their registered
- * names and description strings.
- * sourceRef: src/lib/mcp/prompts/planWeekForPlatform.ts,
- *            repurposePost.ts, auditCalendar.ts
- */
+/** The registered prompt templates (src/lib/mcp/prompts). */
 export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
   {
     name: "plan_week_for_platform",
@@ -173,13 +104,7 @@ export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
 
 // Client setup shared by the docs pages and McpDocsCard. sourceRef: claude.com/docs/connectors/custom/remote-mcp, code.claude.com/docs/en/mcp
 
-/**
- * Claude web and desktop add the server as a custom connector. Claude's
- * default OAuth client option ("Use Claude's published identity") works
- * because Clerk publishes client ID metadata documents (enabled
- * 2026-09-23), so the steps need no OAuth client choice. Dynamic client
- * registration is off, which rules out "Register automatically".
- */
+/** Claude's default OAuth option works because Clerk publishes client ID metadata documents; dynamic registration is off. */
 export const MCP_CLAUDE_CONNECT_STEPS =
   "Open Customize > Connectors > Add custom connector, paste the URL, and click Add. Then click Connect and sign in to Sharetopus.";
 

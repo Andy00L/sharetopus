@@ -136,7 +136,7 @@ export async function updateScheduledTimeBatch(
       return {
         success: false,
         failure: "not_found",
-        message: "You do not own some of these posts.",
+        message: `No post found for id(s): ${unauthorized.map((post) => post.id).join(", ")}.`,
       };
     }
 

@@ -35,7 +35,7 @@ export type DispatchPostNowEventsResult =
  *     the locks.
  *
  * Callers: web direct-post path (handleSocialMediaPost.dispatchDirectPostEvents),
- *          MCP post_now tool, MCP bulk_post_now tool, future REST/x402 endpoints.
+ *          directPostBatch (MCP publish_posts, REST, x402).
  *
  * Tables touched: pending_direct_posts (select + insert)
  * Inngest events sent: post.now (one per new element)

@@ -16,12 +16,7 @@ import {
 } from "@/lib/mcp/rateLimits";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 
-/**
- * Content model for the public /docs/mcp reference page. Tool and prompt
- * rows come from the shared MCP catalog (src/lib/docs/mcpCatalog.ts), the
- * same source the markdown twin /docs/mcp.md renders, so the two surfaces
- * cannot drift. Prose facts carry sourceRefs like the x402 data file.
- */
+// Content of /docs/mcp. Tool and prompt rows come from mcpCatalog.ts, shared with /docs/mcp.md.
 
 export const MCP_OVERVIEW = {
   title: "MCP Server Reference",
@@ -33,9 +28,8 @@ export const MCP_OVERVIEW = {
 
 const TOOL_GROUP_SECTION_IDS: Record<McpToolGroup, string> = {
   "Read tools": "tools-read",
-  "Write tools": "tools-write",
-  "Advanced tools": "tools-advanced",
-  "AI tools": "tools-ai",
+  "Media tools": "tools-media",
+  "Posting tools": "tools-posting",
 };
 
 function buildToolGroupSection(group: McpToolGroup): DocsSection {
@@ -169,27 +163,23 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
     id: "typical-flow",
     navLabel: "Typical flow",
     title: "Typical flow",
-    summary: "The four-step path from a fresh session to a confirmed post.",
-    sourceRef: "src/lib/docs/buildMcpDocMarkdown.ts (typical flow)",
+    summary: "A text post takes two calls; media adds one. The server sends the same guide to every client when it connects.",
+    sourceRef: "src/lib/mcp/serverInstructions.ts",
     table: {
       columns: ["Step", "Tool", "Purpose"],
       rows: [
-        ["1", "list_connections", "Find social account ids and availability"],
+        ["1", "list_connections", "Take the account ids (platform and status come with them)"],
         [
           "2",
           "attach_media_from_url",
-          "Upload media when the post carries an image or video (or request_upload_url)",
+          "Only for an image or video (or request_upload_url for a local file); returns storage_path",
         ],
         [
           "3",
-          "schedule_post",
-          "Schedule (or post_now to publish immediately) with the account id and storage path",
+          "publish_posts",
+          "One entry per account; scheduled_at schedules a post, no scheduled_at publishes it now",
         ],
-        [
-          "4",
-          "list_scheduled_posts",
-          "Confirm the result (or list_content_history for published posts)",
-        ],
+        ["4", "list_posts", "Pass the returned batch_id to see what happened to each post"],
       ],
     },
   },

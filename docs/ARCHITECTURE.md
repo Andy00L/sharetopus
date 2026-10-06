@@ -2,7 +2,7 @@
 
 System architecture for Sharetopus: a Next.js 16 SaaS app with an MCP server, a REST API, Inngest background jobs, and integrations with 4 social platforms.
 
-35 database tables. 18 MCP tools. 32 REST API handlers. 18 Inngest functions.
+35 database tables. 10 MCP tools. 32 REST API handlers. 18 Inngest functions.
 
 [Back to README](../README.md)
 
@@ -306,9 +306,7 @@ sequenceDiagram
     participant User as Browser
     participant Form as SocialPostForm
     participant Handler as handleSocialMediaPost
-    participant Process as /api/social/{platform}/process
-    participant Schedule as scheduleFor{Platform}Accounts
-    participant Internal as schedulePostInternal
+    participant Batch as schedulePostBatch
     participant DB as Supabase
 
     User->>Form: Fill post content + select accounts
@@ -316,18 +314,14 @@ sequenceDiagram
     Handler->>Handler: Clerk authCheck + rate limit (30/60s)
     Handler->>Handler: generateRequestId() for tracing
     Handler->>Handler: Validate content per account
-    Handler->>Process: POST per platform (accounts, content, scheduledAt)
-    Process->>Schedule: scheduleFor{Platform}Accounts(accounts, content)
-    loop Each selected account
-        Schedule->>Internal: schedulePostInternal(data, principalId, "web")
-        Internal->>DB: INSERT scheduled_posts (status=scheduled, created_via=web)
-    end
+    Handler->>Batch: schedulePostBatch(posts, userId, "web")
+    Batch->>DB: INSERT scheduled_posts (status=scheduled, created_via=web)
     DB-->>User: Success response
 ```
 
 ### MCP agent schedules a post
 
-MCP access requires the Creator plan or higher. Starter users have zero MCP access. All 18 tools enforce this via the `withMcpTool` HOF, which runs entitlement checks before any business logic.
+MCP access requires the Creator plan or higher. Starter users have zero MCP access. All 10 tools enforce this via the `withMcpTool` HOF, which runs entitlement checks before any business logic.
 
 ```mermaid
 sequenceDiagram
@@ -336,26 +330,27 @@ sequenceDiagram
     participant Auth as resolveMcpPrincipal
     participant HOF as withMcpTool
     participant Entitle as entitlementFor
-    participant Tool as schedule_post handler
-    participant Internal as schedulePostInternal
+    participant Tool as publish_posts handler
+    participant Batch as schedulePostBatch
     participant DB as Supabase
     participant Audit as logToolCall
 
-    Agent->>MCP: POST {tool: schedule_post, args: {...}}
+    Agent->>MCP: POST {tool: publish_posts, args: {posts: [{..., scheduled_at}]}}
     MCP->>Auth: Bearer token
     Auth-->>MCP: McpPrincipal (principalId, plan)
-    MCP->>HOF: withMcpTool("schedule_post", handler)
+    MCP->>HOF: withMcpTool("publish_posts", handler)
     HOF->>HOF: buildContext (principal, requestId, ipHash, ua)
-    HOF->>Entitle: entitlementFor(principal, "schedule_post")
+    HOF->>Entitle: entitlementFor(principal, "publish_posts")
     Entitle->>Entitle: checkTierGate (Creator+ required)
     Entitle->>DB: atomic_increment_quota (500/mo Creator, unlimited Pro)
     Entitle-->>HOF: allowed
     HOF->>Tool: execute(ctx, args)
-    Tool->>Internal: schedulePostInternal(data, principalId, "mcp")
-    Internal->>DB: INSERT scheduled_posts (status=scheduled, created_via=mcp)
-    DB-->>Tool: scheduleId
-    Tool-->>HOF: {content, isError: false}
-    HOF->>Audit: logToolCall(principal, "schedule_post", "ok", latencyMs)
+    Tool->>DB: loadOwnedAccountPlatforms (platform per account)
+    Tool->>Batch: schedulePostBatch(posts, principalId, "mcp")
+    Batch->>DB: INSERT scheduled_posts (status=scheduled, created_via=mcp)
+    DB-->>Tool: scheduleIds
+    Tool-->>HOF: {content, structuredContent}
+    HOF->>Audit: logToolCall(principal, "publish_posts", "ok", latencyMs)
     Audit->>DB: INSERT mcp_audit_log
     HOF-->>Agent: JSON result
 ```
@@ -459,8 +454,8 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> scheduled: INSERT (web, mcp, x402, api)
     scheduled --> queued: scheduled-posts-tick (cron, batch <=200)
-    scheduled --> cancelled: cancel_scheduled_posts
-    cancelled --> scheduled: resume_scheduled_posts
+    scheduled --> cancelled: update_scheduled_posts cancel
+    cancelled --> scheduled: update_scheduled_posts resume
     queued --> processing: process-single-post (CAS claim)
     processing --> posted: Platform publish success
     processing --> failed: Terminal error (policy_rejected, invalid_input, unknown)

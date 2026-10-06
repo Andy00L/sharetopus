@@ -1,12 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-/**
- * Prompt: audit the next 14 days of scheduled posts.
- *
- * No arguments needed. The agent should fetch all scheduled posts
- * for the next two weeks and analyze timing, platform distribution,
- * and potential gaps.
- */
+/** Prompt: audit the next 14 days of scheduled posts for gaps, clusters and platform balance. */
 export function registerAuditCalendar(server: McpServer): void {
   server.registerPrompt(
     "audit_calendar",
@@ -24,7 +18,7 @@ export function registerAuditCalendar(server: McpServer): void {
               "Audit my content calendar for the next 14 days.",
               "",
               "Steps:",
-              "1. Use list_scheduled_posts to fetch all scheduled posts",
+              "1. Use list_posts (status upcoming, to = 14 days from now, limit 100) to fetch the scheduled posts",
               "2. Analyze the schedule and report:",
               "   - Which days have no posts (gaps)",
               "   - Which days have too many posts clustered together",

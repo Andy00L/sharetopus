@@ -6,6 +6,7 @@ import {
   MCP_SIDEBAR_ITEMS,
 } from "./data/sections";
 import { MCP_ENDPOINTS } from "@/lib/docs/mcpCatalog";
+import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 import { Callout } from "@/components/apiReference/Callout";
 import { CopyButton } from "@/components/apiReference/CopyButton";
 import { ReferencePageShell } from "@/components/apiReference/ReferencePageShell";
@@ -13,15 +14,10 @@ import { SectionBlock } from "@/components/apiReference/SectionBlock";
 
 export const metadata: Metadata = {
   title: "MCP Server Reference | Sharetopus",
-  description:
-    "Connect Claude Desktop, Cursor, or any MCP client to Sharetopus: 18 tools for posting, scheduling, media, and analytics.",
+  description: `Connect Claude Desktop, Cursor, or any MCP client to Sharetopus: ${MCP_TOOL_NAMES.length} tools for posting, scheduling, media, and analytics.`,
 };
 
-/**
- * Public MCP server reference. Fully static: every row comes from the
- * shared MCP catalog (src/lib/docs/mcpCatalog.ts), the same source the
- * markdown twin /docs/mcp.md renders.
- */
+/** Public MCP reference, fully static; rows come from mcpCatalog.ts, shared with /docs/mcp.md. */
 export default function McpReferencePage() {
   return (
     <ReferencePageShell

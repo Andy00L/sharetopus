@@ -9,22 +9,11 @@ import { type PlanTier, tierLabel, tierMeets } from "@/lib/types/plans";
 import type { McpPrincipal } from "./auth/types";
 import type { McpToolName } from "./toolNames";
 
-/**
- * Result of an entitlement check. Tool handlers branch on `mode`:
- *   - "allow": proceed with the action
- *   - "deny": short-circuit with the audit status derived from `reason`
- *
- * `detail` is the human-facing message the tool surfaces to the agent.
- */
+/** Allow, or deny with the message the agent sees. */
 export type EntitlementResult =
   | { mode: "allow" }
   | { mode: "deny"; reason: EntitlementDenyReason; detail: string };
 
-/**
- * Why a request was denied. The HOF wrapper in withMcpTool maps:
- *   - "platform_quota" / "monthly_quota" -> audit status "quota_exceeded"
- *   - "no_subscription" / "plan_too_low" / "infra_error" -> "denied"
- */
 type EntitlementDenyReason =
   | "no_subscription"
   | "plan_too_low"
@@ -32,90 +21,38 @@ type EntitlementDenyReason =
   | "platform_quota"
   | "infra_error";
 
-/**
- * Minimum plan tier required to invoke each MCP tool.
- *
- * Typed as `Record<McpToolName, PlanTier>` so the TypeScript compiler
- * forces every tool name in MCP_TOOL_NAMES to have an entry. Adding a
- * new tool name without adding a tier here is a build error, which is
- * exactly the safety net we want.
- *
- * Policy: MCP access requires Creator tier or higher. Starter users
- * have zero MCP access. The map stays for future granularity but
- * uniformly demands Creator minimum today.
- */
+/** Minimum plan per tool. MCP is a Creator feature, so every tool asks for Creator today. */
 const ACTION_PLAN_GATE: Record<McpToolName, PlanTier> = {
-  list_connections:            "creator",
-  list_pinterest_boards:       "creator",
-  list_scheduled_posts:        "creator",
-  list_content_history:        "creator",
-  list_billing_summary:        "creator",
-  request_account_reauth_link: "creator",
-  attach_media_from_url:       "creator",
-  request_upload_url:          "creator",
-  schedule_post:               "creator",
-  post_now:                    "creator",
-  cancel_scheduled_posts:      "creator",
-  resume_scheduled_posts:      "creator",
-  reschedule_posts:            "creator",
-  delete_scheduled_posts:      "creator",
-  bulk_schedule:               "creator",
-  bulk_post_now:               "creator",
-  get_account_analytics:       "creator",
-  generate_post_draft:         "creator",
+  list_connections:       "creator",
+  list_pinterest_boards:  "creator",
+  list_posts:             "creator",
+  list_billing_summary:   "creator",
+  get_account_analytics:  "creator",
+  attach_media_from_url:  "creator",
+  request_upload_url:     "creator",
+  publish_posts:          "creator",
+  update_scheduled_posts: "creator",
+  delete_scheduled_posts: "creator",
 };
 
 /**
- * Per-tool monthly quota caps, keyed first by tool name then by plan tier.
- *
- * Typed as `Partial<Record<McpToolName, ...>>` because only tools that
- * touch external APIs or sample Claude need explicit caps. Read tools
- * and admin-style tools are uncapped. A missing entry == no cap.
- *
- * Semantics of the inner cap value:
- *   - `number > 0`: monthly cap. Enforced atomically via
- *     atomic_increment_quota RPC.
- *   - `0`: tool not available on this tier (returns "platform_quota"
- *     even before the RPC runs).
- *   - `null`: unlimited on this tier.
- *
- * When adjusting these numbers, remember the RPC counts attempts AFTER
- * the tier gate passes, so increasing a tier's cap retroactively does
- * not invalidate already-rejected calls.
+ * Monthly call caps per tool and tier: a number caps it, 0 removes the tool
+ * from the tier, null is unlimited. Tools without an entry are uncapped.
  */
-const MONTHLY_CAPS: Partial<
-  Record<McpToolName, Record<PlanTier, number | null>>
-> = {
-  schedule_post:         { starter: 0, creator: 500, pro: null },
-  post_now:              { starter: 0, creator: 500, pro: null },
+const MONTHLY_CAPS: Partial<Record<McpToolName, Record<PlanTier, number | null>>> = {
+  publish_posts:         { starter: 0, creator: 500, pro: null },
   request_upload_url:    { starter: 0, creator: 500, pro: null },
   attach_media_from_url: { starter: 0, creator: 500, pro: null },
-  bulk_schedule:         { starter: 0, creator: 200, pro: null },
-  bulk_post_now:         { starter: 0, creator: 500, pro: null },
-  generate_post_draft:   { starter: 0, creator: 100, pro: null },
 };
 
-/**
- * Checks whether a principal is entitled to perform the given action.
- *
- * Runs on every MCP tool call (via the withMcpTool HOF). The plan tier
- * is read from `principal.plan`, which the auth dispatcher populates
- * from checkActiveSubscription on every request.
- *
- * Order of checks:
- *   1. Tier gate: compare `principal.plan` to ACTION_PLAN_GATE[action].
- *   2. Quota gate: if MONTHLY_CAPS has an entry, call the atomic
- *      increment RPC. The RPC handles the increment-and-check inside a
- *      single SQL statement so concurrent requests cannot exceed the cap.
- *
- * `action` is typed as McpToolName so callers cannot pass an arbitrary
- * string and silently miss a gate.
- *
- * Tables read:  usage_quotas (via RPC)
- * Tables written: usage_quotas (via RPC, atomic increment)
- *
- * Called by: withMcpTool wrapper, before any business logic runs.
- */
+/** The monthly cap of every capped tool on a plan, for list_billing_summary. */
+export function monthlyCapsForPlan(plan: PlanTier): Record<string, number | null> {
+  return Object.fromEntries(
+    Object.entries(MONTHLY_CAPS).map(([toolName, capsByTier]) => [toolName, capsByTier[plan]]),
+  );
+}
+
+/** Plan gate, then the atomic monthly quota increment. Runs before every tool call. */
 export async function entitlementFor(
   principal: McpPrincipal,
   action: McpToolName,
@@ -129,56 +66,23 @@ export async function entitlementFor(
   return { mode: "allow" };
 }
 
-/**
- * Pure tier comparison. No DB call. Returns deny when the principal's
- * plan ranks lower than ACTION_PLAN_GATE[action]. Distinguishes free-tier
- * (no_subscription) from paid-but-low-tier (plan_too_low) so the message
- * surfaced to the agent can suggest the right next step.
- */
 function checkTierGate(
   principal: McpPrincipal,
   action: McpToolName,
 ): EntitlementResult {
   const required = ACTION_PLAN_GATE[action];
   if (tierMeets(principal.plan, required)) return { mode: "allow" };
+  const planSentence =
+    principal.plan === null
+      ? "You do not have an active subscription."
+      : `You are on the ${tierLabel(principal.plan)} plan.`;
   return {
     mode: "deny",
     reason: principal.plan === null ? "no_subscription" : "plan_too_low",
-    detail: buildTierDenyMessage(action, required, principal.plan),
+    detail: `"${action}" needs the ${tierLabel(required)} plan or higher. ${planSentence} Upgrade at https://sharetopus.com/#pricing.`,
   };
 }
 
-/**
- * Builds the user-facing string returned in EntitlementResult.detail
- * when a tier gate fires. Two variants: free vs paid-but-too-low, so
- * the upgrade prompt makes sense in context.
- */
-function buildTierDenyMessage(
-  action: McpToolName,
-  required: PlanTier,
-  actual: PlanTier | null,
-): string {
-  if (actual === null) {
-    return (
-      `Action "${action}" requires the ${tierLabel(required)} ` +
-      `plan or higher. You do not have an active subscription.`
-    );
-  }
-  return (
-    `Action "${action}" requires the ${tierLabel(required)} ` +
-    `plan or higher. You are on the ${tierLabel(actual)} plan.`
-  );
-}
-
-/**
- * Runs the per-tool monthly quota gate. Three outcomes:
- *   - Tool has no MONTHLY_CAPS entry: allow.
- *   - Cap is 0 for this tier: deny with "platform_quota" (the tool
- *     is gated out of the tier entirely, no RPC call needed).
- *   - Cap is null: allow (unlimited on this tier).
- *   - Cap is a positive number: call atomic_increment_quota and deny
- *     with "monthly_quota" if the RPC reports the cap is reached.
- */
 async function checkAndIncrementQuota(
   principal: McpPrincipal,
   action: McpToolName,
@@ -190,7 +94,7 @@ async function checkAndIncrementQuota(
     return {
       mode: "deny",
       reason: "no_subscription",
-      detail: `Action "${action}" requires an active subscription.`,
+      detail: `"${action}" needs an active subscription.`,
     };
   }
 
@@ -199,58 +103,31 @@ async function checkAndIncrementQuota(
     return {
       mode: "deny",
       reason: "platform_quota",
-      detail: `Action "${action}" is not available on the ${tierLabel(principal.plan)} plan.`,
+      detail: `"${action}" is not available on the ${tierLabel(principal.plan)} plan.`,
     };
   }
-  if (cap === null || cap === undefined) return { mode: "allow" };
+  if (cap === null) return { mode: "allow" };
 
   const quotaResult = await incrementQuota(principal.principalId, action, cap);
-  if (!quotaResult.allowed) {
-    if (quotaResult.unavailable) {
-      return {
-        mode: "deny",
-        reason: "infra_error",
-        detail: `Quota verification is temporarily unavailable for "${action}". Please retry in a moment.`,
-      };
-    }
+  if (quotaResult.allowed) return { mode: "allow" };
+  if (quotaResult.unavailable) {
     return {
       mode: "deny",
-      reason: "monthly_quota",
-      detail: `Monthly quota exceeded for "${action}". Used ${quotaResult.currentCount}/${cap}. Resets next month.`,
+      reason: "infra_error",
+      detail: `Quota check for "${action}" is temporarily unavailable. Retry in a moment.`,
     };
   }
-
-  return { mode: "allow" };
+  return {
+    mode: "deny",
+    reason: "monthly_quota",
+    detail: `Monthly quota reached for "${action}": ${quotaResult.currentCount}/${cap} calls. It resets on the 1st.`,
+  };
 }
 
 /**
- * Atomically increments the usage counter for a principal+action pair
- * and returns whether the caller is still within the cap.
- *
- * Calls the `atomic_increment_quota` Postgres function which performs
- * the check-and-increment in a single statement, closing the race
- * window that existed in the old read-then-upsert approach. Two
- * concurrent requests at cap-1 will produce one allow and one deny,
- * never two allows.
- *
- * Return semantics:
- *   - `null` from the function means the cap was already reached; the
- *     call did NOT increment. Returned as `{ allowed: false, currentCount: cap }`
- *     so the caller can build the deny message with the cap value.
- *   - A number is the new count after increment.
- *   - No row, or a non-number, is treated like an RPC error.
- *
- * The `_period` RPC parameter is typed `date` in Postgres, so the value
- * must be a valid YYYY-MM-DD string. currentQuotaPeriod() always
- * returns the first of the current month in UTC.
- *
- * Failure mode: on RPC error we FAIL CLOSED (`unavailable: true`). The
- * quota RPC is the only atomic enforcement point for the paid, cost-bearing
- * monthly caps, so a DB hiccup must not silently disable every cap. The
- * caller surfaces a distinct "temporarily unavailable, retry" deny (reason
- * `infra_error`), not a misleading "quota exceeded", and the error is logged
- * for forensic review. This matches the fail-closed posture of the
- * subscription gate.
+ * atomic_increment_quota checks and increments in one statement, so two calls
+ * at cap - 1 give one allow and one deny. It returns null when the cap is
+ * already reached. A failed call fails closed: the caps bound paid usage.
  */
 async function incrementQuota(
   principalId: string,
@@ -278,9 +155,7 @@ async function incrementQuota(
     return { allowed: false, currentCount: cap };
   }
   if (typeof newCount !== "number") {
-    console.error(
-      `[entitlement] atomic_increment_quota returned no count for ${action}`,
-    );
+    console.error(`[entitlement] atomic_increment_quota returned no count for ${action}`);
     return { allowed: false, currentCount: 0, unavailable: true };
   }
 

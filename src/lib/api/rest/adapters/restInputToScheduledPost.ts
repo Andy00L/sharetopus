@@ -4,17 +4,7 @@ import type { DirectPostData } from "@/actions/server/directPostActions/directPo
 import { buildRegistryPostOptions } from "@/lib/platforms/postTargetOptions";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
-/**
- * Maps REST API input to the shape schedulePostBatch expects
- * (single-element batch). Used when scheduled_at is provided.
- *
- * Pure function. No DB calls, no side effects. The MCP schedule_post tool
- * builds the same shape.
- *
- * Platform-specific knobs (pinterest_board_id, the registry options) fold
- * into the postOptions field. The platform adapters already know how to
- * read that structure from the post_options jsonb column.
- */
+/** REST input as one schedulePostBatch entry (scheduled_at given); Pinterest and registry options fold into postOptions. */
 export function restInputToSchedulePostData(
   input: PostCreateInput,
 ): SchedulePostData {
@@ -41,13 +31,7 @@ export function restInputToSchedulePostData(
   };
 }
 
-/**
- * Maps REST API input to the shape directPostBatch expects.
- * Used when scheduled_at is omitted (immediate publish).
- *
- * directPostBatch takes DirectPostData which has Pinterest fields
- * at the top level (not nested in postOptions).
- */
+/** REST input as one directPostBatch entry (no scheduled_at); Pinterest fields stay top level there. */
 export function restInputToDirectPostData(
   input: PostCreateInput,
 ): DirectPostData {

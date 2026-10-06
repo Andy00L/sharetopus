@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
@@ -9,20 +9,8 @@ import type { SocialAccount } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
- * Fetches social accounts for a given principal with optional availability filtering.
- *
- * **Authentication:** Does not call Clerk. Caller must validate `principalId` before
- * calling (e.g. `auth()` in RSC for `"web"`, MCP principal for `"mcp"`).
- *
- * **Rate limiting:** 30 requests per 60s, scoped per `source` + `principalId`
- * (e.g. `web_fetch_social_accounts`, `mcp_fetch_social_accounts`).
- *
- * **Tables:** `social_accounts`.
- *
- * @param principalId - Matches `social_accounts.principal_id`.
- * @param source - Channel label; used to build the rate-limit scope.
- * @param filterByAvailability - When true (default), only returns rows where `is_available = true`.
- * @returns Success flag, user-facing message, optional `data`, and `resetIn` seconds when rate limited.
+ * The principal's social accounts, never deleted ones; filterByAvailability
+ * keeps only is_available rows. Caller validates principalId. 30 calls per 60 s per source.
  */
 export async function fetchSocialAccounts(
   principalId: string,
@@ -40,14 +28,11 @@ export async function fetchSocialAccounts(
       `Source: ${source}`,
     );
 
-    // Step 1: Check rate limits to prevent abuse
-    const rateLimitScope = `${source}_fetch_social_accounts`;
-
     const rateCheck = await checkRateLimit(
-      rateLimitScope, // Unique identifier per channel
-      principalId, // Principal identifier
-      30, // Limit (30 requests)
-      60, // Window (60 seconds)
+      `${source}_fetch_social_accounts`,
+      principalId,
+      30,
+      60,
     );
 
     if (!rateCheck.success) {
@@ -58,8 +43,6 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 2: Build and execute the database query. The availability
-    // filter only applies when requested (and() drops the undefined entry).
     const { data, error } = await runQuery(
       db
         .select()
@@ -67,6 +50,7 @@ export async function fetchSocialAccounts(
         .where(
           and(
             eq(social_accounts.principal_id, principalId),
+            isNull(social_accounts.deleted_at),
             filterByAvailability
               ? eq(social_accounts.is_available, true)
               : undefined,
@@ -82,7 +66,6 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 3: Check if data exists
     if (data.length === 0) {
       console.log(
         `[fetchSocialAccounts]: No social accounts found for principal: ${principalId}`,
@@ -94,14 +77,12 @@ export async function fetchSocialAccounts(
       };
     }
 
-    // Step 4: Return successful response with data
     return {
       success: true,
       message: "Social accounts retrieved successfully.",
       data,
     };
   } catch (err) {
-    // Step 5: Handle unexpected errors
     console.error(
       `[fetchSocialAccounts]: Unexpected error fetching social accounts:`,
       err instanceof Error ? err.message : err,

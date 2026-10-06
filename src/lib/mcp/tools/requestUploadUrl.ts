@@ -5,7 +5,7 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { withMcpTool } from "../withMcpTool";
+import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
 type RequestUploadUrlArgs = {
   filename: string;
@@ -13,22 +13,19 @@ type RequestUploadUrlArgs = {
   size_bytes: number;
 };
 
+/** Signed upload URL valid 2 hours. */
+const UPLOAD_URL_TTL_SECONDS = 7200;
+
+const RequestUploadUrlOutputSchema = z.object({
+  upload_url: z.string(),
+  storage_path: z.string(),
+  token: z.string(),
+  expires_in_seconds: z.number(),
+});
+
 /**
- * Mints a Supabase signed upload URL so agents can upload media bytes
- * directly to storage without routing through Vercel.
- *
- * Plan gate: starter+ (entitlement gate + monthly quota enforced by HOF).
- * Tables touched: none (reads from Supabase Storage for quota check).
- *
- * Agent flow:
- *   1. Call request_upload_url(filename, content_type, size_bytes)
- *   2. PUT bytes to the returned upload_url
- *   3. Call post_now or schedule_post with media_storage_path = storage_path
- *
- * Known limitation: if the agent uploads a file but never calls
- * post_now or schedule_post, the file becomes an orphan in storage and
- * still counts toward the user's storage quota. A future cleanup job
- * should sweep unreferenced files older than 24h.
+ * Signed upload URL so an agent PUTs the bytes straight to storage. An upload
+ * no post ever uses is swept by the daily orphan cleanup after 24 h.
  */
 export function registerRequestUploadUrl(server: McpServer): void {
   server.registerTool(
@@ -36,20 +33,16 @@ export function registerRequestUploadUrl(server: McpServer): void {
     {
       title: "Request Upload URL",
       description:
-        "Get a signed upload URL for uploading media (image/video) directly to Sharetopus storage. Returns a URL + storage_path for use with post_now or schedule_post.",
+        "Get a signed URL to upload a local image or video yourself: PUT the bytes to upload_url with the file's Content-Type, then pass storage_path as media_storage_path in publish_posts.",
       inputSchema: z.object({
-        filename: z
-          .string()
-          .min(1)
-          .describe("Filename including extension (e.g. photo.jpg, clip.mp4)"),
+        filename: z.string().min(1).describe("With extension, e.g. clip.mp4."),
         content_type: z
           .string()
           .min(1)
-          .describe(
-            "MIME type of the file. Allowed: image/jpeg, image/png, video/mp4, video/mov, video/quicktime",
-          ),
-        size_bytes: z.number().int().positive().describe("File size in bytes"),
+          .describe("image/jpeg, image/png, video/mp4, video/mov or video/quicktime."),
+        size_bytes: z.number().int().positive(),
       }),
+      outputSchema: RequestUploadUrlOutputSchema,
       annotations: {
         title: "Request Upload URL",
         readOnlyHint: false,
@@ -68,12 +61,10 @@ export function registerRequestUploadUrl(server: McpServer): void {
           60,
         );
         if (!rateLimitResult.success) {
-          return {
-            content: [{ type: "text", text: rateLimitResult.message }],
-            isError: true,
-            auditStatus:
-              rateLimitResult.reason === "limited" ? "rate_limited" : "error",
-          };
+          return errorResult(
+            rateLimitResult.message,
+            rateLimitResult.reason === "limited" ? "rate_limited" : "error",
+          );
         }
 
         const uploadUrlResult = await generateServerSignedUploadUrl({
@@ -89,35 +80,15 @@ export function registerRequestUploadUrl(server: McpServer): void {
           console.error(
             `[mcp/request_upload_url] [req=${ctx.requestId ?? "?"}] Helper rejected: ${uploadUrlResult.reason} -- ${uploadUrlResult.message}`,
           );
-          return {
-            content: [{ type: "text", text: uploadUrlResult.message }],
-            isError: true,
-          };
+          return errorResult(uploadUrlResult.message);
         }
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  success: true,
-                  upload_url: uploadUrlResult.uploadUrl,
-                  storage_path: uploadUrlResult.path,
-                  token: uploadUrlResult.token,
-                  expires_in_seconds: 7200,
-                  curl_example: `curl -X PUT "${uploadUrlResult.uploadUrl}" -H "Content-Type: ${args.content_type}" --data-binary @<your_file>`,
-                  next_step:
-                    "Upload bytes to upload_url, then call post_now or schedule_post with media_storage_path = storage_path.",
-                  whitelist_note:
-                    "If you are running inside Claude.ai or Claude Desktop with Code Execution, ensure your Supabase project domain is whitelisted under Settings -> Capabilities -> Code execution and file creation -> Additional allowed domains.",
-                },
-                null,
-                2,
-              ),
-            },
-          ],
-        };
+        return jsonResult({
+          upload_url: uploadUrlResult.uploadUrl,
+          storage_path: uploadUrlResult.path,
+          token: uploadUrlResult.token,
+          expires_in_seconds: UPLOAD_URL_TTL_SECONDS,
+        } satisfies z.infer<typeof RequestUploadUrlOutputSchema>);
       },
     ),
   );

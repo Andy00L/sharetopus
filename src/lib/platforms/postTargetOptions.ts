@@ -152,11 +152,7 @@ type ValidationIssueSink = {
   addIssue: (issue: { code: "custom"; path: string[]; message: string }) => void;
 };
 
-/**
- * superRefine callback that reports findPostTargetIssues as validation
- * issues. Called by: the REST post body schema and the MCP posting tool
- * schemas (schedule_post, post_now, bulk_schedule, bulk_post_now).
- */
+/** superRefine callback reporting findPostTargetIssues for the REST post body (publish_posts calls findPostTargetIssues itself). */
 export function refinePostTarget(
   post: PostTargetFields,
   ctx: ValidationIssueSink,

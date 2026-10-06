@@ -1,0 +1,1260 @@
+[
+  {
+    "name": "list_connections",
+    "description": "List your connected social accounts. Shows platform, display name, and availability status.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "include_unavailable": {
+          "default": false,
+          "description": "Include accounts that are disconnected or expired",
+          "type": "boolean"
+        }
+      }
+    },
+    "annotations": {
+      "title": "List Social Connections",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_pinterest_boards",
+    "description": "List Pinterest boards for a connected Pinterest account. Returns board id, name, description, privacy, and pin_count. Supports pagination via the bookmark cursor.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "social_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "ID of the Pinterest social_accounts row"
+        },
+        "page_size": {
+          "default": 25,
+          "description": "Number of boards to return per page (1-100, default 25)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "bookmark": {
+          "description": "Pagination cursor from a previous response",
+          "type": "string"
+        }
+      },
+      "required": [
+        "social_account_id"
+      ]
+    },
+    "annotations": {
+      "title": "List Pinterest Boards",
+      "readOnlyHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "list_scheduled_posts",
+    "description": "List your scheduled posts. Optional filter by platform or status.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "platform": {
+          "description": "Filter by platform",
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook",
+            "bluesky",
+            "mastodon",
+            "telegram",
+            "discord",
+            "slack",
+            "devto",
+            "wordpress",
+            "reddit",
+            "threads",
+            "tumblr",
+            "twitch",
+            "kick",
+            "hashnode",
+            "medium",
+            "lemmy",
+            "farcaster",
+            "listmonk",
+            "nostr",
+            "linkedin_page",
+            "dribbble",
+            "gmb"
+          ]
+        },
+        "status": {
+          "description": "Filter by post status",
+          "type": "string",
+          "enum": [
+            "scheduled",
+            "processing",
+            "posted",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "limit": {
+          "default": 20,
+          "description": "Max results to return (1-100)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "annotations": {
+      "title": "List Scheduled Posts",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_content_history",
+    "description": "View your posted content history. Optional filter by platform.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "platform": {
+          "description": "Filter by platform",
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook",
+            "bluesky",
+            "mastodon",
+            "telegram",
+            "discord",
+            "slack",
+            "devto",
+            "wordpress",
+            "reddit",
+            "threads",
+            "tumblr",
+            "twitch",
+            "kick",
+            "hashnode",
+            "medium",
+            "lemmy",
+            "farcaster",
+            "listmonk",
+            "nostr",
+            "linkedin_page",
+            "dribbble",
+            "gmb"
+          ]
+        },
+        "limit": {
+          "default": 20,
+          "description": "Max results to return (1-100)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "annotations": {
+      "title": "List Content History",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "list_billing_summary",
+    "description": "View your current subscription plan, status, and usage quota counts for the current month.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "title": "List Billing Summary",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "request_account_reauth_link",
+    "description": "Get a re-authentication link for a social account with an expired token. The user must open this link in their browser.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "social_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "ID of the social account to re-authenticate"
+        }
+      },
+      "required": [
+        "social_account_id"
+      ]
+    },
+    "annotations": {
+      "title": "Request Account Reauth Link",
+      "readOnlyHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "attach_media_from_url",
+    "description": "Download media from a public URL and upload it to Sharetopus storage. Returns a storage path for use with schedule_post.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Public HTTP(S) URL of the media file"
+        },
+        "filename": {
+          "description": "Optional label, retained for compatibility. The stored object name is always a random id; this value is not used to build the storage path.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "annotations": {
+      "title": "Attach Media From URL",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "request_upload_url",
+    "description": "Get a signed upload URL for uploading media (image/video) directly to Sharetopus storage. Returns a URL + storage_path for use with post_now or schedule_post.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Filename including extension (e.g. photo.jpg, clip.mp4)"
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "MIME type of the file. Allowed: image/jpeg, image/png, video/mp4, video/mov, video/quicktime"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "description": "File size in bytes"
+        }
+      },
+      "required": [
+        "filename",
+        "content_type",
+        "size_bytes"
+      ]
+    },
+    "annotations": {
+      "title": "Request Upload URL",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "schedule_post",
+    "description": "Schedule a post for publishing at a future time, on any connected platform. For media posts, use attach_media_from_url first to upload your media to Supabase Storage. For Pinterest, provide pinterest_board_id and optionally pinterest_link; reddit needs subreddit, lemmy community_id, gmb location_name. Use list_connections to find available social account IDs.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "social_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns."
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook",
+            "bluesky",
+            "mastodon",
+            "telegram",
+            "discord",
+            "slack",
+            "devto",
+            "wordpress",
+            "reddit",
+            "threads",
+            "tumblr",
+            "twitch",
+            "kick",
+            "hashnode",
+            "medium",
+            "lemmy",
+            "farcaster",
+            "listmonk",
+            "nostr",
+            "linkedin_page",
+            "dribbble",
+            "gmb"
+          ],
+          "description": "Target social media platform. Must match the platform of the provided social_account_id."
+        },
+        "scheduled_at": {
+          "type": "string",
+          "description": "ISO 8601 datetime string for when to publish (e.g. '2026-06-01T14:30:00Z'). Must be in the future. Past dates are rejected."
+        },
+        "post_type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "video"
+          ],
+          "description": "Type of post. Platforms accept different types (YouTube takes video only; Pinterest, TikTok, Instagram and Dribbble need media; Twitch and Kick take text only). An unsupported type is rejected."
+        },
+        "title": {
+          "description": "Post title. Used by Pinterest, YouTube and the blog platforms. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Post body text / caption. Required for text posts. Optional but recommended for media posts. Set to null for media-only posts."
+        },
+        "media_storage_path": {
+          "default": "",
+          "description": "Supabase Storage path for the media file. Required for image/video posts. Get this by calling attach_media_from_url first. Format: 'principal_id/filename.ext'.",
+          "type": "string"
+        },
+        "batch_id": {
+          "description": "Optional batch ID to group this post with related posts (e.g. when cross-posting to multiple platforms). If omitted, server generates one.",
+          "type": "string"
+        },
+        "pinterest_board_id": {
+          "description": "Pinterest board ID where the pin will be posted. REQUIRED when platform='pinterest'. Get available boards via list_pinterest_boards.",
+          "type": "string"
+        },
+        "pinterest_board_name": {
+          "description": "Optional Pinterest board display name. Cosmetic, used in confirmations. Only valid when platform='pinterest'.",
+          "type": "string"
+        },
+        "pinterest_link": {
+          "description": "Destination URL for the Pinterest pin (where users go when they click). Max 2048 chars. Only valid when platform='pinterest'.",
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        },
+        "idempotency_key": {
+          "description": "Optional client-supplied key for safe retries. Same key + same principal returns the existing post instead of inserting a duplicate. Strongly recommended for agent retries after network errors or timeouts.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "subreddit": {
+          "description": "Reddit: subreddit to post to. Required when platform is reddit.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "flair_id": {
+          "description": "Reddit: flair id for the post.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "community_id": {
+          "description": "Lemmy: community id. Required when platform is lemmy.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "publication_id": {
+          "description": "Hashnode: publication id. Defaults to the account's first publication.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "blog": {
+          "description": "Tumblr: blog name. Defaults to the blog stored when the account connected.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "location_name": {
+          "description": "Google Business Profile: location, shaped \"locations/<id>\". Required when platform is gmb.",
+          "type": "string",
+          "pattern": "^locations\\/[0-9]+$"
+        },
+        "organization_id": {
+          "description": "LinkedIn Pages: organization id. Defaults to the connected organization.",
+          "type": "string",
+          "maxLength": 50
+        },
+        "canonical_url": {
+          "description": "dev.to: canonical URL of the original article.",
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        },
+        "tags": {
+          "description": "dev.to: up to 4 tags.",
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          }
+        }
+      },
+      "required": [
+        "social_account_id",
+        "platform",
+        "scheduled_at",
+        "post_type",
+        "description"
+      ]
+    },
+    "annotations": {
+      "title": "Schedule Post",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "post_now",
+    "description": "Publish ONE post to ONE platform immediately, on any connected platform. For media posts, call attach_media_from_url or request_upload_url first to get a media_storage_path. The media file is cleaned up after this post completes. reddit needs subreddit, lemmy community_id, gmb location_name. To publish the same media to multiple platforms in one call, use bulk_post_now. Returns an event_id; check list_content_history in 30-60s to confirm.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "social_account_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          "description": "ID of the social account to post to"
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook",
+            "bluesky",
+            "mastodon",
+            "telegram",
+            "discord",
+            "slack",
+            "devto",
+            "wordpress",
+            "reddit",
+            "threads",
+            "tumblr",
+            "twitch",
+            "kick",
+            "hashnode",
+            "medium",
+            "lemmy",
+            "farcaster",
+            "listmonk",
+            "nostr",
+            "linkedin_page",
+            "dribbble",
+            "gmb"
+          ],
+          "description": "Target platform"
+        },
+        "post_type": {
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "video"
+          ],
+          "description": "Type of post. An unsupported type for the platform is rejected."
+        },
+        "title": {
+          "description": "Post title. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Post body text / caption"
+        },
+        "media_storage_path": {
+          "default": "",
+          "description": "Supabase Storage path. Required for image/video. Get it from attach_media_from_url.",
+          "type": "string"
+        },
+        "cover_timestamp": {
+          "description": "For TikTok video: cover frame at this millisecond mark (>=1000)",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 9007199254740991
+        },
+        "pinterest_board_id": {
+          "description": "Pinterest board ID. Required for Pinterest posts.",
+          "type": "string"
+        },
+        "pinterest_board_name": {
+          "description": "Pinterest board display name. Optional, for content_history.",
+          "type": "string"
+        },
+        "pinterest_link": {
+          "description": "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Optional.",
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        },
+        "batch_id": {
+          "description": "Optional batch_id. When supplied, idempotency_key derives from it so retries with the same batch_id are no-ops.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "idempotency_key": {
+          "description": "Optional client-supplied key for safe retries. Same key + same principal returns the existing event_id instead of dispatching a duplicate. Recommended for agent retries on network errors.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "subreddit": {
+          "description": "Reddit: subreddit to post to. Required when platform is reddit.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 50
+        },
+        "flair_id": {
+          "description": "Reddit: flair id for the post.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "community_id": {
+          "description": "Lemmy: community id. Required when platform is lemmy.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "publication_id": {
+          "description": "Hashnode: publication id. Defaults to the account's first publication.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "blog": {
+          "description": "Tumblr: blog name. Defaults to the blog stored when the account connected.",
+          "type": "string",
+          "maxLength": 100
+        },
+        "location_name": {
+          "description": "Google Business Profile: location, shaped \"locations/<id>\". Required when platform is gmb.",
+          "type": "string",
+          "pattern": "^locations\\/[0-9]+$"
+        },
+        "organization_id": {
+          "description": "LinkedIn Pages: organization id. Defaults to the connected organization.",
+          "type": "string",
+          "maxLength": 50
+        },
+        "canonical_url": {
+          "description": "dev.to: canonical URL of the original article.",
+          "type": "string",
+          "maxLength": 2048,
+          "format": "uri"
+        },
+        "tags": {
+          "description": "dev.to: up to 4 tags.",
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50
+          }
+        }
+      },
+      "required": [
+        "social_account_id",
+        "platform",
+        "post_type",
+        "description"
+      ]
+    },
+    "annotations": {
+      "title": "Post Now",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "cancel_scheduled_posts",
+    "description": "Cancel one or more scheduled posts. Only posts with status 'scheduled' can be cancelled.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "post_ids": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          },
+          "description": "Array of post IDs to cancel"
+        }
+      },
+      "required": [
+        "post_ids"
+      ]
+    },
+    "annotations": {
+      "title": "Cancel Scheduled Posts",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "resume_scheduled_posts",
+    "description": "Resume one or more cancelled posts. Posts with past dates are rescheduled to 1 hour from now.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "post_ids": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          },
+          "description": "Array of post IDs to resume"
+        }
+      },
+      "required": [
+        "post_ids"
+      ]
+    },
+    "annotations": {
+      "title": "Resume Scheduled Posts",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "reschedule_posts",
+    "description": "Change the scheduled time for one or more posts (up to 50). Cancelled posts are automatically resumed (status returns to scheduled).",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "post_ids": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          },
+          "description": "Array of scheduled_post UUIDs to reschedule. Get IDs from list_scheduled_posts. Up to 50 per call."
+        },
+        "new_scheduled_time": {
+          "type": "string",
+          "description": "New ISO 8601 datetime for the posts (e.g. '2026-06-01T14:30:00Z'). Must be in the future. Past times are rejected."
+        }
+      },
+      "required": [
+        "post_ids",
+        "new_scheduled_time"
+      ]
+    },
+    "annotations": {
+      "title": "Reschedule Posts",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "delete_scheduled_posts",
+    "description": "Permanently delete one or more scheduled posts. This action cannot be undone.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "post_ids": {
+          "minItems": 1,
+          "maxItems": 50,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+          },
+          "description": "Array of post IDs to delete"
+        }
+      },
+      "required": [
+        "post_ids"
+      ]
+    },
+    "annotations": {
+      "title": "Delete Scheduled Posts",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "bulk_schedule",
+    "description": "Schedule up to 30 posts in a single call, on any connected platforms. Requires Creator plan or higher. Use this when cross-posting the same media to multiple accounts/platforms, or when scheduling a content series in one shot. For media posts, call attach_media_from_url first. Per post: Pinterest needs pinterest_board_id, reddit subreddit, lemmy community_id, gmb location_name. To make retries safe (recommended for agent flows), supply batch_id.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "posts": {
+          "minItems": 1,
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "social_account_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+                "description": "UUID of the social account to post to. Get this from list_connections. Must be an account the calling principal owns."
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "linkedin",
+                  "tiktok",
+                  "pinterest",
+                  "instagram",
+                  "youtube",
+                  "x",
+                  "facebook",
+                  "bluesky",
+                  "mastodon",
+                  "telegram",
+                  "discord",
+                  "slack",
+                  "devto",
+                  "wordpress",
+                  "reddit",
+                  "threads",
+                  "tumblr",
+                  "twitch",
+                  "kick",
+                  "hashnode",
+                  "medium",
+                  "lemmy",
+                  "farcaster",
+                  "listmonk",
+                  "nostr",
+                  "linkedin_page",
+                  "dribbble",
+                  "gmb"
+                ],
+                "description": "Target social media platform. Must match the platform of the provided social_account_id."
+              },
+              "scheduled_at": {
+                "type": "string",
+                "description": "ISO 8601 datetime string for when to publish (e.g. '2026-06-01T14:30:00Z'). Must be in the future."
+              },
+              "post_type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "description": "Type of post. Platforms accept different types (YouTube takes video only; Pinterest, TikTok, Instagram and Dribbble need media; Twitch and Kick take text only). An unsupported type is rejected."
+              },
+              "title": {
+                "description": "Post title. Used by Pinterest, YouTube and the blog platforms. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Post body text / caption. Required for text posts. Optional but recommended for media posts."
+              },
+              "media_storage_path": {
+                "default": "",
+                "description": "Supabase Storage path for the media file. Required for image/video posts. Get this by calling attach_media_from_url first.",
+                "type": "string"
+              },
+              "pinterest_board_id": {
+                "description": "Pinterest board ID. REQUIRED when platform='pinterest'. Get available boards via list_pinterest_boards.",
+                "type": "string"
+              },
+              "pinterest_board_name": {
+                "description": "Optional Pinterest board display name. Cosmetic. Only valid when platform='pinterest'.",
+                "type": "string"
+              },
+              "pinterest_link": {
+                "description": "Destination URL for the Pinterest pin (clickthrough). Max 2048 chars. Only valid when platform='pinterest'.",
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              },
+              "subreddit": {
+                "description": "Reddit: subreddit to post to. Required when platform is reddit.",
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 50
+              },
+              "flair_id": {
+                "description": "Reddit: flair id for the post.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "community_id": {
+                "description": "Lemmy: community id. Required when platform is lemmy.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "publication_id": {
+                "description": "Hashnode: publication id. Defaults to the account's first publication.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "blog": {
+                "description": "Tumblr: blog name. Defaults to the blog stored when the account connected.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "location_name": {
+                "description": "Google Business Profile: location, shaped \"locations/<id>\". Required when platform is gmb.",
+                "type": "string",
+                "pattern": "^locations\\/[0-9]+$"
+              },
+              "organization_id": {
+                "description": "LinkedIn Pages: organization id. Defaults to the connected organization.",
+                "type": "string",
+                "maxLength": 50
+              },
+              "canonical_url": {
+                "description": "dev.to: canonical URL of the original article.",
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              },
+              "tags": {
+                "description": "dev.to: up to 4 tags.",
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                }
+              }
+            },
+            "required": [
+              "social_account_id",
+              "platform",
+              "scheduled_at",
+              "post_type",
+              "description"
+            ]
+          },
+          "description": "Array of posts to schedule (1 to 30). Each entry represents one post = one social account + one platform. To cross-post to N accounts, include N entries with the same media_storage_path."
+        },
+        "batch_id": {
+          "description": "Optional batch_id to group all posts in this call. When supplied, each post gets idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id are no-ops (already-scheduled posts will not be duplicated). Strongly recommended for agent retries after network errors.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "posts"
+      ]
+    },
+    "annotations": {
+      "title": "Bulk Schedule",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "bulk_post_now",
+    "description": "Publish up to 30 posts immediately across multiple platforms and accounts, on any connected platforms. Requires Creator plan or higher. Reuses one media upload across N posts (one entry in the array = one platform+account combo). Per post: Pinterest needs pinterest_board_id, reddit subreddit, lemmy community_id, gmb location_name. Returns event IDs; check list_content_history in 30-60s to confirm.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "posts": {
+          "minItems": 1,
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "social_account_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+                "description": "UUID of the social account"
+              },
+              "platform": {
+                "type": "string",
+                "enum": [
+                  "linkedin",
+                  "tiktok",
+                  "pinterest",
+                  "instagram",
+                  "youtube",
+                  "x",
+                  "facebook",
+                  "bluesky",
+                  "mastodon",
+                  "telegram",
+                  "discord",
+                  "slack",
+                  "devto",
+                  "wordpress",
+                  "reddit",
+                  "threads",
+                  "tumblr",
+                  "twitch",
+                  "kick",
+                  "hashnode",
+                  "medium",
+                  "lemmy",
+                  "farcaster",
+                  "listmonk",
+                  "nostr",
+                  "linkedin_page",
+                  "dribbble",
+                  "gmb"
+                ],
+                "description": "Target platform"
+              },
+              "post_type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "image",
+                  "video"
+                ],
+                "description": "Type of post. An unsupported type for the platform is rejected."
+              },
+              "title": {
+                "description": "Post title. Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble.",
+                "type": "string"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Post body text / caption"
+              },
+              "media_storage_path": {
+                "default": "",
+                "description": "Supabase Storage path. Required for image/video.",
+                "type": "string"
+              },
+              "cover_timestamp": {
+                "description": "TikTok video cover frame at this ms mark (>=1000)",
+                "type": "integer",
+                "minimum": 1000,
+                "maximum": 9007199254740991
+              },
+              "pinterest_board_id": {
+                "description": "Pinterest board ID. Required when platform='pinterest'.",
+                "type": "string"
+              },
+              "pinterest_board_name": {
+                "description": "Pinterest board display name. Optional.",
+                "type": "string"
+              },
+              "pinterest_link": {
+                "description": "Pinterest pin destination URL. Max 2048 chars.",
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              },
+              "subreddit": {
+                "description": "Reddit: subreddit to post to. Required when platform is reddit.",
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 50
+              },
+              "flair_id": {
+                "description": "Reddit: flair id for the post.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "community_id": {
+                "description": "Lemmy: community id. Required when platform is lemmy.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "publication_id": {
+                "description": "Hashnode: publication id. Defaults to the account's first publication.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "blog": {
+                "description": "Tumblr: blog name. Defaults to the blog stored when the account connected.",
+                "type": "string",
+                "maxLength": 100
+              },
+              "location_name": {
+                "description": "Google Business Profile: location, shaped \"locations/<id>\". Required when platform is gmb.",
+                "type": "string",
+                "pattern": "^locations\\/[0-9]+$"
+              },
+              "organization_id": {
+                "description": "LinkedIn Pages: organization id. Defaults to the connected organization.",
+                "type": "string",
+                "maxLength": 50
+              },
+              "canonical_url": {
+                "description": "dev.to: canonical URL of the original article.",
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              },
+              "tags": {
+                "description": "dev.to: up to 4 tags.",
+                "maxItems": 4,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 50
+                }
+              }
+            },
+            "required": [
+              "social_account_id",
+              "platform",
+              "post_type",
+              "description"
+            ]
+          },
+          "description": "Array of posts to publish immediately (max 30). Each entry = one platform + one social account."
+        },
+        "batch_id": {
+          "description": "Optional batch_id. When supplied, each post gets idempotency_key = `${batch_id}:${index}`. Retries with the same batch_id are no-ops.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "posts"
+      ]
+    },
+    "annotations": {
+      "title": "Bulk Post Now",
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_account_analytics",
+    "description": "Fetch performance metrics (views, likes, comments, shares) for your content. Data may be up to 24h old.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "platform": {
+          "description": "Filter by platform",
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook"
+          ]
+        },
+        "content_id": {
+          "description": "Filter by specific content ID",
+          "type": "string"
+        },
+        "days": {
+          "default": 30,
+          "description": "Number of days to look back (1-90)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "limit": {
+          "default": 20,
+          "description": "Max results to return",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "annotations": {
+      "title": "Get Account Analytics",
+      "readOnlyHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "generate_post_draft",
+    "description": "Generate a draft post using your AI assistant. Requires the Creator plan or higher (100 drafts per month on Creator, unlimited on Pro). The draft is generated by your client's LLM at no cost to your Sharetopus account.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": [
+            "linkedin",
+            "tiktok",
+            "pinterest",
+            "instagram",
+            "youtube",
+            "x",
+            "facebook",
+            "bluesky",
+            "mastodon",
+            "telegram",
+            "discord",
+            "slack",
+            "devto",
+            "wordpress",
+            "reddit",
+            "threads",
+            "tumblr",
+            "twitch",
+            "kick",
+            "hashnode",
+            "medium",
+            "lemmy",
+            "farcaster",
+            "listmonk",
+            "nostr",
+            "linkedin_page",
+            "dribbble",
+            "gmb"
+          ],
+          "description": "Target platform for the draft"
+        },
+        "topic": {
+          "type": "string",
+          "description": "Topic or theme for the post"
+        },
+        "tone": {
+          "default": "professional",
+          "description": "Tone of voice for the draft",
+          "type": "string",
+          "enum": [
+            "professional",
+            "casual",
+            "humorous",
+            "educational",
+            "promotional"
+          ]
+        },
+        "max_length": {
+          "default": 500,
+          "description": "Approximate max character count",
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 3000
+        },
+        "additional_context": {
+          "description": "Any extra instructions or brand guidelines",
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "topic"
+      ]
+    },
+    "annotations": {
+      "title": "Generate Post Draft",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  }
+]

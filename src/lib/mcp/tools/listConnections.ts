@@ -1,71 +1,68 @@
-import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import type { McpServer } from "@modelcontextprotocol/server";
 import "server-only";
+
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { withMcpTool } from "../withMcpTool";
+import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 
-/**
- * Lists the user's connected social accounts.
- *
- * Plan gate: free (any active subscription).
- * Tables read: social_accounts
- * Calls: src/actions/server/data/fetchSocialAccounts.ts
- *
- * Returns text/plain JSON so the output is never mistaken for free-form
- * text that the user authored. Tokens are stripped before serialization.
- */
+import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
+
+const ConnectionRowSchema = z.object({
+  id: z.string(),
+  platform: z.string(),
+  name: z.string().nullable(),
+  username: z.string().nullable(),
+  status: z.enum(["ok", "needs_reconnect"]),
+  follower_count: z.number().nullable().optional(),
+  avatar_url: z.string().nullable().optional(),
+});
+
+const ListConnectionsOutputSchema = z.object({
+  accounts: z.array(ConnectionRowSchema),
+  reconnect_url: z.string(),
+});
+
+/** Lists every connected account; one in needs_reconnect status is fixed at reconnect_url. */
 export function registerListConnections(server: McpServer): void {
   server.registerTool(
     "list_connections",
     {
-      title: "List Social Connections",
+      title: "List Connections",
       description:
-        "List your connected social accounts. Shows platform, display name, and availability status.",
+        "List the connected social accounts with their id, platform and status. Use an id as social_account_id in publish_posts. An account in needs_reconnect status cannot publish until the user reconnects it at reconnect_url.",
       inputSchema: z.object({
-        include_unavailable: z
-          .boolean()
+        response_format: z
+          .enum(["concise", "detailed"])
           .optional()
-          .default(false)
-          .describe("Include accounts that are disconnected or expired"),
+          .default("concise")
+          .describe("detailed adds follower_count and avatar_url."),
       }),
-      annotations: {
-        title: "List Social Connections",
-        readOnlyHint: true,
-        openWorldHint: false,
-      },
+      outputSchema: ListConnectionsOutputSchema,
+      annotations: { title: "List Connections", readOnlyHint: true, openWorldHint: false },
     },
     withMcpTool(
       "list_connections",
-      async (ctx, args: { include_unavailable: boolean }) => {
-        const fetchResult = await fetchSocialAccounts(
-          ctx.principal.principalId,
-          "mcp",
-          !args.include_unavailable,
-        );
-
+      async (ctx, args: { response_format: "concise" | "detailed" }) => {
+        const fetchResult = await fetchSocialAccounts(ctx.principal.principalId, "mcp", false);
         if (!fetchResult.success) {
-          return {
-            content: [{ type: "text", text: fetchResult.message }],
-            isError: true,
-          };
+          return errorResult(fetchResult.message);
         }
 
-        const safeAccounts = (fetchResult.data ?? []).map((account) => ({
-          id: account.id,
-          platform: account.platform,
-          display_name: account.display_name,
-          username: account.username,
-          avatar_url: account.avatar_url,
-          is_available: account.is_available,
-          follower_count: account.follower_count,
-        }));
-
-        return {
-          content: [
-            { type: "text", text: JSON.stringify(safeAccounts, null, 2) },
-          ],
-        };
+        const isDetailed = args.response_format === "detailed";
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
+        return jsonResult({
+          accounts: (fetchResult.data ?? []).map((account) => ({
+            id: account.id,
+            platform: account.platform,
+            name: account.display_name,
+            username: account.username,
+            status: account.is_available ? ("ok" as const) : ("needs_reconnect" as const),
+            ...(isDetailed
+              ? { follower_count: account.follower_count, avatar_url: account.avatar_url }
+              : {}),
+          })),
+          reconnect_url: `${baseUrl}/connections`,
+        } satisfies z.infer<typeof ListConnectionsOutputSchema>);
       },
     ),
   );

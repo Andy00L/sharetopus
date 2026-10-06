@@ -33,7 +33,7 @@ Stripe handles subscriptions and payments. Three tiers with monthly and yearly p
 | Creator (popular) | $18 | $129 | 15 | 15 GB | Yes | Yes (quota-limited) |
 | Pro | $27 | $194 | 999 (unlimited) | 45 GB | Yes | Yes (unlimited) |
 
-Starter users get full web UI access but zero MCP tool access. This is the hybrid pricing model: web for everyone, MCP for Creator and above. All 18 MCP tools require Creator minimum via `ACCESS_PLAN_GATE`.
+Starter users get full web UI access but zero MCP tool access. This is the hybrid pricing model: web for everyone, MCP for Creator and above. All 10 MCP tools require Creator minimum via `ACTION_PLAN_GATE`.
 
 Stripe price IDs are environment-specific (dev vs prod). The code uses `NODE_ENV` to select the correct set. `priceIdToTier()` in `plans.ts` builds the `PRICE_ID_TO_TIER` map at module load from both dev and prod price ID arrays.
 
@@ -118,13 +118,13 @@ Checked by `checkAccountLimits`:
 
 ### MCP tool access by tier
 
-All 18 MCP tools are gated by `ACCESS_PLAN_GATE`, which requires Creator minimum:
+All 10 MCP tools are gated by `ACTION_PLAN_GATE`, which requires Creator minimum:
 
 | Tier | MCP access | Notes |
 |------|------------|-------|
 | Starter | Blocked | Web UI only. All MCP tool calls return an upgrade prompt. |
-| Creator | All 18 tools | Subject to monthly quotas (see below). |
-| Pro | All 18 tools | Unlimited usage (no quotas). |
+| Creator | All 10 tools | Subject to monthly quotas (see below). |
+| Pro | All 10 tools | Unlimited usage (no quotas). |
 
 REST API endpoints share the same quota system and plan gates. The `withRestEndpoint` middleware resolves the principal's plan and enforces the same tier and quota checks that MCP uses.
 
@@ -144,17 +144,11 @@ Defined in `MONTHLY_CAPS` from `entitlement.ts`. Enforced atomically via `atomic
 
 | Action | Starter | Creator | Pro |
 |--------|---------|---------|-----|
-| `schedule_post` | blocked | 500/mo | unlimited |
-| `post_now` | blocked | 500/mo | unlimited |
+| `publish_posts` | blocked | 500/mo | unlimited |
 | `request_upload_url` | blocked | 500/mo | unlimited |
 | `attach_media_from_url` | blocked | 500/mo | unlimited |
-| `bulk_schedule` | blocked | 200/mo | unlimited |
-| `bulk_post_now` | blocked | 500/mo | unlimited |
-| `generate_post_draft` | blocked | 100/mo | unlimited |
 
-Starter shows "blocked" because `ACCESS_PLAN_GATE` rejects all MCP calls before quota checks run. The `MONTHLY_CAPS` for Starter are 0 across the board, but the gate check fires first.
-
-`generate_post_draft` is available to Creator at 100/mo. Previous versions restricted this to Pro only.
+The caps count calls: one `publish_posts` call carries up to 30 posts. Starter shows "blocked" because `ACTION_PLAN_GATE` rejects all MCP calls before quota checks run. The `MONTHLY_CAPS` for Starter are 0 across the board, but the gate check fires first.
 
 ## Upload limits
 
@@ -179,7 +173,7 @@ The `usage_quotas` table stores per-principal monthly counts:
 |--------|-------------|
 | `principal_id` | FK to `principals` |
 | `period` | Date, first of month (e.g., `2026-05-01`). All readers use `currentQuotaPeriod()`. |
-| `action` | Action name (e.g., `schedule_post`) |
+| `action` | Action name (e.g., `publish_posts`) |
 | `count` | Current count for this period |
 
 Incremented atomically by `atomic_increment_quota` on every quota-gated MCP tool call. Period resets on the first of each month.
@@ -275,7 +269,7 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, the server-only subscription reader |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
-| `src/lib/mcp/_shared/entitlement.ts` | `MONTHLY_CAPS`, `ACCESS_PLAN_GATE`, MCP tier gating |
+| `src/lib/mcp/entitlement.ts` | `MONTHLY_CAPS`, `ACTION_PLAN_GATE`, MCP tier gating |
 | `src/lib/mcp/_shared/currentQuotaPeriod.ts` | `currentQuotaPeriod()`, period format for usage tracking |
 | `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware (enforces same plan gates) |
 

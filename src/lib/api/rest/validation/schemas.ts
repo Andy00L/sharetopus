@@ -17,15 +17,7 @@ export const SocialPlatformEnum = z.enum(SCHEDULABLE_PLATFORMS);
 
 export const PostTypeEnum = z.enum(["text", "image", "video"]);
 
-/**
- * Body schema for POST /v1/posts.
- *
- * Flat structure: every platform-specific field at the top level with
- * a platform_* prefix. Mirrors MCP schedule_post exactly.
- *
- * scheduled_at omitted -> directPostBatch (immediate publish).
- * scheduled_at provided -> schedulePostBatch (publishes at given time).
- */
+/** Body of POST /v1/posts, flat like a publish_posts entry; scheduled_at schedules, no scheduled_at publishes now. */
 export const PostCreateInputSchema = z
   .object({
     social_account_id: z.guid(),

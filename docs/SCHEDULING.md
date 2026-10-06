@@ -28,10 +28,10 @@ The `scheduled_posts.status` column drives all lifecycle transitions. Retryable 
 
 ```mermaid
 stateDiagram-v2
-    [*] --> scheduled : schedulePostInternal / bulk_schedule / schedulePostBatch
+    [*] --> scheduled : schedulePostBatch (web, MCP publish_posts, REST, x402)
     scheduled --> queued : scheduled-posts-tick cron (every 5 min, batch ≤ 200)
-    scheduled --> cancelled : cancel_scheduled_posts
-    cancelled --> scheduled : resume_scheduled_posts (past dates bumped to now + 1h)
+    scheduled --> cancelled : update_scheduled_posts cancel
+    cancelled --> scheduled : update_scheduled_posts resume (past dates bumped to now + 1h)
     queued --> processing : process-single-post claims row (CAS UPDATE WHERE status=queued)
     processing --> posted : platform publish success (posted_at = now, content_history inserted)
     processing --> failed : terminal error (error_message recorded, failed_posts row inserted)
@@ -49,11 +49,11 @@ From creation through publish to media cleanup.
 
 ```mermaid
 flowchart TD
-    A["Agent or web calls schedule_post / bulk_schedule"] --> B["schedulePostInternal"]
+    A["Web, MCP publish_posts, REST or x402 schedules posts"] --> B["schedulePostBatch"]
     B --> C{"idempotency_key provided?"}
     C -- yes --> D["INSERT ... ON CONFLICT DO NOTHING"]
     D --> E{"Conflict?"}
-    E -- yes --> F["SELECT existing row, return scheduleId + 'already created'"]
+    E -- yes --> F["Skip the row, count it in duplicates"]
     E -- no --> G["Row inserted, return new scheduleId"]
     C -- no --> H["Plain INSERT"]
     H --> G
@@ -80,17 +80,17 @@ flowchart TD
 
 | From | To | Trigger | Notes |
 |------|-----|---------|-------|
-| (new) | scheduled | schedulePostInternal, bulk_schedule, schedulePostBatch | `created_via` set at insert time |
+| (new) | scheduled | schedulePostBatch | `created_via` set at insert time |
 | scheduled | queued | scheduled-posts-tick cron | Batch up to 200. Status updated before event dispatch. |
-| scheduled | cancelled | cancel_scheduled_posts | Only `scheduled` status can be cancelled |
-| cancelled | scheduled | resume_scheduled_posts | Past dates bumped to now + 1 hour via `bumpPastScheduleToFuture` |
+| scheduled | cancelled | update_scheduled_posts `cancel` | Only `scheduled` status can be cancelled |
+| cancelled | scheduled | update_scheduled_posts `resume` | Past dates bumped to now + 1 hour via `bumpPastScheduleToFuture` |
 | queued | processing | process-single-post | Compare-and-swap (`WHERE status=queued`) prevents double-processing |
 | processing | posted | Platform publish success | `posted_at` set to `now()`. Content history inserted. |
 | processing | failed | Terminal platform error | Error recorded in `error_message`. `failed_posts` row inserted. |
 
 ## created_via
 
-Every post-related table (`scheduled_posts`, `failed_posts`, `content_history`) stores a `created_via` field that tracks origin. The value is threaded through `schedulePostInternal`, `storeContentHistory`, and `storeFailedPost` for per-origin analytics.
+Every post-related table (`scheduled_posts`, `failed_posts`, `content_history`) stores a `created_via` field that tracks origin. The value is threaded through `schedulePostBatch`, `storeContentHistory`, and `storeFailedPost` for per-origin analytics.
 
 | Value | Meaning |
 |-------|---------|
@@ -109,7 +109,7 @@ The lock row is inserted BEFORE the Inngest event is dispatched. This guarantees
 
 ```mermaid
 sequenceDiagram
-    participant Handler as handleSocialMediaPost / post_now tool
+    participant Handler as handleSocialMediaPost / directPostBatch
     participant DB as Supabase
     participant Inngest as Inngest
     participant Worker as process-direct-post
@@ -185,9 +185,9 @@ Tracks TikTok async publish operations. TikTok's pull model means the publish ca
 
 ## Idempotency
 
-Four tools support idempotent retries. This protects against duplicate posts when an agent retries after a network error or timeout.
+Both batch cores support idempotent retries. This protects against duplicate posts when an agent retries after a network error or timeout.
 
-All four use `INSERT ... ON CONFLICT DO NOTHING`. On conflict, the handler fetches the existing row and returns its ID with an "already created" or "already dispatched" message. The key is optional. Omitting it means no dedup (every call creates a new row).
+`schedulePostBatch` inserts with `ON CONFLICT DO NOTHING` and counts a skipped row in `duplicates`; `directPostBatch` looks the key up before dispatching. The key is optional. Omitting it means no dedup (every call creates a new row).
 
 ```mermaid
 sequenceDiagram
@@ -195,27 +195,24 @@ sequenceDiagram
     participant T as Tool handler
     participant DB as Supabase
 
-    A->>T: schedule_post (idempotency_key: "abc")
-    T->>DB: INSERT scheduled_posts ON CONFLICT DO NOTHING
+    A->>T: publish_posts (batch_id: "abc", one post with scheduled_at)
+    T->>DB: INSERT scheduled_posts (idempotency_key "abc:0") ON CONFLICT DO NOTHING
     DB-->>T: 1 row inserted
-    T->>A: { success, scheduleId: "new-id" }
+    T->>A: { scheduled: 1, schedule_ids: ["new-id"] }
 
     Note over A: Network error, agent retries same call
 
-    A->>T: schedule_post (idempotency_key: "abc")
-    T->>DB: INSERT scheduled_posts ON CONFLICT DO NOTHING
+    A->>T: publish_posts (batch_id: "abc", same post)
+    T->>DB: INSERT scheduled_posts (idempotency_key "abc:0") ON CONFLICT DO NOTHING
     DB-->>T: 0 rows inserted (conflict)
-    T->>DB: SELECT WHERE principal_id=? AND idempotency_key="abc"
-    DB-->>T: existing row
-    T->>A: { success, scheduleId: "existing-id", message: "already created" }
+    T->>A: { scheduled: 0, duplicates: 1 }
 ```
 
-| Tool | Key source | Target table | Constraint |
-|------|-----------|--------------|------------|
-| `schedule_post` | `idempotency_key` param (optional, 1-200 chars) | `scheduled_posts` | UNIQUE on `(principal_id, idempotency_key)` |
-| `post_now` | `idempotency_key` param (optional, 1-200 chars) | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
-| `bulk_schedule` | Derived: `${batchId}:${index}` | `scheduled_posts` | Same |
-| `bulk_post_now` | Derived: `${batch_id}:${index}` | `pending_direct_posts` | Same |
+| Caller | Key source | Target table | Constraint |
+|--------|-----------|--------------|------------|
+| MCP `publish_posts` | Derived: `${batch_id}:${index}` when `batch_id` is passed | `scheduled_posts` or `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
+| REST `POST /v1/posts`, x402 | `idempotency_key` param (optional, 1-200 chars) | the table of the path taken | Same |
+| REST `POST /v1/posts/bulk` | `idempotency_key` per post, else `${batch_id}:${index}` | `scheduled_posts` | Same |
 
 The `scheduled-posts-tick` dispatcher also deduplicates at the Inngest layer. It sets `eventId = post.due-${postId}-${scheduledAt}` with a 24-hour dedup window, preventing duplicate dispatch if the cron fires twice for the same batch.
 
@@ -309,6 +306,6 @@ Platform-specific options are stored in the `post_options` JSONB column on `sche
 
 ---
 
-**See also:** [docs/SECURITY.md](./SECURITY.md) (idempotency deep dive), [docs/INNGEST.md](./INNGEST.md) (worker details, retry config), [docs/MCP.md](./MCP.md) (schedule_post and post_now tool params)
+**See also:** [docs/SECURITY.md](./SECURITY.md) (idempotency deep dive), [docs/INNGEST.md](./INNGEST.md) (worker details, retry config), [docs/MCP.md](./MCP.md) (publish_posts and update_scheduled_posts params)
 
 [Back to README](../README.md)

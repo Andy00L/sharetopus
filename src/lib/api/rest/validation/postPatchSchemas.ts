@@ -24,12 +24,7 @@ export const PostPatchInputSchema = z.object({
 
 export type PostPatchInput = z.infer<typeof PostPatchInputSchema>;
 
-/**
- * Body schema for POST /v1/posts/bulk.
- *
- * Each item reuses PostCreateInputSchema (same validation as single
- * POST /v1/posts). Array length capped at 30 to match MCP bulk_schedule.
- */
+/** Body of POST /v1/posts/bulk: 1-30 PostCreateInputSchema items, the publish_posts cap. */
 export const PostBulkInputSchema = z.object({
   posts: z.array(PostCreateInputSchema).min(1).max(30),
 });

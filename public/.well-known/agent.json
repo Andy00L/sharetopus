@@ -15,22 +15,14 @@
       "mcpTools": [
         "list_connections",
         "list_pinterest_boards",
-        "list_scheduled_posts",
-        "list_content_history",
+        "list_posts",
         "list_billing_summary",
-        "request_account_reauth_link",
+        "get_account_analytics",
         "attach_media_from_url",
         "request_upload_url",
-        "schedule_post",
-        "post_now",
-        "cancel_scheduled_posts",
-        "resume_scheduled_posts",
-        "reschedule_posts",
-        "delete_scheduled_posts",
-        "bulk_schedule",
-        "bulk_post_now",
-        "get_account_analytics",
-        "generate_post_draft"
+        "publish_posts",
+        "update_scheduled_posts",
+        "delete_scheduled_posts"
       ]
     },
     {
@@ -49,5 +41,5 @@
   "supportedTrust": [
     "reputation"
   ],
-  "updatedAt": 1789798556
+  "updatedAt": 1791325299
 }

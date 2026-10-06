@@ -34,10 +34,10 @@ graph TD
         RetentionCrons["Data Retention Crons"]
         SSRFGuard["SSRF Guard (safeUserFetch)"]
         StorageQuota["Storage Quota Enforcement"]
-        ToolAnnotations["MCP Tool Annotations (18 tools)"]
+        ToolAnnotations["MCP Tool Annotations (10 tools)"]
         ClientInfo["clientInfo Capture"]
         PinterestBoards["list_pinterest_boards Tool"]
-        BulkPostNow["bulk_post_now Tool"]
+        PublishPosts["publish_posts Tool"]
         IdempotentRetries["Idempotent Retries on Write Tools"]
     end
 
@@ -69,7 +69,7 @@ The `/api/webhooks/tiktok/publish` endpoint receives HMAC-SHA256 signed events f
 
 ### 2. Hybrid Pricing / MCP Creator+ Minimum
 
-All 18 MCP tools require Creator tier or above. Starter users have web UI access only, no MCP. Per-tool quotas at Creator tier: 500/mo for most tools, 200/mo for `bulk_schedule`, 100/mo for `generate_post_draft`. Pro tier has unlimited quotas.
+All 10 MCP tools require Creator tier or above. Starter users have web UI access only, no MCP. Creator tier: 500 calls/mo each for `publish_posts`, `attach_media_from_url` and `request_upload_url`. Pro tier has unlimited quotas.
 
 ### 3. withMcpTool Higher-Order Function
 
@@ -113,7 +113,7 @@ Calls the `get_user_storage_bytes` Postgres RPC to read actual bytes from `stora
 
 ### 12. MCP Tool Annotations
 
-All 18 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`.
+All 10 tools carry Connectors Directory annotations: `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`.
 
 ### 13. clientInfo Capture
 
@@ -123,13 +123,13 @@ The MCP route handler reads the client's name from the 2025-era initialize hands
 
 Lets MCP agents discover board IDs for Pinterest posting. Parameters: `social_account_id` (required), `page_size` (1-100, default 25), `bookmark` (pagination cursor). Returns board id, name, description, privacy, pin_count.
 
-### 15. bulk_post_now MCP Tool
+### 15. publish_posts MCP Tool (2026-10)
 
-Publishes up to 30 posts immediately in one call. Creator+ tier. Same idempotent retry pattern as `bulk_schedule` (batch_id derives per-post idempotency keys).
+One tool publishes now or schedules 1 to 30 posts, replacing schedule_post, post_now, bulk_schedule and bulk_post_now. The platform comes from the account. `update_scheduled_posts` replaced the cancel, resume and reschedule tools, `list_posts` replaced the two list tools, and the server sends usage instructions at initialize. 18 tools became 10.
 
-### 16. Idempotent Retries on MCP Write Tools
+### 16. Idempotent Retries on MCP Posting
 
-`schedule_post`, `post_now`, and `bulk_post_now` accept an optional `idempotency_key` parameter. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors without creating duplicates.
+`publish_posts` derives `${batch_id}:${index}` idempotency keys when the caller passes a `batch_id`. DB-enforced via UNIQUE constraint on `(principal_id, idempotency_key)`. Safe to retry on network errors without creating duplicates.
 
 ### 17. REST API v1
 
@@ -231,7 +231,7 @@ Building it means declaring the five tables in `src/db/schema.ts`, generating an
 | `src/app/api/webhooks/tiktok/publish/route.ts` | TikTok webhook endpoint |
 | `src/inngest/functions/processTikTokPublishWebhook.ts` | Webhook Inngest processor |
 | `src/actions/server/data/finalizeTikTokPostByPublishId.ts` | Shared finalize (poll + webhook) |
-| `src/lib/mcp/withMcpTool.ts` | HOF wrapping all 18 tools |
+| `src/lib/mcp/withMcpTool.ts` | HOF wrapping all 10 tools |
 | `src/lib/mcp/auth/resolve.ts` | Auth resolution, REST API phase 2 comment |
 | `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic adapter pattern |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard |

@@ -1,119 +1,78 @@
+import "server-only";
+
+import type { McpServer } from "@modelcontextprotocol/server";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
+
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { db, runQuery } from "@/db/client";
 import { usage_quotas } from "@/db/schema";
 import { currentQuotaPeriod } from "@/lib/mcp/_shared/currentQuotaPeriod";
-import { and, eq } from "drizzle-orm";
 import { tierLabel } from "@/lib/types/plans";
-import type { McpServer } from "@modelcontextprotocol/server";
-import "server-only";
-import { z } from "zod";
 
-import { withMcpTool, type McpHandlerResult } from "../withMcpTool";
+import { monthlyCapsForPlan } from "../entitlement";
+import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-/**
- * Returns the user's current subscription status and usage quotas.
- *
- * Plan gate: creator (any active subscription at creator or above).
- * Tables read: stripe_subscriptions (via checkActiveSubscription), usage_quotas
- *
- * No free-form user text in the output.
- */
+const ListBillingSummaryOutputSchema = z.object({
+  plan: z.string().nullable(),
+  status: z.string(),
+  current_period_end: z.string().nullable(),
+  period: z.string(),
+  usage: z.array(
+    z.object({ tool: z.string(), used: z.number(), limit: z.number().nullable() }),
+  ),
+});
+
+/** The plan, its status, and this month's usage of each capped tool against its limit. */
 export function registerListBillingSummary(server: McpServer): void {
   server.registerTool(
     "list_billing_summary",
     {
       title: "List Billing Summary",
       description:
-        "View your current subscription plan, status, and usage quota counts for the current month.",
+        "Your plan, its status, and this month's calls of each capped tool against its limit (null limit means unlimited).",
       inputSchema: z.object({}),
-      annotations: {
-        title: "List Billing Summary",
-        readOnlyHint: true,
-        openWorldHint: false,
-      },
+      outputSchema: ListBillingSummaryOutputSchema,
+      annotations: { title: "List Billing Summary", readOnlyHint: true, openWorldHint: false },
     },
     withMcpTool("list_billing_summary", async (ctx) => {
-      // A failed read is an error, never "no subscription" or zero usage.
-      const subscription = await checkActiveSubscription(
-        ctx.principal.principalId,
-      );
+      const subscription = await checkActiveSubscription(ctx.principal.principalId);
       if (subscription.status === "unavailable") {
-        return billingReadFailure("subscription");
+        return errorResult("Could not read your subscription. Retry in a moment.");
       }
 
-      // Fetch current month usage.
-      // Query filter uses YYYY-MM-DD (matches the date column in usage_quotas).
-      // The display `period` field below stays YYYY-MM because it is user-facing.
-      const periodFilter = currentQuotaPeriod();
-      const { data: usageQuotas, error: usageError } = await runQuery(
+      const period = currentQuotaPeriod();
+      const { data: usageRows, error: usageError } = await runQuery(
         db
           .select({ action: usage_quotas.action, count: usage_quotas.count })
           .from(usage_quotas)
           .where(
             and(
               eq(usage_quotas.principal_id, ctx.principal.principalId),
-              eq(usage_quotas.period, periodFilter),
+              eq(usage_quotas.period, period),
             ),
           ),
       );
       if (usageError) {
-        console.error(
-          "[listBillingSummary] usage_quotas read failed:",
-          usageError.message,
-        );
-        return billingReadFailure("usage");
+        console.error("[listBillingSummary] usage_quotas read failed:", usageError.message);
+        return errorResult("Could not read your usage. Retry in a moment.");
       }
 
-      const usageByAction = usageQuotas.reduce(
-        (accumulator, quotaRow) => {
-          accumulator[quotaRow.action] = quotaRow.count;
-          return accumulator;
-        },
-        {} as Record<string, number>,
-      );
+      const usedByTool = new Map(usageRows.map((usageRow) => [usageRow.action, usageRow.count]));
+      const caps = ctx.principal.plan ? monthlyCapsForPlan(ctx.principal.plan) : {};
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                subscription: subscription.isActive
-                  ? {
-                      plan_tier: ctx.principal.plan,
-                      plan_label: ctx.principal.plan
-                        ? tierLabel(ctx.principal.plan)
-                        : "None",
-                      price_id: subscription.priceId,
-                      status: subscription.status,
-                      start_date: subscription.startDate,
-                      current_period_end: subscription.currentPeriodEnd,
-                    }
-                  : null,
-                usage_this_month: usageByAction,
-                // Display YYYY-MM (user-facing); the DB filter above uses YYYY-MM-DD.
-                period: periodFilter.slice(0, 7),
-              },
-              null,
-              2,
-            ),
-          },
-        ],
-      };
+      return jsonResult({
+        plan: ctx.principal.plan ? tierLabel(ctx.principal.plan) : null,
+        status: subscription.status,
+        current_period_end: subscription.isActive ? subscription.currentPeriodEnd : null,
+        // The usage_quotas filter is the 1st of the month; agents read YYYY-MM.
+        period: period.slice(0, 7),
+        usage: Object.entries(caps).map(([toolName, cap]) => ({
+          tool: toolName,
+          used: usedByTool.get(toolName) ?? 0,
+          limit: cap,
+        })),
+      } satisfies z.infer<typeof ListBillingSummaryOutputSchema>);
     }),
   );
-}
-
-function billingReadFailure(
-  whatFailed: "subscription" | "usage",
-): McpHandlerResult {
-  return {
-    content: [
-      {
-        type: "text",
-        text: `Could not read your ${whatFailed}. Please try again.`,
-      },
-    ],
-    isError: true,
-  };
 }

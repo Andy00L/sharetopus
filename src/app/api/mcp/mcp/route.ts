@@ -13,6 +13,7 @@ import { assertExhaustiveKind, type McpPrincipal } from "@/lib/mcp/auth/types";
 import { hashClientIp } from "@/lib/mcp/ipHash";
 import { registerPrompts } from "@/lib/mcp/prompts";
 import { MCP_ROUTE_RATE_LIMIT } from "@/lib/mcp/rateLimits";
+import { MCP_SERVER_INSTRUCTIONS } from "@/lib/mcp/serverInstructions";
 import { registerTools } from "@/lib/mcp/tools";
 import { resolveClientIp } from "@/lib/net/clientIp";
 import {
@@ -23,14 +24,7 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-/**
- * Upper bound on the body size we are willing to read to extract the
- * client's name. The bodies that carry it (a 2025-era `initialize`, or a
- * 2026-07-28 request's `_meta` envelope) are under 2KB unless they are
- * large tool calls, which we skip. Without this guard a 100MB POST would
- * force `req.clone().text()` to buffer the whole body on every request, a
- * trivial OOM/DoS vector against the serverless function.
- */
+/** Largest body read for the client name (bodies carrying it are under 2 KB); bounds the clone against huge POSTs. */
 const MAX_CLIENT_INFO_BODY_BYTES = 16 * 1024;
 
 /** Seconds a client waits before retrying when its credentials could not be checked. */
@@ -41,20 +35,7 @@ const MCP_AUTH_OPTIONS = {
   resourceMetadataPath: "/.well-known/oauth-protected-resource",
 };
 
-/**
- * Strips control characters and HTML/JS injection characters from MCP
- * client-supplied strings before they reach the DB. The client name
- * arrives raw from the client and ends up in mcp_oauth_clients.client_name
- * (first-sight INSERT), which the admin dashboard reads back. Without
- * this guard, a malicious client could store HTML/script payloads that
- * fire as stored-XSS the moment the dashboard renders the field as HTML.
- *
- * Removed character classes:
- *   - 0x00-0x1f: ASCII control chars (null bytes, tabs, escape)
- *   - < > ' " &: HTML/attribute injection vectors
- *
- * The output is also length-capped per the column constraints upstream.
- */
+/** Strips control and HTML characters from the client name before it lands in mcp_oauth_clients (stored XSS guard). */
 function sanitizeClientField(raw: string, maxLength: number): string {
   return raw.replace(/[\x00-\x1f<>'"&]/g, "").slice(0, maxLength);
 }
@@ -63,11 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Reads the client's name from a parsed JSON-RPC body. 2025-era clients
- * send it once, in `initialize` params.clientInfo; 2026-07-28 clients send
- * it on every request, in the `_meta` envelope under CLIENT_INFO_META_KEY.
- */
+/** Client name from initialize params.clientInfo (2025 era) or the _meta envelope (2026-07-28). */
 function readClientName(parsedBody: unknown): string | null {
   if (!isRecord(parsedBody) || !isRecord(parsedBody.params)) return null;
   const { params } = parsedBody;
@@ -80,12 +57,7 @@ function readClientName(parsedBody: unknown): string | null {
     : null;
 }
 
-/**
- * Best-effort: the client name only enriches the first-sight row in
- * mcp_oauth_clients, so any failure returns null and auth continues. The
- * guards skip the clone+read when it cannot pay off: no body, a body above
- * MAX_CLIENT_INFO_BODY_BYTES, or a non-JSON content type.
- */
+/** Best effort: the name only enriches the first-sight client row, so any failure returns null. */
 async function readClientNameFromRequest(req: Request): Promise<string | null> {
   if (req.method !== "POST") return null;
 
@@ -99,8 +71,6 @@ async function readClientNameFromRequest(req: Request): Promise<string | null> {
 
   try {
     const bodyText = await req.clone().text();
-    // Cheap substring check before JSON.parse skips payloads that carry
-    // no client info.
     if (
       !bodyText.includes('"initialize"') &&
       !bodyText.includes(CLIENT_INFO_META_KEY)
@@ -128,24 +98,17 @@ function readBearerToken(authorizationHeader: string | null): string | undefined
 }
 
 /**
- * Steps 2 to 5 of the auth flow. The token is resolved before withMcpAuth
- * runs because withMcpAuth answers 401 to every failure, and a 401 tells an
- * OAuth client its token is dead and starts a re-login: a database outage
- * would have signed every connected client out. A resolution that could
- * not read the database answers 503 with Retry-After instead. No AuthInfo
- * makes withMcpAuth answer 401.
+ * Resolves the token before withMcpAuth: withMcpAuth answers 401 to every
+ * failure, which would sign OAuth clients out during a database outage, so
+ * an unreadable database answers 503 with Retry-After instead.
  */
 async function authenticateMcpRequest(req: Request): Promise<Response> {
   const bearerToken = readBearerToken(req.headers.get("authorization"));
   let authInfo: AuthInfo | undefined;
 
   if (bearerToken) {
-    // Read before resolveMcpPrincipal: the OAuth trust check uses it for
-    // the first-sight INSERT into mcp_oauth_clients.
     const clientName = await readClientNameFromRequest(req);
-
-    // Handles both the API key and the Clerk OAuth paths, including the
-    // subscription gate and the OAuth client trust check.
+    // API key or Clerk OAuth, including the subscription gate and the client trust check.
     const resolution = await resolveMcpPrincipal(bearerToken, { clientName });
     if (resolution.status === "unavailable") {
       return NextResponse.json(
@@ -176,40 +139,17 @@ function toAuthInfo(bearerToken: string, principal: McpPrincipal): AuthInfo {
     clientId: clientIdForAuthInfo(principal),
     extra: {
       principal: principal satisfies McpPrincipal,
-      // Per-request correlation ID for logs and mcp_audit_log.session_id.
-      // Serving is stateless on both protocol eras, so no session id exists.
+      // Serving is stateless, so this per-request id stands in for a session id in logs.
       requestId: randomUUID(),
     },
   };
 }
 
 /**
- * MCP endpoint at /api/mcp/mcp, the URL every client is configured with.
- *
- * mcp-handler 2.x serves the 2026-07-28 protocol revision natively and
- * falls back to stateless Streamable HTTP for 2025-era clients, from this
- * one handler. It serves whatever path it is mounted on, so this is a
- * plain route: /api/mcp/sse and any other path under /api/mcp answer 404.
- * The HTTP+SSE transport no longer exists in 2.x.
- *
- * Auth flow:
- *   1. Per-IP ceiling (MCP_ROUTE_RATE_LIMIT) fires first, before any token
- *      handling, so probes and floods get short-circuited cheaply. It
- *      answers 429 (or 503 when the limiter is down), never 401: a 401
- *      tells an OAuth client its token is dead and starts a re-login.
- *   2. Bearer token arrives in the Authorization header.
- *   3. If it starts with stp_mcp_, resolveMcpPrincipal() resolves it as
- *      an API key.
- *   4. Otherwise, it tries Clerk OAuth token verification. The user's
- *      Clerk userId becomes the principalId.
- *   5. If neither works, the request gets a 401 whose WWW-Authenticate
- *      header points at /.well-known/oauth-protected-resource. When a
- *      database read fails on the way, it gets a 503 with Retry-After.
- *
- * Called by: MCP clients (Claude, Cursor, ChatGPT, etc.)
- * Tables touched: api_keys (read, via resolveMcpPrincipal),
- *   mcp_audit_log (insert per tool call, via withMcpTool)
- * Rate limits: Upstash Redis, via checkRateLimit
+ * The MCP server at /api/mcp/mcp: stateless Streamable HTTP, protocol
+ * 2026-07-28 with a fallback for 2025-era clients. Auth: stp_mcp_ API key or
+ * Clerk OAuth; a missing or bad token gets a 401 pointing at
+ * /.well-known/oauth-protected-resource.
  */
 const mcpHandler = createMcpHandler(
   (server) => {
@@ -219,11 +159,10 @@ const mcpHandler = createMcpHandler(
   {
     serverInfo: {
       name: "Sharetopus",
-      version: "0.1.0",
+      version: "0.2.0",
     },
-    // Tools and prompts never change at runtime, so nothing is announced
-    // and no subscriptions/listen streams are served: on Vercel each one
-    // would hold a function open until maxDuration.
+    instructions: MCP_SERVER_INSTRUCTIONS,
+    // Tools never change at runtime; a listen stream would hold a Vercel function open until maxDuration.
     capabilities: {
       tools: { listChanged: false },
       prompts: { listChanged: false },
@@ -234,10 +173,8 @@ const mcpHandler = createMcpHandler(
 );
 
 /**
- * Step 1 of the auth flow: the per-IP ceiling, applied before the request
- * reaches token verification. Requests with no resolvable IP (synthetic
- * load tests, internal calls) skip it, because checkRateLimit needs a key.
- * The per-user tool-call budget is enforced later, in withMcpTool.
+ * Per-IP ceiling before any token handling; it answers 429 or 503, never a
+ * 401 that would sign OAuth clients out. The per-user budget lives in withMcpTool.
  */
 async function handleMcpRequest(req: Request): Promise<Response> {
   const clientIpHash = hashClientIp(resolveClientIp(req.headers));

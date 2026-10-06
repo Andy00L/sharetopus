@@ -1,0 +1,1065 @@
+{
+  "initialize": {
+    "protocolVersion": "2025-11-25",
+    "capabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "serverInfo": {
+      "name": "Sharetopus",
+      "version": "eval"
+    },
+    "instructions": "Sharetopus publishes and schedules posts on the user's connected social accounts.\n\nPosting takes two calls:\n1. list_connections: take each account's id (its platform and status come with it).\n2. publish_posts: one entry per account. Add scheduled_at (a future ISO 8601 time with a zone, e.g. 2026-10-08T10:00:00Z) to schedule a post; leave it out to publish now.\nThen list_posts with the returned batch_id shows what happened to each post.\n\nMedia: attach_media_from_url copies a public image or video; request_upload_url gives a signed URL to PUT a local file. Both return storage_path, which is publish_posts' media_storage_path. One path can serve several posts.\nTargets: Pinterest needs pinterest_board_id (from list_pinterest_boards); reddit needs subreddit, lemmy community_id, gmb location_name; reddit, lemmy, devto, hashnode, medium, wordpress and dribbble need a title.\nAn account in needs_reconnect status cannot publish until the user reconnects it at reconnect_url.\nupdate_scheduled_posts cancels, resumes or reschedules scheduled posts; delete_scheduled_posts removes them for good.\nTikTok posts made through this server are public.\nLimits: 30 posts per publish_posts call; list_billing_summary shows the monthly quotas."
+  },
+  "tools": {
+    "tools": [
+      {
+        "name": "list_connections",
+        "title": "List Connections",
+        "description": "List the connected social accounts with their id, platform and status. Use an id as social_account_id in publish_posts. An account in needs_reconnect status cannot publish until the user reconnects it at reconnect_url.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "response_format": {
+              "default": "concise",
+              "description": "detailed adds follower_count and avatar_url.",
+              "type": "string",
+              "enum": [
+                "concise",
+                "detailed"
+              ]
+            }
+          }
+        },
+        "annotations": {
+          "title": "List Connections",
+          "readOnlyHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "accounts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "username": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "needs_reconnect"
+                    ]
+                  },
+                  "follower_count": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "avatar_url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "platform",
+                  "name",
+                  "username",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "reconnect_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "accounts",
+            "reconnect_url"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "list_pinterest_boards",
+        "title": "List Pinterest Boards",
+        "description": "List the boards of a connected Pinterest account. A Pinterest post needs one board id as pinterest_board_id. Pass the returned bookmark to get the next page.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "social_account_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+              "description": "A Pinterest account id from list_connections."
+            },
+            "page_size": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "bookmark": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "social_account_id"
+          ]
+        },
+        "annotations": {
+          "title": "List Pinterest Boards",
+          "readOnlyHint": true,
+          "openWorldHint": true
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "boards": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "privacy": {
+                    "type": "string"
+                  },
+                  "pin_count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "bookmark": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "boards",
+            "bookmark"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "list_posts",
+        "title": "List Posts",
+        "description": "List posts: upcoming (scheduled, oldest first), published, failed or cancelled (newest first). Pass batch_id from publish_posts to see what happened to each post of that call.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "status": {
+              "default": "upcoming",
+              "type": "string",
+              "enum": [
+                "upcoming",
+                "published",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "batch_id": {
+              "description": "Overrides status: returns every post of that batch.",
+              "type": "string",
+              "maxLength": 200
+            },
+            "social_account_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+            },
+            "platform": {
+              "description": "Platform id, e.g. linkedin.",
+              "type": "string",
+              "maxLength": 32
+            },
+            "from": {
+              "description": "ISO 8601 lower time bound.",
+              "type": "string"
+            },
+            "to": {
+              "description": "ISO 8601 upper time bound.",
+              "type": "string"
+            },
+            "limit": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "offset": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "response_format": {
+              "default": "concise",
+              "description": "detailed adds full text, title, account id, content id and media URL.",
+              "type": "string",
+              "enum": [
+                "concise",
+                "detailed"
+              ]
+            }
+          }
+        },
+        "annotations": {
+          "title": "List Posts",
+          "readOnlyHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "posts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "account": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "time": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "text": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "media_type": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "batch_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "error": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "social_account_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "content_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "media_url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "status",
+                  "platform",
+                  "account",
+                  "time",
+                  "text",
+                  "media_type",
+                  "batch_id"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "has_more": {
+              "type": "boolean"
+            },
+            "next_offset": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "posts",
+            "has_more",
+            "next_offset"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "list_billing_summary",
+        "title": "List Billing Summary",
+        "description": "Your plan, its status, and this month's calls of each capped tool against its limit (null limit means unlimited).",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {}
+        },
+        "annotations": {
+          "title": "List Billing Summary",
+          "readOnlyHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string"
+            },
+            "current_period_end": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "period": {
+              "type": "string"
+            },
+            "usage": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "used": {
+                    "type": "number"
+                  },
+                  "limit": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "tool",
+                  "used",
+                  "limit"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "plan",
+            "status",
+            "current_period_end",
+            "period",
+            "usage"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "get_account_analytics",
+        "title": "Get Account Analytics",
+        "description": "Daily views, likes, comments, shares and subscribers for your content, newest first. Data can be up to 24 h old.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "platform": {
+              "description": "Platform id, e.g. youtube.",
+              "type": "string",
+              "maxLength": 32
+            },
+            "content_id": {
+              "description": "A content_id from list_posts (published, detailed).",
+              "type": "string",
+              "maxLength": 200
+            },
+            "days": {
+              "default": 30,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90
+            },
+            "limit": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        },
+        "annotations": {
+          "title": "Get Account Analytics",
+          "readOnlyHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "metrics": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "date": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string"
+                  },
+                  "content_id": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "views": {
+                    "type": "number"
+                  },
+                  "likes": {
+                    "type": "number"
+                  },
+                  "comments": {
+                    "type": "number"
+                  },
+                  "shares": {
+                    "type": "number"
+                  },
+                  "subscribers": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "date",
+                  "platform",
+                  "content_id",
+                  "views",
+                  "likes",
+                  "comments",
+                  "shares",
+                  "subscribers"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "metrics"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "attach_media_from_url",
+        "title": "Attach Media From URL",
+        "description": "Copy an image or video from a public URL into storage (JPEG, PNG, GIF, WebP, MP4, MOV, WebM; no redirects). Returns storage_path to pass as media_storage_path in publish_posts.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "description": "Public http(s) URL of the file."
+            }
+          },
+          "required": [
+            "url"
+          ]
+        },
+        "annotations": {
+          "title": "Attach Media From URL",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "storage_path": {
+              "type": "string"
+            },
+            "content_type": {
+              "type": "string"
+            },
+            "size_bytes": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "storage_path",
+            "content_type",
+            "size_bytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "request_upload_url",
+        "title": "Request Upload URL",
+        "description": "Get a signed URL to upload a local image or video yourself: PUT the bytes to upload_url with the file's Content-Type, then pass storage_path as media_storage_path in publish_posts.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "filename": {
+              "type": "string",
+              "minLength": 1,
+              "description": "With extension, e.g. clip.mp4."
+            },
+            "content_type": {
+              "type": "string",
+              "minLength": 1,
+              "description": "image/jpeg, image/png, video/mp4, video/mov or video/quicktime."
+            },
+            "size_bytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "filename",
+            "content_type",
+            "size_bytes"
+          ]
+        },
+        "annotations": {
+          "title": "Request Upload URL",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "upload_url": {
+              "type": "string"
+            },
+            "storage_path": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string"
+            },
+            "expires_in_seconds": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "upload_url",
+            "storage_path",
+            "token",
+            "expires_in_seconds"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "publish_posts",
+        "title": "Publish Posts",
+        "description": "Publish or schedule 1 to 30 posts. A post with scheduled_at is scheduled; one without it is published now. To cross-post, add one entry per account with the same media_storage_path. Check the outcome with list_posts and the returned batch_id.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "posts": {
+              "minItems": 1,
+              "maxItems": 30,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "social_account_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+                    "description": "Account id from list_connections. The platform follows from the account."
+                  },
+                  "post_type": {
+                    "type": "string",
+                    "enum": [
+                      "text",
+                      "image",
+                      "video"
+                    ],
+                    "description": "The platform must accept this type."
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Caption or body text. Required for text posts."
+                  },
+                  "title": {
+                    "description": "Required on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble. Pinterest and YouTube use it too.",
+                    "type": "string"
+                  },
+                  "media_storage_path": {
+                    "default": "",
+                    "description": "From attach_media_from_url or request_upload_url. Required for image and video.",
+                    "type": "string"
+                  },
+                  "scheduled_at": {
+                    "description": "Future ISO 8601 time with a zone (Z or +02:00) to schedule the post. Omit to publish now.",
+                    "type": "string"
+                  },
+                  "cover_timestamp": {
+                    "description": "TikTok video cover frame in ms (at least 1000).",
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 9007199254740991
+                  },
+                  "pinterest_board_id": {
+                    "description": "Required for Pinterest. From list_pinterest_boards.",
+                    "type": "string"
+                  },
+                  "pinterest_link": {
+                    "description": "Pinterest: where the pin links to.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "subreddit": {
+                    "description": "Reddit: subreddit to post to. Required when platform is reddit.",
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 50
+                  },
+                  "flair_id": {
+                    "description": "Reddit: flair id for the post.",
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "community_id": {
+                    "description": "Lemmy: community id. Required when platform is lemmy.",
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "publication_id": {
+                    "description": "Hashnode: publication id. Defaults to the account's first publication.",
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "blog": {
+                    "description": "Tumblr: blog name. Defaults to the blog stored when the account connected.",
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "location_name": {
+                    "description": "Google Business Profile: location, shaped \"locations/<id>\". Required when platform is gmb.",
+                    "type": "string",
+                    "pattern": "^locations\\/[0-9]+$"
+                  },
+                  "organization_id": {
+                    "description": "LinkedIn Pages: organization id. Defaults to the connected organization.",
+                    "type": "string",
+                    "maxLength": 50
+                  },
+                  "canonical_url": {
+                    "description": "dev.to: canonical URL of the original article.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "tags": {
+                    "description": "dev.to: up to 4 tags.",
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 50
+                    }
+                  }
+                },
+                "required": [
+                  "social_account_id",
+                  "post_type",
+                  "description"
+                ]
+              }
+            },
+            "batch_id": {
+              "description": "Reuse the same batch_id when retrying: posts it already created are not duplicated.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "posts"
+          ]
+        },
+        "annotations": {
+          "title": "Publish Posts",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "batch_id": {
+              "type": "string"
+            },
+            "publishing_now": {
+              "type": "number"
+            },
+            "scheduled": {
+              "type": "number"
+            },
+            "duplicates": {
+              "type": "number"
+            },
+            "rejected": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "social_account_id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "social_account_id",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "event_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "schedule_ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "batch_id",
+            "publishing_now",
+            "scheduled",
+            "duplicates",
+            "rejected",
+            "event_ids",
+            "schedule_ids",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "update_scheduled_posts",
+        "title": "Update Scheduled Posts",
+        "description": "Change up to 50 scheduled posts. cancel: stops posts in status scheduled. resume: brings cancelled posts back (a past time moves to 1 hour from now). reschedule: sets a new future time and resumes cancelled posts. Get post ids from list_posts.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "post_ids": {
+              "minItems": 1,
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+              }
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "cancel",
+                "resume",
+                "reschedule"
+              ]
+            },
+            "scheduled_at": {
+              "description": "Future ISO 8601 time with a zone. Required for reschedule.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "post_ids",
+            "action"
+          ]
+        },
+        "annotations": {
+          "title": "Update Scheduled Posts",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "cancel",
+                "resume",
+                "reschedule"
+              ]
+            },
+            "updated": {
+              "type": "number"
+            },
+            "skipped": {
+              "type": "number"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "updated",
+            "skipped",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "delete_scheduled_posts",
+        "title": "Delete Scheduled Posts",
+        "description": "Permanently delete up to 50 scheduled posts. Cannot be undone; to stop a post but keep it, use update_scheduled_posts with action cancel.",
+        "inputSchema": {
+          "type": "object",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "post_ids": {
+              "minItems": 1,
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+              }
+            }
+          },
+          "required": [
+            "post_ids"
+          ]
+        },
+        "annotations": {
+          "title": "Delete Scheduled Posts",
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "deleted": {
+              "type": "number"
+            },
+            "skipped": {
+              "type": "number"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "deleted",
+            "skipped",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  }
+}

@@ -22,13 +22,7 @@ const targetPlatformsArgument = z
   )
   .pipe(z.array(z.enum(SCHEDULABLE_PLATFORMS)).min(1));
 
-/**
- * Prompt: repurpose an existing post for other platforms.
- *
- * Takes a post ID and target platforms. The agent should fetch the
- * original post via list_scheduled_posts or list_content_history,
- * then adapt it for each target platform.
- */
+/** Prompt: rewrite one existing post for other platforms. */
 export function registerRepurposePost(server: McpServer): void {
   server.registerPrompt(
     "repurpose_post",
@@ -39,7 +33,7 @@ export function registerRepurposePost(server: McpServer): void {
         post_id: z
           .string()
           .describe(
-            "ID of the post to repurpose (from scheduled_posts or content_history)",
+            "Id of the post to repurpose, from list_posts.",
           ),
         target_platforms: targetPlatformsArgument,
       }),
@@ -54,14 +48,14 @@ export function registerRepurposePost(server: McpServer): void {
               `Repurpose post ${post_id} for these platforms: ${target_platforms.join(", ")}.`,
               "",
               "Steps:",
-              "1. Use list_scheduled_posts or list_content_history to fetch the original post",
+              "1. Find the original post in list_posts (response_format detailed; try status published, then upcoming)",
               "2. For each target platform, rewrite the content:",
               ...target_platforms.map(
                 (platform) =>
                   `   - ${platform}: adapt the tone, length, and hashtags for ${platform}'s audience`,
               ),
               "3. Show me the adapted versions for review",
-              "4. For the ones I approve, schedule them using schedule_post or bulk_schedule",
+              "4. Publish or schedule the ones I approve in one publish_posts call",
               "",
               "Keep the core message the same, but make each version feel native to its platform.",
             ].join("\n"),

@@ -4,6 +4,7 @@ import {
   MCP_ROUTE_RATE_LIMIT,
   MCP_TOOL_CALL_RATE_LIMIT,
 } from "@/lib/mcp/rateLimits";
+import { MCP_SERVER_INSTRUCTIONS } from "@/lib/mcp/serverInstructions";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 import {
   MCP_CLAUDE_CODE_NEXT_STEP,
@@ -17,13 +18,6 @@ import {
 } from "./mcpCatalog";
 import { SITE_ORIGIN } from "./markdownPrimitives";
 
-/**
- * Renders the MCP server guide as plain markdown for AI agents.
- * Served at /docs/mcp.md via /api/docs/[slug]. Content comes from the
- * shared catalog (mcpCatalog.ts), the same source the HTML reference
- * page reads, so the two surfaces cannot drift.
- */
-
 function renderToolGroups(): string {
   return MCP_TOOL_GROUP_ORDER.map((group) => {
     const groupLines = listMcpToolsInGroup(group).map(
@@ -33,6 +27,7 @@ function renderToolGroups(): string {
   }).join("\n\n");
 }
 
+/** The MCP guide as markdown for agents, served at /docs/mcp.md; content shared with the HTML page. */
 export async function buildMcpDocMarkdown(): Promise<string> {
   const promptLines = MCP_PROMPT_DOCS.map(
     (promptDoc) => `- **${promptDoc.name}**: ${promptDoc.summary}`,
@@ -88,12 +83,13 @@ export async function buildMcpDocMarkdown(): Promise<string> {
     "",
     ...promptLines,
     "",
-    "## Typical flow",
+    "## Server instructions",
     "",
-    "1. `list_connections` to find the social account ids and their availability.",
-    "2. `attach_media_from_url` (or `request_upload_url`) when the post carries an image or video.",
-    "3. `schedule_post` or `post_now` with the account id and the storage path.",
-    "4. `list_scheduled_posts` or `list_content_history` to confirm the result.",
+    "Every client receives this guide when it connects:",
+    "",
+    "```text",
+    MCP_SERVER_INSTRUCTIONS,
+    "```",
     "",
     `The site index for agents is ${SITE_ORIGIN}/llms.txt. The REST alternative (API key, no MCP client needed) is documented at ${SITE_ORIGIN}/docs/quickstart.md.`,
   ];
