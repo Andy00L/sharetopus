@@ -9,12 +9,12 @@ const PLATFORMS = [
   { label: "TikTok", src: "/tiktok.svg" },
 ];
 
-// Icons and spokes share these y positions (percent) so the lines meet the nodes.
-const RIGHT_Y = [15, 30, 50, 70, 85];
+// Positions in percent of the diagram (also the SVG's 0-100 viewBox); spokes and icons share them.
+const PLATFORM_TOP_PERCENTS = [15, 30, 50, 70, 85];
 
-const HUB = { x: 50, y: 50 };
-const USER = { x: 15, y: 50 };
-const PLATFORM_X = 85;
+const HUB = { leftPercent: 50, topPercent: 50 };
+const USER = { leftPercent: 15, topPercent: 50 };
+const PLATFORM_LEFT_PERCENT = 85;
 
 const LINE_ANIM_CSS = `
 @keyframes travelLineLeft {
@@ -121,20 +121,20 @@ export default function Crossposting() {
                   </defs>
 
                   <line
-                    x1={USER.x}
-                    y1={USER.y}
-                    x2={HUB.x}
-                    y2={HUB.y}
+                    x1={USER.leftPercent}
+                    y1={USER.topPercent}
+                    x2={HUB.leftPercent}
+                    y2={HUB.topPercent}
                     stroke="#C8C2B1"
                     strokeWidth={1.4}
                     vectorEffect="non-scaling-stroke"
                   />
-                  {RIGHT_Y.map((spokeY) => (
+                  {PLATFORM_TOP_PERCENTS.map((spokeY) => (
                     <line
                       key={`base-${spokeY}`}
-                      x1={HUB.x}
-                      y1={HUB.y}
-                      x2={PLATFORM_X}
+                      x1={HUB.leftPercent}
+                      y1={HUB.topPercent}
+                      x2={PLATFORM_LEFT_PERCENT}
                       y2={spokeY}
                       stroke="#C8C2B1"
                       strokeWidth={1.6}
@@ -143,22 +143,22 @@ export default function Crossposting() {
                   ))}
 
                   <line
-                    x1={USER.x}
-                    y1={USER.y}
-                    x2={HUB.x}
-                    y2={HUB.y}
+                    x1={USER.leftPercent}
+                    y1={USER.topPercent}
+                    x2={HUB.leftPercent}
+                    y2={HUB.topPercent}
                     stroke="#FF5A36"
                     strokeWidth={1.8}
                     strokeLinecap="round"
                     vectorEffect="non-scaling-stroke"
                     className="animated-line-left"
                   />
-                  {RIGHT_Y.map((spokeY) => (
+                  {PLATFORM_TOP_PERCENTS.map((spokeY) => (
                     <line
                       key={`pulse-${spokeY}`}
-                      x1={HUB.x}
-                      y1={HUB.y}
-                      x2={PLATFORM_X}
+                      x1={HUB.leftPercent}
+                      y1={HUB.topPercent}
+                      x2={PLATFORM_LEFT_PERCENT}
                       y2={spokeY}
                       stroke="#FF5A36"
                       strokeWidth={1.8}
@@ -172,8 +172,8 @@ export default function Crossposting() {
                 <div
                   className="absolute group"
                   style={{
-                    left: `${USER.x}%`,
-                    top: `${USER.y}%`,
+                    left: `${USER.leftPercent}%`,
+                    top: `${USER.topPercent}%`,
                     transform: "translate(-50%, -50%)",
                     zIndex: 10,
                   }}
@@ -202,8 +202,8 @@ export default function Crossposting() {
                 <div
                   className="absolute group"
                   style={{
-                    left: `${HUB.x}%`,
-                    top: `${HUB.y}%`,
+                    left: `${HUB.leftPercent}%`,
+                    top: `${HUB.topPercent}%`,
                     transform: "translate(-50%, -50%)",
                     zIndex: 20,
                   }}
@@ -229,8 +229,8 @@ export default function Crossposting() {
                     key={platform.label}
                     className="group absolute"
                     style={{
-                      left: `${PLATFORM_X}%`,
-                      top: `${RIGHT_Y[platformIndex]}%`,
+                      left: `${PLATFORM_LEFT_PERCENT}%`,
+                      top: `${PLATFORM_TOP_PERCENTS[platformIndex]}%`,
                       transform: "translate(-50%, -50%)",
                       zIndex: 10,
                     }}

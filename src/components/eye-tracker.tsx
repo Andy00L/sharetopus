@@ -77,15 +77,15 @@ export function EyeTracker({
 
     let dilation = 1;
     const pupilOffsets = eyes.map(() => ({ currentX: 0, currentY: 0 }));
-    const mouse: { x: number | null; y: number | null; lastMove: number } = {
-      x: null,
-      y: null,
+    const mouse: { clientX: number | null; clientY: number | null; lastMove: number } = {
+      clientX: null,
+      clientY: null,
       lastMove: 0,
     };
-    let idleTarget: { x: number; y: number } | null = null;
+    let idleTarget: { clientX: number; clientY: number } | null = null;
     let lastIdlePick = 0;
     let isHoveringCta = false;
-    const saccade = { x: 0, y: 0, until: 0 };
+    const saccade = { offsetX: 0, offsetY: 0, until: 0 };
     let nextSaccadeAt = performance.now() + 1800 + Math.random() * 2200;
     let rafId = 0;
     let isRunning = false;
@@ -98,8 +98,8 @@ export function EyeTracker({
 
     const onPointerMove = (event: PointerEvent) => {
       if (event.pointerType === "touch") return;
-      mouse.x = event.clientX;
-      mouse.y = event.clientY;
+      mouse.clientX = event.clientX;
+      mouse.clientY = event.clientY;
       mouse.lastMove = performance.now();
       idleTarget = null;
     };
@@ -115,8 +115,8 @@ export function EyeTracker({
       const padX = cardBounds.width * 0.15;
       const padY = cardBounds.height * 0.15;
       return {
-        x: cardBounds.left + padX + Math.random() * (cardBounds.width - padX * 2),
-        y: cardBounds.top + padY + Math.random() * (cardBounds.height - padY * 2),
+        clientX: cardBounds.left + padX + Math.random() * (cardBounds.width - padX * 2),
+        clientY: cardBounds.top + padY + Math.random() * (cardBounds.height - padY * 2),
       };
     };
 
@@ -126,16 +126,16 @@ export function EyeTracker({
         return;
       }
 
-      let target: { x: number; y: number };
+      let target: { clientX: number; clientY: number };
       if (isHoveringCta) {
-        target = { x: rects.cta.centerX, y: rects.cta.centerY };
+        target = { clientX: rects.cta.centerX, clientY: rects.cta.centerY };
       } else if (
         !isCoarse &&
-        mouse.x !== null &&
-        mouse.y !== null &&
+        mouse.clientX !== null &&
+        mouse.clientY !== null &&
         now - mouse.lastMove < 2400
       ) {
-        target = { x: mouse.x, y: mouse.y };
+        target = { clientX: mouse.clientX, clientY: mouse.clientY };
       } else {
         if (!idleTarget || now - lastIdlePick > 2000) {
           idleTarget = pickIdleTarget();
@@ -145,26 +145,26 @@ export function EyeTracker({
       }
 
       if (now >= nextSaccadeAt) {
-        saccade.x = (Math.random() * 2 - 1) * 1.6;
-        saccade.y = (Math.random() * 2 - 1) * 1.2;
+        saccade.offsetX = (Math.random() * 2 - 1) * 1.6;
+        saccade.offsetY = (Math.random() * 2 - 1) * 1.2;
         saccade.until = now + 90;
         nextSaccadeAt = now + 2200 + Math.random() * 3000;
       }
       if (now > saccade.until) {
-        saccade.x = 0;
-        saccade.y = 0;
+        saccade.offsetX = 0;
+        saccade.offsetY = 0;
       }
 
       let targetDilation = 1;
       if (
         !isCoarse &&
-        mouse.x !== null &&
-        mouse.y !== null &&
+        mouse.clientX !== null &&
+        mouse.clientY !== null &&
         now - mouse.lastMove < 2400
       ) {
         const ctaBounds = rects.cta;
-        const gapX = Math.max(ctaBounds.left - mouse.x, 0, mouse.x - ctaBounds.right);
-        const gapY = Math.max(ctaBounds.top - mouse.y, 0, mouse.y - ctaBounds.bottom);
+        const gapX = Math.max(ctaBounds.left - mouse.clientX, 0, mouse.clientX - ctaBounds.right);
+        const gapY = Math.max(ctaBounds.top - mouse.clientY, 0, mouse.clientY - ctaBounds.bottom);
         const proximity = 1 - Math.min(1, Math.hypot(gapX, gapY) / 260);
         // Smoothstep easing: up to 35% larger pupils as the pointer nears the CTA.
         targetDilation = 1 + proximity * proximity * (3 - 2 * proximity) * 0.35;
@@ -173,8 +173,8 @@ export function EyeTracker({
 
       pupilOffsets.forEach((pupilOffset, eyeIndex) => {
         const eyeCenter = rects.eyes[eyeIndex];
-        const deltaX = target.x - eyeCenter.centerX;
-        const deltaY = target.y - eyeCenter.centerY;
+        const deltaX = target.clientX - eyeCenter.centerX;
+        const deltaY = target.clientY - eyeCenter.centerY;
         const reach = Math.min(1, Math.hypot(deltaX, deltaY) / 280);
         const maxOffset = eyeCenter.width * 0.22;
         const angle = Math.atan2(deltaY, deltaX);
@@ -183,8 +183,8 @@ export function EyeTracker({
         pupilOffset.currentX += (targetX - pupilOffset.currentX) * 0.18;
         pupilOffset.currentY += (targetY - pupilOffset.currentY) * 0.18;
 
-        const pupilX = pupilOffset.currentX + saccade.x;
-        const pupilY = pupilOffset.currentY + saccade.y;
+        const pupilX = pupilOffset.currentX + saccade.offsetX;
+        const pupilY = pupilOffset.currentY + saccade.offsetY;
         pupils[eyeIndex].style.transform =
           `translate3d(${pupilX.toFixed(2)}px, ${pupilY.toFixed(2)}px, 0)`;
         dilates[eyeIndex].style.transform = `scale(${dilation.toFixed(3)})`;
