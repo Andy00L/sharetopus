@@ -104,6 +104,22 @@ action), token-built, never two per page.
 - Width: 64rem is a recorded exception to the 80rem docs width. A ledger
   reads better on a shorter measure.
 
+## Concept films (explanatory figures)
+
+- What: an animated figure that runs one idea on real values, built with the concept-films
+  engine (`public/films/films.js`), mounted by `src/components/films/ConceptFilm.tsx`.
+- Screen: the engine's warm near-black `#141311` with its fixed role hues (blue main object,
+  teal placed, green done). The focus role is the brand orange `#FF5A36` (6.0:1 on the screen).
+  Prose uses DM Sans (Geist in the app), data uses Geist Mono. Tokens:
+  `src/components/films/films-theme.css`.
+- Placement: at most one film per page, as a figure inside the section it explains. Today:
+  `/docs/mcp` "Typical flow" and the integrations MCP card (`mcp-two-calls`). A film never
+  carries the ink stamp.
+- Fallback: the exported poster (`public/films/<key>.png`, the final frame) shows until the
+  engine mounts, and stays when a script fails. Under reduced motion nothing autoplays and
+  the final frame shows.
+- Values: every number comes from a script (`scripts/films/`), never typed from memory.
+
 ## Dashboard surfaces (protected app)
 
 The dashboard runs on the shadcn token set (`:root` zinc scale) over the

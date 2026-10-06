@@ -5,9 +5,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ConceptFilm } from "@/components/films/ConceptFilm";
 import {
   MCP_CLAUDE_CODE_NEXT_STEP,
   MCP_CLAUDE_CONNECT_STEPS,
+  MCP_TWO_CALLS_FILM_ALT,
   buildClaudeCodeAddCommand,
   buildMcpClientConfigJson,
 } from "@/lib/docs/mcpCatalog";
@@ -27,6 +29,8 @@ export function McpDocsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <ConceptFilm filmKey="mcp-two-calls" posterAlt={MCP_TWO_CALLS_FILM_ALT} />
+
         <div>
           <h3 className="mb-2 text-sm font-medium">Claude (web and desktop)</h3>
           <p className="mb-2 text-xs text-muted-foreground">

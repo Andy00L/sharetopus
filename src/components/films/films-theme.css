@@ -1,0 +1,15 @@
+/*
+ * Sharetopus overrides of the concept-film tokens, imported after films.css. The focus color is the
+ * brand orange (#FF5A36, 6.0:1 on the screen; sourceRef: docs/UI_DESIGN_SYSTEM.md). The faces are
+ * next/font's family names (sourceRef: the built CSS in .next/static): DM Sans where the marketing
+ * layout loads it, Geist in the app, Geist Mono for data.
+ */
+:root {
+  --film-yellow: #FF5A36;
+  --film-font-display: 'DM Sans', 'DM Sans Fallback', 'Geist', 'Geist Fallback', system-ui, sans-serif;
+  --film-font-sans: 'DM Sans', 'DM Sans Fallback', 'Geist', 'Geist Fallback', system-ui, sans-serif;
+  --film-font-mono: 'Geist Mono', 'Geist Mono Fallback', ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* The player sits on light pages here, so the primary button takes the screen's dark, not its ink. */
+.concept-film-player .concept-film-primary { background: var(--film-background); color: var(--film-ink); }

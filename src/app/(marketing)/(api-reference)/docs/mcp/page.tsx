@@ -5,12 +5,13 @@ import {
   MCP_OVERVIEW,
   MCP_SIDEBAR_ITEMS,
 } from "./data/sections";
-import { MCP_ENDPOINTS } from "@/lib/docs/mcpCatalog";
+import { MCP_ENDPOINTS, MCP_TWO_CALLS_FILM_ALT } from "@/lib/docs/mcpCatalog";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 import { Callout } from "@/components/apiReference/Callout";
 import { CopyButton } from "@/components/apiReference/CopyButton";
 import { ReferencePageShell } from "@/components/apiReference/ReferencePageShell";
 import { SectionBlock } from "@/components/apiReference/SectionBlock";
+import { ConceptFilm } from "@/components/films/ConceptFilm";
 
 export const metadata: Metadata = {
   title: "MCP Server Reference | Sharetopus",
@@ -45,7 +46,13 @@ export default function McpReferencePage() {
       }
     >
       {MCP_DOCS_SECTIONS.map((section) => (
-        <SectionBlock key={section.id} section={section} />
+        <SectionBlock key={section.id} section={section}>
+          {section.id === "typical-flow" && (
+            <div className="mt-8 max-w-3xl">
+              <ConceptFilm filmKey="mcp-two-calls" posterAlt={MCP_TWO_CALLS_FILM_ALT} showCaption={false} />
+            </div>
+          )}
+        </SectionBlock>
       ))}
     </ReferencePageShell>
   );

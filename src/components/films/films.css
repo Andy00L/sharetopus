@@ -1,0 +1,52 @@
+/*
+ * Concept films: the screen tokens and a neutral player style. The engine reads the --film-* values
+ * at the first scene; override them in the host page (after this file) to match its design system.
+ * Colors must stay #rrggbb so the engine can blend them.
+ */
+:root {
+  /* the screen: a warm near-black, not the default slate of dark interfaces */
+  --film-background: #141311;
+  --film-ink: #F2EEE6;       /* narration and formulas, 16:1 on the background */
+  --film-muted: #A9A396;     /* ticks, captions, braces, 7.4:1 */
+  --film-faint: #7A756B;     /* strokes and switched-off tiles, large text only, 4:1 */
+  --film-grid: #2A2824;      /* chart grid lines, the narration rule */
+  --film-rest: #3D3A35;      /* a tile at rest */
+  /* manim's hues, one fixed meaning each (sourceRef: manim/utils/color/manim_colors.py) */
+  --film-blue: #58C4DD;      /* the main object */
+  --film-teal: #5CD0B3;      /* what is already placed or sorted */
+  --film-green: #83C167;     /* true, holds, acquired */
+  --film-yellow: #F7D96F;    /* what we look at now, the result */
+  --film-gold: #F0AC5F;      /* the second object of a comparison */
+  --film-red: #FC6255;       /* false, broken, over the limit */
+  --film-purple: #9A72AC;    /* a sixth series, only when six are needed */
+  --film-font-display: Georgia, 'Times New Roman', serif;
+  --film-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --film-font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+.concept-film { margin: 0; }
+.concept-film-title { margin: 0 0 4px; font: 500 1.25rem/1.3 var(--film-font-display); text-wrap: balance; }
+.concept-film-caption { margin: 0 0 12px; max-width: 64ch; opacity: 0.8; text-wrap: pretty; }
+.concept-film-variants { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.concept-film-screen { display: block; width: 100%; height: auto; border-radius: 10px; background: var(--film-background); }
+.concept-film-screen:focus-visible { outline: 2px solid var(--film-yellow); outline-offset: 3px; }
+.concept-film-screen:fullscreen { border-radius: 0; }
+.concept-film-player { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+
+.concept-film-player button,
+.concept-film-variants button {
+  appearance: none; border: 0; border-radius: 7px; padding: 7px 12px; cursor: pointer;
+  font: 500 13px/1 var(--film-font-sans); background: var(--film-rest); color: var(--film-ink);
+}
+/* a hover changes the tone, never the position */
+.concept-film-player button:hover,
+.concept-film-variants button:hover { filter: brightness(1.15); }
+.concept-film-player button:focus-visible,
+.concept-film-variants button:focus-visible { outline: 2px solid var(--film-yellow); outline-offset: 2px; }
+.concept-film-player .concept-film-primary { min-width: 88px; background: var(--film-ink); color: var(--film-background); }
+.concept-film-variants button[aria-pressed="true"] { background: var(--film-ink); color: var(--film-background); }
+.concept-film-player input[type="range"] { flex: 1 1 140px; min-width: 0; accent-color: var(--film-yellow); }
+.concept-film-time {
+  margin-left: auto; font: 12px/1 var(--film-font-mono); font-variant-numeric: tabular-nums;
+  opacity: 0.75; white-space: nowrap;
+}

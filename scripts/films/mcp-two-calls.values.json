@@ -1,0 +1,43 @@
+{
+  "computedAt": "2026-10-06T22:51:05.618Z",
+  "postText": "We ship on Friday",
+  "accounts": [
+    {
+      "platform": "linkedin",
+      "name": "Andy Builds",
+      "status": "ok"
+    },
+    {
+      "platform": "bluesky",
+      "name": "Andy",
+      "status": "ok"
+    },
+    {
+      "platform": "tiktok",
+      "name": "Andy Creates",
+      "status": "needs_reconnect"
+    }
+  ],
+  "publish": {
+    "batchId": "wVh-kJfIX0W5UM3UN0919XSw3PV3bRBC",
+    "batchIdShort": "wVh-…bRBC",
+    "publishingNow": 1,
+    "scheduled": 1,
+    "blueskyScheduledAt": "2026-10-09T09:00:00-04:00",
+    "blueskyScheduledLabel": "Fri 09:00 ET"
+  },
+  "listedPosts": [
+    {
+      "platform": "linkedin",
+      "status": "published"
+    },
+    {
+      "platform": "bluesky",
+      "status": "scheduled"
+    }
+  ],
+  "calls": {
+    "toPost": 2,
+    "toCheck": 1
+  }
+}

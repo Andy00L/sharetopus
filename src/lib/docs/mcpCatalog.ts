@@ -112,6 +112,10 @@ export const MCP_CLAUDE_CONNECT_STEPS =
 export const MCP_CLAUDE_CODE_NEXT_STEP =
   'Then run /mcp and choose Authenticate. With an API key, add --header "Authorization: Bearer stp_mcp_YOUR_KEY" to the command instead.';
 
+/** Alt text of the mcp-two-calls film poster (public/films), shown on /docs/mcp and in McpDocsCard. */
+export const MCP_TWO_CALLS_FILM_ALT =
+  "Film: an agent posts in two MCP calls, list_connections then publish_posts, and checks the result with list_posts.";
+
 /** The Claude Code command that adds the server over Streamable HTTP. */
 export function buildClaudeCodeAddCommand(endpointUrl: string): string {
   return `claude mcp add --transport http sharetopus ${endpointUrl}`;

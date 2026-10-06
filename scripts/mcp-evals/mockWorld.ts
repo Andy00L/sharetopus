@@ -1,6 +1,8 @@
 // A fake Sharetopus account (4 connected accounts, 4 scheduled and 3 published posts) and
 // executors for the old 18-tool set and the new 10-tool set. Nothing leaves the process.
 
+import { generateBatchId } from "../../src/lib/utils/generateBatchId";
+
 export type JsonObject = Record<string, unknown>;
 export type ToolResult = { text: string; isError: boolean };
 export type ToolSetVersion = "before" | "after";
@@ -322,7 +324,7 @@ function runOldSinglePost(world: MockWorld, input: JsonObject, isScheduled: bool
   };
   const issues = findPostIssues(world, fields);
   if (issues.length > 0) return failWith(`Validation failed: ${issues.join("; ")}`);
-  const batchId = readString(input, "batch_id") || `batch-${world.nextId}`;
+  const batchId = readString(input, "batch_id") || generateBatchId();
   const post = createPost(world, { ...fields, text: readString(input, "description") ?? null, batchId });
   return okJson(
     isScheduled
@@ -354,7 +356,7 @@ function runOldBulk(world: MockWorld, input: JsonObject, isScheduled: boolean): 
     if (issues.length > 0) return failWith(`posts.${itemIndex}: ${issues.join("; ")}`);
     prepared.push({ ...fields, text: readString(item, "description") ?? null });
   }
-  const batchId = readString(input, "batch_id") || `batch-${world.nextId}`;
+  const batchId = readString(input, "batch_id") || generateBatchId();
   const created = prepared.map((fields) => createPost(world, { ...fields, batchId }));
   return okJson(
     isScheduled
@@ -503,7 +505,7 @@ function runListPosts(world: MockWorld, input: JsonObject): ToolResult {
 }
 
 function runPublishPosts(world: MockWorld, input: JsonObject): ToolResult {
-  const batchId = readString(input, "batch_id") ?? `batch-${world.nextId}`;
+  const batchId = readString(input, "batch_id") ?? generateBatchId();
   const rejected: { social_account_id: string; reason: string }[] = [];
   const created: MockPost[] = [];
   for (const item of readObjectArray(input, "posts")) {
