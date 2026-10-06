@@ -5,10 +5,9 @@ import {
   PostInitResponse,
   TikTokPostResult,
 } from "./postToTikTok";
+import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
-/**
- * Handles image posting to TikTok using PULL_FROM_URL method
- */
+/** Starts a TikTok photo Direct Post that TikTok pulls from media_url. */
 export async function handleImagePost({
   accessToken,
   title,
@@ -27,7 +26,6 @@ export async function handleImagePost({
   autoAddMusic: boolean;
 }): Promise<TikTokPostResult> {
   try {
-    // STEP 1: Initialize the image post
     const initResponse = await fetch(
       "https://open.tiktokapis.com/v2/post/publish/content/init/",
       {
@@ -40,7 +38,7 @@ export async function handleImagePost({
           post_info: {
             title: title || "",
             description: description || "",
-            privacy_level: tikTokOptions?.privacyLevel || "PUBLIC_TO_EVERYONE",
+            privacy_level: resolveTikTokPrivacyLevel(tikTokOptions),
             disable_comment: tikTokOptions?.disableComment || false,
             auto_add_music: autoAddMusic,
             brand_content_toggle: tikTokOptions?.brandedContent === true,
@@ -48,7 +46,7 @@ export async function handleImagePost({
           },
           source_info: {
             source: "PULL_FROM_URL",
-            photo_images: [media_url], // Array for multiple images
+            photo_images: [media_url],
             photo_cover_index: 0,
           },
           post_mode: "DIRECT_POST",

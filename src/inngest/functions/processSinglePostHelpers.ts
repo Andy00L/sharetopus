@@ -332,7 +332,7 @@ type PostOptions = {
   link?: string;
   board?: string;
   boardName?: string;
-  privacyLevel?: string;
+  privacyLevel?: PrivacyLevel;
   visibility?: string;
   disableComment?: boolean;
   disableDuet?: boolean;
@@ -375,7 +375,7 @@ export async function callPlatformDirectPost(args: {
   // Platform options shape mirrors handleSocialMediaPost
   const platformOptions: PlatformOptions = {
     pinterest: {
-      privacyLevel: (options.privacyLevel ?? "PUBLIC") as PrivacyLevel,
+      privacyLevel: options.privacyLevel ?? "PUBLIC",
       board: options.board ?? "",
       link: options.link ?? "",
     },
@@ -383,8 +383,8 @@ export async function callPlatformDirectPost(args: {
       visibility: options.visibility ?? "PUBLIC",
     },
     tiktok: {
-      privacyLevel: (options.privacyLevel ??
-        "PUBLIC_TO_EVERYONE") as PrivacyLevel,
+      // Set only by the web composer; resolveTikTokPrivacyLevel decides the rest.
+      privacyLevel: options.privacyLevel,
       disableComment: options.disableComment ?? false,
       disableDuet: options.disableDuet ?? false,
       disableStitch: options.disableStitch ?? false,

@@ -503,7 +503,6 @@ function buildEventPayloads(
 
     const platformOptions: PlatformOptions = post.platformOptions ?? {
       tiktok: {
-        privacyLevel: "PUBLIC_TO_EVERYONE",
         disableComment: false,
         disableDuet: false,
         disableStitch: false,

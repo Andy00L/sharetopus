@@ -111,13 +111,10 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  const scopes =
-    "user.info.basic,user.info.profile,video.publish,video.upload,user.info.stats";
+  // Direct Post needs video.publish only; video.upload is the inbox-draft flow this app never uses.
+  const scopes = "user.info.basic,user.info.profile,video.publish,user.info.stats";
 
-  // disable_auto_auth=1 makes TikTok show its authorization page on every
-  // connect; without it a creator with a live TikTok session is sent
-  // straight back without seeing it. sourceRef:
-  // developers.tiktok.com/doc/login-kit-web (authorize URL parameters).
+  // disable_auto_auth=1 shows TikTok's authorization page on every connect (developers.tiktok.com/doc/login-kit-web).
   const url =
     `https://www.tiktok.com/v2/auth/authorize/` +
     `?client_key=${clientKey}` +

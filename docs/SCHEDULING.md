@@ -281,7 +281,7 @@ Platform-specific options are stored in the `post_options` JSONB column on `sche
 | Platform | Fields |
 |----------|--------|
 | Pinterest | `pinterest_board_id`, `pinterest_board_name`, `pinterest_link` |
-| TikTok | `privacy_level`, `cover_image_timestamp` |
+| TikTok | `privacyLevel` (web composer only; API, MCP and x402 posts are always public), `disableComment`, `disableDuet`, `disableStitch`, `brandContentToggle`, `yourBrand`, `brandedContent`, `isAigc` |
 
 ## Source files referenced
 

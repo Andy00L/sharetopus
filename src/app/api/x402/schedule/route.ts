@@ -17,54 +17,24 @@ import {
   schedulePostBatch,
 } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import { updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
-import type { PrivacyLevel } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/schedule
- *
- * Pays post.text / post.image / post.video (price per pricing_actions).
- * Steps:
- * 1. Parse body (shared posting schema + scheduled_at in the future).
- * 2. Resolve pricing action from post_type.
- * 3. Before settlement, check the post would be scheduled: fields, media
- *    path, caption length, account ownership, the platform's daily cap, an
- *    unused idempotency_key. A failure here costs nothing.
- * 4. On settle, call schedulePostBatch with createdVia="x402".
- * 5. Link x402_charges.scheduled_post_id to the inserted post.
- *
- * A scheduling failure after settlement is refunded on-chain; a post the
- * platform rejects later, at publish time, is not refunded.
- */
+// POST /api/x402/schedule: checks the post would schedule before settling
+// (a failure costs nothing), schedules it, and refunds a failure after settlement.
+// A post the platform rejects later, at publish time, is not refunded.
 
 /**
- * TikTok privacy levels the scheduler accepts.
- * sourceRef: src/lib/types/dbTypes.ts (PrivacyLevel)
- */
-const PRIVACY_LEVELS = [
-  "PUBLIC_TO_EVERYONE",
-  "MUTUAL_FOLLOW_FRIENDS",
-  "FOLLOWER_OF_CREATOR",
-  "SELF_ONLY",
-  "PUBLIC",
-  "PROTECTED",
-] as const satisfies readonly PrivacyLevel[];
-
-/**
- * Options the scheduler reads for the legacy platforms.
- * sourceRef: src/inngest/functions/processSinglePostHelpers.ts (PostOptions).
- * Unknown keys are stripped rather than rejected, so older clients that send
- * extras keep working, and every value is bounded before it is stored.
+ * Options the scheduler reads (processSinglePostHelpers PostOptions). Unknown
+ * keys are stripped, not rejected. No privacyLevel: TikTok posts from x402 are public.
  */
 const PostOptionsSchema = z.object({
   link: z.string().url().max(2048).optional(),
   board: z.string().max(128).optional(),
   boardName: z.string().max(200).optional(),
-  privacyLevel: z.enum(PRIVACY_LEVELS).optional(),
   visibility: z.string().max(32).optional(),
   disableComment: z.boolean().optional(),
   disableDuet: z.boolean().optional(),

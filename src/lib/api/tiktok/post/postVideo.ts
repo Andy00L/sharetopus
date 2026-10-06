@@ -5,18 +5,12 @@ import {
   PostInitResponse,
   TikTokPostResult,
 } from "./postToTikTok";
+import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
+/** TikTok rejects a cover timestamp under 1 s. */
 const TIKTOK_MIN_COVER_TIMESTAMP_MS = 1000;
 
-/**
- * Resolves the cover timestamp value sent to TikTok's video init endpoint.
- * TikTok requires a positive integer in milliseconds. We clamp the value
- * to >= 1000ms (1 second) and floor to an integer to defend against
- * upstream regressions (UI races, null DB fallbacks, float arithmetic).
- *
- * If the input is non-finite (NaN, Infinity, undefined coerced to NaN),
- * returns the minimum value as a safe default.
- */
+/** Cover timestamp as a whole number of ms, at least 1 s; non-finite input gets the minimum. */
 function resolveTikTokVideoCoverTimestampMs(
   input: number | null | undefined
 ): number {
@@ -26,9 +20,7 @@ function resolveTikTokVideoCoverTimestampMs(
   return Math.max(Math.floor(input), TIKTOK_MIN_COVER_TIMESTAMP_MS);
 }
 
-/**
- * Handles video posting to TikTok using FILE_UPLOAD method
- */
+/** Starts a TikTok video Direct Post that TikTok pulls from media_url. */
 export async function handleVideoPost({
   accessToken,
   description,
@@ -51,7 +43,6 @@ export async function handleVideoPost({
       resolved: resolvedCoverTs,
     });
 
-    // Initialize video post with PULL_FROM_URL
     const initResponse = await fetch(
       "https://open.tiktokapis.com/v2/post/publish/video/init/",
       {
@@ -63,7 +54,7 @@ export async function handleVideoPost({
         body: JSON.stringify({
           post_info: {
             title: description || "",
-            privacy_level: tikTokOptions?.privacyLevel || "PUBLIC_TO_EVERYONE",
+            privacy_level: resolveTikTokPrivacyLevel(tikTokOptions),
             disable_duet: tikTokOptions?.disableDuet || false,
             disable_comment: tikTokOptions?.disableComment || false,
             disable_stitch: tikTokOptions?.disableStitch || false,

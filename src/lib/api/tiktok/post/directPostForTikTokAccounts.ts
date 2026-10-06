@@ -2,6 +2,7 @@ import "server-only";
 import { insertPendingTikTokPull } from "@/actions/server/data/pendingTikTokPulls";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import type { TikTokPostResult } from "@/lib/api/tiktok/post/postToTikTok";
+import { resolveTikTokPrivacyLevel } from "@/lib/api/tiktok/post/tikTokPrivacy";
 import { dispatchTikTokPublishPollEvent } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
@@ -35,6 +36,7 @@ type TikTokPassthrough = {
   config: TikTokDirectPostConfig;
 };
 
+/** Posts to one TikTok account now and starts polling TikTok for the publish result. */
 export async function directPostForTikTokAccounts(
   config: TikTokDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -91,7 +93,7 @@ export async function directPostForTikTokAccounts(
           post_data: postResult.data,
           post_type: cfg.postType,
           posted_at: new Date().toISOString(),
-          privacy_level: pt.config.platformOptions.tiktok,
+          privacy_level: resolveTikTokPrivacyLevel(pt.config.platformOptions.tiktok),
         },
       }),
       onPostSuccess: async ({ postResult, historyResult, config: cfg }, pt) => {
