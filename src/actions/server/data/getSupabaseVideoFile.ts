@@ -2,13 +2,7 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
 
-/**
- * Retrieves a video file from Supabase Storage
- *
- * @param filePath Path to the file in Supabase Storage
- * @param userId ID of the authenticated user
- * @returns Buffer containing the file data
- */
+/** Downloads one of the user's stored files as a Buffer; the path must start with their id. */
 export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
@@ -46,7 +40,7 @@ export async function getSupabaseVideoFile(
     }
 
     if (!data) {
-      console.error("File not found or is empty");
+      console.error(`[Get Supabase video File] File not found or is empty: ${filePath}`);
       return {
         success: false,
         message: "File not found or is empty",

@@ -15,74 +15,51 @@ export type PlatformErrorReason =
   | "unknown";
 
 /**
- * Whether re-running the platform call for this reason is both USEFUL and
- * SAFE TO REPEAT. Only a rate limit qualifies.
- *
- * A 429 is the platform refusing the request outright: nothing was
- * published, so a backoff retry cannot produce a second public post.
- *
- * Deliberately excluded, even though a retry might occasionally succeed:
- *   - transient (timeout, ECONNRESET, 5xx): the outcome is UNKNOWN. The
- *     platform may have accepted the post before the connection died, so
- *     retrying can publish it twice. A duplicate public post cannot be
- *     undone from here; a post marked failed can be rescheduled by its
- *     owner. The asymmetry decides it.
- *   - auth_expired: ensureValidToken already refreshes a clock-expired
- *     token before the call, so a 401/403 here means the grant was revoked
- *     on the platform side. Retrying re-sends the same dead credential.
- *   - policy_rejected / invalid_input / unknown: deterministic. The same
- *     request produces the same rejection.
+ * Only a rate limit is safe to retry: a 429 published nothing. A transient
+ * failure may have published already (a retry could post twice), and the
+ * other reasons fail the same way every time.
  */
 export function isSafeToRetryPost(reason: PlatformErrorReason): boolean {
   return reason === "rate_limited";
 }
 
-/**
- * The directPostFor{Platform}Accounts functions return ScheduleResult:
- *   { success: boolean; count: number; message?: string }
- * which is too coarse to drive retry decisions. This function maps
- * the message string to a PlatformErrorReason.
- *
- * Pinterest specific: code 1 ("Sorry! This site doesn't allow you to
- * save Pins.") is policy_rejected, NOT transient.
- */
+/** Maps a direct-post failure message to a PlatformErrorReason for the retry decision. */
 export function classifyDirectPostFailure(
   platform: import("@/db/schema").Platform,
   message: string | undefined
 ): PlatformErrorReason {
-  const m = (message ?? "").toLowerCase();
+  const normalizedMessage = (message ?? "").toLowerCase();
 
   // Pinterest-specific terminal patterns
   if (platform === "pinterest") {
-    if (m.includes("doesn't allow you to save pins")) return "policy_rejected";
-    if (m.includes("doesn't allow")) return "policy_rejected";
+    if (normalizedMessage.includes("doesn't allow you to save pins")) return "policy_rejected";
+    if (normalizedMessage.includes("doesn't allow")) return "policy_rejected";
   }
 
   // Cross-platform patterns (existing helpers return human strings)
-  if (m.includes("no content found")) return "invalid_input";
-  if (m.includes("no board selected")) return "invalid_input";
-  if (m.includes("no linkedin identifier")) return "invalid_input";
-  if (m.includes("no facebook page id")) return "invalid_input";
-  if (m.includes("invalid token") || m.includes("expired"))
+  if (normalizedMessage.includes("no content found")) return "invalid_input";
+  if (normalizedMessage.includes("no board selected")) return "invalid_input";
+  if (normalizedMessage.includes("no linkedin identifier")) return "invalid_input";
+  if (normalizedMessage.includes("no facebook page id")) return "invalid_input";
+  if (normalizedMessage.includes("invalid token") || normalizedMessage.includes("expired"))
     return "auth_expired";
-  if (m.includes("too many") || m.includes("rate limit"))
+  if (normalizedMessage.includes("too many") || normalizedMessage.includes("rate limit"))
     return "rate_limited";
-  if (m.includes("timeout") || m.includes("etimedout")) return "transient";
-  if (m.includes("network") || m.includes("econnreset")) return "transient";
+  if (normalizedMessage.includes("timeout") || normalizedMessage.includes("etimedout")) return "transient";
+  if (normalizedMessage.includes("network") || normalizedMessage.includes("econnreset")) return "transient";
 
   // The youtube/x/facebook postTo helpers embed the HTTP status as
   // "... failed (429)"; classify by that suffix.
-  if (m.includes("(401)") || m.includes("(403)")) return "auth_expired";
-  if (m.includes("(429)")) return "rate_limited";
+  if (normalizedMessage.includes("(401)") || normalizedMessage.includes("(403)")) return "auth_expired";
+  if (normalizedMessage.includes("(429)")) return "rate_limited";
   if (
-    m.includes("(500)") ||
-    m.includes("(502)") ||
-    m.includes("(503)") ||
-    m.includes("(504)")
+    normalizedMessage.includes("(500)") ||
+    normalizedMessage.includes("(502)") ||
+    normalizedMessage.includes("(503)") ||
+    normalizedMessage.includes("(504)")
   ) {
     return "transient";
   }
 
-  if (m.length === 0) return "unknown";
   return "unknown";
 }

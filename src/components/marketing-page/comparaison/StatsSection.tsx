@@ -1,13 +1,10 @@
-/* StatsBand — sober, editorial version.
-   Hairline dividers above/below + between columns. No card chrome,
-   no shadows, no orange numerals. Reads as a quiet masthead row that
-   sits between two louder sections.
-*/
 const STATS = [
   { value: "4", label: "Social platforms supported" },
   { value: "1,265,120", label: "Posts published by users" },
   { value: "2 min", label: "Average time to post everywhere" },
 ];
+
+/** Three headline numbers between hairline dividers, no card chrome. */
 export default function StatsBand() {
   return (
     <section
@@ -21,9 +18,9 @@ export default function StatsBand() {
         {/* top hairline */}
         <div className="h-px w-full" style={{ background: "#D6D5CF" }} />
         <div className="grid grid-cols-1 md:grid-cols-3">
-          {STATS.map((s) => (
+          {STATS.map((stat) => (
             <div
-              key={s.label}
+              key={stat.label}
               className="py-8 md:py-10 md:px-8 first:md:pl-0 last:md:pr-0 border-b border-[#D6D5CF] last:border-b-0 md:border-b-0 md:border-l md:first:border-l-0"
             >
               <div
@@ -35,13 +32,13 @@ export default function StatsBand() {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {s.value}
+                {stat.value}
               </div>
               <div
                 className="text-[11px] font-semibold uppercase text-[#8A857A]"
                 style={{ letterSpacing: "0.18em" }}
               >
-                {s.label}
+                {stat.label}
               </div>
             </div>
           ))}

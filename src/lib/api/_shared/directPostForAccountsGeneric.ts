@@ -84,6 +84,7 @@ export type DirectPostPlatformAdapter<
   ) => Promise<void>;
 };
 
+/** Shared direct-post flow: validate, refresh the token, call the platform adapter, record content history. */
 export async function directPostForAccountsGeneric<
   TPassthrough,
   TPostResult extends {
@@ -174,14 +175,13 @@ export async function directPostForAccountsGeneric<
       config,
     );
 
-    console.log(
-      `========== ${platform.toUpperCase()} POST RESPONSE (${account.username ?? account.id}) ==========`,
-    );
-    console.log("Success:", postResult.success);
-    if (postResult.publishId) console.log("Publish ID:", postResult.publishId);
-    if (postResult.postId) console.log("Post ID:", postResult.postId);
-    if (postResult.postUrl) console.log("Post URL:", postResult.postUrl);
-    if (postResult.message) console.log("Message:", postResult.message);
+    console.log(`${logPrefix} Post response for ${account.username ?? account.id}:`, {
+      success: postResult.success,
+      publishId: postResult.publishId,
+      postId: postResult.postId,
+      postUrl: postResult.postUrl,
+      message: postResult.message,
+    });
 
     if (!postResult.success) {
       console.error(`${logPrefix} Failed with error:`, postResult.error);
@@ -221,13 +221,7 @@ export async function directPostForAccountsGeneric<
     );
 
     if (!historyResult.success) {
-      // The post IS live on the platform. Reporting failure here made the
-      // worker mark scheduled_posts as 'failed', write a failed_posts row,
-      // and fire a post.failed webhook for content that is publicly
-      // visible, which invites the user (or their agent) to repost and
-      // duplicate it. A lost content_history row is a bookkeeping problem,
-      // not a publishing one: report the success and log the gap loudly so
-      // it can be reconciled from the platform side.
+      // The post is live, so this still reports success: a failure would fire post.failed and invite a duplicate repost.
       console.error(
         `${logPrefix} CONTENT HISTORY NOT RECORDED for a published post ` +
           `(platform=${platform} account=${account.id} ` +

@@ -368,13 +368,12 @@ async function createCarouselPost({
       };
     }
 
-    // Étape 1: Créer des containers pour chaque item du carousel
+    // Step 1: one container per carousel item.
     const containerIds: string[] = [];
 
-    for (let i = 0; i < carouselItems.length; i++) {
-      const item = carouselItems[i];
+    for (const [itemIndex, item] of carouselItems.entries()) {
       console.log(
-        `[Instagram Post] Creating container for carousel item ${i + 1}`
+        `[Instagram Post] Creating container for carousel item ${itemIndex + 1}`
       );
 
       const containerResult = await createMediaContainer({
@@ -390,7 +389,7 @@ async function createCarouselPost({
       if (!containerResult.success || !containerResult.containerId) {
         return {
           success: false,
-          error: `Failed to create container for carousel item ${i + 1}`,
+          error: `Failed to create container for carousel item ${itemIndex + 1}`,
           details: containerResult.details,
         };
       }
@@ -557,7 +556,6 @@ export async function checkContainerStatus({
   error?: string;
 }> {
   try {
-    // Endpoint EXACTEMENT selon la doc
     const response = await fetch(
       `https://graph.instagram.com/v23.0/${containerId}?fields=status_code&access_token=${accessToken}`
     );
@@ -571,14 +569,13 @@ export async function checkContainerStatus({
 
     const data = await response.json();
 
-    // Status codes selon la doc:
-    // EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED
+    // Status codes: EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED.
     return {
       success: true,
       status: data.status_code,
     };
   } catch (error) {
-    console.log(error);
+    console.error("[checkContainerStatus] Status request failed:", error);
     return {
       success: false,
       error: "Error checking container status",

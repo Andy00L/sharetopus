@@ -181,15 +181,12 @@ function buildPriceIdToTierMap(): Record<string, PlanTier> {
   return map;
 }
 
-/**
- * Note the trailing space on "Pro " in the planPrices arrays.
- * trim() handles it.
- */
+/** Plan title to tier; trim() absorbs the trailing space on "Pro " in planPrices. */
 function normalizePlanTitleToTier(title: string): PlanTier | null {
-  const t = title.trim().toLowerCase();
-  if (t === "starter") return "starter";
-  if (t === "creator") return "creator";
-  if (t === "pro") return "pro";
+  const normalizedTitle = title.trim().toLowerCase();
+  if (normalizedTitle === "starter") return "starter";
+  if (normalizedTitle === "creator") return "creator";
+  if (normalizedTitle === "pro") return "pro";
   return null;
 }
 

@@ -1,31 +1,11 @@
-/**
- * Shared redaction patterns for audit logging. Used by both MCP and REST
- * audit pipelines. Extracted verbatim from src/lib/mcp/audit.ts to avoid
- * duplication.
- */
-
-/**
- * Fields that get scrubbed from tool arguments before persisting.
- *
- * Anything that smells like a secret or credential. We match on key
- * names (case-insensitive) rather than values, because values are
- * unpredictable.
- *
- * List: token, password, secret, authorization, bearer, api_key,
- * apikey, access_token, refresh_token, credential, private_key, jwt
- */
-export const REDACT_KEYS =
+// Redaction shared by the MCP and REST audit logs. Keys are matched by name, case-insensitive.
+const REDACT_KEYS =
   /^(token|password|secret|authorization|bearer|api_key|apikey|access_token|refresh_token|credential|private_key|jwt)$/i;
 
-/** Max size (in chars) for args_redacted. Anything longer gets truncated. */
-export const MAX_ARGS_LENGTH = 4096;
+/** Max size of args_redacted, in characters. */
+const MAX_ARGS_LENGTH = 4096;
 
-/**
- * Recursively walks an object and replaces values whose keys match
- * REDACT_KEYS with "[REDACTED]". Also catches anything that looks
- * like a JWT (three dot-separated base64 segments). Handles arrays
- * at any nesting depth.
- */
+/** Replaces secret-named keys and JWT-looking strings with markers, at any depth. */
 export function redactSecrets(
   obj: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -40,14 +20,7 @@ export function redactSecrets(
   return result;
 }
 
-/**
- * Apply redaction to any value recursively.
- *
- * - String: check for JWT pattern
- * - Plain object: recurse via redactSecrets (key-based redaction)
- * - Array: map redactValue over every element
- * - null / undefined / other primitives: pass through unchanged
- */
+
 function redactValue(value: unknown): unknown {
   if (typeof value === "string") {
     return looksLikeJwt(value) ? "[REDACTED_JWT]" : value;
@@ -56,14 +29,14 @@ function redactValue(value: unknown): unknown {
     return value.map(redactValue);
   }
   if (value !== null && typeof value === "object") {
-    return redactSecrets(value as Record<string, unknown>);
+    return redactSecrets(Object.fromEntries(Object.entries(value)));
   }
   return value;
 }
 
 /** Rough JWT detector: three base64url segments separated by dots. */
-export function looksLikeJwt(s: string): boolean {
-  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(s);
+function looksLikeJwt(value: string): boolean {
+  return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
 }
 
 /** Truncate to MAX_ARGS_LENGTH chars. Returns the parsed-safe JSON object. */

@@ -1,4 +1,3 @@
-// createPostForm/action/directPostForInstagramAccounts.ts
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
@@ -6,10 +5,7 @@ import { SocialAccount } from "@/lib/types/dbTypes";
 import { ScheduleResult } from "@/lib/types/ScheduleResult";
 import "server-only";
 
-/**
- * Directly posts content to Instagram accounts without scheduling
- * Handles images and videos (as Reels) with Instagram Graph API
- */
+/** Posts an image or a video (as a Reel) to one Instagram account now and records it in content history. */
 export async function directPostForInstagramAccounts(config: {
   account: SocialAccount;
   mediaPath: string;
@@ -55,7 +51,6 @@ export async function directPostForInstagramAccounts(config: {
       };
     }
 
-    // Vérifier et rafraîchir le token si nécessaire
     const validToken = await ensureValidToken(account);
 
     if (!validToken.success) {
@@ -110,17 +105,14 @@ export async function directPostForInstagramAccounts(config: {
       shareToFeed: true,
     });
 
-    // Add detailed console logging
-    console.log(
-      `========== INSTAGRAM POST RESPONSE (${account.username}) ==========`,
-    );
-    console.log("Success:", postResult.success);
-    console.log("Post ID:", postResult.postId);
-    console.log("Container ID:", postResult.containerId);
-    console.log("Message:", postResult.message);
+    console.log(`[Instagram Direct Post] Post response for ${account.username ?? account.id}:`, {
+      success: postResult.success,
+      postId: postResult.postId,
+      containerId: postResult.containerId,
+      message: postResult.message,
+    });
 
     if (postResult.success) {
-      // Store content history
       const historyResult = await storeContentHistory(
         {
           platform: "instagram",
@@ -144,12 +136,7 @@ export async function directPostForInstagramAccounts(config: {
       );
 
       if (!historyResult.success) {
-        // The post IS live on Instagram. Reporting failure here made the
-        // worker mark scheduled_posts as 'failed', write a failed_posts
-        // row, and fire a post.failed webhook for content that is publicly
-        // visible, which invites a repost and duplicates it. A lost
-        // content_history row is a bookkeeping problem, not a publishing
-        // one. Same handling as directPostForAccountsGeneric.
+        // The post is live, so this still reports success (same as directPostForAccountsGeneric).
         console.error(
           `[Instagram Direct Post] CONTENT HISTORY NOT RECORDED for a ` +
             `published post (account=${account.id} ` +
@@ -164,7 +151,6 @@ export async function directPostForInstagramAccounts(config: {
       }
     }
 
-    // Add more detailed error logging
     if (!postResult.success) {
       console.error(
         "[Instagram Direct Post] Failed with error:",

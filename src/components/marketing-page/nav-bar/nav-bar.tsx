@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@clerk/nextjs";
 import { ArrowRight, Menu, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -20,6 +21,7 @@ const NAV_LINKS = [
 const CTA_BUTTON_CLASS =
   "gap-1.5 rounded-full bg-[#FF5A36] px-5 py-3 text-[15px] font-medium tracking-[-0.015em] text-white hover:bg-[#E84A26]";
 
+/** Landing page navbar with a full-screen mobile menu. */
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { userId, isLoaded } = useAuth();
@@ -30,9 +32,9 @@ export default function Navbar() {
       <div className="relative mx-auto flex max-w-6xl items-center justify-between">
         {/* Brand */}
         <Link href="/" className="flex items-center gap-2 md:flex-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <Image
             src="/trans_logo%20(1).webp"
+            unoptimized
             alt="Sharetopus"
             width={28}
             height={28}
@@ -105,9 +107,9 @@ export default function Navbar() {
               onClick={() => setMobileOpen(false)}
               className="flex items-center gap-2"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <Image
                 src="/trans_logo%20(1).webp"
+                unoptimized
                 alt="Sharetopus"
                 width={28}
                 height={28}

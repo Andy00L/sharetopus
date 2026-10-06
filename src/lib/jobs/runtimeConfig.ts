@@ -3,11 +3,9 @@ import {
   TIER_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
 
-// Largest video upload any plan allows (in MB). Used to compute how
-// many concurrent workers can run without exceeding the Vercel
-// function memory ceiling.
+// Largest video upload any plan allows, in MB; sizes worker concurrency against the memory ceiling.
 const MAX_VIDEO_MB = Math.max(
-  ...Object.values(TIER_UPLOAD_LIMITS).map((l) => l.video),
+  ...Object.values(TIER_UPLOAD_LIMITS).map((tierLimits) => tierLimits.video),
   DEFAULT_UPLOAD_LIMITS.video,
 );
 
@@ -73,15 +71,7 @@ const INNGEST_RETRY_VALUES = [
 
 export type InngestRetryCount = (typeof INNGEST_RETRY_VALUES)[number];
 
-/**
- * Clamps an operator-supplied retry count (WORKER_MAX_RETRIES) into the
- * range Inngest accepts, returning it as the literal union the SDK expects.
- *
- * Indexing the frozen tuple is what produces the union, so no assertion is
- * needed: the previous `Math.min(...) as 0 | 1 | 2 | 3 | 4 | 5` compiled
- * but lied, since an operator setting WORKER_MAX_RETRIES=10 produced a 10
- * typed as 5.
- */
+/** Clamps WORKER_MAX_RETRIES into Inngest's 0-20 range; indexing the tuple yields the literal union without a cast. */
 export function toInngestRetryCount(requested: number): InngestRetryCount {
   const clamped = Math.min(
     Math.max(Math.trunc(requested), 0),
@@ -93,6 +83,6 @@ export function toInngestRetryCount(requested: number): InngestRetryCount {
 function readPositiveInt(key: string, fallback: number): number {
   const raw = process.env[key];
   if (raw === undefined || raw.trim() === "") return fallback;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }

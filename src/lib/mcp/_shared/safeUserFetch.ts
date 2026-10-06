@@ -45,21 +45,9 @@ export type SafeFetchOptions = {
 // ---------- main fetch ----------
 
 /**
- * Fetches a user-supplied URL with SSRF protection.
- *
- * Guards:
- *   - URL parse + http(s)-only scheme
- *   - DNS resolved ONCE; every resolved IP checked against private/reserved
- *     ranges (IPv4-mapped IPv6 re-checked against IPv4 ranges)
- *   - The connection is PINNED to the validated IP via a per-request undici
- *     dispatcher, closing the DNS-rebinding TOCTOU (the socket cannot
- *     re-resolve to an internal address after the check)
- *   - Redirects disabled (TOCTOU defense)
- *   - Content-type allowlist (prefix + exact match)
- *   - Stream-based byte counter (Content-Length not trusted)
- *   - Connect timeout + total request timeout via AbortController
- *
- * Returns errors as values. Never throws across this boundary.
+ * Fetches a user-supplied URL with SSRF protection: http(s) only, DNS resolved
+ * once and every IP checked, the socket pinned to the checked IP, no redirects,
+ * a content-type allowlist, a streamed byte cap, and timeouts.
  */
 export async function safeUserFetch(
   rawUrl: string,
@@ -160,11 +148,11 @@ export async function safeUserFetch(
     }
 
     // 7. Content-type validation
-    const rawCt = response.headers.get("content-type") ?? "";
-    const contentType = rawCt.split(";")[0].trim().toLowerCase();
+    const rawContentType = response.headers.get("content-type") ?? "";
+    const contentType = rawContentType.split(";")[0].trim().toLowerCase();
 
-    const prefixOk = opts.allowedContentTypePrefixes.some((p) =>
-      contentType.startsWith(p),
+    const prefixOk = opts.allowedContentTypePrefixes.some((allowedPrefix) =>
+      contentType.startsWith(allowedPrefix),
     );
     if (!prefixOk) {
       return {
@@ -175,7 +163,7 @@ export async function safeUserFetch(
     }
 
     const exactOk = opts.allowedContentTypes.some(
-      (t) => t.toLowerCase() === contentType,
+      (allowedType) => allowedType.toLowerCase() === contentType,
     );
     if (!exactOk) {
       return {

@@ -11,11 +11,11 @@ export const runtime = "nodejs";
 
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 
-function ok(body: Record<string, unknown> = {}) {
+function respondReceived(body: Record<string, unknown> = {}) {
   return NextResponse.json({ received: true, ...body }, { status: 200 });
 }
 
-function err(message: string, status: number) {
+function respondError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
 }
 
@@ -28,21 +28,21 @@ function getClientSecret(): string | null {
   return secret ?? null;
 }
 
-type SignatureParts = { t: number; s: string };
+type SignatureParts = { timestamp: number; signature: string };
 
+/** Reads "t=<unix seconds>,s=<hex hmac>" from the TikTok-Signature header. */
 function parseTikTokSignatureHeader(header: string): SignatureParts | null {
-  const parts = header.split(",");
-  let t: number | null = null;
-  let s: string | null = null;
+  let timestamp: number | null = null;
+  let signature: string | null = null;
 
-  for (const part of parts) {
+  for (const part of header.split(",")) {
     const [key, value] = part.split("=");
-    if (key === "t") t = Number.parseInt(value, 10);
-    else if (key === "s") s = value;
+    if (key === "t") timestamp = Number.parseInt(value, 10);
+    else if (key === "s") signature = value;
   }
 
-  if (t === null || Number.isNaN(t) || !s) return null;
-  return { t, s };
+  if (timestamp === null || Number.isNaN(timestamp) || !signature) return null;
+  return { timestamp, signature };
 }
 
 function verifyTikTokSignature(input: {
@@ -56,36 +56,32 @@ function verifyTikTokSignature(input: {
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (Math.abs(nowSec - parsed.t) > SIGNATURE_TOLERANCE_SECONDS) {
+  if (Math.abs(nowSec - parsed.timestamp) > SIGNATURE_TOLERANCE_SECONDS) {
     return {
       valid: false,
-      reason: `Timestamp outside tolerance (delta=${nowSec - parsed.t}s)`,
+      reason: `Timestamp outside tolerance (delta=${nowSec - parsed.timestamp}s)`,
     };
   }
 
-  const signedPayload = `${parsed.t}.${input.rawBody}`;
+  const signedPayload = `${parsed.timestamp}.${input.rawBody}`;
   const expected = createHmac("sha256", input.secret)
     .update(signedPayload)
     .digest("hex");
 
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(parsed.s, "hex");
-  if (a.length !== b.length) {
+  const expectedBytes = Buffer.from(expected, "hex");
+  const receivedBytes = Buffer.from(parsed.signature, "hex");
+  if (expectedBytes.length !== receivedBytes.length) {
     return { valid: false, reason: "Signature length mismatch" };
   }
 
-  if (!timingSafeEqual(a, b)) {
+  if (!timingSafeEqual(expectedBytes, receivedBytes)) {
     return { valid: false, reason: "Signature mismatch" };
   }
 
   return { valid: true };
 }
 
-/**
- * The fields this route reads from a TikTok webhook body. client_key, event
- * and create_time are required, as the route always demanded; user_openid and
- * content are passed on to the worker as sent.
- */
+/** Fields read from a TikTok webhook body; user_openid and content pass through to the worker. */
 const TikTokWebhookPayloadSchema = z.object({
   client_key: z.string().min(1),
   event: z.string().min(1),
@@ -110,13 +106,13 @@ export async function POST(req: NextRequest) {
 
   if (!sigHeader) {
     console.error("[TikTok webhook] Missing TikTok-Signature header");
-    return err("Missing signature", 400);
+    return respondError("Missing signature", 400);
   }
 
   const secret = getClientSecret();
   if (!secret) {
     console.error("[TikTok webhook] TIKTOK_CLIENT_SECRET not configured");
-    return err("Webhook misconfigured", 500);
+    return respondError("Webhook misconfigured", 500);
   }
 
   const sigCheck = verifyTikTokSignature({
@@ -129,7 +125,7 @@ export async function POST(req: NextRequest) {
     console.error(
       `[TikTok webhook] Signature verification failed: ${sigCheck.reason}`,
     );
-    return err("Invalid signature", 400);
+    return respondError("Invalid signature", 400);
   }
 
   let parsedBody: unknown;
@@ -140,13 +136,13 @@ export async function POST(req: NextRequest) {
       "[TikTok webhook] Body JSON parse failed:",
       parseErr instanceof Error ? parseErr.message : parseErr,
     );
-    return err("Invalid JSON body", 400);
+    return respondError("Invalid JSON body", 400);
   }
 
   const payloadParse = TikTokWebhookPayloadSchema.safeParse(parsedBody);
   if (!payloadParse.success) {
     console.error("[TikTok webhook] Payload missing required fields");
-    return err("Malformed payload", 400);
+    return respondError("Malformed payload", 400);
   }
   const payload = payloadParse.data;
 
@@ -155,13 +151,13 @@ export async function POST(req: NextRequest) {
   // An event is logged only once it reached Inngest; see tiktokEventLog.ts.
   const processedCheck = await isTikTokEventProcessed(eventId);
   if (!processedCheck.ok) {
-    return err("Could not read the event log", 500);
+    return respondError("Could not read the event log", 500);
   }
   if (processedCheck.isProcessed) {
     console.log(
       `[TikTok webhook] Duplicate event ${eventId} (${payload.event}), returning 200`,
     );
-    return ok({ duplicate: true, event_id: eventId });
+    return respondReceived({ duplicate: true, event_id: eventId });
   }
 
   // A failed dispatch answers 500 so TikTok redelivers. The event id makes
@@ -185,7 +181,7 @@ export async function POST(req: NextRequest) {
       "[TikTok webhook] Inngest dispatch failed:",
       dispatchErr instanceof Error ? dispatchErr.message : dispatchErr,
     );
-    return err("Dispatch failed", 500);
+    return respondError("Dispatch failed", 500);
   }
 
   const logged = await markTikTokEventProcessed({
@@ -193,11 +189,11 @@ export async function POST(req: NextRequest) {
     event_type: payload.event,
   });
   if (!logged.ok) {
-    return err("Could not log the event", 500);
+    return respondError("Could not log the event", 500);
   }
 
   console.log(
     `[TikTok webhook] Dispatched ${payload.event} for event_id=${eventId}`,
   );
-  return ok({ dispatched: true, event_id: eventId });
+  return respondReceived({ dispatched: true, event_id: eventId });
 }

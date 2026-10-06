@@ -307,14 +307,13 @@ export async function postToLinkedIn({
         };
       }
 
-      // Récupérer la réponse
       const responseText = await linkedInResponse.text();
       let data;
 
       try {
-        // La réponse peut être vide, donc nous vérifions
+        // LinkedIn may answer with an empty body.
         data = responseText ? JSON.parse(responseText) : {};
-        console.log("Raw response:", responseText);
+        console.log("[LinkedIn Post Routes] Raw response:", responseText);
       } catch (parseError) {
         console.log(
           `[LinkedIn Post Routes] Response is not JSON:${parseError}`,

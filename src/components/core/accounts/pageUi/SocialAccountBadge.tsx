@@ -46,7 +46,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
         setIsDisconnecting(false);
       }
     } catch (error) {
-      console.error("Error disconnecting account:", error);
+      console.error("[SocialAccountBadge] Error disconnecting account:", error);
       toast.error("An error occurred. Please try again.");
       setIsDisconnecting(false);
     }

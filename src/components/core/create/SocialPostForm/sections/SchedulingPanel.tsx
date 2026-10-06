@@ -13,11 +13,11 @@ interface SchedulingPanelProps {
   /** Still needed for the upload-progress block below. */
   readonly selectedFile: File | null;
   readonly isScheduled: boolean;
-  readonly setIsScheduled: (v: boolean) => void;
+  readonly setIsScheduled: (isScheduled: boolean) => void;
   readonly scheduledDate: string;
-  readonly setScheduledDate: (v: string) => void;
+  readonly setScheduledDate: (scheduledDate: string) => void;
   readonly scheduledTime: string;
-  readonly setScheduledTime: (v: string) => void;
+  readonly setScheduledTime: (scheduledTime: string) => void;
   readonly error: string | null;
   readonly isLoading: boolean;
   readonly uploadProgress: number;
@@ -25,13 +25,11 @@ interface SchedulingPanelProps {
   readonly disabled: boolean;
   readonly hasTikTokAccounts: boolean;
   readonly tikTokOptions?: TikTokOptions;
-  /**
-   * Why the post cannot go to TikTok yet (findTikTokPublishBlocker), shown
-   * under the disabled button. Null when nothing blocks it.
-   */
+  /** Why the post cannot go to TikTok yet (findTikTokPublishBlocker); null when nothing blocks it. */
   readonly publishBlocker: string | null;
 }
 
+/** Schedule toggle, date and time, TikTok declaration, and the publish button. */
 export default function SchedulingPanel({
   selectedFile,
   isScheduled,

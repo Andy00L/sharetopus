@@ -4,17 +4,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Scroll-driven sidebar nav. An IntersectionObserver watches every section
- * id; the rootMargin pushes the observation band 96px down (under the
- * sticky offset, sections use scroll-mt-24) and cuts the bottom 55% off so
- * the section sitting under the header wins, not the one entering from the
- * bottom. No scroll libraries, no layout shift: only colors change.
- *
- * Active state per docs/UI_DESIGN_SYSTEM.md: a 2px orange rail + ink text
- * on the layered cream. Orange text alone fails 4.5:1 on the cream field,
- * so the accent carries the rail, not the label.
- */
+/** Docs sidebar that highlights the section under the sticky header (IntersectionObserver, 96px offset). */
 export function DocsSidebar({ items }: { items: SidebarItem[] }) {
   const [activeId, setActiveId] = useState<string>(items[0]?.id ?? "");
 
@@ -24,8 +14,7 @@ export function DocsSidebar({ items }: { items: SidebarItem[] }) {
       .filter((element): element is HTMLElement => element !== null);
     if (sections.length === 0) return;
 
-    // Track every currently intersecting section by its viewport offset and
-    // activate the topmost one, so fast scrolls never leave a stale highlight.
+    // Activating the topmost visible section keeps fast scrolls from leaving a stale highlight.
     const visibleTops = new Map<string, number>();
     const observer = new IntersectionObserver(
       (entries) => {
@@ -38,7 +27,7 @@ export function DocsSidebar({ items }: { items: SidebarItem[] }) {
         }
         if (visibleTops.size > 0) {
           const topmost = [...visibleTops.entries()].sort(
-            (a, b) => a[1] - b[1]
+            ([, leftTop], [, rightTop]) => leftTop - rightTop
           )[0];
           setActiveId(topmost[0]);
         }

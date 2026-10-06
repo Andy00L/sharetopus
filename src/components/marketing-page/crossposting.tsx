@@ -1,8 +1,5 @@
+import Image from "next/image";
 import Link from "next/link";
-
-/* Cross-posting hub-and-spoke. Icon and spoke Y positions share RIGHT_Y so lines
-   meet nodes. Plain <img> for platform SVGs; hub uses the transparent logo.
-   #platforms lives on SupportedPlatforms (View platforms CTA scrolls there). */
 
 const PLATFORMS = [
   { label: "Facebook", src: "/facebook.svg" },
@@ -12,6 +9,7 @@ const PLATFORMS = [
   { label: "TikTok", src: "/tiktok.svg" },
 ];
 
+// Icons and spokes share these y positions (percent) so the lines meet the nodes.
 const RIGHT_Y = [15, 30, 50, 70, 85];
 
 const HUB = { x: 50, y: 50 };
@@ -38,6 +36,7 @@ const LINE_ANIM_CSS = `
 }
 `;
 
+/** Cross-posting section: copy plus an animated user, hub and platforms diagram. */
 export default function Crossposting() {
   return (
     <section
@@ -130,13 +129,13 @@ export default function Crossposting() {
                     strokeWidth={1.4}
                     vectorEffect="non-scaling-stroke"
                   />
-                  {RIGHT_Y.map((y) => (
+                  {RIGHT_Y.map((spokeY) => (
                     <line
-                      key={`base-${y}`}
+                      key={`base-${spokeY}`}
                       x1={HUB.x}
                       y1={HUB.y}
                       x2={PLATFORM_X}
-                      y2={y}
+                      y2={spokeY}
                       stroke="#C8C2B1"
                       strokeWidth={1.6}
                       vectorEffect="non-scaling-stroke"
@@ -154,13 +153,13 @@ export default function Crossposting() {
                     vectorEffect="non-scaling-stroke"
                     className="animated-line-left"
                   />
-                  {RIGHT_Y.map((y) => (
+                  {RIGHT_Y.map((spokeY) => (
                     <line
-                      key={`pulse-${y}`}
+                      key={`pulse-${spokeY}`}
                       x1={HUB.x}
                       y1={HUB.y}
                       x2={PLATFORM_X}
-                      y2={y}
+                      y2={spokeY}
                       stroke="#FF5A36"
                       strokeWidth={1.8}
                       strokeLinecap="round"
@@ -213,43 +212,41 @@ export default function Crossposting() {
                     className="flex size-[84px] items-center justify-center rounded-full border-[1.5px] border-[#1C1B18] bg-white overflow-hidden transition-transform duration-300 group-hover:scale-[1.06]"
                     style={{ boxShadow: "4px 4px 0 0 #1C1B18" }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
+                    <Image
                       src="/trans_logo%20(1).webp"
                       alt="Sharetopus"
+                      unoptimized
                       width={52}
                       height={52}
                       loading="lazy"
-                      decoding="async"
                       className="w-[52px] h-[52px] object-contain"
                     />
                   </div>
                 </div>
 
-                {PLATFORMS.map((p, i) => (
+                {PLATFORMS.map((platform, platformIndex) => (
                   <div
-                    key={p.label}
+                    key={platform.label}
                     className="group absolute"
                     style={{
                       left: `${PLATFORM_X}%`,
-                      top: `${RIGHT_Y[i]}%`,
+                      top: `${RIGHT_Y[platformIndex]}%`,
                       transform: "translate(-50%, -50%)",
                       zIndex: 10,
                     }}
-                    title={p.label}
+                    title={platform.label}
                   >
                     <div
                       className="flex size-[58px] items-center justify-center rounded-full border-[1.5px] border-[#1C1B18] bg-white transition-transform duration-300 hover:scale-[1.08] cursor-pointer"
                       style={{ boxShadow: "3px 3px 0 0 #1C1B18" }}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={p.src}
-                        alt={p.label}
+                      <Image
+                        src={platform.src}
+                        alt={platform.label}
+                        unoptimized
                         width={24}
                         height={24}
                         loading="lazy"
-                        decoding="async"
                         className="w-6 h-6 transition-transform duration-300 group-hover:scale-110"
                       />
                     </div>

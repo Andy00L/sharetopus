@@ -53,7 +53,7 @@ export const scheduledPostsTick = inngest.createFunction(
     await step.sendEvent("dispatch-due-posts", events);
 
     const marked = await step.run("mark-queued", () =>
-      markPostsAsQueued(due.posts.map((p) => p.id)),
+      markPostsAsQueued(due.posts.map((duePost) => duePost.id)),
     );
 
     return {

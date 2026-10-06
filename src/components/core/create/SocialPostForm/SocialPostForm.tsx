@@ -18,9 +18,8 @@ import {
 } from "../constants/constants";
 import NoAccountAvailable from "../NoAccountAvailable";
 import PostPreviewPanel from "../preview/PostPreviewPanel";
-import { ImageUploads } from "../upload/ImageUpload";
+import { MediaUpload } from "../upload/MediaUpload";
 import { VideoCoverSelector } from "../upload/VideoCoverSelector";
-import { VideoUploads } from "../upload/VideoUpload";
 import { useAccountContent } from "./hooks/useAccountContent";
 import { usePinterestBoards } from "./hooks/usePinterestBoards";
 import { useTikTokCreatorInfo } from "./hooks/useTikTokCreatorInfo";
@@ -430,7 +429,8 @@ export default function SocialPostForm({
 
         {/* Video upload / cover */}
         {postType === "video" && !selectedFile && (
-          <VideoUploads
+          <MediaUpload
+            kind="video"
             maxSizeMB={uploadLimits?.video ?? 50}
             onFileSelected={(file) => {
               if (!ALLOWED_VIDEO_TYPES.includes(file.type)) {
@@ -460,7 +460,8 @@ export default function SocialPostForm({
 
         {/* Image upload */}
         {postType === "image" && !selectedFile && (
-          <ImageUploads
+          <MediaUpload
+            kind="image"
             maxSizeMB={uploadLimits?.image ?? 8}
             onFileSelected={async (file) => {
               if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {

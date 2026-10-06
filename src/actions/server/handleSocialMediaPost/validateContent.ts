@@ -1,6 +1,7 @@
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 
+/** One error per account with no content, no Pinterest board, or no LinkedIn identifier. */
 export function validateAccountContent(
   accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
@@ -11,7 +12,7 @@ export function validateAccountContent(
   const errors: AccountError[] = [];
 
   accounts.forEach((account) => {
-    const content = accountContent.find((c) => c.accountId === account.id);
+    const content = accountContent.find((contentEntry) => contentEntry.accountId === account.id);
     const displayName = account.display_name ?? account.username ?? account.id;
 
     if (!content) {

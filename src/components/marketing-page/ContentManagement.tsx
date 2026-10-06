@@ -1,11 +1,6 @@
 import Link from "next/link";
 
-/* ContentManagement — restyled to match the Sharetopus landing system:
-   - Cream surface w/ ink (#1C1B18) border + 6px hard offset shadow
-   - Orange accent (#FF5A36) eyebrow + italic display accent on the headline
-   - Layout: copy LEFT, media RIGHT on desktop
-   Video: /public/manage.{webm,mp4}, webm first, autoplay+muted+loop+playsInline. */
-
+/** Content management section: copy on the left, the looping manage.webm/mp4 demo on the right. */
 export default function ContentManagement() {
   return (
     <section
