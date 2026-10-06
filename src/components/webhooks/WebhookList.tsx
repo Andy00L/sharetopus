@@ -15,10 +15,7 @@ type WebhookSubscription = {
   created_at: string;
 };
 
-/**
- * Renders the list of webhook subscriptions with expand/collapse
- * for delivery logs.
- */
+/** Webhook subscriptions, each with an expandable delivery log. */
 export function WebhookList({
   subscriptions,
   onDelete,

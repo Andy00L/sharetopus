@@ -1,14 +1,12 @@
 "use client";
 
-/**
- * Checkbox list for selecting webhook event types.
- */
+/** Checkbox list for selecting webhook event types. */
 export function EventPicker({
   allEvents,
   selectedEvents,
   onChange,
 }: {
-  allEvents: string[];
+  allEvents: readonly string[];
   selectedEvents: string[];
   onChange: (events: string[]) => void;
 }) {

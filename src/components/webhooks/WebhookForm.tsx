@@ -3,20 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { WEBHOOK_EVENT_TYPES } from "@/lib/api/rest/webhooks/eventTypes";
 import { EventPicker } from "./EventPicker";
 
-const ALL_EVENTS = [
-  "post.scheduled",
-  "post.published",
-  "post.failed",
-  "connection.connected",
-  "connection.expired",
-];
-
-/**
- * Form for creating a new webhook subscription.
- * URL input + event checkboxes.
- */
+/** Create form for a webhook subscription: HTTPS URL plus event checkboxes. */
 export function WebhookForm({
   onSubmit,
   onCancel,
@@ -26,7 +16,7 @@ export function WebhookForm({
 }) {
   const [url, setUrl] = useState("");
   const [selectedEvents, setSelectedEvents] = useState<string[]>([
-    ...ALL_EVENTS,
+    ...WEBHOOK_EVENT_TYPES,
   ]);
 
   const isValid = url.startsWith("https://") && selectedEvents.length > 0;
@@ -49,7 +39,7 @@ export function WebhookForm({
       </div>
 
       <EventPicker
-        allEvents={ALL_EVENTS}
+        allEvents={WEBHOOK_EVENT_TYPES}
         selectedEvents={selectedEvents}
         onChange={setSelectedEvents}
       />

@@ -3,15 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
-/**
- * Client component wrapping a form POST to the share link initiate route.
- *
- * Provides loading state to prevent double-clicks. The form POST triggers
- * a 302 redirect to TikTok (or to an error page on failure), so the browser
- * handles navigation natively.
- *
- * Called by: ShareLinkLandingPage
- */
+/** Posts to the share link initiate route, which redirects to TikTok; disabled after the first click. */
 export function ConnectShareLinkButton({
   initiateUrl,
 }: {

@@ -3,10 +3,7 @@
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
-/**
- * Client component: copies the referral link to the clipboard and
- * shows a brief "Copied!" confirmation.
- */
+/** Copies the referral link and shows "Copied" for 2 seconds. */
 export function CopyLinkButton({ link }: { link: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -16,7 +13,6 @@ export function CopyLinkButton({ link }: { link: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback: select text in the code element (browsers that block clipboard)
       console.warn("[CopyLinkButton] Clipboard write failed");
     }
   }

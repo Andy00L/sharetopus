@@ -2,23 +2,12 @@ import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { listRestApiKeys } from "@/actions/server/api/listRestApiKeys";
 import { listApiKeys } from "@/actions/server/mcp/listApiKeys";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
+import { ApiKeysCard } from "@/components/integrations/ApiKeysCard";
+import { McpDocsCard } from "@/components/integrations/McpDocsCard";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
-import { ApiKeysCard } from "./components/ApiKeysCard";
-import { McpDocsCard } from "./components/McpDocsCard";
-import { RestApiKeysCard } from "./components/RestApiKeysCard";
 
-/**
- * Integrations page for managing MCP and REST API keys.
- *
- * Server component. Checks for an active subscription before rendering
- * the key management UI. Users without a plan see the subscribe prompt, and
- * a failed check shows a retry (InactiveSubscriptionNotice), as on
- * src/app/(protected)/connections/page.tsx.
- *
- * Route: /integrations (protected)
- * Server actions used: checkActiveSubscription, listApiKeys, listRestApiKeys
- */
+/** /integrations: MCP and REST API key management for subscribed users. */
 export default async function IntegrationsPage() {
   const { userId } = await auth();
 
@@ -44,8 +33,8 @@ export default async function IntegrationsPage() {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <ApiKeysCard initialKeys={mcpKeysResult.data ?? []} />
-      <RestApiKeysCard initialKeys={restKeysResult.data ?? []} />
+      <ApiKeysCard kind="mcp" initialKeys={mcpKeysResult.data ?? []} />
+      <ApiKeysCard kind="rest" initialKeys={restKeysResult.data ?? []} />
       <McpDocsCard />
     </div>
   );

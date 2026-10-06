@@ -1,17 +1,14 @@
 import type { Metadata } from "next";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { WebhooksClient } from "./WebhooksClient";
+import { WebhooksClient } from "@/components/webhooks/WebhooksClient";
 
 export const metadata: Metadata = {
   title: "Webhooks - Settings",
   description: "Manage webhook subscriptions",
 };
 
-/**
- * Server component for /settings/webhooks.
- * Verifies auth, then renders the client-side management UI.
- */
+/** /settings/webhooks: requires a signed-in user. */
 export default async function WebhooksSettingsPage() {
   const { userId } = await auth();
   if (!userId) {

@@ -236,7 +236,7 @@ Building it means declaring the five tables in `src/db/schema.ts`, generating an
 | `src/lib/api/_shared/directPostForAccountsGeneric.ts` | Generic adapter pattern |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard |
 | `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement |
-| `src/app/(protected)/integrations/components/ApiKeysCard.tsx` | API key expiry display |
+| `src/components/integrations/ApiKeysCard.tsx` | API key expiry display |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | OAuth trust sweep cron |
 | `src/inngest/functions/cleanupMcpAuditLogCron.ts` | Audit log retention cron |
 | `src/inngest/functions/cleanupX402AccessLogCron.ts` | x402 access log retention cron |

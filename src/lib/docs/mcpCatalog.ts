@@ -171,14 +171,7 @@ export const MCP_PROMPT_DOCS: readonly { name: string; summary: string }[] = [
   },
 ];
 
-/*
- * Client setup, shared by both doc surfaces and the integrations card
- * (src/app/(protected)/integrations/components/McpDocsCard.tsx), which
- * passes its own origin to the builders.
- * sourceRef: https://claude.com/docs/connectors/custom/remote-mcp (Claude
- *            menu labels, OAuth client options),
- *            https://code.claude.com/docs/en/mcp (claude mcp add flags)
- */
+// Client setup shared by the docs pages and McpDocsCard. sourceRef: claude.com/docs/connectors/custom/remote-mcp, code.claude.com/docs/en/mcp
 
 /**
  * Claude web and desktop add the server as a custom connector. Claude's

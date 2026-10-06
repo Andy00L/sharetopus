@@ -3,14 +3,7 @@
 import { authCheck } from "@/actions/server/authCheck";
 import { revokeApiKeyForPrincipal } from "@/lib/api/revokeApiKeyForPrincipal";
 
-/**
- * Revokes one of the caller's MCP API keys. The key row stays for audit
- * purposes; resolveMcpPrincipal filters on revoked_at IS NULL, so the key
- * stops authenticating at once.
- *
- * Called by: src/app/(protected)/integrations/components/ApiKeysCard.tsx
- * Tables touched: api_keys (update, through revokeApiKeyForPrincipal)
- */
+/** Revokes one of the caller's MCP API keys; the row stays for audit and stops authenticating at once. */
 export async function revokeApiKey(
   userId: string | null,
   keyId: string

@@ -9,36 +9,19 @@ import { generateApiKey } from "@/lib/api/tokens";
 import { isValidApiKeyExpiryDays } from "@/lib/mcp/apiKeyExpiry";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
+type CreateApiKeyResult =
+  | { success: true; rawKey: string; keyId: string; prefix: string; expiresAtIso: string }
+  | { success: false; message: string };
+
 /**
- * Creates a new MCP API key for the authenticated user.
- *
- * Requires an active Stripe subscription. MCP is a paid feature, so
- * Free users see a paywall message instead of generating a key that
- * would never authenticate (the auth resolver also checks subscription).
- *
- * The raw key is returned exactly once. After this call, only the
- * prefix and metadata are visible. The key hash is stored in
- * api_keys.token_hash for lookup during MCP requests.
- *
- * Respects the enforce_api_key_kind_matrix trigger: kind must be
- * 'mcp' and the principal must be a Clerk user.
- *
- * Called by: src/app/(protected)/integrations/components/ApiKeysCard.tsx
- * Tables read: stripe_subscriptions
- * Tables touched: api_keys (insert)
+ * Creates an MCP API key for a subscribed user; the raw key is returned once,
+ * only its hash is stored.
  */
 export async function createApiKey(
   userId: string | null,
   name: string,
   expiresInDays: number,
-): Promise<{
-  success: boolean;
-  message: string;
-  rawKey?: string;
-  keyId?: string;
-  prefix?: string;
-  expiresAtIso?: string;
-}> {
+): Promise<CreateApiKeyResult> {
   try {
     const authResult = await authCheck(userId);
     if (!authResult || !userId) {
@@ -117,7 +100,6 @@ export async function createApiKey(
 
     return {
       success: true,
-      message: "API key created. Copy the key now, it will not be shown again.",
       rawKey,
       keyId: newKey.id,
       prefix,

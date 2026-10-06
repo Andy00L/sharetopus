@@ -12,14 +12,7 @@ import {
   buildMcpClientConfigJson,
 } from "@/lib/docs/mcpCatalog";
 
-/**
- * Static instructions for connecting an MCP client to Sharetopus: Claude
- * (custom connector), Claude Code, Cursor, and other MCP clients. The steps
- * come from the shared MCP catalog, so they match /docs/mcp; this card
- * passes its own origin for the URLs.
- *
- * Called by: src/app/(protected)/integrations/page.tsx
- */
+/** How to connect Claude, Claude Code, Cursor and other MCP clients; steps shared with /docs/mcp. */
 export function McpDocsCard() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
   const mcpUrl = `${baseUrl}/api/mcp/mcp`;

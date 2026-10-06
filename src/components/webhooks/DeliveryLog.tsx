@@ -14,10 +14,7 @@ type Delivery = {
   created_at: string;
 };
 
-/**
- * Expandable delivery log for a webhook subscription.
- * Fetches on mount and shows status badges.
- */
+/** Last 20 deliveries of a webhook subscription, with status dots. */
 export function DeliveryLog({
   subscriptionId,
 }: {

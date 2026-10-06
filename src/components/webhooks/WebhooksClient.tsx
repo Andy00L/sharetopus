@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { WebhookList } from "./components/WebhookList";
-import { WebhookForm } from "./components/WebhookForm";
+import { WebhookList } from "./WebhookList";
+import { WebhookForm } from "./WebhookForm";
 import { Button } from "@/components/ui/button";
 
 type WebhookSubscription = {
@@ -19,10 +19,7 @@ type WebhookSubscription = {
   secret?: string;
 };
 
-/**
- * Client component orchestrating the webhooks management UI.
- * Fetches data via internal API calls (same-origin).
- */
+/** Webhook management UI, backed by the same-origin /api/v1/webhooks routes. */
 export function WebhooksClient() {
   const [subscriptions, setSubscriptions] = useState<WebhookSubscription[]>([]);
   const [isLoading, setIsLoading] = useState(true);

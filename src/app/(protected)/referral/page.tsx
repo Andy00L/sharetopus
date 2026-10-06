@@ -1,4 +1,5 @@
 import { getReferralSummary } from "@/actions/server/referral/getReferralSummary";
+import { CopyLinkButton } from "@/components/referral/CopyLinkButton";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import {
   MAX_REFERRAL_WEEKS,
@@ -7,15 +8,8 @@ import {
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { CopyLinkButton } from "./copy-link-button";
 
-/**
- * Referral page: shows the user's referral link, progress, and earned weeks.
- *
- * Server component; inherits the protected layout + auth from (protected)/layout.tsx.
- * All data is loaded via getReferralSummary which calls ensureReferralCode as
- * a lazy fallback.
- */
+/** /referral: the user's referral link, progress and earned weeks. */
 export default async function ReferralPage() {
   const { userId } = await auth();
   if (!userId) {

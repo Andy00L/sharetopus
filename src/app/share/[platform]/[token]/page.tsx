@@ -1,22 +1,11 @@
 import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
+import { ConnectShareLinkButton } from "@/components/connections/ConnectShareLinkButton";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { db, runQuery } from "@/db/client";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { ConnectShareLinkButton } from "./ConnectShareLinkButton";
-
-/**
- * Public landing page for a share link.
- *
- * Validates the token, looks up creator info, pre-checks account limits,
- * and renders a card inviting the friend to connect their TikTok.
- *
- * No auth required. The friend does not need a Sharetopus account.
- *
- * Route: /share/[platform]/[token]
- */
 
 /** Masks an email address: first char + "****@" + domain */
 function maskEmail(email: string): string {
@@ -36,6 +25,7 @@ function buildDisplayIdentity(user: {
   return maskEmail(user.email);
 }
 
+/** Public /share/[platform]/[token] page inviting a friend to connect their TikTok; no account needed. */
 export default async function ShareLinkLandingPage({
   params,
 }: {
