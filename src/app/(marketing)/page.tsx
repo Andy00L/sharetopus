@@ -23,13 +23,7 @@ export default function page() {
           <Crossposting />
           <Scheduling />
           <ContentManagement />
-          {/*  <ProblemsSection /> */}
-
-          {/*  <FeaturesSection /> */}
-
           <StatsBand />
-          {/* <HeroVisuals /> */}
-
           <ViralFormats />
           <SupportedPlatforms />
 

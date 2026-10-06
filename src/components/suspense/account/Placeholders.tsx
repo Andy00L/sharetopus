@@ -1,35 +1,5 @@
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 
-// components/suspense/Placeholders.tsx
-export function ButtonPlaceholder() {
-  return <div className="h-9 w-36 bg-muted animate-pulse rounded-md"></div>;
-}
-
-export function AccountListPlaceholder() {
-  return (
-    <div className="h-10 w-full bg-muted/50 rounded-full animate-pulse"></div>
-  );
-}
-
-export function SectionPlaceholder() {
-  return (
-    <div className="space-y-3 animate-pulse">
-      <div className="flex items-center justify-between">
-        <div className="h-7 w-24 bg-muted rounded"></div>
-        <div className="h-9 w-36 bg-muted rounded-md"></div>
-      </div>
-      <div className="h-10 w-full bg-muted/50 rounded-full"></div>
-    </div>
-  );
-}
-
-export function MessagePlaceholder() {
-  return (
-    <div className="h-40 w-full bg-muted/30 rounded-lg animate-pulse"></div>
-  );
-}
-
-// Account badge skeleton component
 function AccountBadgeSkeleton() {
   return (
     <div className="flex items-center gap-2 px-2 py-1 rounded-full border border-gray-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
@@ -39,6 +9,8 @@ function AccountBadgeSkeleton() {
     </div>
   );
 }
+
+/** Loading skeleton for the connections page. */
 export default function AccountsPageSkeleton() {
   return (
     <SidebarContent className=" px-4 py-6 ">
@@ -48,20 +20,17 @@ export default function AccountsPageSkeleton() {
       </SidebarGroup>
 
       <SidebarGroup className="mb-8 space-y-6">
-        {/* TikTok Section */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">TikTok</h2>
             <div className="h-9 w-36 bg-gray-100 dark:bg-gray-700 rounded-md animate-pulse"></div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {/* Account badges placeholders */}
             <AccountBadgeSkeleton />
             <AccountBadgeSkeleton />
           </div>
         </div>
 
-        {/* Pinterest Section */}
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">Pinterest</h2>
@@ -72,7 +41,6 @@ export default function AccountsPageSkeleton() {
           </div>
         </div>
 
-        {/* LinkedIn Section */}
         <div className="space-y-3 pt-4 border-t">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">LinkedIn</h2>
@@ -85,7 +53,6 @@ export default function AccountsPageSkeleton() {
         </div>
       </SidebarGroup>
 
-      {/* Empty state placeholder */}
       <SidebarGroup className="mt-8 mb-16">
         <div className="border border-dashed rounded-lg p-8 text-center bg-gray-50 dark:bg-gray-800/30 animate-pulse">
           <div className="mx-auto h-12 w-12 rounded-full bg-gray-200 dark:bg-gray-700 mb-4"></div>

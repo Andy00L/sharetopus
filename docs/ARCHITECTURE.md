@@ -161,7 +161,7 @@ src/
                                 # sweepStaleOauthClients, cleanupCancelledPostsAfterGrace,
                                 # finalizeTikTokPostByPublishId,
                                 # getServerSignedViewUrl, getSupabaseVideoFile
-      directPostActions/        # directPostBatchAction (with requestId tracing)
+      directPostActions/        # directPostBatch (with requestId tracing)
       handleSocialMediaPost/    # Main posting handler (direct + scheduled)
       mcp/                      # createApiKey, listApiKeys, revokeApiKey
       rateLimit/                # checkRateLimit (Upstash sliding window)
@@ -202,7 +202,6 @@ src/
         {platform}/initiate/    # OAuth initiation redirect
       storage/
         generate-upload-url/    # Signed upload URL (Clerk-authed)
-        generate-view-url/      # Signed view URL (Clerk-authed, 5min TTL)
       webhooks/
         clerk/                  # user.created, user.updated, user.deleted
         stripe/                 # subscription.*, invoice.*

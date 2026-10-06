@@ -1,23 +1,7 @@
 import type { ProviderMetadata } from "./types";
 
-/**
- * Client-safe metadata for every publishing target.
- *
- * Deliberately free of implementation imports: the connect UI, the REST
- * validation schemas, and the MCP tool schemas all read this, and pulling a
- * provider's network code in would ship credential-handling code to the
- * browser. Behavior lives in registry.ts behind "server-only".
- *
- * Adding a provider means one entry here, one module under this folder, and
- * one line in registry.ts. The four legacy per-platform switch statements
- * are not touched: the seven original platforms keep their bespoke adapters
- * until they are migrated onto this contract one at a time.
- *
- * Every provider in this first batch is credentials-based on purpose. They
- * need no app registration and no OAuth review, so each one works the
- * moment its key is pasted, which is the "when I get the API keys it just
- * works" requirement.
- */
+// Client-safe metadata for every registry provider. No implementation imports:
+// the browser reads this file, and provider code handles credentials.
 
 /** Bluesky posts cap at 300 graphemes. sourceRef: atproto app.bsky.feed.post */
 const BLUESKY_MAX_CHARS = 300;
@@ -712,11 +696,6 @@ export const FULL_PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> =
     ...VARIANT_CATALOG,
   };
 
-/** Every provider id served by the registry. */
-export const PROVIDER_IDS: readonly string[] = Object.keys(
-  FULL_PROVIDER_CATALOG,
-);
-
 /** Metadata lookup. Returns null for unknown ids so callers fail closed. */
 export function getProviderMetadata(
   providerId: string,
@@ -724,12 +703,7 @@ export function getProviderMetadata(
   return FULL_PROVIDER_CATALOG[providerId] ?? null;
 }
 
-/**
- * Registry platform ids as a literal tuple, for z.enum and the
- * schedulable-platform union in capabilities.ts. Kept in catalog so the
- * list lives next to the entries it mirrors; getProviderMetadata returning
- * non-null for each id is asserted by the registry parity audit.
- */
+/** Registry platform ids as a literal tuple, for z.enum and capabilities.ts. */
 export const REGISTRY_PLATFORM_IDS = [
   "bluesky",
   "mastodon",

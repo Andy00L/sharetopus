@@ -148,9 +148,7 @@ The `get_user_storage_bytes` Postgres RPC reads `storage.objects` directly (no p
 
 ## View URLs
 
-**Web UI:** `GET /api/storage/generate-view-url` creates signed view URLs. Validates Clerk auth and path ownership (`{userId}/` prefix check). Default TTL: 5 minutes (300 seconds).
-
-**Server-side:** `getServerSignedViewUrl(path, expiresInSeconds)` for internal use by server actions and background jobs.
+`getServerSignedViewUrl(path, expiresInSeconds)` creates signed view URLs for server actions and background jobs.
 
 ## Media proxy
 
@@ -304,7 +302,6 @@ Platform-specific timestamp formats for video cover images:
 | File | Purpose |
 | ---- | ------- |
 | `src/app/api/storage/generate-upload-url/route.ts` | Web UI upload endpoint |
-| `src/app/api/storage/generate-view-url/route.ts` | Web UI view URL endpoint |
 | `src/app/api/media/route.ts` | HMAC-signed media proxy for TikTok |
 | `src/actions/client/signedUrlUpload.ts` | Client-side XHR upload with progress |
 | `src/actions/server/data/getServerSignedViewUrl.ts` | Server-side signed view URL helper |

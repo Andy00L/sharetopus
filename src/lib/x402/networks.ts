@@ -1,31 +1,14 @@
 import "server-only";
 
-/**
- * Network registry for the x402 payment protocol.
- *
- * Single source of truth for supported networks and for how each one
- * settles. Facilitator choice, payout wallet, RPC override and refund
- * sender are all read from the entry (settlement, recipientEnvVar,
- * rpcUrlEnvVar), so no other module compares network names to decide how
- * money moves.
- *
- * Called by: config.ts, facilitator.ts, facilitatorClient.ts,
- *            http/resolveRequestNetwork.ts, the /proof and /solana pages,
- *            solanaActions/*
- * Tables touched: none (pure configuration)
- */
+// x402 network registry: the one place that decides how each network settles,
+// pays out and refunds. No other module compares network names.
 
 import type { WalletChain } from "@/db/schema";
 
 /**
- * Who verifies and settles payments on a network. Stored verbatim in
- * x402_charges.facilitator, so the values are the domain vocabulary:
- *   - coinbase_cdp: CDP hosted facilitator; refunds go out through the CDP SDK.
- *   - celo: Celo hosted facilitator (api.x402.celo.org); refunds are signed
- *     locally with X402_CELO_REFUND_KEY.
- *   - arc_local: Sharetopus verifies and settles in process
- *     (arc/arcFacilitator.ts) and signs refunds with X402_ARC_KEY. No third
- *     party screens the payer on this lane.
+ * Who settles a network, stored in x402_charges.facilitator: CDP (refunds via
+ * the CDP SDK), Celo's facilitator (refunds signed with X402_CELO_REFUND_KEY),
+ * or Sharetopus itself on Arc (refunds signed with X402_ARC_KEY).
  */
 export type SettlementLane = "coinbase_cdp" | "celo" | "arc_local";
 
@@ -76,14 +59,7 @@ export interface SvmNetworkConfig extends NetworkConfigBase {
 
 export type NetworkConfig = EvmNetworkConfig | SvmNetworkConfig;
 
-/**
- * Supported mainnet networks. Testnets are excluded on purpose: WalletChain
- * still lists them at the DB level, but any ?network value not found here is
- * rejected with 400 unsupported_network.
- *
- * Base, Polygon and Arbitrum USDC domains verified against @x402/evm
- * DEFAULT_STABLECOINS (v2.14.0).
- */
+/** Supported mainnets; any other ?network value gets 400 unsupported_network. */
 export const NETWORKS = Object.freeze({
   base: {
     name: "base",
@@ -127,11 +103,7 @@ export const NETWORKS = Object.freeze({
     settlement: "coinbase_cdp",
     recipientEnvVar: "X402_RECIPIENT_EVM",
   },
-  // usdcAddress from docs.celo.org/build-on-celo/build-with-ai/x402; the
-  // domain and decimals were read from the contract on Forno (2026-07-16):
-  // name "USDC" (not Base's "USD Coin"), version "2", decimals 6. Celo has
-  // its own payout wallet because refunds must come from a key the operator
-  // holds, which the shared CDP EVM wallet is not.
+  // EIP-712 name is "USDC" here, not "USD Coin" (read on-chain 2026-07-16).
   celo: {
     name: "celo",
     family: "evm",
@@ -146,15 +118,7 @@ export const NETWORKS = Object.freeze({
     settlement: "celo",
     recipientEnvVar: "X402_RECIPIENT_CELO",
   },
-  // chainId and rpcUrl from docs.arc.io/arc/references/rpc-endpoints
-  // (eth_chainId -> 0x13b2). usdcAddress is the system contract from
-  // docs.arc.io/arc/references/contract-addresses; its name, version and
-  // decimals were read on mainnet (2026-09-17) and the EIP-712 domain
-  // separator recomputed from them matches the contract's own. Gas on Arc is
-  // USDC, so the operations wallet that settles here pays a fraction of a
-  // cent per broadcast. Circle's hosted Facilitator Service also settles
-  // Arc since September 2026 but needs a Circle API key in production; this
-  // lane stays self-settled until one is configured.
+  // Gas on Arc is USDC; the settling operations wallet pays it (docs.arc.io).
   arc: {
     name: "arc",
     family: "evm",
@@ -185,11 +149,7 @@ export const NETWORKS = Object.freeze({
 
 export type SupportedNetworkName = keyof typeof NETWORKS;
 
-/**
- * Own-key check. A plain index would also resolve inherited names such as
- * "constructor" or "__proto__" to Object.prototype members and hand them
- * back as a network.
- */
+/** Own-key check, so "constructor" or "__proto__" never resolve to a network. */
 function isSupportedNetworkName(name: string): name is SupportedNetworkName {
   return Object.hasOwn(NETWORKS, name);
 }
@@ -199,23 +159,12 @@ export function getNetworkConfig(name: string): NetworkConfig | null {
   return isSupportedNetworkName(name) ? NETWORKS[name] : null;
 }
 
-/**
- * Address equality on a network. EVM addresses compare case-insensitively
- * (EIP-55 checksum casing); Solana base58 is case-sensitive.
- */
+/** Address equality: case-insensitive on EVM, exact on Solana (base58). */
 export function addressesMatch(network: NetworkConfig, left: string, right: string): boolean {
   return network.family === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-/** Every supported network, in registry order. */
-export function listNetworks(): NetworkConfig[] {
-  return Object.values(NETWORKS);
-}
-
-/**
- * The configured default network (X402_DEFAULT_NETWORK), falling back to
- * Base when the variable is missing or names an unsupported network.
- */
+/** X402_DEFAULT_NETWORK, or Base when it is unset or unknown. */
 export function getDefaultNetwork(): NetworkConfig {
   const envName = process.env.X402_DEFAULT_NETWORK;
   if (envName) {

@@ -53,7 +53,7 @@ MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth 
 | 3 | Oversized file with fake Content-Length | Stream-based byte counter (Content-Length never trusted) | `safeUserFetch.ts` |
 | 4 | Storage quota bypass | `enforceStorageQuota` via `get_user_storage_bytes` RPC | `enforceStorageQuota.ts` |
 | 5 | `attach_media_from_url` flood | 10/60s rate limit + monthly cap per tier | `attachMediaFromUrl.ts` |
-| 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/storage/generate-view-url`, `/api/media` |
+| 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/media` |
 | 7 | TikTok media URL forgery | HMAC-SHA256 + 30-min expiry | `buildProxiedTikTokMediaUrl.ts` |
 | 8 | Media proxy path traversal | Block `..`, `//`, leading `/` | `/api/media/route.ts` |
 | 9 | Audit log tampering | Append-only table (`reject_mutation` DB trigger refuses UPDATE and DELETE, except retention deletes and ON DELETE SET NULL detaching a deleted principal) | `mcp_audit_log` table |
@@ -483,10 +483,9 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 | # | Gap | Severity | Notes |
 |---|-----|----------|-------|
 | 1 | Cancelled `scheduled_posts` hold storage indefinitely | Design decision | Orphan sweep only catches unreferenced files. Cancelled posts still reference their media. |
-| 2 | `expiresIn` on `/api/storage/generate-view-url` not capped server-side | Low | Own files only. Client could request a long-lived signed URL. |
-| 3 | No alerting on orphan sweep counts | Low | Sweep logs stats to Inngest but no external notification hook. |
-| 4 | No rate limit on view URL and media proxy endpoints | Low | Both require authentication (Clerk or HMAC). Abuse would require valid credentials. |
-| 5 | No aggregate daily cap on `attach_media_from_url` | Low | Per-minute (10/60s) and per-month caps exist. A sustained 10/min attack over 24h would hit the monthly cap within a day for Creator users. |
+| 2 | No alerting on orphan sweep counts | Low | Sweep logs stats to Inngest but no external notification hook. |
+| 3 | No rate limit on the media proxy endpoint | Low | It requires a valid HMAC signature, so abuse needs a signed URL. |
+| 4 | No aggregate daily cap on `attach_media_from_url` | Low | Per-minute (10/60s) and per-month caps exist. A sustained 10/min attack over 24h would hit the monthly cap within a day for Creator users. |
 
 ## Compliance Posture
 
@@ -522,7 +521,6 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 | `src/lib/mcp/ipHash.ts` | IP hashing (SHA-256 with salt) |
 | `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed TikTok media URL builder |
 | `src/app/api/media/route.ts` | Media proxy (HMAC verification, path traversal guard) |
-| `src/app/api/storage/generate-view-url/route.ts` | Web view URL generation (Clerk auth, path ownership) |
 | `src/app/api/storage/generate-upload-url/route.ts` | Web upload URL generation (storage quota check) |
 | `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API endpoint wrapper (auth, validation, audit, rate limit) |
 | `src/lib/api/rest/audit/writeRestAuditLog.ts` | REST API audit log writer |
