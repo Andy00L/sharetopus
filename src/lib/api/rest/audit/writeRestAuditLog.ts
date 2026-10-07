@@ -1,8 +1,9 @@
 import "server-only";
 
 import { db, runQuery } from "@/db/client";
-import { rest_audit_log, type Json, type REST_AUDIT_OUTCOMES } from "@/db/schema";
+import { rest_audit_log, type REST_AUDIT_OUTCOMES } from "@/db/schema";
 import { redactSecrets } from "@/lib/api/audit/redactPatterns";
+import { toJsonValue } from "@/lib/utils/jsonObject";
 import type { RestApiKeyContext } from "../auth/types";
 
 /** The rest_audit_log.outcome values, from the column's CHECK list. */
@@ -54,8 +55,8 @@ export async function writeRestAuditLog(
       outcome,
       error_code: errorCode,
       latency_ms: Date.now() - context.startedAt,
-      args_redacted: redactedArgs as Json,
-      response_summary: responseSummary as Json,
+      args_redacted: toJsonValue(redactedArgs),
+      response_summary: toJsonValue(responseSummary),
     };
 
     const { error: insertError } = await runQuery(

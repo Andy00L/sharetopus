@@ -1,11 +1,18 @@
 import { TikTokOptions } from "@/lib/types/dbTypes";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 import "server-only";
-import {
-  CreatorInfoResponse,
-  PostInitResponse,
-  TikTokPostResult,
-} from "./postToTikTok";
+import { z } from "zod";
+import type { TikTokPostResult } from "./postToTikTok";
 import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
+
+/**
+ * Direct Post init answer (photo and video): the publish_id the status
+ * poll tracks. Also read by handleVideoPost.
+ * sourceRef: developers.tiktok.com/doc/content-posting-api-reference-direct-post
+ */
+export const TikTokPostInitSchema = z.object({
+  data: z.object({ publish_id: z.string() }),
+});
 
 /** Starts a TikTok photo Direct Post that TikTok pulls from media_url. */
 export async function handleImagePost({
@@ -14,7 +21,7 @@ export async function handleImagePost({
   description,
   tikTokOptions,
   media_url,
-  creatorInfo,
+  creatorUsername,
   autoAddMusic,
 }: {
   accessToken: string;
@@ -22,7 +29,7 @@ export async function handleImagePost({
   description?: string;
   tikTokOptions?: TikTokOptions;
   media_url: string;
-  creatorInfo: CreatorInfoResponse;
+  creatorUsername: string;
   autoAddMusic: boolean;
 }): Promise<TikTokPostResult> {
   try {
@@ -56,7 +63,7 @@ export async function handleImagePost({
     );
 
     if (!initResponse.ok) {
-      const errorData = await initResponse.json();
+      const errorData: unknown = await initResponse.json();
       console.error(
         "[Tiktok Post Function] Image initialization error:",
         errorData
@@ -64,12 +71,22 @@ export async function handleImagePost({
       return {
         success: false,
         error: "Failed to initialize image post",
-        details: errorData as Record<string, unknown>,
+        details: toJsonObject(errorData) ?? undefined,
       };
     }
 
-    const initData = (await initResponse.json()) as PostInitResponse;
-    const publishId = initData.data.publish_id;
+    const initData = TikTokPostInitSchema.safeParse(await initResponse.json());
+    if (!initData.success) {
+      console.error(
+        "[Tiktok Post Function] Image initialization returned no publish_id"
+      );
+      return {
+        success: false,
+        error: "Failed to initialize image post",
+        message: "TikTok returned no publish_id",
+      };
+    }
+    const publishId = initData.data.data.publish_id;
     console.log(
       `[Tiktok Post Function] Image post initialized successfully with publish_id: ${publishId}`
     );
@@ -77,12 +94,12 @@ export async function handleImagePost({
     return {
       success: true,
       publishId,
-      postUrl: `https://www.tiktok.com/@${creatorInfo.data.creator_username}`,
+      postUrl: `https://www.tiktok.com/@${creatorUsername}`,
       data: { status: "PUBLISH_COMPLETE" },
       message: "Image submitted to TikTok for processing",
       status: "posted",
       content_id: publishId,
-      creator_username: creatorInfo.data.creator_username,
+      creator_username: creatorUsername,
     };
   } catch (error) {
     console.error("[Tiktok Post Function] Image post error:", error);

@@ -1,8 +1,10 @@
 // lib/api/tiktok/post/postToTikTok.ts
 import type { MediaType } from "@/db/schema";
-import { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
+import { TikTokOptions } from "@/lib/types/dbTypes";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 import fetch from "node-fetch";
 import "server-only";
+import { z } from "zod";
 import { handleImagePost } from "./postImage";
 import { handleVideoPost } from "./postVideo";
 
@@ -21,36 +23,13 @@ export interface TikTokPostResult {
   creator_username?: string;
 }
 
-// Interfaces for API responses
-export interface CreatorInfoResponse {
-  data: {
-    creator_avatar_url: string;
-    creator_username: string;
-    creator_nickname: string;
-    privacy_level_options: PrivacyLevel[];
-    comment_disabled: boolean;
-    duet_disabled: boolean;
-    stitch_disabled: boolean;
-    max_video_post_duration_sec: number;
-  };
-  error: {
-    code: string;
-    message: string;
-    log_id: string;
-  };
-}
-
-export interface PostInitResponse {
-  data: {
-    publish_id: string;
-    upload_url?: string;
-  };
-  error: {
-    code: string;
-    message: string;
-    log_id: string;
-  };
-}
+/**
+ * creator_info answer; only the username is read here (for the profile URL).
+ * sourceRef: developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
+ */
+const CreatorInfoResponseSchema = z.object({
+  data: z.object({ creator_username: z.string() }),
+});
 
 /**
  * Posts content directly to TikTok using their Content Posting API
@@ -109,12 +88,20 @@ export async function postToTikTok({
       return {
         success: false,
         error: "Failed to query creator info",
-        details: errorData as Record<string, unknown>,
+        details: toJsonObject(errorData) ?? undefined,
       };
     }
 
-    const creatorInfo =
-      (await creatorInfoResponse.json()) as CreatorInfoResponse;
+    const creatorInfo = CreatorInfoResponseSchema.safeParse(
+      await creatorInfoResponse.json(),
+    );
+    if (!creatorInfo.success) {
+      console.error(
+        "[Tiktok Post Function] Creator info response had no creator_username",
+      );
+      return { success: false, error: "Failed to query creator info" };
+    }
+    const creatorUsername = creatorInfo.data.data.creator_username;
 
     // Call the appropriate handler based on media type
     if (postType === "image") {
@@ -123,7 +110,7 @@ export async function postToTikTok({
         title,
         description,
         tikTokOptions,
-        creatorInfo,
+        creatorUsername,
         autoAddMusic,
         media_url,
       });
@@ -134,7 +121,7 @@ export async function postToTikTok({
         description,
         tikTokOptions,
         coverTimestamp,
-        creatorInfo,
+        creatorUsername,
         media_url,
       });
     }

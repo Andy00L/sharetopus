@@ -9,7 +9,9 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
-import { parseJsonBody, providerFetch } from "./_shared/providerFetch";
+import { isJsonObject } from "@/lib/utils/jsonObject";
+
+import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
 /**
  * Slack provider, bot-token mode.
@@ -48,12 +50,11 @@ async function callSlackApi(
     return { ok: false, message: `Slack ${method} failed: ${callResult.message}` };
   }
 
-  const parsed = parseJsonBody(callResult.bodyText);
-  if (!parsed || typeof parsed !== "object") {
+  const envelope = parseJsonObject(callResult.bodyText);
+  if (!envelope) {
     return { ok: false, message: `Slack ${method} returned no JSON.` };
   }
 
-  const envelope = parsed as Record<string, unknown>;
   if (envelope.ok !== true) {
     // Slack's error slugs are actionable verbatim: not_in_channel,
     // channel_not_found, invalid_auth, missing_scope.
@@ -191,10 +192,7 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   }
 
   const channels = rawChannels
-    .filter(
-      (channel): channel is Record<string, unknown> =>
-        typeof channel === "object" && channel !== null,
-    )
+    .filter(isJsonObject)
     .map((channel) => ({
       id: typeof channel.id === "string" ? channel.id : null,
       name: typeof channel.name === "string" ? channel.name : null,

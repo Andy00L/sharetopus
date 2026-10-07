@@ -3,7 +3,7 @@ import "server-only";
 
 import { db, runQuery } from "@/db/client";
 import { content_history } from "@/db/schema";
-import type { Json } from "@/db/schema";
+import { toJsonValue } from "@/lib/utils/jsonObject";
 
 export type StoreContentHistoryInput = {
   platform: string;
@@ -62,7 +62,7 @@ export async function storeContentHistory(
       batch_id: data.batch_id,
       scheduled_post_id: data.scheduled_post_id ?? null,
       social_account_id: data.social_account_id,
-      extra: (data.extra ?? {}) as Json,
+      extra: toJsonValue(data.extra ?? {}) ?? {},
       created_via: data.created_via,
     };
 

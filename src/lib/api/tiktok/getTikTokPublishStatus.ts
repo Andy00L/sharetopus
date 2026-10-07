@@ -1,5 +1,25 @@
 import fetch from "node-fetch";
 import "server-only";
+import { z } from "zod";
+
+/**
+ * /v2/post/publish/status/fetch/ answer. Every field may be absent: a
+ * missing status reads as in progress, a missing error message as the
+ * HTTP status.
+ */
+const PublishStatusResponseSchema = z.object({
+  data: z
+    .object({
+      status: z.string().nullish(),
+      fail_reason: z.string().nullish(),
+      // list<int64> in the docs, so an id can arrive as a number.
+      publicaly_available_post_id: z
+        .array(z.union([z.string(), z.number()]))
+        .nullish(),
+    })
+    .nullish(),
+  error: z.object({ message: z.string().nullish() }).nullish(),
+});
 
 // Terminal failure status values from TikTok Content Posting API.
 // Reference: https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
@@ -57,18 +77,19 @@ export async function getTikTokPublishStatus(input: {
     );
 
     // Read the body exactly once (FIX 17 convention).
-    const body = (await response.json()) as {
-      data?: {
-        status?: string;
-        fail_reason?: string;
-        publicaly_available_post_id?: string[];
+    const parsedBody = PublishStatusResponseSchema.safeParse(
+      await response.json(),
+    );
+    if (!parsedBody.success) {
+      console.error(
+        `[getTikTokPublishStatus] Response body had an unexpected shape (HTTP ${response.status})`,
+      );
+      return {
+        success: false,
+        message: `TikTok API error: unexpected response (HTTP ${response.status})`,
       };
-      error?: {
-        code?: string;
-        message?: string;
-        log_id?: string;
-      };
-    };
+    }
+    const body = parsedBody.data;
 
     if (!response.ok) {
       const errorMsg = body.error?.message ?? `HTTP ${response.status}`;
@@ -83,13 +104,14 @@ export async function getTikTokPublishStatus(input: {
 
     if (TERMINAL_SUCCESS_STATUSES.has(status)) {
       console.log(`[getTikTokPublishStatus] Terminal success: ${status}`);
+      const publicPostId = body.data?.publicaly_available_post_id?.[0];
       return {
         success: true,
         terminal: true,
         kind: "completed",
         raw_status: status,
         tiktok_post_id:
-          body.data?.publicaly_available_post_id?.[0] ?? undefined,
+          publicPostId === undefined ? undefined : String(publicPostId),
       };
     }
 

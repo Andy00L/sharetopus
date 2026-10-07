@@ -31,6 +31,13 @@ const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
+/** An inline style that also sets CSS custom properties, which React.CSSProperties has no keys for. */
+type StyleWithCssVariables = React.CSSProperties & Record<`--${string}`, string>
+
+const MOBILE_SHEET_STYLE: StyleWithCssVariables = {
+  "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
+}
+
 type SidebarContextProps = {
   state: "expanded" | "collapsed"
   open: boolean
@@ -112,6 +119,12 @@ function SidebarProvider({
   // This makes it easier to style the sidebar with Tailwind classes.
   const state = open ? "expanded" : "collapsed"
 
+  const wrapperStyle: StyleWithCssVariables = {
+    "--sidebar-width": SIDEBAR_WIDTH,
+    "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+    ...style,
+  }
+
   const contextValue = React.useMemo<SidebarContextProps>(
     () => ({
       state,
@@ -130,13 +143,7 @@ function SidebarProvider({
       <TooltipProvider delayDuration={0}>
         <div
           data-slot="sidebar-wrapper"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH,
-              "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
-              ...style,
-            } as React.CSSProperties
-          }
+          style={wrapperStyle}
           className={cn(
             "group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full",
             className
@@ -187,11 +194,7 @@ function Sidebar({
           data-slot="sidebar"
           data-mobile="true"
           className="bg-sidebar text-sidebar-foreground w-(--sidebar-width) p-0 [&>button]:hidden"
-          style={
-            {
-              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
+          style={MOBILE_SHEET_STYLE}
           side={side}
         >
           <SheetHeader className="sr-only">

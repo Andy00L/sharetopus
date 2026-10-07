@@ -7,8 +7,11 @@ import type {
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
+import { toJsonObject } from "@/lib/utils/jsonObject";
+
 import {
   parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -151,12 +154,9 @@ async function twitchPublish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const dataRows = Array.isArray(parsed?.data) ? parsed.data : [];
-  const first =
-    dataRows[0] && typeof dataRows[0] === "object"
-      ? (dataRows[0] as Record<string, unknown>)
-      : null;
+  const parsed = parseJsonObject(result.bodyText);
+  const dataRows: unknown[] = Array.isArray(parsed?.data) ? parsed.data : [];
+  const first = toJsonObject(dataRows[0]);
   const messageId =
     first && typeof first.message_id === "string" ? first.message_id : null;
   if (!messageId) return { ok: false, message: "Twitch returned no message id." };
@@ -204,12 +204,9 @@ async function kickConnect(
   if (!userResult.ok || userResult.status !== 200) {
     return { ok: false, message: "Kick user lookup failed." };
   }
-  const parsed = parseJsonBody(userResult.bodyText) as Record<string, unknown> | null;
-  const dataRows = Array.isArray(parsed?.data) ? parsed.data : [];
-  const user =
-    dataRows[0] && typeof dataRows[0] === "object"
-      ? (dataRows[0] as Record<string, unknown>)
-      : null;
+  const parsed = parseJsonObject(userResult.bodyText);
+  const dataRows: unknown[] = Array.isArray(parsed?.data) ? parsed.data : [];
+  const user = toJsonObject(dataRows[0]);
   const userId =
     user && typeof user.user_id === "number" ? String(user.user_id) : null;
   if (!user || !userId) {
@@ -283,11 +280,7 @@ async function kickPublish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const data =
-    parsed && typeof parsed.data === "object" && parsed.data !== null
-      ? (parsed.data as Record<string, unknown>)
-      : null;
+  const data = toJsonObject(parseJsonObject(result.bodyText)?.data);
   const messageId =
     data && typeof data.message_id === "string" ? data.message_id : null;
 

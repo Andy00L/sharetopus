@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
+
 /** Small JSON calls (initialize, finalize, tweet create) are bounded to 15s. */
 const API_TIMEOUT_MS = 15_000;
 /** One chunk APPEND moves at most 4 MB; 60s covers it on a slow link. */
@@ -397,13 +399,5 @@ function sleepSeconds(seconds: number): Promise<void> {
 
 /** Best-effort JSON parse of a provider error body for the details field. */
 function parseErrorDetails(errorText: string): Record<string, unknown> {
-  try {
-    const parsedBody = JSON.parse(errorText) as unknown;
-    if (parsedBody !== null && typeof parsedBody === "object") {
-      return parsedBody as Record<string, unknown>;
-    }
-    return { rawError: errorText };
-  } catch {
-    return { rawError: errorText };
-  }
+  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
+
 /** Feed and photo publishes are quick JSON calls; 30s covers them. */
 const PUBLISH_TIMEOUT_MS = 30_000;
 /** Video publish makes Facebook pull file_url server-side; allow 2 minutes. */
@@ -146,13 +148,5 @@ export async function postToFacebook({
 
 /** Best-effort JSON parse of a provider error body for the details field. */
 function parseErrorDetails(errorText: string): Record<string, unknown> {
-  try {
-    const parsedBody = JSON.parse(errorText) as unknown;
-    if (parsedBody !== null && typeof parsedBody === "object") {
-      return parsedBody as Record<string, unknown>;
-    }
-    return { rawError: errorText };
-  } catch {
-    return { rawError: errorText };
-  }
+  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

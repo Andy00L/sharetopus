@@ -166,10 +166,12 @@ export default function ScheduleCalendar({
     setView("week");
   }
 
+  // The chip's draggable id is its batchId (CalendarBatchChip), so the
+  // batch is looked up by id instead of read from untyped drag data.
   function handleDragStart(event: DragStartEvent) {
-    const draggedBatch = event.active.data.current?.batch as
-      | CalendarBatch
-      | undefined;
+    const draggedBatch = visibleBatches.find(
+      (batch) => batch.batchId === event.active.id,
+    );
     setActiveDragBatch(draggedBatch ?? null);
   }
 

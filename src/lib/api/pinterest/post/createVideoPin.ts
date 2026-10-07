@@ -1,12 +1,22 @@
+import { z } from "zod";
+
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { buildStreamingMultipartFormDataBody } from "@/lib/api/_shared/buildStreamingMultipartFormDataBody";
+import { readStringField } from "@/lib/platforms/providers/_shared/providerFetch";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
-import {
-  PinterestMediaRegistrationResponse,
-  PinterestMediaStatusResponse,
-  PinterestPostResult,
-} from "./postToPinterest";
+import { CreatedPinSchema } from "./postImage";
+import { PinterestPostResult } from "./postToPinterest";
+
+/** POST /v5/media answer: where and how to upload the video bytes. */
+const MediaRegistrationSchema = z.object({
+  media_id: z.string(),
+  upload_url: z.string(),
+  upload_parameters: z.record(z.string(), z.string()),
+});
+
+/** GET /v5/media/{id} answer: the processing status (succeeded, failed, ...). */
+const MediaStatusSchema = z.object({ status: z.string() });
 
 type MediaUploadResult =
   | {
@@ -118,10 +128,10 @@ async function registerMediaUpload(
       body: JSON.stringify({ media_type: "video" }),
     });
 
-    const data = (await response.json()) as PinterestMediaRegistrationResponse;
+    const payload: unknown = await response.json();
 
     if (!response.ok) {
-      console.error("[Pinterest PostVideo] Media registration failed:", data);
+      console.error("[Pinterest PostVideo] Media registration failed:", payload);
       return {
         success: false,
         error: "Failed to register media upload",
@@ -129,12 +139,24 @@ async function registerMediaUpload(
       };
     }
 
+    const registration = MediaRegistrationSchema.safeParse(payload);
+    if (!registration.success) {
+      console.error(
+        "[Pinterest PostVideo] Media registration response had an unexpected shape",
+      );
+      return {
+        success: false,
+        error: "Failed to register media upload",
+        message: "Pinterest returned an incomplete media registration",
+      };
+    }
+
     console.log("[Pinterest PostVideo] Media registered successfully");
     return {
       success: true,
-      media_id: data.media_id,
-      upload_url: data.upload_url,
-      upload_parameters: data.upload_parameters,
+      media_id: registration.data.media_id,
+      upload_url: registration.data.upload_url,
+      upload_parameters: registration.data.upload_parameters,
     };
   } catch (error) {
     console.error("[Pinterest PostVideo] Media registration error:", error);
@@ -363,10 +385,11 @@ async function checkMediaStatus(
       },
     );
 
-    const data = (await response.json()) as PinterestMediaStatusResponse;
+    const payload: unknown = await response.json();
+    const mediaStatus = MediaStatusSchema.safeParse(payload);
 
-    if (!response.ok) {
-      console.error("[Pinterest PostVideo] Status check failed:", data);
+    if (!response.ok || !mediaStatus.success) {
+      console.error("[Pinterest PostVideo] Status check failed:", payload);
       return {
         success: false,
         error:
@@ -378,7 +401,7 @@ async function checkMediaStatus(
     // Return status in message field for easy access
     return {
       success: true,
-      message: data.status,
+      message: mediaStatus.data.status,
     };
   } catch (error) {
     console.error("[Pinterest PostVideo] Status check error:", error);
@@ -433,23 +456,33 @@ async function createPinWithVideo({
       body: JSON.stringify(requestBody),
     });
 
-    const data = (await response.json()) as Record<string, unknown>;
+    const payload: unknown = await response.json();
 
     if (!response.ok) {
-      console.error("[Pinterest] Pin creation failed:", data);
+      console.error("[Pinterest] Pin creation failed:", payload);
       return {
         success: false,
         error: "Failed to create pin",
-        message: data.message as string,
+        message: readStringField(payload, "message") ?? undefined,
+      };
+    }
+
+    const createdPin = CreatedPinSchema.safeParse(payload);
+    if (!createdPin.success) {
+      console.error("[Pinterest] Pin creation response had no pin id");
+      return {
+        success: false,
+        error: "Failed to create pin",
+        message: "Pinterest returned no pin id",
       };
     }
 
     console.log("[Pinterest] Pin created successfully");
     return {
       success: true,
-      postId: data.id as string,
-      postUrl: `https://www.pinterest.com/pin/${data.id}/`,
-      data,
+      postId: createdPin.data.id,
+      postUrl: `https://www.pinterest.com/pin/${createdPin.data.id}/`,
+      data: createdPin.data,
       message: "Successfully created video pin",
     };
   } catch (error) {

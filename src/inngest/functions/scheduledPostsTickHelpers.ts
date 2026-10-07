@@ -4,15 +4,13 @@ import { and, asc, eq, inArray, lte } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
-import type { Platform, PostStatus } from "@/db/schema";
+import type { PostStatus } from "@/db/schema";
 
-export type DuePost = {
-  id: string;
-  principal_id: string;
-  social_account_id: string;
-  platform: Platform;
-  scheduled_at: string;
-};
+/** The scheduled_posts columns a post.due event carries (platform is plain text). */
+export type DuePost = Pick<
+  typeof scheduled_posts.$inferSelect,
+  "id" | "principal_id" | "social_account_id" | "platform" | "scheduled_at"
+>;
 
 export type FetchDueResult =
   | { success: true; message: string; posts: DuePost[] }
@@ -53,7 +51,7 @@ export async function fetchDueScheduledPosts(
   return {
     success: true,
     message: `Fetched ${data.length} due posts`,
-    posts: data as DuePost[],
+    posts: data,
   };
 }
 

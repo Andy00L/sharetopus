@@ -1,6 +1,7 @@
 "use client";
 
 import { toast } from "sonner";
+import { z } from "zod";
 import type {
   PostStatusJob,
   PostStatusResponse,
@@ -12,6 +13,23 @@ const FAST_PHASE_ATTEMPTS = 60;
 const FAST_PHASE_INTERVAL_MS = 1000;
 const SLOW_PHASE_ATTEMPTS = 60;
 const SLOW_PHASE_INTERVAL_MS = 2000;
+
+/** Runtime mirror of PostStatusResponse; the annotation keeps it in step with the shared type. */
+const PostStatusResponseSchema: z.ZodType<PostStatusResponse> = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    jobs: z.array(
+      z.object({
+        event_id: z.string(),
+        status: z.enum(["pending", "success", "failed"]),
+        platform: z.string(),
+        error_message: z.string().nullable(),
+      }),
+    ),
+    allTerminal: z.boolean(),
+  }),
+  z.object({ success: z.literal(false), message: z.string() }),
+]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,8 +98,10 @@ export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
       );
 
       if (res.ok) {
-        const body = (await res.json()) as PostStatusResponse;
-        if (body.success) {
+        const responseBody: unknown = await res.json();
+        const parsedResponse = PostStatusResponseSchema.safeParse(responseBody);
+        const body = parsedResponse.success ? parsedResponse.data : null;
+        if (body?.success) {
           for (const job of body.jobs) {
             emitToastForJob(job, toasted);
           }

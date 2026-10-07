@@ -7,7 +7,9 @@ import type {
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
-import { parseJsonBody, providerFetch } from "./_shared/providerFetch";
+import { toJsonObject } from "@/lib/utils/jsonObject";
+
+import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
 /**
  * Credentials-based providers: Farcaster (via a Neynar managed signer) and
@@ -59,7 +61,7 @@ async function farcasterConnect(
       message: `Neynar rejected the credentials (HTTP ${signerResult.status}).`,
     };
   }
-  const signer = parseJsonBody(signerResult.bodyText) as Record<string, unknown> | null;
+  const signer = parseJsonObject(signerResult.bodyText);
   const status = signer && typeof signer.status === "string" ? signer.status : null;
   if (status !== "approved") {
     return {
@@ -125,11 +127,7 @@ async function farcasterPublish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const cast =
-    parsed && typeof parsed.cast === "object" && parsed.cast !== null
-      ? (parsed.cast as Record<string, unknown>)
-      : null;
+  const cast = toJsonObject(parseJsonObject(result.bodyText)?.cast);
   const castHash = cast && typeof cast.hash === "string" ? cast.hash : null;
   if (!castHash) return { ok: false, message: "Neynar returned no cast hash." };
 
@@ -191,11 +189,7 @@ async function listmonkConnect(
     };
   }
 
-  const parsed = parseJsonBody(listResult.bodyText) as Record<string, unknown> | null;
-  const listData =
-    parsed && typeof parsed.data === "object" && parsed.data !== null
-      ? (parsed.data as Record<string, unknown>)
-      : null;
+  const listData = toJsonObject(parseJsonObject(listResult.bodyText)?.data);
   const listName =
     listData && typeof listData.name === "string" ? listData.name : `List ${listId}`;
 
@@ -258,11 +252,7 @@ async function listmonkPublish(
       message: `Listmonk campaign create failed (${createResult.status}): ${createResult.bodyText.slice(0, 200)}`,
     };
   }
-  const created = parseJsonBody(createResult.bodyText) as Record<string, unknown> | null;
-  const campaign =
-    created && typeof created.data === "object" && created.data !== null
-      ? (created.data as Record<string, unknown>)
-      : null;
+  const campaign = toJsonObject(parseJsonObject(createResult.bodyText)?.data);
   const campaignId =
     campaign && typeof campaign.id === "number" ? campaign.id : null;
   if (!campaignId) {

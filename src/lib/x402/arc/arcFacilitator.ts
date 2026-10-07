@@ -24,7 +24,8 @@ import "server-only";
  */
 
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
-import { encodeFunctionData, type VerifyTypedDataActionParameters } from "viem";
+import { encodeFunctionData, isAddress, isHex, type TypedDataDomain } from "viem";
+import { verifyTypedData } from "viem/actions";
 
 import { getArcSigner } from "@/lib/x402/arc/arcChain";
 import { broadcastCall, type OperatorSigner } from "@/lib/x402/chain/broadcastCall";
@@ -83,20 +84,18 @@ function buildArcFacilitatorSigner(
         args: args.args ? [...args.args] : undefined,
       }),
 
-    // The x402 signer interface types the EIP-712 pieces as loose records,
-    // viem types them as a concrete TypedData definition, and neither side
-    // can be widened from here. The cast is the adapter boundary and holds
-    // because the scheme builds these fields from the EIP-3009 typed-data
-    // definition before handing them over, never from client input.
+    // The standalone action (what publicClient.verifyTypedData calls) is
+    // generic, so it takes the loose types and message records; the domain
+    // still has to be typed.
     verifyTypedData: (args) =>
-      publicClient.verifyTypedData({
+      verifyTypedData(publicClient, {
         address: args.address,
-        domain: args.domain,
+        domain: toTypedDataDomain(args.domain),
         types: args.types,
         primaryType: args.primaryType,
         message: args.message,
         signature: args.signature,
-      } as VerifyTypedDataActionParameters),
+      }),
 
     writeContract: (args) =>
       broadcastCall(
@@ -139,5 +138,29 @@ function buildArcFacilitatorSigner(
     },
 
     getCode: (args) => publicClient.getCode({ address: args.address }),
+  };
+}
+
+/**
+ * Narrows the x402 signer's loose EIP-712 domain record to viem's
+ * TypedDataDomain. A field of the wrong type is left out, as viem's own
+ * domain encoding (getTypesForEIP712Domain) does, so a malformed domain
+ * fails verification instead of passing a mistyped value through.
+ */
+function toTypedDataDomain(domain: Record<string, unknown>): TypedDataDomain {
+  const { name, version, chainId, verifyingContract, salt } = domain;
+  return {
+    name: typeof name === "string" ? name : undefined,
+    version: typeof version === "string" ? version : undefined,
+    chainId:
+      typeof chainId === "number" || typeof chainId === "bigint"
+        ? chainId
+        : undefined,
+    verifyingContract:
+      typeof verifyingContract === "string" &&
+      isAddress(verifyingContract, { strict: false })
+        ? verifyingContract
+        : undefined,
+    salt: isHex(salt) ? salt : undefined,
   };
 }

@@ -1,9 +1,11 @@
+import { z } from "zod";
+
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { inngest } from "@/inngest/client";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
-import type { Platform } from "@/db/schema";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 import { isSafeToRetryPost, type PlatformPostOutcome } from "./platformErrors";
 import {
   buildPlatformSignedUrls,
@@ -15,16 +17,16 @@ import {
   recordPostStatus,
 } from "./processSinglePostHelpers";
 
-type PostDueEventData = {
-  scheduled_post_id: string;
-  principal_id: string;
-  social_account_id: string;
-  platform: Platform;
-  scheduled_at: string;
-  // Correlation ID propagated from the originating request. Optional because
-  // cron-dispatched events do not carry one.
-  request_id?: string | null;
-};
+/**
+ * The post.due fields this worker reads. scheduledPostsTick also sends
+ * principal_id, social_account_id (the throttle key) and scheduled_at.
+ */
+const PostDueEventDataSchema = z.object({
+  scheduled_post_id: z.string(),
+  // scheduled_posts.platform is plain text; checkPlatformCompatibility
+  // fails an unknown value.
+  platform: z.string(),
+});
 
 /**
  * Processes ONE scheduled_posts row for ONE social_account on ONE
@@ -57,7 +59,12 @@ export const processSinglePost = inngest.createFunction(
     onFailure: async ({ event, error }) => finalizeExhaustedPost(event, error),
   },
   async ({ event, step }) => {
-    const data = event.data as PostDueEventData;
+    const parsedEvent = PostDueEventDataSchema.safeParse(event.data);
+    if (!parsedEvent.success) {
+      console.error("[processSinglePost] Event data is malformed; post not claimed");
+      return { skipped: true, reason: "invalid_event_data" };
+    }
+    const data = parsedEvent.data;
 
     const fetched = await step.run("fetch-post-and-account", () =>
       fetchPostAndAccount(data.scheduled_post_id),
@@ -212,11 +219,8 @@ async function finalizeExhaustedPost(
   failureEvent: { data: { event: { data?: unknown } } },
   error: Error,
 ): Promise<{ finalized: boolean; reason?: string }> {
-  const originalEventData = failureEvent.data.event.data as
-    | Partial<PostDueEventData>
-    | null
-    | undefined;
-  const scheduledPostId = originalEventData?.scheduled_post_id;
+  const scheduledPostId = toJsonObject(failureEvent.data.event.data)
+    ?.scheduled_post_id;
 
   if (typeof scheduledPostId !== "string" || scheduledPostId.length === 0) {
     console.error(

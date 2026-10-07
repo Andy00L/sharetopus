@@ -12,6 +12,7 @@ import {
   type StoredCredential,
 } from "@/lib/api/refreshWithAccountLock";
 import type { SocialAccount } from "@/lib/types/dbTypes";
+import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
 import { resolveConfiguredProvider } from "./registry";
 import type { ProviderDefinition } from "./types";
@@ -265,13 +266,6 @@ function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
  * Non-object values (null, arrays, scalars) degrade to {} so a malformed
  * row cannot throw inside a provider.
  */
-function narrowAccountConfig(rawValue: unknown): Record<string, unknown> {
-  if (
-    rawValue !== null &&
-    typeof rawValue === "object" &&
-    !Array.isArray(rawValue)
-  ) {
-    return rawValue as Record<string, unknown>;
-  }
-  return {};
+function narrowAccountConfig(rawValue: unknown): JsonObject {
+  return toJsonObject(rawValue) ?? {};
 }

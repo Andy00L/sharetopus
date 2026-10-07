@@ -11,6 +11,18 @@ export type DispatchPostNowEventsResult =
   | { success: true; eventIds: string[]; freshCount: number }
   | { success: false; message: string; phase: "lock_insert" | "inngest_send" };
 
+type PostNowEvent = { name: "post.now"; data: PostNowEventData };
+
+/** True when the event carries the non-empty dispatch_id its lock row needs. */
+function hasDispatchId(
+  postEvent: PostNowEvent,
+): postEvent is PostNowEvent & { data: { dispatch_id: string } } {
+  return (
+    typeof postEvent.data.dispatch_id === "string" &&
+    postEvent.data.dispatch_id.length > 0
+  );
+}
+
 /**
  * Inserts pending_direct_posts lock rows for every event and dispatches the
  * events to Inngest in a single send call.
@@ -41,7 +53,7 @@ export type DispatchPostNowEventsResult =
  * Inngest events sent: post.now (one per new element)
  */
 export async function dispatchPostNowEvents(
-  events: { name: "post.now"; data: PostNowEventData }[]
+  events: PostNowEvent[]
 ): Promise<DispatchPostNowEventsResult> {
   const requestId = events[0]?.data.request_id ?? null;
 
@@ -53,14 +65,12 @@ export async function dispatchPostNowEvents(
     };
   }
 
-  for (const evt of events) {
-    if (!evt.data.dispatch_id) {
-      return {
-        success: false,
-        message: "Event missing dispatch_id (caller must set per event)",
-        phase: "lock_insert",
-      };
-    }
+  if (!events.every(hasDispatchId)) {
+    return {
+      success: false,
+      message: "Event missing dispatch_id (caller must set per event)",
+      phase: "lock_insert",
+    };
   }
 
   // Step 1: pre-check existing idempotency keys (only when any event carries one).
@@ -68,7 +78,9 @@ export async function dispatchPostNowEvents(
   const existingMap = new Map<string, string>(); // idempotency_key -> event_id
 
   if (keyedEvents.length > 0) {
-    const keys = keyedEvents.map((keyedEvent) => keyedEvent.data.idempotency_key as string);
+    const keys = keyedEvents.flatMap(
+      (keyedEvent) => keyedEvent.data.idempotency_key ?? [],
+    );
     const principalIds = [
       ...new Set(keyedEvents.map((keyedEvent) => keyedEvent.data.principal_id)),
     ];
@@ -119,7 +131,7 @@ export async function dispatchPostNowEvents(
   // Step 3: insert lock rows + send only the new ones.
   if (newEvents.length > 0) {
     const lockRows = newEvents.map((evt) => ({
-      event_id: evt.data.dispatch_id!,
+      event_id: evt.data.dispatch_id,
       batch_id: evt.data.batch_id,
       principal_id: evt.data.principal_id,
       social_account_id: evt.data.social_account_id,
@@ -167,10 +179,8 @@ export async function dispatchPostNowEvents(
   // Step 4: assemble eventIds in input order, mixing fresh + existing.
   const eventIds = events.map((postEvent) => {
     const key = postEvent.data.idempotency_key;
-    if (key && existingMap.has(key)) {
-      return existingMap.get(key) as string;
-    }
-    return postEvent.data.dispatch_id as string;
+    const existingEventId = key ? existingMap.get(key) : undefined;
+    return existingEventId ?? postEvent.data.dispatch_id;
   });
 
   return { success: true, eventIds, freshCount: newEvents.length };

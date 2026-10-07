@@ -1,5 +1,7 @@
 import "server-only";
 
+import { eventType, staticSchema } from "inngest";
+
 import type { MediaType, Platform } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
@@ -58,6 +60,15 @@ export type PostNowEventData = {
    */
   post_options?: Record<string, unknown> | null;
 };
+
+/**
+ * The post.now trigger, typed with PostNowEventData. The schema is
+ * type-only (no runtime check): the one sender, dispatchPostNowEvents,
+ * already takes PostNowEventData.
+ */
+export const postNowEvent = eventType("post.now", {
+  schema: staticSchema<PostNowEventData>(),
+});
 
 // ---------- call-platform-direct-post ----------
 
@@ -160,7 +171,15 @@ export async function callDirectPostFromEvent(
         break;
       }
       case "instagram": {
-        const igPostType = post_type as "image" | "video";
+        // Instagram takes media only; callers validate the media type, so
+        // this guards a malformed event rather than a normal path.
+        if (post_type === "text") {
+          return {
+            success: false,
+            message: "Instagram does not support text posts",
+            contentId: null,
+          };
+        }
         result = await directPostForInstagramAccounts({
           account,
           mediaPath: media_path,
@@ -169,7 +188,7 @@ export async function callDirectPostFromEvent(
           accountContent: account_content,
           userId: data.principal_id,
           mediaUrl: media_url ?? "",
-          postType: igPostType,
+          postType: post_type,
           fileName: file_name,
           batchId: batch_id,
           createdVia,

@@ -3,11 +3,11 @@ import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/del
 import { db, runQuery } from "@/db/client";
 import { principals, users } from "@/db/schema";
 import stripe from "@/lib/stripe";
-import { WebhookEvent } from "@clerk/backend";
 import { eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import Stripe from "stripe";
 import { Webhook } from "svix";
+import { z } from "zod";
 
 export async function POST(req: Request) {
   const webhookSecret =
@@ -42,15 +42,15 @@ export async function POST(req: Request) {
   // sourceRef: docs.svix.com webhook verification (raw body required).
   const rawBody = await req.text();
 
-  const wh = new Webhook(webhookSecret);
-  let evt: WebhookEvent;
+  const svixWebhook = new Webhook(webhookSecret);
+  let verifiedPayload: unknown;
 
   try {
-    evt = wh.verify(rawBody, {
+    verifiedPayload = svixWebhook.verify(rawBody, {
       "svix-id": svix_id,
       "svix-timestamp": svix_timestamp,
       "svix-signature": svix_signature,
-    }) as WebhookEvent;
+    });
   } catch (err) {
     console.error("[Clerk Routes]: Webhook verification failed:", err);
     return new Response("Signature verification failed", {
@@ -58,20 +58,33 @@ export async function POST(req: Request) {
     });
   }
 
-  const eventType = evt.type;
-  const data = evt.data;
+  // A valid signature proves the sender, not the shape: parse it here.
+  const envelopeResult = ClerkEventEnvelopeSchema.safeParse(verifiedPayload);
+  if (!envelopeResult.success) {
+    return respondMalformedEvent("envelope");
+  }
+  const { type: eventType, data } = envelopeResult.data;
 
   try {
     switch (eventType) {
-      case "user.created":
-        await handleUserCreated(data as ClerkUserData);
+      case "user.created": {
+        const userResult = ClerkUserDataSchema.safeParse(data);
+        if (!userResult.success) return respondMalformedEvent(eventType);
+        await handleUserCreated(userResult.data);
         break;
-      case "user.updated":
-        await handleUserUpdated(data as ClerkUserData);
+      }
+      case "user.updated": {
+        const userResult = ClerkUserDataSchema.safeParse(data);
+        if (!userResult.success) return respondMalformedEvent(eventType);
+        await handleUserUpdated(userResult.data);
         break;
-      case "user.deleted":
-        await handleUserDeleted(data as { id: string });
+      }
+      case "user.deleted": {
+        const deletedResult = ClerkDeletedUserSchema.safeParse(data);
+        if (!deletedResult.success) return respondMalformedEvent(eventType);
+        await handleUserDeleted(deletedResult.data);
         break;
+      }
       default:
         console.log("[Clerk Routes]: Unhandled event:", eventType);
         break;
@@ -91,25 +104,30 @@ export async function POST(req: Request) {
   }
 }
 
-interface ClerkEmailAddress {
-  email_address: string;
-  id: string;
-  verification: {
-    status: string;
-    strategy: string;
-  } | null;
-  object: string;
-}
+/** Every Clerk event: the type picks which data schema applies. */
+const ClerkEventEnvelopeSchema = z.object({
+  type: z.string(),
+  data: z.unknown(),
+});
 
-interface ClerkUserData {
-  id: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  full_name?: string | null;
-  email_addresses?: ClerkEmailAddress[];
-  primary_email_address_id?: string | null;
-  username?: string | null;
-  object: string;
+/** The user.created / user.updated fields the handlers read. */
+const ClerkUserDataSchema = z.object({
+  id: z.string(),
+  first_name: z.string().nullish(),
+  last_name: z.string().nullish(),
+  full_name: z.string().nullish(),
+  email_addresses: z.array(z.object({ email_address: z.string() })).optional(),
+  username: z.string().nullish(),
+});
+
+type ClerkUserData = z.infer<typeof ClerkUserDataSchema>;
+
+const ClerkDeletedUserSchema = z.object({ id: z.string() });
+
+/** A 400 for a signed event whose body does not match the shape its type promises. */
+function respondMalformedEvent(eventLabel: string): Response {
+  console.error(`[respondMalformedEvent] Clerk ${eventLabel} payload failed validation`);
+  return new Response("Invalid webhook payload", { status: 400 });
 }
 
 /**

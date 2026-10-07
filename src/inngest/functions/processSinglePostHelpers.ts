@@ -1,11 +1,12 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { z } from "zod";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts, social_accounts } from "@/db/schema";
-import type { Platform, PostStatus } from "@/db/schema";
+import type { PostStatus } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -17,6 +18,7 @@ import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostF
 import {
   PLATFORM_LABELS,
   isPostingPlatform,
+  isSchedulablePlatform,
   platformHotlinksMedia,
   platformSupportsMediaType,
 } from "@/lib/platforms/capabilities";
@@ -28,6 +30,7 @@ import type {
   PrivacyLevel,
   SocialAccount,
 } from "@/lib/types/dbTypes";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 import "server-only";
 import {
   classifyDirectPostFailure,
@@ -207,7 +210,7 @@ export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
 
 export async function buildPlatformSignedUrls(
   post: ScheduledPost,
-  platform: Platform,
+  platform: string,
 ): Promise<SignedUrlsResult> {
   if (!post.media_storage_path || post.media_storage_path === "") {
     return {
@@ -301,14 +304,13 @@ export type CompatibilityResult = {
  * If incompatible, the worker records it as invalid_input (terminal).
  */
 export function checkPlatformCompatibility(
-  platform: Platform,
+  platform: string,
   mediaType: ScheduledPost["media_type"],
 ): CompatibilityResult {
   if (!platformSupportsMediaType(platform, mediaType)) {
-    const platformLabel =
-      platform in PLATFORM_LABELS
-        ? PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS]
-        : platform;
+    const platformLabel = isPostingPlatform(platform)
+      ? PLATFORM_LABELS[platform]
+      : platform;
     return {
       success: true,
       message: "incompatible",
@@ -328,22 +330,37 @@ export function checkPlatformCompatibility(
 
 export type CallPlatformResult = PlatformPostOutcome;
 
-type PostOptions = {
-  link?: string;
-  board?: string;
-  boardName?: string;
-  privacyLevel?: PrivacyLevel;
-  visibility?: string;
-  disableComment?: boolean;
-  disableDuet?: boolean;
-  disableStitch?: boolean;
-  brandContentToggle?: boolean;
-  yourBrand?: boolean;
-  brandedContent?: boolean;
-  isAigc?: boolean;
+/** Every PrivacyLevel (dbTypes), keyed by itself so a new level fails compilation here. */
+const PRIVACY_LEVELS = {
+  PUBLIC_TO_EVERYONE: "PUBLIC_TO_EVERYONE",
+  MUTUAL_FOLLOW_FRIENDS: "MUTUAL_FOLLOW_FRIENDS",
+  FOLLOWER_OF_CREATOR: "FOLLOWER_OF_CREATOR",
+  SELF_ONLY: "SELF_ONLY",
+  PUBLIC: "PUBLIC",
+  PROTECTED: "PROTECTED",
+} as const satisfies { [Level in PrivacyLevel]: Level };
+
+/**
+ * The post_options keys the seven legacy adapters read, as
+ * SchedulePostData["postOptions"] writes them. Registry keys are stripped
+ * (the registry arm reads post_options itself); a null reads as absent.
+ */
+const PostOptionsSchema = z.object({
+  link: z.string().nullish(),
+  board: z.string().nullish(),
+  boardName: z.string().nullish(),
+  privacyLevel: z.enum(PRIVACY_LEVELS).nullish(),
+  visibility: z.string().nullish(),
+  disableComment: z.boolean().nullish(),
+  disableDuet: z.boolean().nullish(),
+  disableStitch: z.boolean().nullish(),
+  brandContentToggle: z.boolean().nullish(),
+  yourBrand: z.boolean().nullish(),
+  brandedContent: z.boolean().nullish(),
+  isAigc: z.boolean().nullish(),
   /** YouTube videos.insert status.privacyStatus (dbTypes YouTubeOptions). */
-  privacyStatus?: "public" | "unlisted" | "private";
-};
+  privacyStatus: z.enum(["public", "unlisted", "private"]).nullish(),
+});
 
 /**
  * Dispatches to the right per-account direct-post function based on
@@ -363,7 +380,28 @@ export async function callPlatformDirectPost(args: {
 
   const createdVia = post.created_via ?? "web";
 
-  const options = (post.post_options ?? {}) as PostOptions;
+  // scheduled_posts.platform is plain text; an unknown value stops here.
+  const platform = post.platform;
+  if (!isSchedulablePlatform(platform)) {
+    return {
+      ok: false,
+      reason: "invalid_input",
+      message: `Unsupported platform: ${platform}`,
+    };
+  }
+
+  const parsedOptions = PostOptionsSchema.safeParse(post.post_options ?? {});
+  if (!parsedOptions.success) {
+    const invalidKeys = parsedOptions.error.issues
+      .map((issue) => issue.path.join("."))
+      .join(", ");
+    return {
+      ok: false,
+      reason: "invalid_input",
+      message: `Malformed post_options: ${invalidKeys}`,
+    };
+  }
+  const options = parsedOptions.data;
   const accountContent = {
     accountId: account.id,
     title: post.post_title ?? "",
@@ -384,14 +422,14 @@ export async function callPlatformDirectPost(args: {
     },
     tiktok: {
       // Set only by the web composer; resolveTikTokPrivacyLevel decides the rest.
-      privacyLevel: options.privacyLevel,
+      privacyLevel: options.privacyLevel ?? undefined,
       disableComment: options.disableComment ?? false,
       disableDuet: options.disableDuet ?? false,
       disableStitch: options.disableStitch ?? false,
-      brandContentToggle: options.brandContentToggle,
-      yourBrand: options.yourBrand,
-      brandedContent: options.brandedContent,
-      isAigc: options.isAigc,
+      brandContentToggle: options.brandContentToggle ?? undefined,
+      yourBrand: options.yourBrand ?? undefined,
+      brandedContent: options.brandedContent ?? undefined,
+      isAigc: options.isAigc ?? undefined,
     },
     youtube: {
       privacyStatus: options.privacyStatus ?? "public",
@@ -403,7 +441,7 @@ export async function callPlatformDirectPost(args: {
   try {
     let result: { success: boolean; count: number; message?: string };
 
-    switch (post.platform as Platform) {
+    switch (platform) {
       case "pinterest": {
         if (!options.board) {
           return {
@@ -475,9 +513,15 @@ export async function callPlatformDirectPost(args: {
         break;
       }
       case "instagram": {
-        // Instagram postType is "image" | "video" (never "text";
-        // compatibility check rejects text before this point).
-        const igPostType = post.media_type as "image" | "video";
+        // Instagram takes media only; the compatibility check rejects text
+        // before this point, so this guards a malformed row.
+        if (post.media_type === "text") {
+          return {
+            ok: false,
+            reason: "invalid_input",
+            message: "Instagram does not support text posts",
+          };
+        }
         result = await directPostForInstagramAccounts({
           account,
           mediaPath: post.media_storage_path,
@@ -486,7 +530,7 @@ export async function callPlatformDirectPost(args: {
           accountContent,
           userId: post.principal_id,
           mediaUrl: mediaUrl ?? "",
-          postType: igPostType,
+          postType: post.media_type,
           fileName,
           batchId,
           scheduledPostId: post.id,
@@ -539,8 +583,8 @@ export async function callPlatformDirectPost(args: {
       }
       default: {
         // Everything outside the seven legacy adapters publishes through
-        // the provider registry. Unknown platforms come back as a
-        // not-available message and classify as terminal below.
+        // the provider registry. A provider that is not available comes
+        // back as a message and classifies as terminal below.
         result = await publishViaRegistry({
           account,
           principalId: post.principal_id,
@@ -569,10 +613,7 @@ export async function callPlatformDirectPost(args: {
       };
     }
 
-    const reason = classifyDirectPostFailure(
-      post.platform as Platform,
-      result.message,
-    );
+    const reason = classifyDirectPostFailure(platform, result.message);
     return {
       ok: false,
       reason,
@@ -582,7 +623,7 @@ export async function callPlatformDirectPost(args: {
     // Network / unexpected. Classify to drive retry decisions.
     const message = err instanceof Error ? err.message : String(err);
     const reason: PlatformErrorReason = classifyDirectPostFailure(
-      post.platform as Platform,
+      platform,
       message,
     );
     return { ok: false, reason, message };
@@ -708,7 +749,7 @@ export async function recordPostStatus(args: {
       platform: post.platform,
       post_title: post.post_title ?? null,
       post_description: post.post_description ?? null,
-      post_options: (post.post_options ?? {}) as object,
+      post_options: toJsonObject(post.post_options) ?? {},
       media_type: post.media_type,
       media_storage_path: post.media_storage_path ?? "",
       coverTimestamp: post.cover_image_timestamp ?? undefined,

@@ -16,17 +16,6 @@ export interface PinterestPostResult {
   error?: string;
   message?: string;
 }
-export interface PinterestMediaRegistrationResponse {
-  media_id: string;
-  media_type: string;
-  upload_url: string;
-  upload_parameters: Record<string, string>;
-}
-export interface PinterestMediaStatusResponse {
-  status: string;
-  media_id: string;
-  media_type?: string;
-}
 
 /**
  * Posts content directly to Pinterest

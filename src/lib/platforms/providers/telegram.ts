@@ -9,7 +9,9 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
-import { parseJsonBody, providerFetch } from "./_shared/providerFetch";
+import { toJsonObject } from "@/lib/utils/jsonObject";
+
+import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
 /**
  * Telegram provider. Posts to a channel or group through a bot the user
@@ -53,12 +55,11 @@ async function callBotApi(
     return { ok: false, message: `Telegram ${method} failed: ${callResult.message}` };
   }
 
-  const parsed = parseJsonBody(callResult.bodyText);
-  if (!parsed || typeof parsed !== "object") {
+  const envelope = parseJsonObject(callResult.bodyText);
+  if (!envelope) {
     return { ok: false, message: `Telegram ${method} returned no JSON.` };
   }
 
-  const envelope = parsed as Record<string, unknown>;
   if (envelope.ok !== true) {
     // description carries the actionable reason ("chat not found", "bot is
     // not a member of the channel chat"), so it is worth surfacing verbatim.
@@ -91,7 +92,7 @@ async function connect(
     return { ok: false, message: identityResult.message };
   }
 
-  const bot = identityResult.result as Record<string, unknown> | null;
+  const bot = toJsonObject(identityResult.result);
   const botId = bot && typeof bot.id === "number" ? String(bot.id) : null;
   if (!botId) {
     return { ok: false, message: "Telegram getMe returned no bot id." };
@@ -108,7 +109,7 @@ async function connect(
     };
   }
 
-  const chat = chatResult.result as Record<string, unknown> | null;
+  const chat = toJsonObject(chatResult.result);
   const chatTitle =
     chat && typeof chat.title === "string" ? chat.title : chatId;
 
@@ -171,7 +172,7 @@ function buildPublishResult(
   sendResult: unknown,
   chatId: string,
 ): ProviderPublishResult {
-  const message = sendResult as Record<string, unknown> | null;
+  const message = toJsonObject(sendResult);
   const messageId =
     message && typeof message.message_id === "number"
       ? String(message.message_id)
@@ -224,7 +225,7 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   });
   if (!chatResult.ok) return { ok: false, message: chatResult.message };
 
-  const chat = chatResult.result as Record<string, unknown> | null;
+  const chat = toJsonObject(chatResult.result);
   return {
     ok: true,
     data: {

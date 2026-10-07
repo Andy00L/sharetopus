@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import { inngest } from "@/inngest/client";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { getTikTokPublishStatus } from "@/lib/api/tiktok/getTikTokPublishStatus";
@@ -7,6 +9,12 @@ import {
 } from "@/actions/server/data/pendingTikTokPulls";
 import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 import { resolveTikTokAccessTokenForAccount } from "./tikTokPublishStatusPollHelpers";
+
+/** The fields read from the data dispatchTikTokPublishPollEvent sends. */
+const PollEventDataSchema = z.object({
+  publish_id: z.string(),
+  social_account_id: z.string(),
+});
 
 /** One poll attempt: the token could not be resolved, or TikTok answered. */
 type PollAttemptResult =
@@ -43,12 +51,14 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     triggers: [{ event: "tiktok.publish.poll" }],
   },
   async ({ event, step }) => {
-    const { publish_id, social_account_id } =
-      event.data as {
-        publish_id: string;
-        social_account_id: string;
-        content_history_id: string | null;
-      };
+    const eventData = PollEventDataSchema.safeParse(event.data);
+    if (!eventData.success) {
+      console.error(
+        "[tiktokPublishStatusPollWorker] Event data has no publish_id or social_account_id",
+      );
+      return { outcome: "skipped", reason: "invalid_event_data" };
+    }
+    const { publish_id, social_account_id } = eventData.data;
 
     const maxAttempts = RUNTIME.tikTokPublishPollMaxAttempts;
     const intervalMs = RUNTIME.tikTokPublishPollIntervalMs;

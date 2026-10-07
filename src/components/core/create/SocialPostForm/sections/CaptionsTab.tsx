@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import {
   CAPTION_LIMITS,
-  CaptionPlatform,
+  isCaptionPlatform,
 } from "../../constants/captionLimits";
 import type { AccountContentEntry } from "../hooks/useAccountContent";
 
@@ -47,9 +47,9 @@ export default function CaptionsTab({
           );
           const isCustomized = accountData?.isCustomized || false;
           const isEditing = editingAccounts[account.id] || false;
-          const platformLimit =
-            CAPTION_LIMITS[account.platform as CaptionPlatform] ||
-            CAPTION_LIMITS.default;
+          const platformLimit = isCaptionPlatform(account.platform)
+            ? CAPTION_LIMITS[account.platform]
+            : CAPTION_LIMITS.default;
 
           return (
             <div key={`caption-${account.id}`} className="border rounded p-3">

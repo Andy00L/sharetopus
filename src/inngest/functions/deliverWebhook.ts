@@ -1,12 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { inngest } from "../client";
 import { db, runQuery } from "@/db/client";
-import {
-  webhook_deliveries,
-  webhook_subscriptions,
-  type Json,
-} from "@/db/schema";
+import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
 import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 
@@ -23,18 +20,20 @@ const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
  */
 const MAX_DELIVERY_RETRIES = 3;
 
-type WebhookDispatchEventData = {
-  subscription_id: string;
-  event_type: string;
-  event_id: string;
-  payload: Record<string, unknown>;
-};
+/** The data sendWebhookDispatchEvent (src/lib/api/rest/webhooks/dispatch.ts) sends. */
+const WebhookDispatchEventDataSchema = z.object({
+  subscription_id: z.string(),
+  event_type: z.string(),
+  event_id: z.string(),
+  payload: z.record(z.string(), z.json()),
+});
 
 /**
  * Inngest function that delivers a single webhook event to one subscriber.
  *
  * Flow:
- *   1. Load subscription (skip if disabled or deleted)
+ *   1. Load subscription (skip if the event data is malformed, or the
+ *      subscription is disabled or deleted)
  *   2. Build JSON body and HMAC-SHA256 signature
  *   3. POST to subscriber URL with timeout
  *   4. Record delivery in webhook_deliveries
@@ -63,8 +62,12 @@ export const deliverWebhook = inngest.createFunction(
     triggers: [{ event: "webhook.dispatch.v1" }],
   },
   async ({ event, attempt }) => {
-    const eventData = event.data as WebhookDispatchEventData;
-    const { subscription_id, event_type, event_id, payload } = eventData;
+    const eventData = WebhookDispatchEventDataSchema.safeParse(event.data);
+    if (!eventData.success) {
+      console.error("[deliverWebhook] Event data is malformed; nothing sent");
+      return { skipped: true, reason: "invalid_event_data" };
+    }
+    const { subscription_id, event_type, event_id, payload } = eventData.data;
 
     // Step 1: load subscription (skip if disabled or deleted).
     const { data: subscriptionRows, error: loadError } = await runQuery(
@@ -136,7 +139,7 @@ export const deliverWebhook = inngest.createFunction(
         subscription_id,
         event_type,
         event_id,
-        payload: payload as Json,
+        payload,
         status_code: statusCode,
         response_body: responseBody,
         // Real attempt number. `attempt` is zero-indexed, the column is

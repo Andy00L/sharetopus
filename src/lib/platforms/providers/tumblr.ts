@@ -9,8 +9,10 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
+
 import {
-  parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -57,24 +59,14 @@ async function fetchUserInfo(
     return { ok: false, message: `Tumblr user/info failed (${result.status}).` };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const response =
-    parsed && typeof parsed.response === "object" && parsed.response !== null
-      ? (parsed.response as Record<string, unknown>)
-      : null;
-  const user =
-    response && typeof response.user === "object" && response.user !== null
-      ? (response.user as Record<string, unknown>)
-      : null;
+  const response = toJsonObject(parseJsonObject(result.bodyText)?.response);
+  const user = toJsonObject(response?.user);
   const userName = user && typeof user.name === "string" ? user.name : null;
   if (!userName) return { ok: false, message: "Tumblr returned no user name." };
 
   const blogs = Array.isArray(user?.blogs)
     ? user.blogs
-        .filter(
-          (blog): blog is Record<string, unknown> =>
-            typeof blog === "object" && blog !== null,
-        )
+        .filter(isJsonObject)
         .map((blog) => ({
           name: typeof blog.name === "string" ? blog.name : "",
           title: typeof blog.title === "string" ? blog.title : null,
@@ -191,11 +183,7 @@ async function publish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const response =
-    parsed && typeof parsed.response === "object" && parsed.response !== null
-      ? (parsed.response as Record<string, unknown>)
-      : null;
+  const response = toJsonObject(parseJsonObject(result.bodyText)?.response);
   const postId =
     response && (typeof response.id === "string" || typeof response.id === "number")
       ? String(response.id)

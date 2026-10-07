@@ -48,7 +48,8 @@ export async function verifyOAuthToken(
       return null;
     }
 
-    const principalId = (authInfo.extra?.userId as string) ?? "";
+    const userIdClaim = authInfo.extra?.userId;
+    const principalId = typeof userIdClaim === "string" ? userIdClaim : "";
     const oauthClientId = authInfo.clientId ?? "";
 
     if (!principalId || !oauthClientId) {

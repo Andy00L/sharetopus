@@ -34,8 +34,30 @@ import { toast } from "sonner";
  * Server action: createShareLink
  */
 
-type ExpiryOption = "3600" | "21600" | "86400" | "forever";
-type MaxUsesOption = "1" | "5" | "10" | "unlimited";
+const EXPIRY_OPTIONS = [
+  { value: "3600", label: "1 hour" },
+  { value: "21600", label: "6 hours" },
+  { value: "86400", label: "24 hours" },
+  { value: "forever", label: "Never" },
+] as const;
+
+const MAX_USES_OPTIONS = [
+  { value: "1", label: "1 (default)" },
+  { value: "5", label: "5" },
+  { value: "10", label: "10" },
+  { value: "unlimited", label: "Unlimited" },
+] as const;
+
+type ExpiryOption = (typeof EXPIRY_OPTIONS)[number]["value"];
+type MaxUsesOption = (typeof MAX_USES_OPTIONS)[number]["value"];
+
+/** The listed option matching a radio/select value, or undefined for anything else. */
+function findOptionValue<OptionValue extends string>(
+  options: readonly { value: OptionValue }[],
+  candidate: string,
+): OptionValue | undefined {
+  return options.find((option) => option.value === candidate)?.value;
+}
 
 export function CreateShareLinkDialog() {
   const [open, setOpen] = useState(false);
@@ -150,15 +172,13 @@ export function CreateShareLinkDialog() {
                 <Label className="text-sm font-medium">Link expires in</Label>
                 <RadioGroup
                   value={expiry}
-                  onValueChange={(value) => setExpiry(value as ExpiryOption)}
+                  onValueChange={(value) => {
+                    const expiryOption = findOptionValue(EXPIRY_OPTIONS, value);
+                    if (expiryOption) setExpiry(expiryOption);
+                  }}
                   className="grid grid-cols-2 gap-2"
                 >
-                  {[
-                    { value: "3600", label: "1 hour" },
-                    { value: "21600", label: "6 hours" },
-                    { value: "86400", label: "24 hours" },
-                    { value: "forever", label: "Never" },
-                  ].map((option) => (
+                  {EXPIRY_OPTIONS.map((option) => (
                     <div key={option.value} className="flex items-center space-x-2">
                       <RadioGroupItem value={option.value} id={`expiry-${option.value}`} />
                       <Label htmlFor={`expiry-${option.value}`} className="text-sm cursor-pointer">
@@ -174,16 +194,20 @@ export function CreateShareLinkDialog() {
                 <Label className="text-sm font-medium">Max uses</Label>
                 <Select
                   value={maxUses}
-                  onValueChange={(value) => setMaxUses(value as MaxUsesOption)}
+                  onValueChange={(value) => {
+                    const maxUsesOption = findOptionValue(MAX_USES_OPTIONS, value);
+                    if (maxUsesOption) setMaxUses(maxUsesOption);
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">1 (default)</SelectItem>
-                    <SelectItem value="5">5</SelectItem>
-                    <SelectItem value="10">10</SelectItem>
-                    <SelectItem value="unlimited">Unlimited</SelectItem>
+                    {MAX_USES_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

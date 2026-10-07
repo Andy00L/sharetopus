@@ -5,7 +5,16 @@
 // resolves the token by account id after an ownership check.
 import "server-only";
 
+import { z } from "zod";
+
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { readStringField } from "@/lib/platforms/providers/_shared/providerFetch";
+
+/** One page of GET /v5/boards (items plus a bookmark cursor); board fields are read leniently below. */
+const PinterestBoardsPageSchema = z.object({
+  items: z.array(z.record(z.string(), z.unknown())).optional(),
+  bookmark: z.unknown().optional(),
+});
 
 export interface PinterestBoard {
   id: string;
@@ -102,34 +111,35 @@ export async function getPinterestBoards(
       return { success: false, failure: "upstream_error" };
     }
 
-    const data = (await response.json()) as {
-      items?: unknown[];
-      bookmark?: string;
-    };
-    const items: unknown[] = data.items ?? [];
+    const payload: unknown = await response.json();
+    const page = PinterestBoardsPageSchema.safeParse(payload);
+    if (!page.success) {
+      console.error("[GetPinterestBoards] Boards response had an unexpected shape");
+      return { success: false, failure: "upstream_error" };
+    }
 
-    const boards: PinterestBoard[] = items.map((item) => {
-      const rec = item as Record<string, unknown>;
-      const privacyRaw = rec.privacy;
+    const boards: PinterestBoard[] = (page.data.items ?? []).map((board) => {
+      // privacy is a plain string or an object carrying it in `value`.
       const privacyValue =
-        typeof privacyRaw === "string"
-          ? privacyRaw
-          : (privacyRaw as { value?: string } | null | undefined)?.value;
+        typeof board.privacy === "string"
+          ? board.privacy
+          : readStringField(board.privacy, "value");
       return {
-        id: String(rec.id ?? ""),
-        name: String(rec.name ?? ""),
+        id: String(board.id ?? ""),
+        name: String(board.name ?? ""),
         description:
-          rec.description != null ? String(rec.description) : undefined,
+          board.description != null ? String(board.description) : undefined,
         privacy: privacyValue ?? undefined,
         pin_count:
-          typeof rec.pin_count === "number" ? rec.pin_count : undefined,
+          typeof board.pin_count === "number" ? board.pin_count : undefined,
       };
     });
 
     return {
       boards,
       success: true,
-      bookmark: typeof data.bookmark === "string" ? data.bookmark : null,
+      bookmark:
+        typeof page.data.bookmark === "string" ? page.data.bookmark : null,
     };
   } catch (error) {
     console.error("[GetPinterestBoards] Network or unexpected error:", error);

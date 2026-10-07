@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
+
 /** Resumable-session initiation is a small JSON call; 15s is generous. */
 const INIT_TIMEOUT_MS = 15_000;
 /** The byte upload moves the whole video in one PUT; 4 minutes covers 250 MB on a slow link. */
@@ -181,13 +183,5 @@ export async function postToYouTube({
 
 /** Best-effort JSON parse of a provider error body for the details field. */
 function parseErrorDetails(errorText: string): Record<string, unknown> {
-  try {
-    const parsedBody = JSON.parse(errorText) as unknown;
-    if (parsedBody !== null && typeof parsedBody === "object") {
-      return parsedBody as Record<string, unknown>;
-    }
-    return { rawError: errorText };
-  } catch {
-    return { rawError: errorText };
-  }
+  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

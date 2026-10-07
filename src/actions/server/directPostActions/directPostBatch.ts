@@ -95,11 +95,11 @@ export async function directPostBatch(
     `[directPostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s), batchId=${batchId}`,
   );
 
-  const emptyDetails = {
+  const emptyDetails: DirectPostBatchResult["details"] = {
     total: 0,
     dispatched: 0,
     duplicates: 0,
-    rejected: [] as PostRejection[],
+    rejected: [],
   };
 
   try {

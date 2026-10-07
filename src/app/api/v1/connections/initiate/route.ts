@@ -10,7 +10,6 @@ import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { db, runQuery } from "@/db/client";
 import { social_connections } from "@/db/schema";
-import type { Platform } from "@/lib/x402/connect/types";
 
 const OAUTH_EXPIRY_MINUTES = 15;
 
@@ -48,8 +47,7 @@ export const POST = withRestEndpoint({
         { issues: bodyParseResult.error.issues },
       );
     }
-    const validatedInput = bodyParseResult.data;
-    const platform = validatedInput.platform as Platform;
+    const platform = bodyParseResult.data.platform;
 
     // Step 2: build the OAuth redirect URI for the shared callback. Fixed
     // per platform; never taken from client input (open-redirect defense).

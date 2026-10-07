@@ -2,8 +2,10 @@
 // executors for the old 18-tool set and the new 10-tool set. Nothing leaves the process.
 
 import { generateBatchId } from "../../src/lib/utils/generateBatchId";
+import { isJsonObject, type JsonObject } from "../../src/lib/utils/jsonObject";
 
-export type JsonObject = Record<string, unknown>;
+export { isJsonObject, type JsonObject };
+
 export type ToolResult = { text: string; isError: boolean };
 export type ToolSetVersion = "before" | "after";
 
@@ -229,10 +231,6 @@ const ANALYTICS_ROWS = [
 ];
 
 // ---------- input readers ----------
-
-export function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function readString(input: JsonObject, key: string): string | undefined {
   const value = input[key];

@@ -9,8 +9,11 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
+
 import {
   parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -168,12 +171,8 @@ async function publish(
   }
 
   // Response shape: { json: { errors: [...], data: { id, url, name } } }
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const jsonEnvelope =
-    parsed && typeof parsed.json === "object" && parsed.json !== null
-      ? (parsed.json as Record<string, unknown>)
-      : null;
-  const submitErrors = Array.isArray(jsonEnvelope?.errors)
+  const jsonEnvelope = toJsonObject(parseJsonObject(result.bodyText)?.json);
+  const submitErrors: unknown[] = Array.isArray(jsonEnvelope?.errors)
     ? jsonEnvelope.errors
     : [];
   if (submitErrors.length > 0) {
@@ -182,10 +181,7 @@ async function publish(
       message: `Reddit rejected the post: ${JSON.stringify(submitErrors[0]).slice(0, 200)}`,
     };
   }
-  const submitData =
-    jsonEnvelope && typeof jsonEnvelope.data === "object"
-      ? (jsonEnvelope.data as Record<string, unknown>)
-      : null;
+  const submitData = toJsonObject(jsonEnvelope?.data);
   const postName = submitData && typeof submitData.name === "string" ? submitData.name : null;
   if (!postName) {
     return { ok: false, message: "Reddit returned no post id." };
@@ -220,17 +216,11 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   );
   if (!flairs.ok) return { ok: false, message: flairs.message };
 
-  const list = Array.isArray(flairs.body)
-    ? flairs.body
-        .filter(
-          (flair): flair is Record<string, unknown> =>
-            typeof flair === "object" && flair !== null,
-        )
-        .map((flair) => ({
-          id: typeof flair.id === "string" ? flair.id : null,
-          text: typeof flair.text === "string" ? flair.text : null,
-        }))
-    : [];
+  const flairRows: unknown[] = Array.isArray(flairs.body) ? flairs.body : [];
+  const list = flairRows.filter(isJsonObject).map((flair) => ({
+    id: typeof flair.id === "string" ? flair.id : null,
+    text: typeof flair.text === "string" ? flair.text : null,
+  }));
   return { ok: true, data: { flairs: list } };
 }
 

@@ -9,8 +9,11 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
+
 import {
   parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -74,14 +77,10 @@ async function listAdministeredOrganizations(
     };
   }
 
-  const parsed = parseJsonBody(aclResult.bodyText) as Record<string, unknown> | null;
-  const elements = Array.isArray(parsed?.elements) ? parsed.elements : [];
+  const parsed = parseJsonObject(aclResult.bodyText);
+  const elements: unknown[] = Array.isArray(parsed?.elements) ? parsed.elements : [];
   const organizations = elements
-    .map((element) =>
-      typeof element === "object" && element !== null
-        ? (element as Record<string, unknown>).organization
-        : null,
-    )
+    .map((element) => toJsonObject(element)?.organization)
     .filter((urn): urn is string => typeof urn === "string")
     // URN shape: urn:li:organization:12345
     .map((urn) => ({ id: urn.split(":").pop() ?? "", name: null }))
@@ -228,7 +227,7 @@ async function dribbbleConnect(
   if (!userResult.ok || userResult.status !== 200) {
     return { ok: false, message: "Dribbble user lookup failed." };
   }
-  const user = parseJsonBody(userResult.bodyText) as Record<string, unknown> | null;
+  const user = parseJsonObject(userResult.bodyText);
   const userId =
     user && typeof user.id === "number" ? String(user.id) : null;
   if (!userId) return { ok: false, message: "Dribbble returned no user id." };
@@ -358,12 +357,9 @@ async function gmbConnect(
         "Google Business account lookup failed. The Business Profile APIs require Google's approval for the project.",
     };
   }
-  const parsed = parseJsonBody(accountsResult.bodyText) as Record<string, unknown> | null;
-  const accounts = Array.isArray(parsed?.accounts) ? parsed.accounts : [];
-  const firstAccount =
-    accounts[0] && typeof accounts[0] === "object"
-      ? (accounts[0] as Record<string, unknown>)
-      : null;
+  const parsed = parseJsonObject(accountsResult.bodyText);
+  const accounts: unknown[] = Array.isArray(parsed?.accounts) ? parsed.accounts : [];
+  const firstAccount = toJsonObject(accounts[0]);
   const accountName =
     firstAccount && typeof firstAccount.name === "string"
       ? firstAccount.name
@@ -496,13 +492,10 @@ async function gmbRunTool(input: ProviderToolInput): Promise<ProviderToolResult>
     return { ok: false, message: `Location list failed (${result.status}).` };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const locations = Array.isArray(parsed?.locations) ? parsed.locations : [];
+  const parsed = parseJsonObject(result.bodyText);
+  const locations: unknown[] = Array.isArray(parsed?.locations) ? parsed.locations : [];
   const list = locations
-    .filter(
-      (location): location is Record<string, unknown> =>
-        typeof location === "object" && location !== null,
-    )
+    .filter(isJsonObject)
     .map((location) => ({
       name: typeof location.name === "string" ? location.name : null,
       title: typeof location.title === "string" ? location.title : null,

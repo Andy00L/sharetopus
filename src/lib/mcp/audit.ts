@@ -1,8 +1,9 @@
 import "server-only";
 
 import { db, runQuery } from "@/db/client";
-import { mcp_audit_log, type Json } from "@/db/schema";
+import { mcp_audit_log } from "@/db/schema";
 import { redactSecrets, truncateJson } from "@/lib/api/audit/redactPatterns";
+import { toJsonValue } from "@/lib/utils/jsonObject";
 
 import { assertExhaustiveKind, type McpPrincipal } from "./auth/types";
 
@@ -80,7 +81,7 @@ export async function logToolCall(entry: AuditEntry): Promise<void> {
           : null,
         session_id: entry.requestId,
         tool_name: entry.toolName,
-        args_redacted: argsJson as Json,
+        args_redacted: toJsonValue(argsJson),
         result_status: entry.resultStatus,
         latency_ms: entry.latencyMs ?? null,
         ip_hash: entry.ipHash ?? null,

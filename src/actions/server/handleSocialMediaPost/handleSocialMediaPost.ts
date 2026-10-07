@@ -7,7 +7,6 @@ import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/del
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import {
-  POSTING_PLATFORMS,
   isPostingPlatform,
   platformSupportsMediaType,
   type PostingPlatform,
@@ -64,12 +63,18 @@ type PostResult = {
   event_ids?: string[];
 };
 
+/** A zero count per posting platform; the return type makes a new platform a compile error here. */
 function buildZeroCounts(): PlatformCounts {
-  const counts = { total: 0 } as PlatformCounts;
-  for (const platform of POSTING_PLATFORMS) {
-    counts[platform] = 0;
-  }
-  return counts;
+  return {
+    total: 0,
+    linkedin: 0,
+    tiktok: 0,
+    pinterest: 0,
+    instagram: 0,
+    youtube: 0,
+    x: 0,
+    facebook: 0,
+  };
 }
 
 // ────────────────────────────────────────────────────────────

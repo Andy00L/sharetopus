@@ -12,7 +12,7 @@ import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
-import type { Platform } from "@/lib/x402/connect/types";
+import { isPostingPlatform } from "@/lib/platforms/capabilities";
 
 const ConnectionIdSchema = z.guid();
 const OAUTH_EXPIRY_MINUTES = 15;
@@ -79,7 +79,19 @@ export const POST = withRestEndpoint({
       );
     }
 
-    const platform = accountRow.platform as Platform;
+    // Registry platforms have no OAuth reauth flow here: same answer as a
+    // buildOAuthUrl failure.
+    const platform = accountRow.platform;
+    if (!isPostingPlatform(platform)) {
+      console.error(
+        `[v1/connections/[id]/reauth POST] No OAuth reauth flow for platform ${platform}`,
+      );
+      return restErrorResponse(
+        "internal_error",
+        "Failed to build reauth URL",
+        ctx.requestId,
+      );
+    }
 
     // Step 3: build OAuth URL for reauth.
     const baseUrl =

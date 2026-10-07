@@ -74,7 +74,7 @@ export type X402Platform = (typeof X402_PLATFORMS)[number];
 
 /** Type guard for query/body platform values against the x402 subset. */
 export function isX402Platform(value: string): value is X402Platform {
-  return (X402_PLATFORMS as readonly string[]).includes(value);
+  return X402_PLATFORMS.some((platform) => platform === value);
 }
 
 /**

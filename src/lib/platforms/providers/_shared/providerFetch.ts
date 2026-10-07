@@ -6,6 +6,7 @@ import {
   buildPinnedAgent,
   resolveHostToPublicAddresses,
 } from "@/lib/net/pinnedFetch";
+import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
 /**
  * HTTP for provider calls whose host comes from the USER, not from us.
@@ -151,12 +152,16 @@ export function parseJsonBody(bodyText: string): unknown {
   }
 }
 
+/** Parses a JSON body that should be an object; null for anything else. */
+export function parseJsonObject(bodyText: string): JsonObject | null {
+  return toJsonObject(parseJsonBody(bodyText));
+}
+
 /** Reads a string field from an unknown JSON object, or null. */
 export function readStringField(
   source: unknown,
   fieldName: string,
 ): string | null {
-  if (!source || typeof source !== "object") return null;
-  const value = (source as Record<string, unknown>)[fieldName];
+  const value = toJsonObject(source)?.[fieldName];
   return typeof value === "string" ? value : null;
 }

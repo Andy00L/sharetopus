@@ -6,6 +6,7 @@ import { db, runQuery } from "@/db/client";
 import { content_history, type Json } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { inngest } from "@/inngest/client";
+import { isJsonObject } from "@/lib/utils/jsonObject";
 
 /**
  * Resolves a fresh TikTok access token for a social account.
@@ -93,12 +94,9 @@ export async function updateContentHistoryStatusToFailed(
   }
 
   // Merge failure info into existing extra
-  const existingExtra =
-    current.extra && typeof current.extra === "object" && !Array.isArray(current.extra)
-      ? (current.extra as Record<string, Json>)
-      : {};
+  const existingExtra = isJsonObject(current.extra) ? current.extra : {};
 
-  const mergedExtra: Record<string, Json> = {
+  const mergedExtra: Json = {
     ...existingExtra,
     failure_reason: reason,
     failed_at: new Date().toISOString(),
@@ -109,7 +107,7 @@ export async function updateContentHistoryStatusToFailed(
       .update(content_history)
       .set({
         status: "failed",
-        extra: mergedExtra as Json,
+        extra: mergedExtra,
       })
       .where(eq(content_history.id, content_history_id)),
   );

@@ -10,7 +10,7 @@ import {
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts } from "@/db/schema";
-import type { CreatedVia, Json } from "@/db/schema";
+import type { CreatedVia } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
@@ -80,11 +80,11 @@ export async function schedulePostBatch(
     `[schedulePostBatch] [req=${requestId ?? "?"}] Starting from source="${source}" for principal=${principalId}, ${posts?.length ?? 0} post(s) requested, batchId=${batchId}`,
   );
 
-  const emptyDetails = {
+  const emptyDetails: SchedulePostBatchResult["details"] = {
     total: 0,
     inserted: 0,
     duplicates: 0,
-    rejected: [] as PostRejection[],
+    rejected: [],
   };
 
   try {
@@ -512,9 +512,8 @@ function validatePostFields(
     return "Media path is not owned by the calling principal.";
   }
 
-  const opts = post.postOptions as Record<string, unknown> | null | undefined;
-  const hasPinterestBoard = Boolean(opts?.board);
-  const hasPinterestLink = Boolean(opts?.link);
+  const hasPinterestBoard = Boolean(post.postOptions?.board);
+  const hasPinterestLink = Boolean(post.postOptions?.link);
 
   if (post.platform === "pinterest" && !hasPinterestBoard) {
     return "Pinterest posts require a board ID in postOptions.board.";
@@ -624,7 +623,7 @@ function buildInsertRows(
     scheduled_at: new Date(post.scheduledAt).toISOString(),
     post_title: post.title ?? "",
     post_description: post.description,
-    post_options: (post.postOptions ?? {}) as Json,
+    post_options: post.postOptions ?? {},
     media_type: post.postType,
     media_storage_path: post.mediaStoragePath,
     cover_image_timestamp: post.coverTimestamp ?? null,

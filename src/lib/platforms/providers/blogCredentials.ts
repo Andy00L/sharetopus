@@ -9,8 +9,11 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import { isJsonObject, toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
+
 import {
   parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -33,8 +36,8 @@ const HASHNODE_GQL = "https://gql.hashnode.com";
 async function hashnodeGql(
   apiToken: string,
   query: string,
-  variables: Record<string, unknown>,
-): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string }> {
+  variables: JsonObject,
+): Promise<{ ok: true; data: JsonObject } | { ok: false; message: string }> {
   const result = await providerFetch(HASHNODE_GQL, {
     method: "POST",
     headers: {
@@ -45,19 +48,13 @@ async function hashnodeGql(
     timeoutMs: BLOG_TIMEOUT_MS,
   });
   if (!result.ok) return { ok: false, message: result.message };
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const gqlErrors = Array.isArray(parsed?.errors) ? parsed.errors : [];
+  const parsed = parseJsonObject(result.bodyText);
+  const gqlErrors: unknown[] = Array.isArray(parsed?.errors) ? parsed.errors : [];
   if (gqlErrors.length > 0) {
-    const firstError =
-      typeof gqlErrors[0] === "object" && gqlErrors[0] !== null
-        ? ((gqlErrors[0] as Record<string, unknown>).message ?? "GraphQL error")
-        : "GraphQL error";
+    const firstError = toJsonObject(gqlErrors[0])?.message ?? "GraphQL error";
     return { ok: false, message: `Hashnode: ${String(firstError).slice(0, 200)}` };
   }
-  const data =
-    parsed && typeof parsed.data === "object" && parsed.data !== null
-      ? (parsed.data as Record<string, unknown>)
-      : null;
+  const data = toJsonObject(parsed?.data);
   if (!data) return { ok: false, message: "Hashnode returned no data." };
   return { ok: true, data };
 }
@@ -78,28 +75,15 @@ async function hashnodeConnect(
   );
   if (!me.ok) return { ok: false, message: me.message };
 
-  const meNode =
-    typeof me.data.me === "object" && me.data.me !== null
-      ? (me.data.me as Record<string, unknown>)
-      : null;
+  const meNode = toJsonObject(me.data.me);
   const userId = meNode && typeof meNode.id === "string" ? meNode.id : null;
   if (!userId) return { ok: false, message: "Hashnode token is not valid." };
 
   // Default publication: the first one on the account. listPublications
   // lets an agent pick another.
-  const publications =
-    meNode && typeof meNode.publications === "object" && meNode.publications !== null
-      ? (meNode.publications as Record<string, unknown>)
-      : null;
-  const edges = Array.isArray(publications?.edges) ? publications.edges : [];
-  const firstEdge =
-    edges[0] && typeof edges[0] === "object"
-      ? (edges[0] as Record<string, unknown>)
-      : null;
-  const firstNode =
-    firstEdge && typeof firstEdge.node === "object" && firstEdge.node !== null
-      ? (firstEdge.node as Record<string, unknown>)
-      : null;
+  const publications = toJsonObject(meNode?.publications);
+  const edges: unknown[] = Array.isArray(publications?.edges) ? publications.edges : [];
+  const firstNode = toJsonObject(toJsonObject(edges[0])?.node);
   const publicationId =
     firstNode && typeof firstNode.id === "string" ? firstNode.id : null;
 
@@ -147,14 +131,7 @@ async function hashnodePublish(
   );
   if (!published.ok) return { ok: false, message: published.message };
 
-  const publishPost =
-    typeof published.data.publishPost === "object" && published.data.publishPost !== null
-      ? (published.data.publishPost as Record<string, unknown>)
-      : null;
-  const post =
-    publishPost && typeof publishPost.post === "object" && publishPost.post !== null
-      ? (publishPost.post as Record<string, unknown>)
-      : null;
+  const post = toJsonObject(toJsonObject(published.data.publishPost)?.post);
   const postId = post && typeof post.id === "string" ? post.id : null;
   if (!postId) return { ok: false, message: "Hashnode returned no post id." };
 
@@ -178,25 +155,11 @@ async function hashnodeRunTool(
   );
   if (!me.ok) return { ok: false, message: me.message };
 
-  const meNode =
-    typeof me.data.me === "object" && me.data.me !== null
-      ? (me.data.me as Record<string, unknown>)
-      : null;
-  const publications =
-    meNode && typeof meNode.publications === "object" && meNode.publications !== null
-      ? (meNode.publications as Record<string, unknown>)
-      : null;
-  const edges = Array.isArray(publications?.edges) ? publications.edges : [];
+  const publications = toJsonObject(toJsonObject(me.data.me)?.publications);
+  const edges: unknown[] = Array.isArray(publications?.edges) ? publications.edges : [];
   const list = edges
-    .map((edge) =>
-      typeof edge === "object" && edge !== null
-        ? (edge as Record<string, unknown>).node
-        : null,
-    )
-    .filter(
-      (node): node is Record<string, unknown> =>
-        typeof node === "object" && node !== null,
-    )
+    .map((edge) => toJsonObject(edge)?.node)
+    .filter(isJsonObject)
     .map((node) => ({
       id: typeof node.id === "string" ? node.id : null,
       title: typeof node.title === "string" ? node.title : null,
@@ -239,11 +202,7 @@ async function mediumConnect(
     };
   }
 
-  const parsed = parseJsonBody(meResult.bodyText) as Record<string, unknown> | null;
-  const data =
-    parsed && typeof parsed.data === "object" && parsed.data !== null
-      ? (parsed.data as Record<string, unknown>)
-      : null;
+  const data = toJsonObject(parseJsonObject(meResult.bodyText)?.data);
   const userId = data && typeof data.id === "string" ? data.id : null;
   if (!userId) return { ok: false, message: "Medium returned no user id." };
 
@@ -300,11 +259,7 @@ async function mediumPublish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const data =
-    parsed && typeof parsed.data === "object" && parsed.data !== null
-      ? (parsed.data as Record<string, unknown>)
-      : null;
+  const data = toJsonObject(parseJsonObject(result.bodyText)?.data);
   const postId = data && typeof data.id === "string" ? data.id : null;
   if (!postId) return { ok: false, message: "Medium returned no post id." };
 
@@ -397,7 +352,7 @@ async function lemmyPublish(
   const title = input.title.trim();
   if (!title) return { ok: false, message: "Lemmy posts require a title." };
 
-  const postPayload: Record<string, unknown> = {
+  const postPayload: JsonObject = {
     name: title,
     community_id: communityId,
     body: input.body,
@@ -422,15 +377,7 @@ async function lemmyPublish(
     };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const postView =
-    parsed && typeof parsed.post_view === "object" && parsed.post_view !== null
-      ? (parsed.post_view as Record<string, unknown>)
-      : null;
-  const post =
-    postView && typeof postView.post === "object" && postView.post !== null
-      ? (postView.post as Record<string, unknown>)
-      : null;
+  const post = toJsonObject(toJsonObject(parseJsonObject(result.bodyText)?.post_view)?.post);
   const postId = post && typeof post.id === "number" ? String(post.id) : null;
   if (!postId) return { ok: false, message: "Lemmy returned no post id." };
 
@@ -462,20 +409,13 @@ async function lemmyRunTool(
     return { ok: false, message: `Lemmy community list failed (${result.status}).` };
   }
 
-  const parsed = parseJsonBody(result.bodyText) as Record<string, unknown> | null;
-  const communityViews = Array.isArray(parsed?.communities)
+  const parsed = parseJsonObject(result.bodyText);
+  const communityViews: unknown[] = Array.isArray(parsed?.communities)
     ? parsed.communities
     : [];
   const communities = communityViews
-    .map((view) =>
-      typeof view === "object" && view !== null
-        ? (view as Record<string, unknown>).community
-        : null,
-    )
-    .filter(
-      (community): community is Record<string, unknown> =>
-        typeof community === "object" && community !== null,
-    )
+    .map((view) => toJsonObject(view)?.community)
+    .filter(isJsonObject)
     .map((community) => ({
       id: typeof community.id === "number" ? community.id : null,
       name: typeof community.name === "string" ? community.name : null,

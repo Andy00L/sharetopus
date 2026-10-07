@@ -1,6 +1,6 @@
 import "server-only";
 
-import { parseJsonBody, providerFetch, readStringField } from "./providerFetch";
+import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
 
 /**
  * Shared OAuth2 authorization-code plumbing.
@@ -170,16 +170,13 @@ async function requestToken(
     };
   }
 
-  const tokenBody = parseJsonBody(tokenResult.bodyText);
+  const tokenBody = parseJsonObject(tokenResult.bodyText);
   const accessToken = readStringField(tokenBody, "access_token");
   if (!accessToken) {
     return { ok: false, message: "Token response carried no access_token." };
   }
 
-  const rawExpiresIn =
-    tokenBody && typeof tokenBody === "object"
-      ? (tokenBody as Record<string, unknown>).expires_in
-      : undefined;
+  const rawExpiresIn = tokenBody?.expires_in;
 
   return {
     ok: true,

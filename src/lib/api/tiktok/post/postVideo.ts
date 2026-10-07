@@ -1,10 +1,8 @@
 import { TikTokOptions } from "@/lib/types/dbTypes";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 import "server-only";
-import {
-  CreatorInfoResponse,
-  PostInitResponse,
-  TikTokPostResult,
-} from "./postToTikTok";
+import { TikTokPostInitSchema } from "./postImage";
+import type { TikTokPostResult } from "./postToTikTok";
 import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
 /** TikTok rejects a cover timestamp under 1 s. */
@@ -27,14 +25,14 @@ export async function handleVideoPost({
   tikTokOptions,
   coverTimestamp,
   media_url,
-  creatorInfo,
+  creatorUsername,
 }: {
   accessToken: string;
   description?: string;
   tikTokOptions?: TikTokOptions;
   media_url: string;
   coverTimestamp: number;
-  creatorInfo: CreatorInfoResponse;
+  creatorUsername: string;
 }): Promise<TikTokPostResult> {
   try {
     const resolvedCoverTs = resolveTikTokVideoCoverTimestampMs(coverTimestamp);
@@ -72,7 +70,7 @@ export async function handleVideoPost({
     );
 
     if (!initResponse.ok) {
-      const errorData = await initResponse.json();
+      const errorData: unknown = await initResponse.json();
       console.error(
         "[Tiktok Post Function] Video initialization error:",
         errorData
@@ -80,13 +78,23 @@ export async function handleVideoPost({
       return {
         success: false,
         error: "Failed to initialize video post",
-        details: errorData as Record<string, unknown>,
+        details: toJsonObject(errorData) ?? undefined,
       };
     }
 
-    const initData = (await initResponse.json()) as PostInitResponse;
+    const initData = TikTokPostInitSchema.safeParse(await initResponse.json());
+    if (!initData.success) {
+      console.error(
+        "[Tiktok Post Function] Video initialization returned no publish_id"
+      );
+      return {
+        success: false,
+        error: "Failed to initialize video post",
+        message: "TikTok returned no publish_id",
+      };
+    }
 
-    const publishId = initData.data.publish_id;
+    const publishId = initData.data.data.publish_id;
 
     console.log(
       `[Tiktok Post Function] Video post initialized successfully with publish_id: ${publishId}`
@@ -94,12 +102,12 @@ export async function handleVideoPost({
     return {
       success: true,
       publishId,
-      postUrl: `https://www.tiktok.com/@${creatorInfo.data.creator_username}`,
+      postUrl: `https://www.tiktok.com/@${creatorUsername}`,
       data: { status: "PUBLISH_COMPLETE" },
       message: "Video submitted to TikTok for processing",
       status: "posted",
       content_id: publishId,
-      creator_username: creatorInfo.data.creator_username,
+      creator_username: creatorUsername,
     };
   } catch (error) {
     console.error("[tiktok Post Function] Unexpected error:", error);

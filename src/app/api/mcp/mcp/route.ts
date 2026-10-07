@@ -16,6 +16,7 @@ import { MCP_ROUTE_RATE_LIMIT } from "@/lib/mcp/rateLimits";
 import { MCP_SERVER_INSTRUCTIONS } from "@/lib/mcp/serverInstructions";
 import { registerTools } from "@/lib/mcp/tools";
 import { resolveClientIp } from "@/lib/net/clientIp";
+import { isJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 import {
   buildRateLimitJsonResponse,
   describeRateLimitRejection,
@@ -40,19 +41,15 @@ function sanitizeClientField(raw: string, maxLength: number): string {
   return raw.replace(/[\x00-\x1f<>'"&]/g, "").slice(0, maxLength);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Client name from initialize params.clientInfo (2025 era) or the _meta envelope (2026-07-28). */
 function readClientName(parsedBody: unknown): string | null {
-  if (!isRecord(parsedBody) || !isRecord(parsedBody.params)) return null;
+  if (!isJsonObject(parsedBody) || !isJsonObject(parsedBody.params)) return null;
   const { params } = parsedBody;
-  const envelope: Record<string, unknown> = isRecord(params._meta)
+  const envelope: JsonObject = isJsonObject(params._meta)
     ? params._meta
     : {};
   const clientInfo = params.clientInfo ?? envelope[CLIENT_INFO_META_KEY];
-  return isRecord(clientInfo) && typeof clientInfo.name === "string"
+  return isJsonObject(clientInfo) && typeof clientInfo.name === "string"
     ? clientInfo.name
     : null;
 }

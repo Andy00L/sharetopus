@@ -59,11 +59,10 @@ export function buildOAuthUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
       return buildFacebookUrl(input);
     default: {
       const _exhaustive: never = input.platform;
-      void _exhaustive;
       return {
         ok: false,
         error: "unsupported_platform",
-        message: `Unsupported platform: ${input.platform as string}`,
+        message: `Unsupported platform: ${String(_exhaustive)}`,
       };
     }
   }

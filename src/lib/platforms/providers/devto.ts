@@ -8,7 +8,7 @@ import type {
   ProviderPublishResult,
 } from "./types";
 import {
-  parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -59,11 +59,8 @@ async function connect(
     };
   }
 
-  const user = parseJsonBody(meResult.bodyText);
-  const userId =
-    user && typeof user === "object" && typeof (user as Record<string, unknown>).id === "number"
-      ? String((user as Record<string, unknown>).id)
-      : null;
+  const user = parseJsonObject(meResult.bodyText);
+  const userId = user && typeof user.id === "number" ? String(user.id) : null;
 
   if (!userId) {
     return { ok: false, message: "Dev.to returned no user id for that key." };
@@ -136,11 +133,9 @@ async function publish(
     };
   }
 
-  const created = parseJsonBody(createResult.bodyText);
+  const created = parseJsonObject(createResult.bodyText);
   const articleId =
-    created && typeof created === "object" && typeof (created as Record<string, unknown>).id === "number"
-      ? String((created as Record<string, unknown>).id)
-      : null;
+    created && typeof created.id === "number" ? String(created.id) : null;
 
   if (!articleId) {
     return { ok: false, message: "Dev.to returned no article id." };

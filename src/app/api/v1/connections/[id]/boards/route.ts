@@ -14,7 +14,6 @@ import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { getPinterestBoards } from "@/lib/api/pinterest/data/getPinterestBoards";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import type { SocialAccount } from "@/lib/types/dbTypes";
 
 const ConnectionIdSchema = z.guid();
 
@@ -60,17 +59,11 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 3: fetch account scoped to principal + platform=pinterest.
+    // Step 3: fetch account scoped to principal. The full row, because
+    // ensureValidToken's refresh path reads columns beyond the token ones.
     const { data: pinterestAccounts, error: lookupError } = await runQuery(
       db
-        .select({
-          id: social_accounts.id,
-          platform: social_accounts.platform,
-          principal_id: social_accounts.principal_id,
-          access_token: social_accounts.access_token,
-          refresh_token: social_accounts.refresh_token,
-          token_expires_at: social_accounts.token_expires_at,
-        })
+        .select()
         .from(social_accounts)
         .where(
           and(
@@ -112,9 +105,7 @@ export const GET = withRestEndpoint({
     }
 
     // Step 5: ensure token is fresh (refresh if expired).
-    const tokenRefreshResult = await ensureValidToken(
-      pinterestAccount as SocialAccount,
-    );
+    const tokenRefreshResult = await ensureValidToken(pinterestAccount);
     if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
       const baseUrl =
         process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";

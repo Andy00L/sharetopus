@@ -15,29 +15,36 @@ import type { WalletChain } from "@/db/schema";
  * /tx; Solana Explorer says /address and /tx as well but is a different
  * host per chain, so the mapping stays explicit rather than derived.
  * sourceRef: src/lib/x402/networks.ts for the network slugs.
+ *
+ * Both lookups are Maps read by raw slug, so a prototype key such as
+ * "toString" finds nothing; `satisfies` keeps every key a WalletChain.
  */
-const EXPLORER_BASE_URL_BY_NETWORK: Partial<Record<WalletChain, string>> = {
-  base: "https://basescan.org",
-  polygon: "https://polygonscan.com",
-  arbitrum: "https://arbiscan.io",
-  celo: "https://celoscan.io",
-  arc: "https://explorer.arc.io",
-  solana: "https://explorer.solana.com",
-};
+const EXPLORER_BASE_URL_BY_NETWORK: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    base: "https://basescan.org",
+    polygon: "https://polygonscan.com",
+    arbitrum: "https://arbiscan.io",
+    celo: "https://celoscan.io",
+    arc: "https://explorer.arc.io",
+    solana: "https://explorer.solana.com",
+  } satisfies Partial<Record<WalletChain, string>>),
+);
 
 /** Human label for a network, used in link titles and the ledger column. */
-const DISPLAY_NAME_BY_NETWORK: Partial<Record<WalletChain, string>> = {
-  base: "Base",
-  polygon: "Polygon",
-  arbitrum: "Arbitrum",
-  celo: "Celo",
-  arc: "Arc",
-  solana: "Solana",
-};
+const DISPLAY_NAME_BY_NETWORK: ReadonlyMap<string, string> = new Map(
+  Object.entries({
+    base: "Base",
+    polygon: "Polygon",
+    arbitrum: "Arbitrum",
+    celo: "Celo",
+    arc: "Arc",
+    solana: "Solana",
+  } satisfies Partial<Record<WalletChain, string>>),
+);
 
 /** Falls back to the raw slug so an unmapped network still renders. */
 export function networkDisplayName(networkName: string): string {
-  return DISPLAY_NAME_BY_NETWORK[networkName as WalletChain] ?? networkName;
+  return DISPLAY_NAME_BY_NETWORK.get(networkName) ?? networkName;
 }
 
 /**
@@ -70,7 +77,7 @@ export function buildExplorerTxUrl(
   networkName: string,
   txHash: string,
 ): string | null {
-  const baseUrl = EXPLORER_BASE_URL_BY_NETWORK[networkName as WalletChain];
+  const baseUrl = EXPLORER_BASE_URL_BY_NETWORK.get(networkName);
   return baseUrl ? `${baseUrl}/tx/${encodeURIComponent(txHash)}` : null;
 }
 
@@ -79,6 +86,6 @@ export function buildExplorerAddressUrl(
   networkName: string,
   address: string,
 ): string | null {
-  const baseUrl = EXPLORER_BASE_URL_BY_NETWORK[networkName as WalletChain];
+  const baseUrl = EXPLORER_BASE_URL_BY_NETWORK.get(networkName);
   return baseUrl ? `${baseUrl}/address/${encodeURIComponent(address)}` : null;
 }

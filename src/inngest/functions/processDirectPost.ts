@@ -3,8 +3,8 @@ import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import {
   callDirectPostFromEvent,
+  postNowEvent,
   type DirectPostResult,
-  type PostNowEventData,
 } from "./processDirectPostHelpers";
 import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
@@ -33,10 +33,10 @@ export const processDirectPost = inngest.createFunction(
       period: "1m",
       key: "event.data.social_account_id",
     },
-    triggers: [{ event: "post.now" }],
+    triggers: [postNowEvent],
   },
   async ({ event, step }) => {
-    const data = event.data as PostNowEventData;
+    const data = event.data;
 
     // Steps 1-2: load the account and publish, in one step. Inngest stores
     // every step result and the account row carries the OAuth tokens, so the
@@ -56,10 +56,11 @@ export const processDirectPost = inngest.createFunction(
     // Step 3: finalize THIS worker's lock (release self before cleanup check).
     // dispatch_id may be undefined for legacy in-flight events that predate
     // the FIX RACE-1 deploy. Skip finalize in that case.
-    if (data.dispatch_id) {
+    const dispatchId = data.dispatch_id;
+    if (dispatchId) {
       await step.run("finalize-pending-direct-post", () =>
         finalizePendingDirectPost(
-          data.dispatch_id!,
+          dispatchId,
           result.success ? "completed" : "failed",
           result.success ? null : (result.message?.slice(0, 1000) ?? null)
         )

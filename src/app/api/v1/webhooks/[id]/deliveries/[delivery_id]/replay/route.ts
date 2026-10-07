@@ -8,6 +8,7 @@ import { sendWebhookDispatchEvent } from "@/lib/api/rest/webhooks/dispatch";
 import type { WebhookReplayResult } from "@/lib/api/rest/openapi/responseSchemas";
 import { db, runQuery } from "@/db/client";
 import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
+import { toJsonObject } from "@/lib/utils/jsonObject";
 
 const UuidSchema = z.guid();
 
@@ -132,12 +133,7 @@ export const POST = withRestEndpoint({
     // Step 4: queue one delivery for this subscription. dispatchWebhook
     // would send the event to every active subscription of the principal
     // that listens for this event type, not only the one being replayed.
-    const replayPayload =
-      typeof originalDeliveryRow.payload === "object" &&
-      originalDeliveryRow.payload !== null &&
-      !Array.isArray(originalDeliveryRow.payload)
-        ? (originalDeliveryRow.payload as Record<string, unknown>)
-        : {};
+    const replayPayload = toJsonObject(originalDeliveryRow.payload) ?? {};
 
     const replaySendResult = await sendWebhookDispatchEvent({
       subscriptionId,

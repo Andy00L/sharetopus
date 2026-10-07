@@ -9,6 +9,7 @@ import type {
 } from "./types";
 import {
   parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -331,11 +332,11 @@ async function uploadImageBlob(
     };
   }
 
-  const uploaded = parseJsonBody(uploadResult.bodyText);
-  if (!uploaded || typeof uploaded !== "object") {
+  const uploaded = parseJsonObject(uploadResult.bodyText);
+  if (!uploaded) {
     return { ok: false, message: "Bluesky blob upload returned no JSON." };
   }
-  const blob = (uploaded as Record<string, unknown>).blob;
+  const blob = uploaded.blob;
   if (!blob) {
     return { ok: false, message: "Bluesky blob upload returned no blob ref." };
   }

@@ -8,7 +8,7 @@ import type {
   ProviderPublishResult,
 } from "./types";
 import {
-  parseJsonBody,
+  parseJsonObject,
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
@@ -109,11 +109,8 @@ async function connect(
     };
   }
 
-  const user = parseJsonBody(meResult.bodyText);
-  const userId =
-    user && typeof user === "object" && typeof (user as Record<string, unknown>).id === "number"
-      ? String((user as Record<string, unknown>).id)
-      : null;
+  const user = parseJsonObject(meResult.bodyText);
+  const userId = user && typeof user.id === "number" ? String(user.id) : null;
 
   if (!userId) {
     return { ok: false, message: "WordPress returned no user id." };
@@ -193,11 +190,9 @@ async function publish(
     };
   }
 
-  const created = parseJsonBody(createResult.bodyText);
+  const created = parseJsonObject(createResult.bodyText);
   const postId =
-    created && typeof created === "object" && typeof (created as Record<string, unknown>).id === "number"
-      ? String((created as Record<string, unknown>).id)
-      : null;
+    created && typeof created.id === "number" ? String(created.id) : null;
 
   if (!postId) {
     return { ok: false, message: "WordPress returned no post id." };
@@ -266,11 +261,9 @@ async function uploadMedia(
     };
   }
 
-  const uploaded = parseJsonBody(uploadResult.bodyText);
+  const uploaded = parseJsonObject(uploadResult.bodyText);
   const mediaId =
-    uploaded && typeof uploaded === "object" && typeof (uploaded as Record<string, unknown>).id === "number"
-      ? ((uploaded as Record<string, unknown>).id as number)
-      : null;
+    uploaded && typeof uploaded.id === "number" ? uploaded.id : null;
 
   if (mediaId === null) {
     return { ok: false, message: "WordPress media upload returned no id." };

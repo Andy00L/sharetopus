@@ -26,6 +26,13 @@ export const CAPTION_LIMITS = {
 
 export type CaptionPlatform = keyof typeof CAPTION_LIMITS;
 
+/** True when the map above has its own limit for this platform (hasOwn, so "toString" is not one). */
+export function isCaptionPlatform(
+  platform: string,
+): platform is Exclude<CaptionPlatform, "default"> {
+  return platform !== "default" && Object.hasOwn(CAPTION_LIMITS, platform);
+}
+
 /**
  * Text limit for any platform value: legacy platforms answer from the map
  * above, registry providers from their catalog rules (maxTextLength), and
@@ -35,8 +42,8 @@ export type CaptionPlatform = keyof typeof CAPTION_LIMITS;
  * rather than a guarantee.
  */
 export function resolvePlatformTextLimit(platform: string): number {
-  if (platform !== "default" && platform in CAPTION_LIMITS) {
-    return CAPTION_LIMITS[platform as CaptionPlatform];
+  if (isCaptionPlatform(platform)) {
+    return CAPTION_LIMITS[platform];
   }
   const registryLimit = getProviderMetadata(platform)?.rules.maxTextLength;
   return registryLimit ?? CAPTION_LIMITS.default;

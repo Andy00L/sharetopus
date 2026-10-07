@@ -26,5 +26,5 @@ export type RegistryOAuthPlatform =
 export function isRegistryOAuthPlatform(
   value: string,
 ): value is RegistryOAuthPlatform {
-  return (REGISTRY_OAUTH_PLATFORM_IDS as readonly string[]).includes(value);
+  return REGISTRY_OAUTH_PLATFORM_IDS.some((platformId) => platformId === value);
 }

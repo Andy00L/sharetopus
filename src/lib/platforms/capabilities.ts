@@ -82,7 +82,7 @@ const PLATFORM_MEDIA_SUPPORT: Record<PostingPlatform, readonly MediaType[]> = {
 
 /** Type guard for arbitrary strings (query params, DB reads). */
 export function isPostingPlatform(value: string): value is PostingPlatform {
-  return (POSTING_PLATFORMS as readonly string[]).includes(value);
+  return POSTING_PLATFORMS.some((platform) => platform === value);
 }
 
 /**
@@ -105,7 +105,7 @@ export const SCHEDULABLE_PLATFORMS: readonly [
 export function isSchedulablePlatform(
   value: string,
 ): value is SchedulablePlatform {
-  return (SCHEDULABLE_PLATFORMS as readonly string[]).includes(value);
+  return SCHEDULABLE_PLATFORMS.some((platform) => platform === value);
 }
 
 /**

@@ -1,8 +1,10 @@
 "use server";
 
+import { z } from "zod";
+
 import type { PrivacyLevel } from "@/lib/types/dbTypes";
 
-// Matches CreatorInfoResponse.data in postToTikTok.ts
+/** creator_info `data`; the composer reads every field. */
 export type CreatorInfoData = {
   creator_avatar_url: string;
   creator_username: string;
@@ -14,14 +16,44 @@ export type CreatorInfoData = {
   max_video_post_duration_sec: number;
 };
 
-type CreatorInfoApiResponse = {
-  data?: CreatorInfoData;
-  error?: {
-    code: string;
-    message: string;
-    log_id: string;
-  };
-};
+/**
+ * The privacy levels creator_info returns. sourceRef:
+ * developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
+ */
+const TikTokPrivacyLevelSchema = z.enum([
+  "PUBLIC_TO_EVERYONE",
+  "MUTUAL_FOLLOW_FRIENDS",
+  "FOLLOWER_OF_CREATOR",
+  "SELF_ONLY",
+]);
+
+/** Validates creator_info `data`; a privacy level TikTok adds later is dropped, not fatal. */
+const CreatorInfoDataSchema = z.object({
+  creator_avatar_url: z.string(),
+  creator_username: z.string(),
+  creator_nickname: z.string(),
+  privacy_level_options: z.array(z.string()).transform((levels) =>
+    levels.flatMap((level) => {
+      const knownLevel = TikTokPrivacyLevelSchema.safeParse(level);
+      return knownLevel.success ? [knownLevel.data] : [];
+    }),
+  ),
+  comment_disabled: z.boolean(),
+  duet_disabled: z.boolean(),
+  stitch_disabled: z.boolean(),
+  max_video_post_duration_sec: z.number(),
+});
+
+/** The envelope every creator_info answer carries, 2xx or not; `data` is checked separately. */
+const CreatorInfoResponseSchema = z.object({
+  data: z.unknown().optional(),
+  error: z
+    .object({ code: z.string(), message: z.string() })
+    .partial()
+    .optional(),
+});
+
+type CreatorInfoApiResponse = z.infer<typeof CreatorInfoResponseSchema>;
 
 type GetCreatorInfoResult =
   | { success: true; data: CreatorInfoData }
@@ -48,12 +80,14 @@ const CREATOR_INFO_ERROR_MESSAGES: Record<string, string> = {
     "TikTok is receiving too many requests. Please wait a minute and try again.",
 };
 
-/** Reads the TikTok error envelope from any response, 2xx or not. */
+/** Reads the TikTok error envelope from any response, 2xx or not; null when unreadable. */
 async function readCreatorInfoResponse(
   response: Response,
 ): Promise<CreatorInfoApiResponse | null> {
   try {
-    return (await response.json()) as CreatorInfoApiResponse;
+    const payload: unknown = await response.json();
+    const envelope = CreatorInfoResponseSchema.safeParse(payload);
+    return envelope.success ? envelope.data : null;
   } catch {
     return null;
   }
@@ -104,12 +138,13 @@ export async function getTikTokCreatorInfo(
       };
     }
 
-    if (!json?.data) {
-      console.error("[getTikTokCreatorInfo] No data in response");
+    const creatorInfo = CreatorInfoDataSchema.safeParse(json?.data);
+    if (!creatorInfo.success) {
+      console.error("[getTikTokCreatorInfo] No usable data in response");
       return { success: false, message: "No creator info data returned" };
     }
 
-    return { success: true, data: json.data };
+    return { success: true, data: creatorInfo.data };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[getTikTokCreatorInfo] Unexpected error:", message);

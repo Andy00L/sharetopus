@@ -93,7 +93,6 @@ export default function CalendarBatchChip({
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
     id: batch.batchId,
     disabled: !draggable,
-    data: { batch },
   });
 
   const statusStyle = POST_STATUS_STYLES[batch.status];
