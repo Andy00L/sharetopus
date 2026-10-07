@@ -88,7 +88,8 @@ export default function PostPreviewPanel({
       </div>
 
       {accounts.length > 1 && (
-        <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1">
+        // The scroll row clips on both axes; the left and top padding keeps each badge's overhang visible.
+        <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 pl-1.5 pt-1.5">
           {accounts.map((account) => {
             const isActive = account.id === activeAccount.id;
             return (

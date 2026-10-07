@@ -1,4 +1,3 @@
-// src/components/core/accounts/social/AvatarWithFallback.tsx
 "use client";
 
 import clsx from "clsx";
@@ -13,11 +12,16 @@ interface Props {
   readonly alt: string;
   /** Optional Tailwind classes applied to BOTH img & icon. */
   readonly className?: string;
-  /** Width / height, defaults to 64 x 64 (px) like your design. */
+  /** Width / height in px. */
   readonly size?: number;
   readonly isSelected?: boolean;
 }
 
+/**
+ * A round avatar that falls back to a person icon when the URL is missing or fails (expired
+ * TikTok links answer 403). Unoptimized on purpose: avatars come from many CDNs, and one
+ * direct URL stays cached across every size the app renders it at.
+ */
 export default function AvatarWithFallback({
   src,
   alt,
@@ -25,18 +29,17 @@ export default function AvatarWithFallback({
   size = 40,
   isSelected = false,
 }: Props) {
-  const [errored, setErrored] = useState(false);
+  // Remembering the failed URL, not a flag, lets the next account's src render without an effect.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const frameClassName = clsx(
+    "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",
+    isSelected ? "border-2 border-green-500" : "border-2 border-border",
+    className,
+  );
 
-  /* ---------- show icon if: no src OR already failed ---------- */
-  if (!src || errored) {
+  if (!src || failedSrc === src) {
     return (
-      <div
-        className={clsx(
-          "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",
-          isSelected ? "border-2 border-green-500" : "border-2 border-border", // Conditional border
-          className
-        )}
-      >
+      <div className={frameClassName}>
         <UserCheck
           aria-label={alt}
           className={clsx("text-muted-foreground", className)}
@@ -47,22 +50,16 @@ export default function AvatarWithFallback({
     );
   }
 
-  /* ---------- otherwise show the real avatar ---------- */
   return (
-    <div
-      className={clsx(
-        "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",
-        isSelected ? "border-2 border-green-500" : "border-2 border-border", // Conditional border
-        className
-      )}
-    >
+    <div className={frameClassName}>
       <Image
         src={src}
         alt={alt}
         width={size}
         height={size}
-        className={clsx("object-cover ", className)}
-        onError={() => setErrored(true)}
+        unoptimized
+        className={clsx("object-cover", className)}
+        onError={() => setFailedSrc(src)}
       />
     </div>
   );

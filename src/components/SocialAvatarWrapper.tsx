@@ -1,4 +1,3 @@
-// src/components/SocialAvatarWrapper.tsx
 "use client";
 
 import AvatarWithFallback from "./AvatarWithFallback";
@@ -18,6 +17,7 @@ interface SocialAvatarWrapperProps {
   readonly isSelected?: boolean;
 }
 
+/** An avatar with the platform badge on its top-left edge; the badge overhangs by 30% of its size. */
 export default function SocialAvatarWrapper({
   src,
   alt,
@@ -59,12 +59,3 @@ export default function SocialAvatarWrapper({
     </div>
   );
 }
-/**use exemple
- * <SocialAvatarWrapper
-        src={account.avatar_url}
-        alt="LinkedIn Profile"
-        platform={account.platform}
-        className="h-10 w-10"
-        size={40}
-      />
- */
