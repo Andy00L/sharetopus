@@ -17,12 +17,8 @@ import {
 import { toast } from "sonner";
 
 /**
- * Client component wrapping a revoke action in an AlertDialog confirmation.
- *
- * On confirm, calls revokeShareLink and optimistically hides the row.
- * Does NOT disconnect existing social accounts linked via this share link.
- *
- * Called by: ShareLinkList
+ * Revoke with an AlertDialog confirmation; the row hides once the server confirms, so a failed
+ * revoke never hides a link that still works. Accounts already connected through it stay.
  */
 export function RevokeShareLinkButton({
   shareLinkId,
@@ -35,12 +31,10 @@ export function RevokeShareLinkButton({
 
   async function handleRevoke() {
     setIsRevoking(true);
-    // Optimistic: hide immediately
-    onRevoked();
-
     const result = await revokeShareLink({ shareLinkId });
 
     if (result.success) {
+      onRevoked();
       toast.success("Share link revoked");
     } else {
       toast.error(result.message);
@@ -52,7 +46,7 @@ export function RevokeShareLinkButton({
     <AlertDialog>
       <AlertDialogTrigger asChild>
         <Button variant="destructive" size="sm" className="text-xs" disabled={isRevoking}>
-          Revoke
+          {isRevoking ? "Revoking..." : "Revoke"}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>

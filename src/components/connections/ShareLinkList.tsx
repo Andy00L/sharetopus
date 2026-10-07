@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { listShareLinks, type ShareLinkSummary } from "@/actions/server/share-link/listShareLinks";
+import { useState } from "react";
+import type { ShareLinkSummary } from "@/actions/server/share-link/listShareLinks";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Table,
@@ -14,13 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { RevokeShareLinkButton } from "./RevokeShareLinkButton";
 import { toast } from "sonner";
-
-/**
- * Displays the user's active share links in a table with copy and revoke
- * actions. Fetches data via the listShareLinks server action on mount.
- *
- * Called by: connections page (below TikTok accounts section)
- */
 
 function formatRelativeTime(isoDate: string): string {
   const date = new Date(isoDate);
@@ -46,33 +39,23 @@ function formatCreatedAt(isoDate: string): string {
   });
 }
 
-export function ShareLinkList() {
-  const [links, setLinks] = useState<ShareLinkSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    listShareLinks().then((result) => {
-      if (result.success) {
-        setLinks(result.data);
-      }
-      setIsLoading(false);
-    });
-  }, []);
+/**
+ * The user's active share links with copy and revoke actions. The connections page loads them
+ * on the server (null when that failed); CreateShareLinkDialog refreshes the page after a create,
+ * so a new link shows without a reload.
+ */
+export function ShareLinkList({ links }: { links: ShareLinkSummary[] | null }) {
+  const [revokedLinkIds, setRevokedLinkIds] = useState<ReadonlySet<string>>(new Set());
+  const visibleLinks = (links ?? []).filter((link) => !revokedLinkIds.has(link.id));
 
   function handleCopyLink(token: string) {
-    const baseUrl =
-      typeof window !== "undefined" ? window.location.origin : "";
-    const url = `${baseUrl}/share/tiktok/${token}`;
+    const url = `${window.location.origin}/share/tiktok/${token}`;
     navigator.clipboard.writeText(url);
     toast.success("Link copied to clipboard");
   }
 
   function handleRevoked(linkId: string) {
-    setLinks((prev) => prev.filter((link) => link.id !== linkId));
-  }
-
-  if (isLoading) {
-    return null;
+    setRevokedLinkIds((previousIds) => new Set(previousIds).add(linkId));
   }
 
   return (
@@ -81,7 +64,11 @@ export function ShareLinkList() {
         <h3 className="text-sm font-semibold">Active share links</h3>
       </CardHeader>
       <CardContent>
-        {links.length === 0 ? (
+        {links === null ? (
+          <p className="text-sm text-destructive">
+            Could not load your share links. Reload the page to try again.
+          </p>
+        ) : visibleLinks.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No active share links. Create one to let a friend connect their
             TikTok to your Sharetopus.
@@ -97,7 +84,7 @@ export function ShareLinkList() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {links.map((link) => (
+              {visibleLinks.map((link) => (
                 <TableRow key={link.id}>
                   <TableCell className="text-xs">
                     {formatCreatedAt(link.createdAt)}

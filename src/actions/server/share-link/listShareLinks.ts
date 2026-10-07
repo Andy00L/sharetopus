@@ -10,7 +10,7 @@ import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
  * authenticated user. Used by the connections page to display the
  * creator's active share links.
  *
- * Called by: ShareLinkList server component
+ * Called by: the connections page (server), which passes the result to ShareLinkList
  * Tables read: share_links (select)
  */
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createShareLink } from "@/actions/server/share-link/createShareLink";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,6 +61,7 @@ function findOptionValue<OptionValue extends string>(
 }
 
 export function CreateShareLinkDialog() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [expiry, setExpiry] = useState<ExpiryOption>("86400");
@@ -84,6 +86,8 @@ export function CreateShareLinkDialog() {
 
     if (result.success) {
       setResultUrl(result.data.shareUrl);
+      // Re-renders the connections page so ShareLinkList shows the new link behind the dialog.
+      router.refresh();
     } else {
       setErrorMessage(result.message);
     }

@@ -2,7 +2,19 @@
 
 import { useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -95,6 +107,7 @@ export function ApiKeysCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
   const [selectedExpiresInDays, setSelectedExpiresInDays] =
     useState<ApiKeyExpiryDays>(DEFAULT_API_KEY_EXPIRY_DAYS);
 
@@ -134,17 +147,16 @@ export function ApiKeysCard({
   }
 
   async function handleRevoke(keyId: string) {
-    const confirmed = window.confirm(
-      "Revoke this key? Any client using it will lose access immediately.",
-    );
-    if (!confirmed) return;
-
+    setRevokingKeyId(keyId);
+    setError(null);
     const result =
       kind === "mcp"
         ? await revokeApiKey(userId ?? null, keyId)
         : await revokeRestApiKey(userId ?? null, keyId);
+    setRevokingKeyId(null);
     if (result.success) {
       setKeys((previousKeys) => previousKeys.filter((apiKey) => apiKey.id !== keyId));
+      toast.success("Key revoked");
     } else {
       setError(result.message);
     }
@@ -264,13 +276,35 @@ export function ApiKeysCard({
                     )}
                   </p>
                 </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => handleRevoke(apiKey.id)}
-                >
-                  Revoke
-                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={revokingKeyId === apiKey.id}
+                    >
+                      {revokingKeyId === apiKey.id ? "Revoking..." : "Revoke"}
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Revoke &quot;{apiKey.name}&quot;?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Any client using this key loses access right away. This
+                        cannot be undone; create a new key to reconnect.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep key</AlertDialogCancel>
+                      <AlertDialogAction
+                        className={buttonVariants({ variant: "destructive" })}
+                        onClick={() => handleRevoke(apiKey.id)}
+                      >
+                        Revoke key
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             ))}
           </div>

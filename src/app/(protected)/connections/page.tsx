@@ -1,6 +1,7 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkAccountLimits } from "@/actions/server/connections/checkAccountLimits";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
+import { listShareLinks } from "@/actions/server/share-link/listShareLinks";
 import ConnectPlatformButton from "@/components/core/accounts/connectAccountsButton/ConnectPlatformButton";
 import { CreateShareLinkDialog } from "@/components/connections/CreateShareLinkDialog";
 import { ShareLinkList } from "@/components/connections/ShareLinkList";
@@ -56,6 +57,10 @@ const AccountsPageWithData = async () => {
 
   // Client-safe projection: full rows would serialize token columns into the RSC payload.
   const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);
+
+  // Share links are a Creator feature; null tells the list the read failed.
+  const shareLinksResult = isCreatorOrHigher ? await listShareLinks() : null;
+  const shareLinks = shareLinksResult?.success ? shareLinksResult.data : null;
 
   return (
     <SidebarContent className="px-4 py-6 ">
@@ -123,7 +128,7 @@ const AccountsPageWithData = async () => {
               </div>
               {showShareLinks && (
                 <div className="mt-3">
-                  <ShareLinkList />
+                  <ShareLinkList links={shareLinks} />
                 </div>
               )}
             </div>
