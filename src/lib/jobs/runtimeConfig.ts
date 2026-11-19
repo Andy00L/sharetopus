@@ -33,8 +33,7 @@ const computedWorkerConcurrency = Math.max(
 /**
  * Operator-controlled runtime knobs. Set in Vercel env vars.
  * Defaults are safe for Vercel Hobby with Fluid Compute (300s ceiling).
- * On Pro: bump MAX_FILE_MB, POLL_WINDOW_S. workerConcurrency now
- * derives from MAX_VIDEO_MB automatically.
+ * workerConcurrency derives from MAX_VIDEO_MB automatically.
  *
  * MAX_DURATION_S must match the maxDuration export in
  * src/app/api/inngest/route.ts AND maxRuntime on the Inngest client.
@@ -47,8 +46,6 @@ export const RUNTIME = {
     "PER_ACCOUNT_THROTTLE_PER_MIN",
     5
   ),
-  maxFileMb: readPositiveInt("MAX_FILE_MB", 100),
-  pollWindowS: readPositiveInt("POLL_WINDOW_S", 120),
   maxRetries: readPositiveInt("WORKER_MAX_RETRIES", 3),
   dispatcherBatchSize: readPositiveInt("DISPATCHER_BATCH_SIZE", 200),
   signedUrlTtlS: readPositiveInt("SIGNED_URL_TTL_S", 300),

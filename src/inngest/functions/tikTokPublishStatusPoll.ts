@@ -39,16 +39,19 @@ type PollAttemptResult =
  * paths converge. Early-exit at top of each iteration detects when
  * the webhook already finalized the post.
  *
- * Retries: 0 (retry logic is internal via the poll loop).
- * Concurrency: 5 per social_account_id (safety valve).
+ * Every step is safe to repeat (reads, a status fetch, an idempotent
+ * finalize), so a database error throws inside its step and Inngest
+ * retries that step. When retries run out, onFailure finalizes the pull as
+ * failed so it never stays 'pending' with no worker watching it.
  */
 export const tikTokPublishStatusPollWorker = inngest.createFunction(
   {
     id: "tiktok-publish-status-poll",
     name: "TikTok publish status poll",
     concurrency: { limit: 5, key: "event.data.social_account_id" },
-    retries: 0,
+    retries: 3,
     triggers: [{ event: "tiktok.publish.poll" }],
+    onFailure: async ({ event, error }) => finalizeAbandonedPoll(event, error),
   },
   async ({ event, step }) => {
     const eventData = PollEventDataSchema.safeParse(event.data);
@@ -65,21 +68,29 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
 
     let consecutiveErrors = 0;
 
+    const finalizeInStep = async (
+      stepId: string,
+      outcome: Parameters<typeof finalizeTikTokPostByPublishId>[1],
+    ): Promise<void> => {
+      await step.run(stepId, async () => {
+        const finalized = await finalizeTikTokPostByPublishId(publish_id, outcome);
+        if (!finalized.success) throw new Error(finalized.message);
+        return finalized;
+      });
+    };
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       // Early-exit: if webhook already finalized this post, stop polling.
+      // The lookup reports a missing row and a failed query the same way,
+      // so both throw and retry: a failed query must not end the poll.
       const currentPull = await step.run(
         `check-pending-${attempt}`,
         async () => {
-          return await findPendingTikTokPullByPublishId(publish_id);
+          const pullResult = await findPendingTikTokPullByPublishId(publish_id);
+          if (!pullResult.success) throw new Error(pullResult.message);
+          return pullResult;
         },
       );
-
-      if (!currentPull.success) {
-        console.log(
-          `[tiktokPublishStatusPollWorker] Pull row gone for ${publish_id}, exiting`,
-        );
-        return { outcome: "skipped", reason: "pull_not_found" };
-      }
 
       if (currentPull.pull.status !== "pending") {
         console.log(
@@ -112,12 +123,10 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
       if (attemptResult.kind === "token_unavailable") {
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
-          await step.run("finalize-token-failure", async () => {
-            await finalizeTikTokPostByPublishId(publish_id, {
-              source: "poll",
-              outcome: "failed",
-              fail_reason: "Could not resolve access token for polling",
-            });
+          await finalizeInStep("finalize-token-failure", {
+            source: "poll",
+            outcome: "failed",
+            fail_reason: "Could not resolve access token for polling",
           });
           return {
             outcome: "failed",
@@ -132,12 +141,10 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
       if (!status.success) {
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
-          await step.run("finalize-poll-errors", async () => {
-            await finalizeTikTokPostByPublishId(publish_id, {
-              source: "poll",
-              outcome: "failed",
-              fail_reason: `Status fetch errors exceeded: ${status.message}`,
-            });
+          await finalizeInStep("finalize-poll-errors", {
+            source: "poll",
+            outcome: "failed",
+            fail_reason: `Status fetch errors exceeded: ${status.message}`,
           });
           return {
             outcome: "failed",
@@ -152,24 +159,20 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
       consecutiveErrors = 0;
 
       if (status.terminal && status.kind === "completed") {
-        await step.run("finalize-completed", async () => {
-          await finalizeTikTokPostByPublishId(publish_id, {
-            source: "poll",
-            outcome: "completed",
-            tiktok_post_id: status.tiktok_post_id ?? null,
-          });
+        await finalizeInStep("finalize-completed", {
+          source: "poll",
+          outcome: "completed",
+          tiktok_post_id: status.tiktok_post_id ?? null,
         });
         return { outcome: "completed", raw_status: status.raw_status };
       }
 
       if (status.terminal && status.kind === "failed") {
         const reason = status.reason ?? `TikTok status: ${status.raw_status}`;
-        await step.run("finalize-failed", async () => {
-          await finalizeTikTokPostByPublishId(publish_id, {
-            source: "poll",
-            outcome: "failed",
-            fail_reason: reason,
-          });
+        await finalizeInStep("finalize-failed", {
+          source: "poll",
+          outcome: "failed",
+          fail_reason: reason,
         });
         return {
           outcome: "failed",
@@ -183,14 +186,41 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     }
 
     // Max attempts exhausted without terminal status
-    await step.run("finalize-timeout", async () => {
-      await finalizeTikTokPostByPublishId(publish_id, {
-        source: "poll",
-        outcome: "failed",
-        fail_reason: "Timeout waiting for TikTok publish status",
-      });
+    await finalizeInStep("finalize-timeout", {
+      source: "poll",
+      outcome: "failed",
+      fail_reason: "Timeout waiting for TikTok publish status",
     });
 
     return { outcome: "failed", reason: "timeout" };
   },
 );
+
+/**
+ * Finalizes the pull as failed once the poll run exhausts its retries, so
+ * the post shows a reason instead of staying 'pending' with no worker
+ * watching it. A pull a webhook already finalized is left as it is.
+ */
+async function finalizeAbandonedPoll(
+  // Structural shape of Inngest's FailureEventPayload: the original event
+  // is nested at data.event. sourceRef: node_modules/inngest/types.d.ts.
+  failureEvent: { data: { event: { data?: unknown } } },
+  error: Error,
+): Promise<{ finalized: boolean }> {
+  const eventData = PollEventDataSchema.safeParse(failureEvent.data.event.data);
+  if (!eventData.success) {
+    console.error("[finalizeAbandonedPoll] Failure event carried no publish_id");
+    return { finalized: false };
+  }
+  const finalized = await finalizeTikTokPostByPublishId(eventData.data.publish_id, {
+    source: "poll",
+    outcome: "failed",
+    fail_reason: `Status polling stopped: ${error.message}`.slice(0, 1000),
+  });
+  if (!finalized.success) {
+    console.error(
+      `[finalizeAbandonedPoll] Could not finalize ${eventData.data.publish_id}: ${finalized.message}`,
+    );
+  }
+  return { finalized: finalized.success };
+}

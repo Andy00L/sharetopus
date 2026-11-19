@@ -1,5 +1,11 @@
 import "server-only";
 
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { Blob } from "node:buffer";
+
+import { FormData } from "undici";
+
 import type {
   ProviderBehavior,
   ProviderConnectInput,
@@ -12,6 +18,10 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
 
 /**
  * Mastodon provider. Covers mastodon.social and every other instance,
@@ -32,6 +42,10 @@ const MASTODON_TIMEOUT_MS = 20_000;
 
 /** Media upload can transcode video, so it gets a longer ceiling. */
 const MASTODON_MEDIA_TIMEOUT_MS = 60_000;
+
+const MEDIA_PROCESSING_POLL_INTERVAL_MS = 2_000;
+
+const MEDIA_PROCESSING_DEADLINE_MS = 90_000;
 
 function normalizeInstanceUrl(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
@@ -214,52 +228,24 @@ async function uploadMedia(
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
-  let mediaBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    mediaBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
+  const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedMedia.ok) return storedMedia;
 
-  const formBoundary = `----sharetopus${Math.abs(Date.now() | 0).toString(36)}`;
-  const preamble =
-    `--${formBoundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
-    `Content-Type: ${mimeType}\r\n\r\n`;
-  const epilogue = `\r\n--${formBoundary}--\r\n`;
-
-  const multipartBody = Buffer.concat([
-    Buffer.from(preamble, "utf-8"),
-    Buffer.from(mediaBytes),
-    Buffer.from(epilogue, "utf-8"),
-  ]);
+  const uploadForm = new FormData();
+  uploadForm.append(
+    "file",
+    new Blob([storedMedia.media], { type: mimeType }),
+    fileName,
+  );
 
   const uploadResult = await providerFetch(`${instanceUrl}/api/v2/media`, {
     method: "POST",
-    headers: {
-      "Content-Type": `multipart/form-data; boundary=${formBoundary}`,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: new Uint8Array(multipartBody),
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: uploadForm,
     timeoutMs: MASTODON_MEDIA_TIMEOUT_MS,
   });
 
   if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
-
-  // v2/media answers 202 while it is still processing; the id is usable in
-  // a status immediately, so both 200 and 202 are success here.
   if (uploadResult.status !== 200 && uploadResult.status !== 202) {
     return {
       ok: false,
@@ -273,7 +259,47 @@ async function uploadMedia(
     return { ok: false, message: "Mastodon media upload returned no id." };
   }
 
+  // 202 means the file is still processing, and a status that attaches
+  // unprocessed media is refused. sourceRef: docs.joinmastodon.org
+  // methods/media (POST v2/media 202, GET v1/media/:id 200 vs 206).
+  if (uploadResult.status === 202) {
+    const processed = await waitForProcessedMedia(instanceUrl, accessToken, mediaId);
+    if (!processed.ok) return processed;
+  }
+
   return { ok: true, mediaId };
+}
+
+/** Polls the attachment until the instance finishes processing it, within MEDIA_PROCESSING_DEADLINE_MS. */
+async function waitForProcessedMedia(
+  instanceUrl: string,
+  accessToken: string,
+  mediaId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const deadlineMs = Date.now() + MEDIA_PROCESSING_DEADLINE_MS;
+  while (Date.now() < deadlineMs) {
+    await sleep(MEDIA_PROCESSING_POLL_INTERVAL_MS);
+    const mediaStatus = await providerFetch(
+      `${instanceUrl}/api/v1/media/${encodeURIComponent(mediaId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeoutMs: MASTODON_TIMEOUT_MS,
+      },
+    );
+    if (!mediaStatus.ok) return { ok: false, message: mediaStatus.message };
+    if (mediaStatus.status === 200) return { ok: true };
+    if (mediaStatus.status !== 206) {
+      return {
+        ok: false,
+        message: `Mastodon media processing failed (${mediaStatus.status}).`,
+      };
+    }
+  }
+  return {
+    ok: false,
+    message: `Mastodon was still processing the media after ${MEDIA_PROCESSING_DEADLINE_MS / 1000} seconds.`,
+  };
 }
 
 export const mastodonBehavior: ProviderBehavior = { connect, publish };

@@ -12,6 +12,10 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
 
 /**
  * WordPress provider, self-hosted mode.
@@ -219,24 +223,8 @@ async function uploadMedia(
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
-  let mediaBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    mediaBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
+  const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedMedia.ok) return storedMedia;
 
   // Strip anything that could break out of the header value; the filename
   // comes from stored data but this header is attacker-adjacent input.
@@ -249,7 +237,7 @@ async function uploadMedia(
       "Content-Type": mimeType,
       "Content-Disposition": `attachment; filename="${safeFileName}"`,
     },
-    body: mediaBytes,
+    body: storedMedia.media,
     timeoutMs: WORDPRESS_MEDIA_TIMEOUT_MS,
   });
 

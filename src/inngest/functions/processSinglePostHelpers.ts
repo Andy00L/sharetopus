@@ -5,7 +5,7 @@ import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFai
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
-import { scheduled_posts, social_accounts } from "@/db/schema";
+import { content_history, scheduled_posts, social_accounts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
@@ -41,59 +41,40 @@ import {
 /** A scheduled_posts row as the worker reads it. */
 type ScheduledPost = typeof scheduled_posts.$inferSelect;
 
-// ---------- fetch-post-and-account ----------
+// ---------- load-post ----------
 
-export type FetchPostResult =
-  | {
-      success: true;
-      message: string;
-      skip: false;
-      post: ScheduledPost;
-      /** The account exists and is not deleted; only its id, never its tokens. */
-      account: Pick<SocialAccount, "id">;
-    }
-  | { success: true; message: string; skip: true }
-  | { success: false; message: string };
+export type LoadPostResult =
+  | { kind: "ready"; post: ScheduledPost }
+  | { kind: "account_missing"; post: ScheduledPost }
+  | { kind: "terminal"; message: string }
+  | { kind: "lookup_failed"; message: string };
 
 /**
- * Returns skip:true if the row no longer exists or its status is
- * terminal (posted/failed/cancelled), so a re-invocation is a no-op.
+ * Loads the post and checks its account still exists. "terminal" means the
+ * row is gone or already posted, failed or cancelled, so a re-invocation is
+ * a no-op. Only the account id is checked, never its tokens: this result is
+ * returned from an Inngest step, which stores it.
  */
-export async function fetchPostAndAccount(
+export async function loadPostForProcessing(
   scheduledPostId: string,
-): Promise<FetchPostResult> {
-  const { data: postRows, error: postErr } = await runQuery(
+): Promise<LoadPostResult> {
+  const { data: postRows, error: postError } = await runQuery(
     db
       .select()
       .from(scheduled_posts)
       .where(eq(scheduled_posts.id, scheduledPostId))
       .limit(1),
   );
-
-  if (postErr) {
-    return {
-      success: false,
-      message: `Failed to fetch post: ${postErr.message}`,
-    };
+  if (postError) {
+    return { kind: "lookup_failed", message: `Failed to fetch post: ${postError.message}` };
   }
   const post = postRows[0];
-  if (!post) {
-    return { success: true, message: "post not found", skip: true };
+  if (!post) return { kind: "terminal", message: "post not found" };
+  if (TERMINAL_POST_STATUSES.includes(post.status)) {
+    return { kind: "terminal", message: `post already ${post.status}` };
   }
 
-  const terminalStates: PostStatus[] = ["posted", "failed", "cancelled"];
-  if (terminalStates.includes(post.status)) {
-    return {
-      success: true,
-      message: `post already ${post.status}`,
-      skip: true,
-    };
-  }
-
-  // Only the id: this result is returned from an Inngest step, which stores
-  // it, and the full row carries the OAuth tokens. The publish step loads
-  // the row itself (fetchAccountForPublish).
-  const { data: accountRows, error: accErr } = await runQuery(
+  const { data: accountRows, error: accountError } = await runQuery(
     db
       .select({ id: social_accounts.id })
       .from(social_accounts)
@@ -105,46 +86,32 @@ export async function fetchPostAndAccount(
       )
       .limit(1),
   );
-
-  if (accErr) {
-    return {
-      success: false,
-      message: `Failed to fetch account: ${accErr.message}`,
-    };
+  if (accountError) {
+    return { kind: "lookup_failed", message: `Failed to fetch account: ${accountError.message}` };
   }
-  const account = accountRows[0];
-  if (!account) {
-    return {
-      success: false,
-      message: "Social account not found or deleted",
-    };
-  }
-
-  return {
-    success: true,
-    message: "fetched",
-    skip: false,
-    post,
-    account,
-  };
+  return accountRows.length > 0
+    ? { kind: "ready", post }
+    : { kind: "account_missing", post };
 }
+
+const TERMINAL_POST_STATUSES: readonly PostStatus[] = ["posted", "failed", "cancelled"];
 
 // ---------- claim-post ----------
 
-export type ClaimResult = {
-  success: true;
-  message: string;
-  claimed: boolean;
-};
+export type ClaimResult =
+  | { success: true; claimed: boolean }
+  | { success: false; message: string };
 
 /**
  * UPDATE ... SET status='processing' WHERE id=? AND status IN
- * ('scheduled','queued'). Zero rows updated means another worker
- * took it OR the row already moved on; return claimed=false.
+ * ('scheduled','queued') AND scheduled_at = the dispatched time. Zero rows
+ * means another run took it, the row moved on, or it was rescheduled after
+ * this event was sent (the tick dispatches the new time with a new event).
  */
-export async function claimPostForProcessing(
-  scheduledPostId: string,
-): Promise<ClaimResult> {
+export async function claimPostForProcessing(input: {
+  scheduledPostId: string;
+  dispatchedScheduledAt: string;
+}): Promise<ClaimResult> {
   const { data, error } = await runQuery(
     db
       .update(scheduled_posts)
@@ -154,29 +121,55 @@ export async function claimPostForProcessing(
       })
       .where(
         and(
-          eq(scheduled_posts.id, scheduledPostId),
+          eq(scheduled_posts.id, input.scheduledPostId),
           inArray(
             scheduled_posts.status,
             ["scheduled", "queued"] satisfies PostStatus[],
           ),
+          eq(scheduled_posts.scheduled_at, input.dispatchedScheduledAt),
         ),
       )
       .returning({ id: scheduled_posts.id }),
   );
 
   if (error) {
-    console.error("[processSinglePost] claim failed:", error.message);
-    return {
-      success: true,
-      message: `claim error: ${error.message}`,
-      claimed: false,
-    };
+    console.error("[claimPostForProcessing] claim failed:", error.message);
+    return { success: false, message: `claim error: ${error.message}` };
   }
-  return {
-    success: true,
-    message: data.length > 0 ? "claimed" : "not claimed",
-    claimed: data.length > 0,
-  };
+  return { success: true, claimed: data.length > 0 };
+}
+
+// ---------- duplicate-publish guard ----------
+
+export type PublishedCheckResult =
+  | { success: true; isPublished: boolean }
+  | { success: false; message: string };
+
+/**
+ * True when a content_history row already records this scheduled post.
+ * Every publish path writes one right after the platform accepts the post,
+ * with batch_id = post.batch_id ?? post.id, so the lookup rides
+ * idx_content_history_batch.
+ */
+export async function findPublishedContentHistory(
+  post: Pick<ScheduledPost, "id" | "batch_id">,
+): Promise<PublishedCheckResult> {
+  const { data, error } = await runQuery(
+    db
+      .select({ id: content_history.id })
+      .from(content_history)
+      .where(
+        and(
+          eq(content_history.batch_id, post.batch_id ?? post.id),
+          eq(content_history.scheduled_post_id, post.id),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `content history lookup failed: ${error.message}` };
+  }
+  return { success: true, isPublished: data.length > 0 };
 }
 
 // ---------- build-signed-urls ----------
@@ -632,35 +625,25 @@ export async function callPlatformDirectPost(args: {
 
 // ---------- record final status ----------
 
-export type RecordStatusResult = {
-  success: true;
-  message: string;
-  updated: boolean;
-};
+export type RecordStatusResult =
+  | { success: true; updated: boolean }
+  | { success: false; message: string };
 
 /**
- * Idempotent: only acts if the row is currently 'processing'.
- * Re-invocation after success is a no-op (row already posted/failed).
+ * Moves a 'processing' row to posted or failed. CAS-guarded on
+ * status='processing', so a re-invocation after the row moved on updates
+ * nothing and sends no duplicate webhook or failed_posts row. A failed
+ * UPDATE comes back as success:false for the caller to retry.
  *
- * For terminal failures, this function both UPDATEs the scheduled_posts
- * row to status='failed' AND INSERTs a failed_posts record via
- * storeFailedPost. The failed_posts INSERT only fires when the CAS
- * guard matches (row was 'processing'), preventing duplicate rows on
- * re-invocation. If the INSERT fails, the error is logged and the
- * function continues (the scheduled_posts update already succeeded).
- *
- * For success, content_history (with scheduled_post_id lineage) is
- * already written by the directPostFor function; this step marks the
- * scheduled_posts row as status='posted'. The row stays alive so the
- * FK on content_history.scheduled_post_id is not cascaded (ON DELETE
- * SET NULL). The Scheduled UI filters out 'posted' rows by default.
+ * For success, content_history (with scheduled_post_id lineage) is already
+ * written by the publish path; the row stays so the content_history FK
+ * (ON DELETE SET NULL) keeps its lineage.
  */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
-  account: Pick<SocialAccount, "id">;
   result: PlatformPostOutcome;
 }): Promise<RecordStatusResult> {
-  const { post, account, result } = args;
+  const { post, result } = args;
   const nowIso = new Date().toISOString();
 
   if (result.ok) {
@@ -684,31 +667,18 @@ export async function recordPostStatus(args: {
 
     if (error) {
       console.error("[recordPostStatus] mark posted failed:", error.message);
-      return {
-        success: true,
-        message: `mark-posted error: ${error.message}`,
-        updated: false,
-      };
+      return { success: false, message: `mark-posted error: ${error.message}` };
     }
     const wasPosted = data.length > 0;
-
-    // Dispatch post.published webhook on successful status transition.
     if (wasPosted) {
       dispatchWebhook(post.principal_id, "post.published", {
         post_id: post.id,
         platform: post.platform,
       });
     }
-
-    return {
-      success: true,
-      message: wasPosted ? "marked posted" : "already moved on",
-      updated: wasPosted,
-    };
+    return { success: true, updated: wasPosted };
   }
 
-  // Terminal failure path. Retryable failures throw upstream and
-  // never reach this branch.
   const errorMessage = `${result.reason}: ${result.message}`.slice(0, 1000);
 
   const { data, error } = await runQuery(
@@ -730,74 +700,54 @@ export async function recordPostStatus(args: {
 
   if (error) {
     console.error("[recordPostStatus] mark failed failed:", error.message);
-    return {
-      success: true,
-      message: `mark-failed error: ${error.message}`,
-      updated: false,
-    };
+    return { success: false, message: `mark-failed error: ${error.message}` };
   }
 
   const wasUpdated = data.length > 0;
+  if (!wasUpdated) return { success: true, updated: false };
 
-  // Write a failed_posts row only when we actually transitioned the
-  // row to 'failed'. The CAS guard prevents duplicate rows on
-  // re-invocation (wasUpdated is false if the row already moved on).
-  if (wasUpdated) {
-    const storeResult = await storeFailedPost({
-      principal_id: post.principal_id,
-      social_account_id: post.social_account_id ?? account.id,
-      platform: post.platform,
-      post_title: post.post_title ?? null,
-      post_description: post.post_description ?? null,
-      post_options: toJsonObject(post.post_options) ?? {},
-      media_type: post.media_type,
-      media_storage_path: post.media_storage_path ?? "",
-      coverTimestamp: post.cover_image_timestamp ?? undefined,
-      batch_id: post.batch_id ?? post.id,
-      idempotency_key: post.idempotency_key,
-      x402_charge_id: post.x402_charge_id,
-      extra_data: {
-        reason: result.reason,
-        message: result.message,
-        timestamp: nowIso,
-      },
-      created_via: post.created_via ?? "web",
-    });
-
-    if (!storeResult.success) {
-      console.error(
-        "[recordPostStatus] Failed to store failed post record:",
-        storeResult.message,
-      );
-      // Continue. The scheduled_posts UPDATE already succeeded;
-      // losing the failed_posts row is non-fatal.
-    }
-  }
-
-  // Dispatch post.failed webhook on terminal failure transition.
-  if (wasUpdated) {
-    dispatchWebhook(post.principal_id, "post.failed", {
-      post_id: post.id,
-      platform: post.platform,
+  const storeResult = await storeFailedPost({
+    principal_id: post.principal_id,
+    social_account_id: post.social_account_id,
+    platform: post.platform,
+    post_title: post.post_title ?? null,
+    post_description: post.post_description ?? null,
+    post_options: toJsonObject(post.post_options) ?? {},
+    media_type: post.media_type,
+    media_storage_path: post.media_storage_path ?? "",
+    coverTimestamp: post.cover_image_timestamp ?? undefined,
+    batch_id: post.batch_id ?? post.id,
+    idempotency_key: post.idempotency_key,
+    x402_charge_id: post.x402_charge_id,
+    extra_data: {
       reason: result.reason,
-      error_message: result.message,
-    });
-
-    // If the failure reason is auth_expired, also notify about the connection.
-    if (result.reason === "auth_expired") {
-      dispatchWebhook(post.principal_id, "connection.expired", {
-        social_account_id: account.id,
-        platform: post.platform,
-        reason: "auth_expired",
-      });
-    }
+      message: result.message,
+      timestamp: nowIso,
+    },
+    created_via: post.created_via ?? "web",
+  });
+  if (!storeResult.success) {
+    console.error(
+      "[recordPostStatus] Failed to store failed post record:",
+      storeResult.message,
+    );
   }
 
-  return {
-    success: true,
-    message: wasUpdated ? "marked failed" : "already moved on",
-    updated: wasUpdated,
-  };
+  dispatchWebhook(post.principal_id, "post.failed", {
+    post_id: post.id,
+    platform: post.platform,
+    reason: result.reason,
+    error_message: result.message,
+  });
+  if (result.reason === "auth_expired") {
+    dispatchWebhook(post.principal_id, "connection.expired", {
+      social_account_id: post.social_account_id,
+      platform: post.platform,
+      reason: "auth_expired",
+    });
+  }
+
+  return { success: true, updated: true };
 }
 
 // ---------- cleanup storage ----------

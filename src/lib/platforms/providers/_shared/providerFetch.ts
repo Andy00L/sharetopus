@@ -1,9 +1,16 @@
 import "server-only";
 
-import { fetch as undiciFetch, type Response as UndiciResponse } from "undici";
+import type { Blob } from "node:buffer";
 
 import {
-  buildPinnedAgent,
+  fetch as undiciFetch,
+  type FormData,
+  type Response as UndiciResponse,
+} from "undici";
+
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
+import {
+  acquirePinnedDispatcher,
   resolveHostToPublicAddresses,
 } from "@/lib/net/pinnedFetch";
 import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
@@ -22,9 +29,6 @@ import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
  * private or reserved address, pin the socket to the validated IP so
  * rebinding cannot swap it after the check, and refuse redirects.
  *
- * Providers on fixed first-party hosts (Discord, Telegram) do not need
- * this and call fetch directly.
- *
  * Called by: instance-hosted provider modules.
  * Tables touched: none.
  */
@@ -39,8 +43,8 @@ export type ProviderFetchResult =
 export type ProviderFetchOptions = {
   method: "GET" | "POST" | "PUT";
   headers?: Record<string, string>;
-  /** Pre-serialized request body. */
-  body?: string | Uint8Array;
+  /** FormData must be undici's class: undici's fetch serializes no other. */
+  body?: string | Uint8Array | Blob | FormData;
   timeoutMs: number;
 };
 
@@ -74,7 +78,6 @@ export async function providerFetch(
     };
   }
 
-  const dispatcher = buildPinnedAgent(resolution.addresses);
   try {
     const response = await undiciFetch(rawUrl, {
       method: options.method,
@@ -82,7 +85,7 @@ export async function providerFetch(
       body: options.body,
       redirect: "manual",
       signal: AbortSignal.timeout(options.timeoutMs),
-      dispatcher,
+      dispatcher: acquirePinnedDispatcher(resolution.addresses),
     });
 
     if (response.status >= 300 && response.status < 400) {
@@ -95,15 +98,7 @@ export async function providerFetch(
     const bodyText = await readCappedBody(response);
     return { ok: true, status: response.status, bodyText };
   } catch (requestError) {
-    return {
-      ok: false,
-      message:
-        requestError instanceof Error
-          ? requestError.message
-          : "Unknown network error calling the provider.",
-    };
-  } finally {
-    dispatcher.close().catch(() => {});
+    return { ok: false, message: describeNetworkError(requestError) };
   }
 }
 

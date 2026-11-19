@@ -9,6 +9,19 @@ import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 const CUTOFF_HOURS = 24;
 const MAX_FILES_PER_RUN = 10_000;
 
+type SweepOutcome =
+  | {
+      ok: true;
+      scanned: number;
+      referenced: number;
+      orphansFound: number;
+      deleted: number;
+      failed: number;
+      bytesFreed: number;
+      truncated: boolean;
+    }
+  | { ok: false; reason: string };
+
 /**
  * Daily cron that sweeps storage files older than 24h with no reference
  * in any of 4 tables (scheduled_posts, failed_posts, pending_tiktok_pulls,
@@ -17,6 +30,10 @@ const MAX_FILES_PER_RUN = 10_000;
  * Runs at 03:00 UTC. No retries (next daily run catches any failures).
  * Partial success is acceptable: failed batches are logged and retried
  * on the next run (the 24h cutoff makes them eligible again).
+ *
+ * One step that returns counts only: Inngest stores every step result, and
+ * the listed paths (up to MAX_FILES_PER_RUN with their sizes) would be
+ * stored and replayed to each later step for nothing.
  */
 export const sweepOrphanStorageFiles = inngest.createFunction(
   {
@@ -26,106 +43,73 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
     triggers: [{ cron: "0 3 * * *" }],
   },
   async ({ step }) => {
-    const cutoffIso = new Date(
-      Date.now() - CUTOFF_HOURS * 3_600_000
-    ).toISOString();
-
-    const listResult = await step.run("list-aged", () =>
-      listAgedStorageFiles({ bucket: MEDIA_BUCKET, cutoffIso, maxFiles: MAX_FILES_PER_RUN })
+    const outcome = await step.run("sweep-orphans", () =>
+      sweepOrphans(new Date(Date.now() - CUTOFF_HOURS * 3_600_000).toISOString()),
     );
-
-    if (!listResult.success) {
-      console.error(
-        "[sweepOrphanStorageFiles] List failed:",
-        listResult.message
-      );
-      return { ok: false, reason: listResult.message };
+    if (!outcome.ok) {
+      console.error("[sweepOrphanStorageFiles] Sweep failed:", outcome.reason);
+      return outcome;
     }
-
-    if (listResult.paths.length === 0) {
-      return {
-        ok: true,
-        scanned: 0,
-        referenced: 0,
-        orphansFound: 0,
-        deleted: 0,
-        bytesFreed: 0,
-        truncated: false,
-      };
-    }
-
-    if (listResult.truncated) {
-      console.warn(
-        `[sweepOrphanStorageFiles] Truncated at ${MAX_FILES_PER_RUN} files. ` +
-          "Consider raising MAX_FILES_PER_RUN if this persists."
-      );
-    }
-
-    const refResult = await step.run("query-references", () =>
-      findReferencedStoragePaths(listResult.paths)
-    );
-
-    if (!refResult.success) {
-      console.error(
-        "[sweepOrphanStorageFiles] Reference query failed:",
-        refResult.message
-      );
-      return { ok: false, reason: refResult.message };
-    }
-
-    const referencedSet = new Set(refResult.referenced);
-    const orphans = listResult.paths.filter(
-      (storagePath) => !referencedSet.has(storagePath)
-    );
-
-    if (orphans.length === 0) {
-      console.log(
-        `[sweepOrphanStorageFiles] scanned=${listResult.paths.length} ` +
-          `referenced=${refResult.referenced.length} orphans=0`
-      );
-      return {
-        ok: true,
-        scanned: listResult.paths.length,
-        referenced: refResult.referenced.length,
-        orphansFound: 0,
-        deleted: 0,
-        bytesFreed: 0,
-        truncated: listResult.truncated,
-      };
-    }
-
-    const deleteResult = await step.run("batch-delete", () =>
-      batchDeleteStorageFiles({
-        bucket: MEDIA_BUCKET,
-        paths: orphans,
-        pathSizes: listResult.pathSizes,
-      })
-    );
-
-    if (!deleteResult.success) {
-      console.error(
-        "[sweepOrphanStorageFiles] Batch delete failed:",
-        deleteResult.message
-      );
-      return { ok: false, reason: deleteResult.message };
-    }
-
     console.log(
-      `[sweepOrphanStorageFiles] scanned=${listResult.paths.length} ` +
-        `referenced=${refResult.referenced.length} ` +
-        `orphans=${orphans.length} ` +
-        `deleted=${deleteResult.deletedCount} failed=${deleteResult.failedCount} ` +
-        `bytesFreed=${deleteResult.bytesFreed}`
+      `[sweepOrphanStorageFiles] scanned=${outcome.scanned} referenced=${outcome.referenced} ` +
+        `orphans=${outcome.orphansFound} deleted=${outcome.deleted} failed=${outcome.failed} ` +
+        `bytesFreed=${outcome.bytesFreed} truncated=${outcome.truncated}`,
     );
-
-    return {
-      ok: true,
-      scanned: listResult.paths.length,
-      referenced: refResult.referenced.length,
-      orphansFound: orphans.length,
-      deleted: deleteResult.deletedCount,
-      bytesFreed: deleteResult.bytesFreed,
-      truncated: listResult.truncated,
-    };
-  }
+    return outcome;
+  },
 );
+
+async function sweepOrphans(cutoffIso: string): Promise<SweepOutcome> {
+  const listResult = await listAgedStorageFiles({
+    bucket: MEDIA_BUCKET,
+    cutoffIso,
+    maxFiles: MAX_FILES_PER_RUN,
+  });
+  if (!listResult.success) return { ok: false, reason: listResult.message };
+
+  if (listResult.truncated) {
+    console.warn(
+      `[sweepOrphans] Truncated at ${MAX_FILES_PER_RUN} files. ` +
+        "Consider raising MAX_FILES_PER_RUN if this persists.",
+    );
+  }
+
+  const emptyCounts = {
+    ok: true as const,
+    scanned: listResult.paths.length,
+    referenced: 0,
+    orphansFound: 0,
+    deleted: 0,
+    failed: 0,
+    bytesFreed: 0,
+    truncated: listResult.truncated,
+  };
+  if (listResult.paths.length === 0) return emptyCounts;
+
+  const refResult = await findReferencedStoragePaths(listResult.paths);
+  if (!refResult.success) return { ok: false, reason: refResult.message };
+
+  const referencedPaths = new Set(refResult.referenced);
+  const orphans = listResult.paths.filter(
+    (storagePath) => !referencedPaths.has(storagePath),
+  );
+  if (orphans.length === 0) {
+    return { ...emptyCounts, referenced: refResult.referenced.length };
+  }
+
+  const deleteResult = await batchDeleteStorageFiles({
+    bucket: MEDIA_BUCKET,
+    paths: orphans,
+    pathSizes: listResult.pathSizes,
+  });
+  if (!deleteResult.success) return { ok: false, reason: deleteResult.message };
+
+  return {
+    ...emptyCounts,
+    referenced: refResult.referenced.length,
+    orphansFound: orphans.length,
+    deleted: deleteResult.deletedCount,
+    failed: deleteResult.failedCount,
+    bytesFreed: deleteResult.bytesFreed,
+  };
+}

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
@@ -41,7 +41,7 @@ export async function fetchDueScheduledPosts(
   );
 
   if (error) {
-    console.error("[scheduledPostsTick] fetch failed:", error.message);
+    console.error("[fetchDueScheduledPosts] fetch failed:", error.message);
     return {
       success: false,
       message: `Failed to fetch due posts: ${error.message}`,
@@ -60,13 +60,16 @@ export type MarkQueuedResult =
   | { success: false; message: string; updated: 0 };
 
 /**
- * Idempotent: only flips rows still in 'scheduled' state. Concurrent
- * tick attempts cannot double-update.
+ * Flips the dispatched rows from 'scheduled' to 'queued'. Each row must
+ * still carry the scheduled_at its event was sent with: a post rescheduled
+ * between dispatch and this update stays 'scheduled' for the tick at its
+ * new time, instead of sitting in 'queued' where no tick reads it and the
+ * stale event's claim refuses it.
  */
 export async function markPostsAsQueued(
-  postIds: string[]
+  dispatchedPosts: Pick<DuePost, "id" | "scheduled_at">[],
 ): Promise<MarkQueuedResult> {
-  if (postIds.length === 0) {
+  if (dispatchedPosts.length === 0) {
     return { success: true, message: "Nothing to mark", updated: 0 };
   }
   const { data, error } = await runQuery(
@@ -78,15 +81,26 @@ export async function markPostsAsQueued(
       })
       .where(
         and(
-          inArray(scheduled_posts.id, postIds),
+          inArray(
+            scheduled_posts.id,
+            dispatchedPosts.map((dispatchedPost) => dispatchedPost.id),
+          ),
           eq(scheduled_posts.status, "scheduled" satisfies PostStatus),
+          or(
+            ...dispatchedPosts.map((dispatchedPost) =>
+              and(
+                eq(scheduled_posts.id, dispatchedPost.id),
+                eq(scheduled_posts.scheduled_at, dispatchedPost.scheduled_at),
+              ),
+            ),
+          ),
         ),
       )
       .returning({ id: scheduled_posts.id }),
   );
 
   if (error) {
-    console.error("[scheduledPostsTick] mark queued failed:", error.message);
+    console.error("[markPostsAsQueued] mark queued failed:", error.message);
     return {
       success: false,
       message: `Failed to mark queued: ${error.message}`,

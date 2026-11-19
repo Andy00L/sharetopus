@@ -1,5 +1,9 @@
 import "server-only";
 
+import { Blob } from "node:buffer";
+
+import { FormData } from "undici";
+
 import type {
   ProviderBehavior,
   ProviderConnectInput,
@@ -17,6 +21,10 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
 import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
@@ -256,41 +264,23 @@ async function dribbblePublish(
   const title = input.title.trim();
   if (!title) return { ok: false, message: "Dribbble shots require a title." };
 
-  // Fetch our own signed URL for the bytes, then multipart-upload the shot.
-  let imageBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(input.mediaUrl);
-    if (!mediaResponse.ok) {
-      return { ok: false, message: `Could not read the shot image (HTTP ${mediaResponse.status}).` };
-    }
-    imageBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the shot image: ${mediaError instanceof Error ? mediaError.message : "unknown"}`,
-    };
-  }
+  const storedImage = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedImage.ok) return storedImage;
 
-  const boundary = `----sharetopus${Math.abs(Date.now() | 0).toString(36)}`;
   const safeFileName = input.fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "shot.png";
-  const parts = Buffer.concat([
-    Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\n${title}\r\n` +
-        `--${boundary}\r\nContent-Disposition: form-data; name="description"\r\n\r\n${input.body.trim()}\r\n` +
-        `--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="${safeFileName}"\r\nContent-Type: ${input.mediaMimeType}\r\n\r\n`,
-      "utf-8",
-    ),
-    Buffer.from(imageBytes),
-    Buffer.from(`\r\n--${boundary}--\r\n`, "utf-8"),
-  ]);
+  const shotForm = new FormData();
+  shotForm.append("title", title);
+  shotForm.append("description", input.body.trim());
+  shotForm.append(
+    "image",
+    new Blob([storedImage.media], { type: input.mediaMimeType }),
+    safeFileName,
+  );
 
   const shotResult = await providerFetch("https://api.dribbble.com/v2/shots", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.accessToken}`,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-    },
-    body: new Uint8Array(parts),
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: shotForm,
     timeoutMs: VARIANT_TIMEOUT_MS,
   });
 

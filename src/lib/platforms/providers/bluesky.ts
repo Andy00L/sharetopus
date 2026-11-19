@@ -13,6 +13,7 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import { fetchStoredMedia } from "./_shared/fetchStoredMedia";
 
 /**
  * Bluesky (AT Protocol) provider.
@@ -283,33 +284,8 @@ async function uploadImageBlob(
   mediaUrl: string,
   mimeType: string,
 ): Promise<BlobUploadResult> {
-  let imageBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    imageBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
-
-  if (imageBytes.byteLength > BLUESKY_MAX_IMAGE_BYTES) {
-    return {
-      ok: false,
-      message: `Image is ${Math.round(imageBytes.byteLength / 1024)}KB; Bluesky accepts up to ${
-        BLUESKY_MAX_IMAGE_BYTES / 1000
-      }KB.`,
-    };
-  }
+  const storedImage = await fetchStoredMedia(mediaUrl, BLUESKY_MAX_IMAGE_BYTES);
+  if (!storedImage.ok) return storedImage;
 
   const uploadResult = await providerFetch(
     `${service}/xrpc/com.atproto.repo.uploadBlob`,
@@ -319,7 +295,7 @@ async function uploadImageBlob(
         "Content-Type": mimeType,
         Authorization: `Bearer ${accessToken}`,
       },
-      body: imageBytes,
+      body: storedImage.media,
       timeoutMs: BLUESKY_TIMEOUT_MS,
     },
   );

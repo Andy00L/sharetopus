@@ -32,8 +32,8 @@ const WebhookContentSchema = z.object({
  *   - others (inbox_delivered, no_longer_publicaly_available,
  *     authorization.removed, ...): logged and ignored.
  *
- * Retries: Inngest default. The finalize function is idempotent so
- * retries are safe.
+ * A finalize that fails throws so Inngest retries the run; the finalize
+ * function is idempotent, so a retry is safe.
  */
 export const processTikTokPublishWebhook = inngest.createFunction(
   {
@@ -87,7 +87,7 @@ export const processTikTokPublishWebhook = inngest.createFunction(
 
     switch (eventName) {
       case "post.publish.complete": {
-        const result = await finalizeTikTokPostByPublishId(parsed.publish_id, {
+        const result = await finalizeOrThrow(parsed.publish_id, {
           source: "webhook",
           outcome: "completed",
           // post_id not yet known. publicly_available will arrive later
@@ -107,7 +107,7 @@ export const processTikTokPublishWebhook = inngest.createFunction(
             ? String(parsed.post_id)
             : null;
 
-        const result = await finalizeTikTokPostByPublishId(parsed.publish_id, {
+        const result = await finalizeOrThrow(parsed.publish_id, {
           source: "webhook",
           outcome: "completed",
           tiktok_post_id: tiktokPostId,
@@ -121,7 +121,7 @@ export const processTikTokPublishWebhook = inngest.createFunction(
       }
 
       case "post.publish.failed": {
-        const result = await finalizeTikTokPostByPublishId(parsed.publish_id, {
+        const result = await finalizeOrThrow(parsed.publish_id, {
           source: "webhook",
           outcome: "failed",
           fail_reason: parsed.reason ?? "TikTok webhook reported failure",
@@ -145,3 +145,18 @@ export const processTikTokPublishWebhook = inngest.createFunction(
     }
   },
 );
+
+/**
+ * Finalizes and throws on failure, the Inngest retry exception to errors
+ * as values: this handler has no step.run, so a throw re-runs it whole.
+ */
+async function finalizeOrThrow(
+  publishId: string,
+  outcome: Parameters<typeof finalizeTikTokPostByPublishId>[1],
+): Promise<Awaited<ReturnType<typeof finalizeTikTokPostByPublishId>>> {
+  const finalized = await finalizeTikTokPostByPublishId(publishId, outcome);
+  if (!finalized.success) {
+    throw new Error(`[finalizeOrThrow] ${publishId}: ${finalized.message}`);
+  }
+  return finalized;
+}

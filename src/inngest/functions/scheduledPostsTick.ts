@@ -6,39 +6,35 @@ import {
 } from "./scheduledPostsTickHelpers";
 
 /**
- * Runs once per minute on Inngest's cron infrastructure.
- * Replaces the Supabase Edge Function process-scheduled-posts AND
- * /api/cron/process-scheduled-posts. Vercel cron is not used
- * (Hobby plan has a 1 invocation/day cap).
+ * Dispatches due scheduled posts every 5 minutes on Inngest's cron. Every
+ * step is safe to repeat (a read, a send deduplicated by event id, a
+ * CAS-guarded update), so each throws on failure and Inngest retries it.
  */
 export const scheduledPostsTick = inngest.createFunction(
   {
     id: "scheduled-posts-tick",
     name: "Scheduled posts dispatcher",
     concurrency: { limit: 1 },
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "*/5 * * * *" }],
   },
   async ({ step }) => {
-    const due = await step.run("fetch-due-posts", () =>
-      fetchDueScheduledPosts(
+    const duePosts = await step.run("read-due-posts", async () => {
+      const due = await fetchDueScheduledPosts(
         new Date().toISOString(),
         RUNTIME.dispatcherBatchSize,
-      ),
-    );
+      );
+      if (!due.success) throw new Error(due.message);
+      return due.posts;
+    });
 
-    if (!due.success) {
-      return { enqueued: 0, marked: 0, message: due.message };
-    }
-    if (due.posts.length === 0) {
+    if (duePosts.length === 0) {
       return { enqueued: 0, marked: 0, message: "no due posts" };
     }
 
-    // Inngest dedupes events with identical id within 24h. The id
-    // includes scheduled_at so a manual reschedule (status flipped
-    // back from failed to scheduled with a new scheduled_at) gets
-    // a fresh event id.
-    const events = due.posts.map((post) => ({
+    // Inngest dedupes events with an identical id within 24h. The id
+    // includes scheduled_at so a rescheduled post gets a fresh event.
+    const events = duePosts.map((post) => ({
       name: "post.due" as const,
       id: `post.due-${post.id}-${post.scheduled_at}`,
       data: {
@@ -52,9 +48,11 @@ export const scheduledPostsTick = inngest.createFunction(
 
     await step.sendEvent("dispatch-due-posts", events);
 
-    const marked = await step.run("mark-queued", () =>
-      markPostsAsQueued(due.posts.map((duePost) => duePost.id)),
-    );
+    const marked = await step.run("mark-queued", async () => {
+      const markResult = await markPostsAsQueued(duePosts);
+      if (!markResult.success) throw new Error(markResult.message);
+      return markResult;
+    });
 
     return {
       enqueued: events.length,

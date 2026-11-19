@@ -4,6 +4,11 @@ import { createHash } from "node:crypto";
 import { WebSocket } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
+import {
+  acquirePinnedDispatcher,
+  resolveHostToPublicAddresses,
+} from "@/lib/net/pinnedFetch";
+
 import type {
   ProviderBehavior,
   ProviderConnectInput,
@@ -165,11 +170,21 @@ async function publish(
 
 type RelayOutcome = { accepted: boolean; reason: string };
 
-/** Sends ["EVENT", event] and waits for the matching ["OK", id, bool]. */
-function publishToRelay(
+/**
+ * Sends ["EVENT", event] and waits for the matching ["OK", id, bool]. The
+ * relay URL is user input, so its host gets the same resolve, validate and
+ * pin treatment as providerFetch before the socket opens.
+ */
+async function publishToRelay(
   relayUrl: string,
   signedEvent: { id: string },
 ): Promise<RelayOutcome> {
+  const resolution = await resolveHostToPublicAddresses(new URL(relayUrl).hostname);
+  if (!resolution.ok) {
+    return { accepted: false, reason: `relay host not permitted (${resolution.reason})` };
+  }
+  const pinnedDispatcher = acquirePinnedDispatcher(resolution.addresses);
+
   return new Promise((resolve) => {
     let settled = false;
     const settle = (outcome: RelayOutcome) => {
@@ -185,7 +200,7 @@ function publishToRelay(
 
     let relaySocket: WebSocket;
     try {
-      relaySocket = new WebSocket(relayUrl);
+      relaySocket = new WebSocket(relayUrl, { dispatcher: pinnedDispatcher });
     } catch (socketError) {
       resolve({
         accepted: false,
