@@ -19,8 +19,6 @@ import {
 } from "./_shared/oauth2";
 
 /**
- * Threads provider (Meta's Threads API).
- *
  * Two-step publish: create a media container, then publish it. The short
  * lived code-exchange token is immediately traded for a long-lived one
  * (~60 days) so scheduled posts do not die within the hour.
@@ -53,8 +51,6 @@ async function connect(
   const shortLived = await exchangeOAuth2Code(THREADS_OAUTH, input);
   if (!shortLived.ok) return { ok: false, message: shortLived.message };
 
-  // Trade for the long-lived token. A failure here is fatal on purpose:
-  // storing the one-hour token would make every scheduled post a coin flip.
   const clientSecret = process.env.THREADS_CLIENT_SECRET ?? "";
   const exchangeUrl =
     `${THREADS_GRAPH.replace("/v1.0", "")}/access_token` +
@@ -114,7 +110,6 @@ async function publish(
     .filter((part) => part.length > 0)
     .join("\n\n");
 
-  // Step 1: media container.
   const containerParams = new URLSearchParams({
     access_token: input.accessToken,
     text,
@@ -153,7 +148,6 @@ async function publish(
     return { ok: false, message: "Threads returned no creation id." };
   }
 
-  // Step 2: publish the container.
   const publishParams = new URLSearchParams({
     access_token: input.accessToken,
     creation_id: creationId,

@@ -32,23 +32,8 @@ import {
   type OAuth2Config,
 } from "./_shared/oauth2";
 
-/**
- * OAuth providers that are variants or approval-gated APIs: LinkedIn Page
- * (company pages on the existing LinkedIn app), Dribbble (shot upload
- * needs Dribbble's approved upload scope), Google My Business (API access
- * is approval-gated by Google). The code is complete; each activates when
- * its env pair is set and the platform-side approval exists.
- *
- * sourceRef: learn.microsoft.com/linkedin (organizationAcls, ugcPosts);
- * developer.dribbble.com/v2 (user, shots); developers.google.com/my-business
- * (accounts, locations, localPosts).
- */
-
 const VARIANT_TIMEOUT_MS = 30_000;
 
-// ── LinkedIn Page ─────────────────────────────────────────────────────────
-
-/** Reuses the existing LinkedIn app; only the scopes differ. */
 const LINKEDIN_PAGE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
   tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
@@ -148,9 +133,6 @@ async function linkedinPagePublish(
     .filter((part) => part.length > 0)
     .join("\n\n");
 
-  // Text posts, and media as an ARTICLE share pointing at the URL. The
-  // registerUpload asset pipeline (native image/video) is a follow-up; a
-  // link share is the honest form that works everywhere today.
   const shareContent: Record<string, unknown> = {
     shareCommentary: { text: commentary },
     shareMediaCategory: input.mediaUrl ? "ARTICLE" : "NONE",
@@ -206,8 +188,6 @@ export const linkedinPageBehavior: ProviderBehavior = {
   buildAuthorizeUrl: (input) =>
     buildOAuth2AuthorizeUrl(LINKEDIN_PAGE_OAUTH, input),
 };
-
-// ── Dribbble ──────────────────────────────────────────────────────────────
 
 const DRIBBBLE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://dribbble.com/oauth/authorize",
@@ -299,8 +279,6 @@ async function dribbblePublish(
     };
   }
 
-  // 202: processing. Dribbble returns no body; the shot id is not known
-  // yet, so record acceptance honestly rather than inventing an id.
   return { ok: true, postId: "accepted", postUrl: null };
 }
 
@@ -309,8 +287,6 @@ export const dribbbleBehavior: ProviderBehavior = {
   publish: dribbblePublish,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(DRIBBBLE_OAUTH, input),
 };
-
-// ── Google My Business ────────────────────────────────────────────────────
 
 const GMB_OAUTH: OAuth2Config = {
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -372,8 +348,6 @@ async function gmbConnect(
       username: null,
       avatarUrl: null,
     },
-    // The posting location is chosen via the listLocations tool and stored
-    // in options; the account is the anchor.
     config: { accountName },
   };
 }
@@ -399,7 +373,6 @@ async function gmbRefresh(refreshToken: string): Promise<ProviderConnectResult> 
 async function gmbPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  // localPosts live under a location; the tool supplies valid names.
   const locationName =
     typeof input.options.locationName === "string"
       ? input.options.locationName

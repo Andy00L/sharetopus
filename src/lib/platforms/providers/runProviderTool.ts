@@ -8,25 +8,6 @@ import { social_accounts } from "@/db/schema";
 import { resolveConfiguredProvider } from "./registry";
 import type { ProviderTool, ProviderToolResult } from "./types";
 
-/**
- * Runs a provider helper tool against one connected account.
- *
- * This is the single generic entry point behind both the REST trigger
- * route and the MCP tool, so a provider that declares a new helper needs
- * no new route, no new schema, and no new MCP registration. It replaces
- * what would otherwise be one bespoke endpoint per helper (list Discord
- * channels, fetch Reddit flairs, list LinkedIn pages, search Reels audio).
- *
- * Authorization: the account is looked up scoped to the calling principal,
- * so an account id belonging to someone else resolves to nothing and is
- * reported as not found rather than as forbidden. Callers never pass a
- * token in; it is read from the row here so a credential cannot be
- * supplied or substituted by the request.
- *
- * Called by: /api/v1/connections/[id]/tools (GET and POST).
- * Tables touched: social_accounts (read).
- */
-
 export type ToolDiscoveryResult =
   | {
       ok: true;
@@ -40,11 +21,6 @@ export type ToolDiscoveryResult =
       message: string;
     };
 
-/**
- * Lists the helper tools available on a connection, with their parameter
- * schemas. This is the discovery half: an agent calls it first to learn
- * what it can trigger.
- */
 export async function listProviderToolsForAccount(params: {
   principalId: string;
   socialAccountId: string;
@@ -60,12 +36,6 @@ export async function listProviderToolsForAccount(params: {
 
   const providerResult = resolveConfiguredProvider(account.platform);
   if (!providerResult.ok) {
-    // The seven legacy platforms (linkedin, tiktok, ...) are not in the
-    // registry, so an unknown provider here is a valid connection that
-    // simply has no registry tools. That is an empty list, not an error;
-    // agents iterate every connection and a 500 would page for nothing.
-    // A registry provider whose env is unset stays an error, because its
-    // declared tools exist and are unavailable for an operator reason.
     if (providerResult.reason === "unknown_provider") {
       return {
         ok: true,
@@ -103,11 +73,6 @@ export type RunToolResult =
       message: string;
     };
 
-/**
- * Executes one helper tool. Validates the method name and required
- * parameters against the provider's own declaration before calling it, so
- * a provider implementation never has to re-check the basics.
- */
 export async function runProviderToolForAccount(params: {
   principalId: string;
   socialAccountId: string;
@@ -144,8 +109,6 @@ export async function runProviderToolForAccount(params: {
     };
   }
 
-  // Validate against the provider's own parameter declaration so every
-  // provider gets the same guarantees without repeating the checks.
   for (const declaredParameter of declaredTool.parameters) {
     if (!declaredParameter.required) continue;
     const suppliedValue = params.parameters[declaredParameter.name];
@@ -175,8 +138,6 @@ export async function runProviderToolForAccount(params: {
       parameters: params.parameters,
     });
   } catch (toolError) {
-    // Providers are contracted to return errors as values. A throw is a bug
-    // in the provider, not a caller error, so it is logged and flattened.
     console.error(
       `[runProviderToolForAccount] ${provider.id}.${params.methodName} threw:`,
       toolError instanceof Error ? toolError.message : toolError,
@@ -204,11 +165,6 @@ type OwnedAccount =
     }
   | { ok: false };
 
-/**
- * Loads a connected account scoped to its owner. The principal filter is
- * the authorization check: a row belonging to anyone else simply does not
- * come back, so existence is never disclosed.
- */
 async function loadOwnedAccount(params: {
   principalId: string;
   socialAccountId: string;
@@ -241,9 +197,6 @@ async function loadOwnedAccount(params: {
   const accountRow = accountRows[0];
   if (!accountRow) return { ok: false };
 
-  // extra is Json; narrow to a plain object so provider config reads are
-  // typed without an assertion. A non-object value degrades to {} rather
-  // than throwing inside a provider.
   const rawExtra = accountRow.extra;
   const config: Record<string, unknown> =
     rawExtra !== null && typeof rawExtra === "object" && !Array.isArray(rawExtra)

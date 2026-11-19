@@ -15,32 +15,12 @@ import {
 } from "./_shared/providerFetch";
 import { fetchStoredMedia } from "./_shared/fetchStoredMedia";
 
-/**
- * Bluesky (AT Protocol) provider.
- *
- * Auth is an app password exchanged for a session, so a user can connect
- * without any app registration on our side. createSession returns a short
- * lived accessJwt plus a refreshJwt; the access token is what we post with
- * and refreshSession renews it.
- *
- * The service URL is a connect field because a user may run their own PDS.
- * That makes it untrusted input, so every call goes through providerFetch
- * (DNS validated, IP pinned, redirects refused).
- *
- * sourceRef: atproto XRPC (com.atproto.server.createSession,
- * com.atproto.repo.uploadBlob, com.atproto.repo.createRecord).
- */
-
-/** Public Bluesky PDS. Used when the user leaves the service field blank. */
 const DEFAULT_BLUESKY_SERVICE = "https://bsky.social";
 
-/** Bluesky sessions are short lived; renew well before the hour is out. */
 const BLUESKY_SESSION_TTL_SECONDS = 60 * 60;
 
-/** Per-request ceiling for XRPC calls. */
 const BLUESKY_TIMEOUT_MS = 20_000;
 
-/** Bluesky rejects blobs over roughly 1MB on the image path. */
 const BLUESKY_MAX_IMAGE_BYTES = 1_000_000;
 
 function resolveServiceUrl(config: Record<string, unknown>): string {
@@ -113,16 +93,13 @@ async function connect(
       username: handle,
       avatarUrl: null,
     },
-    // The DID and service are needed on every later call; the app password
-    // is deliberately NOT stored, the refresh token replaces it.
     config: { service, did, handle },
   };
 }
 
 async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
   // refreshSession authenticates with the refresh JWT itself, and it is
-  // bound to the PDS that issued it. The default service covers the hosted
-  // case; a self-hosted PDS re-authenticates through connect instead.
+  // bound to the PDS that issued it.
   const refreshResult = await providerFetch(
     `${DEFAULT_BLUESKY_SERVICE}/xrpc/com.atproto.server.refreshSession`,
     {
@@ -228,8 +205,6 @@ async function publish(
     return { ok: false, message: createResult.message };
   }
   if (createResult.status !== 200) {
-    // Surface the status so the worker's classifier can tell a 429 from a
-    // 401 and decide whether a retry is worth attempting.
     return {
       ok: false,
       message: `Bluesky createRecord failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
@@ -254,10 +229,6 @@ function buildPostText(input: ProviderPublishInput): string {
   return `${trimmedTitle}\n\n${trimmedBody}`;
 }
 
-/**
- * Converts an at:// record URI into the browsable bsky.app permalink.
- * Returns null when the handle is unknown rather than guessing a URL.
- */
 function buildPostUrl(
   config: Record<string, unknown>,
   recordUri: string,
@@ -272,12 +243,6 @@ type BlobUploadResult =
   | { ok: true; blob: unknown }
   | { ok: false; message: string };
 
-/**
- * Fetches our own signed media URL and uploads the bytes to the PDS.
- *
- * The media URL is minted by us (Supabase signed URL), not supplied by the
- * user, so it does not need the SSRF guard; the PDS call does and gets it.
- */
 async function uploadImageBlob(
   service: string,
   accessToken: string,

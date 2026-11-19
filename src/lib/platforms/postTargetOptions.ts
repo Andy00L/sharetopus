@@ -7,14 +7,6 @@ import {
 } from "@/lib/platforms/capabilities";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 
-/**
- * Registry-provider post options as flat snake_case fields. Each one is
- * read only by the provider named in its description (the key it maps to
- * in post_options is in buildRegistryPostOptions). The REST post body and
- * the MCP posting tools both spread these, so the two accept the same
- * options; findPostTargetIssues enforces the ones a platform cannot
- * publish without.
- */
 export const REGISTRY_POST_OPTION_FIELDS = {
   subreddit: z
     .string()
@@ -71,13 +63,6 @@ export const REGISTRY_POST_OPTION_FIELDS = {
 export const RegistryPostOptionsSchema = z.object(REGISTRY_POST_OPTION_FIELDS);
 export type RegistryPostOptionInput = z.infer<typeof RegistryPostOptionsSchema>;
 
-/**
- * Folds the registry option fields into post_options under the keys each
- * provider's publish reads. Returns null when the input carries none, so a
- * post without options keeps a null post_options.
- *
- * Called by: the REST post adapters and the MCP posting tools
- */
 export function buildRegistryPostOptions(
   input: RegistryPostOptionInput,
 ): SchedulePostData["postOptions"] {
@@ -94,7 +79,6 @@ export function buildRegistryPostOptions(
   return Object.keys(registryOptions).length > 0 ? registryOptions : null;
 }
 
-/** The fields findPostTargetIssues reads. */
 type PostTargetFields = {
   platform: string;
   post_type: MediaType;
@@ -105,15 +89,6 @@ type PostTargetFields = {
   location_name?: string;
 };
 
-/**
- * Why a post cannot be published on its platform: a media type the
- * platform does not take, a missing title where the provider requires one
- * (catalog rules.titleRequired), or a missing target the provider's publish
- * refuses to run without (Pinterest board, Reddit subreddit, Lemmy
- * community, Google Business location). The REST post body and the MCP
- * posting tools add these as validation issues, so a bad post fails when
- * it is submitted instead of at publish time.
- */
 export function findPostTargetIssues(
   post: PostTargetFields,
 ): { path: string; message: string }[] {
@@ -147,12 +122,10 @@ export function findPostTargetIssues(
   return issues;
 }
 
-/** The part of Zod's refinement context refinePostTarget uses. */
 type ValidationIssueSink = {
   addIssue: (issue: { code: "custom"; path: string[]; message: string }) => void;
 };
 
-/** superRefine callback reporting findPostTargetIssues for the REST post body (publish_posts calls findPostTargetIssues itself). */
 export function refinePostTarget(
   post: PostTargetFields,
   ctx: ValidationIssueSink,

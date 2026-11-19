@@ -23,14 +23,6 @@ import {
   type OAuth2Config,
 } from "./_shared/oauth2";
 
-/**
- * Tumblr provider. OAuth2 with refresh tokens; posts use the Neue Post
- * Format (content blocks). The user's primary blog is stored at connect
- * and a listBlogs tool lets an agent target another one.
- *
- * sourceRef: tumblr.com/docs/en/api/v2 (oauth2, user/info, blog posts NPF).
- */
-
 const TUMBLR_API = "https://api.tumblr.com/v2";
 const TUMBLR_TIMEOUT_MS = 20_000;
 
@@ -138,7 +130,6 @@ async function publish(
     return { ok: false, message: "Stored Tumblr account has no blog." };
   }
 
-  // NPF content blocks: optional media block, then the text.
   const contentBlocks: Record<string, unknown>[] = [];
   if (input.mediaType === "image" && input.mediaUrl) {
     contentBlocks.push({

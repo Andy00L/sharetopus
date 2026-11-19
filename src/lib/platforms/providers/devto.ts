@@ -13,21 +13,9 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 
-/**
- * Dev.to provider. Publishes articles through the Forem API using a
- * personal API key the user generates in their own settings, so nothing
- * needs registering on our side.
- *
- * Long-form, so unlike the social providers the title is a real field
- * rather than a first line, and the body is markdown.
- *
- * sourceRef: developers.forem.com/api/v1 (users/me, articles).
- */
-
 const DEVTO_API_ORIGIN = "https://dev.to/api";
 const DEVTO_TIMEOUT_MS = 30_000;
 
-/** Forem accepts long articles; this is a sanity ceiling, not an API limit. */
 const DEVTO_MAX_BODY_CHARS = 100_000;
 
 async function connect(
@@ -92,8 +80,7 @@ async function publish(
 
   const markdownBody = buildMarkdownBody(input);
 
-  // published:true publishes immediately. Our scheduler already decided
-  // when to run, so a draft would defeat the schedule.
+  // published:true publishes immediately.
   const article: Record<string, unknown> = {
     title: articleTitle,
     body_markdown: markdownBody,
@@ -122,8 +109,6 @@ async function publish(
   if (!createResult.ok) return { ok: false, message: createResult.message };
 
   if (createResult.status === 429) {
-    // Forem throttles article creation aggressively; distinct wording so
-    // the worker classifies this as retryable.
     return { ok: false, message: "Dev.to rate limit reached (429)." };
   }
   if (createResult.status !== 201 && createResult.status !== 200) {
@@ -148,11 +133,6 @@ async function publish(
   };
 }
 
-/**
- * Builds the article markdown. A cover image is expressed through the
- * front-matter-free API by embedding it at the top of the body, because
- * the JSON article shape has no cover field for an arbitrary URL.
- */
 function buildMarkdownBody(input: ProviderPublishInput): string {
   const body = input.body.trim();
   const withMedia =

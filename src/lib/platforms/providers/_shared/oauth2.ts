@@ -2,43 +2,16 @@ import "server-only";
 
 import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
 
-/**
- * Shared OAuth2 authorization-code plumbing.
- *
- * Sixteen of the remaining providers differ only in URLs, scopes, and how
- * they name the profile fields. Without this, each would carry its own copy
- * of the same authorize-URL builder and token-exchange call, which is how
- * the original seven platforms ended up with four parallel switch
- * statements. A provider supplies configuration; this supplies behavior.
- *
- * Called by: the oauth2 provider modules.
- * Tables touched: none.
- */
-
 const OAUTH_TIMEOUT_MS = 20_000;
 
 export type OAuth2Config = {
-  /** Provider's authorize endpoint. */
   authorizeUrl: string;
-  /** Provider's token endpoint. */
   tokenUrl: string;
-  /** Env var holding the client id. */
   clientIdEnv: string;
-  /** Env var holding the client secret. */
   clientSecretEnv: string;
   /** Scopes, already joined with the separator this provider expects. */
   scope: string;
-  /**
-   * Extra authorize-URL parameters. Use for the flags that decide whether
-   * a refresh token is issued at all (Reddit's duration=permanent,
-   * Google's access_type=offline).
-   */
   extraAuthorizeParams?: Record<string, string>;
-  /**
-   * True when the token endpoint wants HTTP Basic with the client
-   * credentials instead of them in the form body. Reddit and Twitch differ
-   * here, and getting it wrong yields an opaque 401.
-   */
   useBasicAuthForToken: boolean;
 };
 
@@ -46,11 +19,6 @@ export type BuildAuthorizeUrlResult =
   | { ok: true; url: string }
   | { ok: false; message: string };
 
-/**
- * Builds the authorize URL, or reports which env var is missing. Returning
- * the failure rather than throwing means an unconfigured provider is a
- * clear message, not a 500 halfway through a redirect.
- */
 export function buildOAuth2AuthorizeUrl(
   config: OAuth2Config,
   input: { state: string; redirectUri: string; codeChallenge: string | null },
@@ -93,7 +61,6 @@ export type OAuth2TokenResult =
     }
   | { ok: false; message: string };
 
-/** Exchanges an authorization code for tokens. */
 export async function exchangeOAuth2Code(
   config: OAuth2Config,
   input: { code: string; redirectUri: string; codeVerifier: string | null },
@@ -106,7 +73,6 @@ export async function exchangeOAuth2Code(
   });
 }
 
-/** Exchanges a refresh token for a fresh access token. */
 export async function refreshOAuth2Token(
   config: OAuth2Config,
   refreshToken: string,

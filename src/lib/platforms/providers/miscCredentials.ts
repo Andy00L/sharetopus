@@ -11,17 +11,7 @@ import { toJsonObject } from "@/lib/utils/jsonObject";
 
 import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
-/**
- * Credentials-based providers: Farcaster (via a Neynar managed signer) and
- * Listmonk (self-hosted newsletter).
- *
- * sourceRef: docs.neynar.com (v2/farcaster/cast, x-api-key + signer_uuid);
- * listmonk.app/docs/apis (basic auth, campaigns, campaign status).
- */
-
 const MISC_TIMEOUT_MS = 30_000;
-
-// ── Farcaster (Neynar) ────────────────────────────────────────────────────
 
 const NEYNAR_API = "https://api.neynar.com/v2/farcaster";
 /** Farcaster casts cap at 320 bytes; 320 chars is the practical bound. */
@@ -45,7 +35,6 @@ async function farcasterConnect(
     };
   }
 
-  // The signer lookup proves both credentials at once and yields the FID.
   const signerResult = await providerFetch(
     `${NEYNAR_API}/signer?signer_uuid=${encodeURIComponent(signerUuid)}`,
     {
@@ -74,7 +63,6 @@ async function farcasterConnect(
 
   return {
     ok: true,
-    // The API key is the credential; the signer UUID is config.
     accessToken: apiKey,
     refreshToken: null,
     expiresIn: null,
@@ -138,8 +126,6 @@ export const farcasterBehavior: ProviderBehavior = {
   connect: farcasterConnect,
   publish: farcasterPublish,
 };
-
-// ── Listmonk ──────────────────────────────────────────────────────────────
 
 function normalizeListmonkUrl(rawUrl: string): string {
   return rawUrl.trim().replace(/\/+$/, "");
@@ -231,7 +217,6 @@ async function listmonkPublish(
       ? `<p><img src="${input.mediaUrl}" alt="" style="max-width:100%"/></p>${paragraphs(input.body)}`
       : paragraphs(input.body);
 
-  // Step 1: create the campaign.
   const createResult = await providerFetch(`${instanceUrl}/api/campaigns`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: authorization },
@@ -259,8 +244,6 @@ async function listmonkPublish(
     return { ok: false, message: "Listmonk returned no campaign id." };
   }
 
-  // Step 2: start sending. A campaign left in draft would silently never
-  // reach anyone, which is not what "publish" means.
   const startResult = await providerFetch(
     `${instanceUrl}/api/campaigns/${campaignId}/status`,
     {
@@ -285,7 +268,6 @@ async function listmonkPublish(
   };
 }
 
-/** Minimal text-to-HTML: blank-line-separated paragraphs, escaped. */
 function paragraphs(text: string): string {
   const escape = (line: string) =>
     line

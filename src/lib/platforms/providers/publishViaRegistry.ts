@@ -17,28 +17,6 @@ import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 import { resolveConfiguredProvider } from "./registry";
 import type { ProviderDefinition } from "./types";
 
-/**
- * Publishes one scheduled post through a registry provider. This is the
- * worker-side counterpart of directPostForAccountsGeneric for the 21
- * registry channels: resolve provider, ensure a fresh credential, publish,
- * record content history.
- *
- * Contracts carried over from the legacy flow, on purpose:
- *   - Refresh-token rotation: a rotated token that cannot be persisted is
- *     a RECONNECT REQUIRED log line, and the in-hand token is still used
- *     for this post (same rule ensureValidToken follows).
- *   - A published post whose content_history write fails is still a
- *     SUCCESS; the missing row is logged for reconciliation. Reporting it
- *     as failure made the worker mark live content as failed and invite a
- *     duplicate repost (audit finding 8).
- *   - Errors as values; the return shape matches DirectPostScheduleResult
- *     so classifyDirectPostFailure keeps working on the message.
- *
- * Called by: processSinglePostHelpers.callPlatformDirectPost (default arm).
- * Tables touched: social_accounts (token refresh persist), content_history
- * (via storeContentHistory).
- */
-
 export type RegistryPublishResult = {
   success: boolean;
   count: number;
@@ -50,15 +28,12 @@ export type RegistryPublishArgs = {
   principalId: string;
   title: string | null;
   body: string | null;
-  /** Post kind ("text" | "image" | "video"), not the MIME type. */
   mediaType: MediaType;
   mediaUrl: string | null;
   fileName: string;
   mediaMimeType: string;
-  /** Per-post provider options (subreddit, communityId, ...). */
   options: unknown;
   batchId: string;
-  /** Null for direct (post-now) publishes with no scheduled_posts row. */
   scheduledPostId: string | null;
   createdVia: CreatedVia;
 };
@@ -140,16 +115,6 @@ type FreshTokenResult =
   | { success: true; accessToken: string }
   | { success: false; message: string };
 
-/**
- * Returns a credential valid for this publish, refreshing and persisting
- * first when the stored one is expired or about to expire. The refresh runs
- * under refreshWithAccountLock, so concurrent publishes to one account
- * refresh it once and share the saved token.
- *
- * Registry providers with no refresh function either never expire
- * (credentials providers store null expiry, so the expiry check is never
- * true) or require a reconnect once expired (Threads).
- */
 async function ensureFreshRegistryToken(
   provider: ProviderDefinition,
   account: SocialAccount,
@@ -186,11 +151,6 @@ async function ensureFreshRegistryToken(
   }
 }
 
-/**
- * Refreshes a registry account's token from the credential just read under
- * the refresh lock (the caller's copy may predate a rotation), then saves
- * the new one.
- */
 async function refreshAndStoreRegistryToken(
   providerLabel: string,
   refreshCredential: NonNullable<ProviderDefinition["refresh"]>,
@@ -230,9 +190,6 @@ async function refreshAndStoreRegistryToken(
   );
 
   if (persistError) {
-    // Same asymmetry ensureValidToken documents: the in-hand token still
-    // works for THIS post, but a rotated refresh token that was not
-    // persisted means the stored credential chain is now dead.
     const rotated =
       Boolean(refreshed.refreshToken) &&
       refreshed.refreshToken !== stored.refresh_token;
@@ -253,7 +210,6 @@ async function refreshAndStoreRegistryToken(
   return { success: true, accessToken: refreshed.accessToken };
 }
 
-/** No refresh is possible: the provider has none, or no refresh token is stored. */
 function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
   return {
     success: false,
@@ -261,11 +217,6 @@ function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
   };
 }
 
-/**
- * Narrows a Json column value to the flat object shape providers take.
- * Non-object values (null, arrays, scalars) degrade to {} so a malformed
- * row cannot throw inside a provider.
- */
 function narrowAccountConfig(rawValue: unknown): JsonObject {
   return toJsonObject(rawValue) ?? {};
 }

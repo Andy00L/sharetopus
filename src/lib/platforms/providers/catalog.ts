@@ -1,19 +1,15 @@
 import type { ProviderMetadata } from "./types";
 
-// Client-safe metadata for every registry provider. No implementation imports:
-// the browser reads this file, and provider code handles credentials.
-
 /** Bluesky posts cap at 300 graphemes. sourceRef: atproto app.bsky.feed.post */
 const BLUESKY_MAX_CHARS = 300;
 /** Mastodon's default instance limit; instances may raise it. */
 const MASTODON_MAX_CHARS = 500;
-/** Telegram sendMessage caps at 4096 UTF-8 chars. */
+/** Telegram sendMessage caps at 4096 chars. */
 const TELEGRAM_MAX_CHARS = 4096;
 /** Discord webhook content caps at 2000 chars. */
 const DISCORD_MAX_CHARS = 2000;
 /** Slack chat.postMessage practical text ceiling. */
 const SLACK_MAX_CHARS = 40_000;
-/** Sanity ceiling for long-form bodies; not an API limit. */
 const ARTICLE_MAX_CHARS = 100_000;
 
 export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
@@ -290,7 +286,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   },
 };
 
-/** OAuth providers: env pairs gate availability (see requiredEnv). */
 const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   reddit: {
     id: "reddit",
@@ -388,7 +383,6 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   },
 };
 
-/** Additional credentials providers (no app registration needed). */
 const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   hashnode: {
     id: "hashnode",
@@ -588,14 +582,12 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   },
 };
 
-/** OAuth variants and approval-gated APIs (code complete; activate on env). */
 const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   linkedin_page: {
     id: "linkedin_page",
     label: "LinkedIn Page",
     category: "business",
     authKind: "oauth2",
-    // Reuses the existing LinkedIn app; only the scopes differ.
     requiredEnv: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
     rules: {
       maxTextLength: 3000,
@@ -687,7 +679,6 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   },
 };
 
-/** Merged view served to the registry and the connect UI. */
 export const FULL_PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> =
   {
     ...PROVIDER_CATALOG,
@@ -696,14 +687,12 @@ export const FULL_PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> =
     ...VARIANT_CATALOG,
   };
 
-/** Metadata lookup. Returns null for unknown ids so callers fail closed. */
 export function getProviderMetadata(
   providerId: string,
 ): ProviderMetadata | null {
   return FULL_PROVIDER_CATALOG[providerId] ?? null;
 }
 
-/** Registry platform ids as a literal tuple, for z.enum and capabilities.ts. */
 export const REGISTRY_PLATFORM_IDS = [
   "bluesky",
   "mastodon",

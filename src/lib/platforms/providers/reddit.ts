@@ -170,7 +170,6 @@ async function publish(
     };
   }
 
-  // Response shape: { json: { errors: [...], data: { id, url, name } } }
   const jsonEnvelope = toJsonObject(parseJsonObject(result.bodyText)?.json);
   const submitErrors: unknown[] = Array.isArray(jsonEnvelope?.errors)
     ? jsonEnvelope.errors

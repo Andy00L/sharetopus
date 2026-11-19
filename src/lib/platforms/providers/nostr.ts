@@ -17,21 +17,6 @@ import type {
   ProviderPublishResult,
 } from "./types";
 
-/**
- * Nostr provider. The credential is the account's secp256k1 private key
- * (hex); events are signed locally per NIP-01 (schnorr over the sha256 of
- * the canonical serialization) and published to the user's relays over
- * WebSocket. undici's WebSocket keeps this independent of the runtime's
- * global availability.
- *
- * The key never leaves this process: connect only derives the public key,
- * and publish signs locally. Success requires at least one relay OK.
- *
- * sourceRef: NIP-01 (event id serialization, EVENT/OK messages).
- */
-
-/** 32-byte hex key. nsec bech32 is deliberately not accepted; the help
- * text tells the user to convert, which keeps decoding surface out. */
 const HEX_KEY_PATTERN = /^[0-9a-f]{64}$/;
 const RELAY_TIMEOUT_MS = 10_000;
 const MAX_RELAYS = 5;
@@ -170,11 +155,7 @@ async function publish(
 
 type RelayOutcome = { accepted: boolean; reason: string };
 
-/**
- * Sends ["EVENT", event] and waits for the matching ["OK", id, bool]. The
- * relay URL is user input, so its host gets the same resolve, validate and
- * pin treatment as providerFetch before the socket opens.
- */
+/** Sends ["EVENT", event] and waits for the matching ["OK", id, bool]. */
 async function publishToRelay(
   relayUrl: string,
   signedEvent: { id: string },
@@ -193,7 +174,6 @@ async function publishToRelay(
       try {
         relaySocket.close();
       } catch {
-        // Already closed.
       }
       resolve(outcome);
     };
@@ -233,7 +213,6 @@ async function publishToRelay(
           });
         }
       } catch {
-        // Non-JSON frame; keep waiting until timeout.
       }
     });
     relaySocket.addEventListener("error", () => {

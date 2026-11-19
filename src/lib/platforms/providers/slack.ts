@@ -14,11 +14,7 @@ import { isJsonObject } from "@/lib/utils/jsonObject";
 import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
 /**
- * Slack provider, bot-token mode.
- *
- * The user creates an app in their own workspace, gives it chat:write, and
- * pastes the bot token. No OAuth app of ours and no review, so it works as
- * soon as the token exists. Bot tokens do not expire, hence no refresh.
+ * Bot tokens do not expire, hence no refresh.
  *
  * sourceRef: api.slack.com/methods (auth.test, chat.postMessage,
  * conversations.list).
@@ -56,8 +52,6 @@ async function callSlackApi(
   }
 
   if (envelope.ok !== true) {
-    // Slack's error slugs are actionable verbatim: not_in_channel,
-    // channel_not_found, invalid_auth, missing_scope.
     const errorSlug =
       typeof envelope.error === "string" ? envelope.error : "unknown_error";
     return { ok: false, message: `Slack ${method} failed: ${errorSlug}` };
@@ -100,8 +94,6 @@ async function connect(
     refreshToken: null,
     expiresIn: null,
     identity: {
-      // The channel is the posting target, so it identifies the connection;
-      // one token can serve several channels as separate connections.
       accountIdentifier: `${teamId}:${channelId}`,
       displayName: teamName ? `${teamName} (${channelId})` : channelId,
       username: teamName,
@@ -128,8 +120,7 @@ async function publish(
   };
 
   // Slack renders an image from a block using our signed URL, so no upload
-  // is needed. Video is not renderable as a block; the URL goes in the text
-  // where Slack unfurls it.
+  // is needed.
   if (input.mediaType === "image" && input.mediaUrl) {
     payload.blocks = [
       { type: "section", text: { type: "mrkdwn", text: messageText } },

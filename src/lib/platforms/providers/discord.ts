@@ -14,11 +14,7 @@ import {
 } from "./_shared/providerFetch";
 
 /**
- * Discord provider, webhook mode.
- *
- * A channel webhook needs no bot, no OAuth app, and no review: the user
- * copies one URL from channel settings and the connection works. The
- * webhook URL is both the credential and the target, so it is stored in
+ * The webhook URL is both the credential and the target, so it is stored in
  * access_token and never logged.
  *
  * sourceRef: discord.com/developers/docs/resources/webhook (Get Webhook
@@ -27,12 +23,6 @@ import {
 
 const DISCORD_TIMEOUT_MS = 20_000;
 
-/**
- * Hosts a Discord webhook may live on. The URL is pasted by the user, so
- * without this check "webhook URL" would be an open request-forgery field
- * pointed at any host we can reach. providerFetch already blocks private
- * addresses; this additionally pins the provider to Discord itself.
- */
 const ALLOWED_DISCORD_HOSTS: readonly string[] = [
   "discord.com",
   "discordapp.com",
@@ -117,8 +107,7 @@ async function connect(
     ok: true,
     accessToken: validation.webhookUrl,
     refreshToken: null,
-    // Webhook tokens do not expire; null stops ensureValidToken from
-    // trying to refresh something that has no refresh flow.
+    // Webhook tokens do not expire.
     expiresIn: null,
     identity: {
       accountIdentifier: webhookId,
@@ -136,8 +125,6 @@ async function connect(
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  // Re-validate on every send: the stored value is the posting target, and
-  // a row edited by any other path must not become a request forgery.
   const validation = validateWebhookUrl(input.accessToken);
   if (!validation.ok) return { ok: false, message: validation.message };
 
@@ -167,8 +154,6 @@ async function publish(
   if (!sendResult.ok) return { ok: false, message: sendResult.message };
 
   if (sendResult.status === 429) {
-    // Distinct wording so the worker's classifier routes this to the
-    // retryable path instead of failing the post outright.
     return { ok: false, message: "Discord rate limit reached (429)." };
   }
   if (sendResult.status !== 200) {
@@ -198,7 +183,6 @@ async function publish(
   };
 }
 
-/** Discord has no title field, so a title becomes a bold first line. */
 function buildContent(input: ProviderPublishInput): string {
   const trimmedTitle = input.title.trim();
   const trimmedBody = input.body.trim();

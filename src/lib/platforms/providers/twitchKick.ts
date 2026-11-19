@@ -22,18 +22,7 @@ import {
   type OAuth2Config,
 } from "./_shared/oauth2";
 
-/**
- * Twitch and Kick providers, chat mode: "posting" publishes a message to
- * the streamer's own chat, which is what Postiz does for these platforms
- * too. Both are OAuth2 with refresh tokens; Kick mandates PKCE.
- *
- * sourceRef: dev.twitch.tv/docs/api (oauth2/validate, helix/chat/messages);
- * docs.kick.com (id.kick.com oauth, public/v1/users, public/v1/chat).
- */
-
 const CHAT_TIMEOUT_MS = 20_000;
-
-// ── Twitch ────────────────────────────────────────────────────────────────
 
 const TWITCH_OAUTH: OAuth2Config = {
   authorizeUrl: "https://id.twitch.tv/oauth2/authorize",
@@ -53,7 +42,6 @@ async function twitchConnect(
   const tokens = await exchangeOAuth2Code(TWITCH_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
-  // validate returns the user id and login for the token's owner.
   const validation = await providerFetch(
     "https://id.twitch.tv/oauth2/validate",
     {
@@ -171,8 +159,6 @@ export const twitchBehavior: ProviderBehavior = {
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TWITCH_OAUTH, input),
 };
 
-// ── Kick ──────────────────────────────────────────────────────────────────
-
 const KICK_OAUTH: OAuth2Config = {
   authorizeUrl: "https://id.kick.com/oauth/authorize",
   tokenUrl: "https://id.kick.com/oauth/token",
@@ -286,7 +272,6 @@ async function kickPublish(
 
   return {
     ok: true,
-    // Kick's response id is best-effort; the send already succeeded.
     postId: messageId ?? "sent",
     postUrl: null,
   };

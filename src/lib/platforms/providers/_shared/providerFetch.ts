@@ -15,25 +15,6 @@ import {
 } from "@/lib/net/pinnedFetch";
 import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
-/**
- * HTTP for provider calls whose host comes from the USER, not from us.
- *
- * Instance-hosted providers (Mastodon, Lemmy, WordPress, a self-hosted
- * Bluesky PDS) take a server URL as a connect field. That URL is untrusted
- * input: without a guard, a user could point a "Mastodon instance" at
- * http://169.254.169.254 or an internal address and turn every scheduled
- * post into a request against our own infrastructure, with the response
- * body handed back in the error message.
- *
- * Same treatment the webhook sender gets: resolve DNS once, reject any
- * private or reserved address, pin the socket to the validated IP so
- * rebinding cannot swap it after the check, and refuse redirects.
- *
- * Called by: instance-hosted provider modules.
- * Tables touched: none.
- */
-
-/** Cap on the response body we read from a user-supplied host. */
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 
 export type ProviderFetchResult =
@@ -48,10 +29,6 @@ export type ProviderFetchOptions = {
   timeoutMs: number;
 };
 
-/**
- * Performs one SSRF-guarded request against a user-supplied absolute URL.
- * Returns the raw body text; callers parse it. Errors as values.
- */
 export async function providerFetch(
   rawUrl: string,
   options: ProviderFetchOptions,
@@ -102,11 +79,6 @@ export async function providerFetch(
   }
 }
 
-/**
- * Reads at most MAX_PROVIDER_RESPONSE_BYTES and stops pulling. A hostile
- * or broken instance must not be able to stream unbounded bytes into the
- * function's memory.
- */
 async function readCappedBody(response: UndiciResponse): Promise<string> {
   if (!response.body) return "";
 
@@ -124,7 +96,6 @@ async function readCappedBody(response: UndiciResponse): Promise<string> {
       if (byteCount >= MAX_PROVIDER_RESPONSE_BYTES) break;
     }
   } catch {
-    // A short read still leaves whatever arrived usable for diagnostics.
   } finally {
     reader.cancel().catch(() => {});
   }
@@ -135,10 +106,6 @@ async function readCappedBody(response: UndiciResponse): Promise<string> {
     .toString("utf-8");
 }
 
-/**
- * Parses a JSON body without throwing. Providers return varied shapes, so
- * callers narrow the unknown themselves.
- */
 export function parseJsonBody(bodyText: string): unknown {
   try {
     return JSON.parse(bodyText);
@@ -147,12 +114,10 @@ export function parseJsonBody(bodyText: string): unknown {
   }
 }
 
-/** Parses a JSON body that should be an object; null for anything else. */
 export function parseJsonObject(bodyText: string): JsonObject | null {
   return toJsonObject(parseJsonBody(bodyText));
 }
 
-/** Reads a string field from an unknown JSON object, or null. */
 export function readStringField(
   source: unknown,
   fieldName: string,

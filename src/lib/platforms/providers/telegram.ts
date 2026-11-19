@@ -14,13 +14,8 @@ import { toJsonObject } from "@/lib/utils/jsonObject";
 import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
 
 /**
- * Telegram provider. Posts to a channel or group through a bot the user
- * creates with @BotFather, so nothing needs registering on our side and the
- * connection works the moment the token is pasted.
- *
  * The bot token IS the credential and never expires, which is why this
- * provider declares no refresh. It is stored in access_token and appears in
- * the request path, so it must never reach a log line.
+ * provider declares no refresh.
  *
  * sourceRef: core.telegram.org/bots/api (getMe, getChat, sendMessage,
  * sendPhoto, sendVideo).
@@ -98,9 +93,6 @@ async function connect(
     return { ok: false, message: "Telegram getMe returned no bot id." };
   }
 
-  // Confirm the bot can actually see the target chat now, rather than
-  // letting the first scheduled post be the thing that discovers the bot
-  // was never added as an administrator.
   const chatResult = await callBotApi(botToken, "getChat", { chat_id: chatId });
   if (!chatResult.ok) {
     return {
@@ -119,8 +111,6 @@ async function connect(
     refreshToken: null,
     expiresIn: null,
     identity: {
-      // The chat is the posting target, so it is the account identity;
-      // one bot can serve several channels as separate connections.
       accountIdentifier: chatId,
       displayName: chatTitle,
       username:
@@ -182,8 +172,6 @@ function buildPublishResult(
     return { ok: false, message: "Telegram returned no message id." };
   }
 
-  // Public channels have a t.me permalink; numeric chat IDs (private
-  // groups) have none, so the URL is null rather than a broken guess.
   const postUrl = chatId.startsWith("@")
     ? `https://t.me/${chatId.slice(1)}/${messageId}`
     : null;

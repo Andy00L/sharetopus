@@ -17,22 +17,6 @@ import {
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
 
-/**
- * WordPress provider, self-hosted mode.
- *
- * Uses an Application Password, which core WordPress has issued since 5.6:
- * the user creates one under Users, Profile, Application Passwords and
- * pastes it with their username. No plugin, no OAuth app, no review.
- *
- * The site URL is a connect field and therefore untrusted input, so every
- * call goes through providerFetch (DNS validated, IP pinned, redirects
- * refused). Without that, "your WordPress site" would be an open
- * request-forgery field.
- *
- * sourceRef: developer.wordpress.org/rest-api/reference (users/me, posts,
- * media).
- */
-
 const WORDPRESS_TIMEOUT_MS = 30_000;
 const WORDPRESS_MEDIA_TIMEOUT_MS = 60_000;
 
@@ -66,8 +50,6 @@ async function connect(
 
   const siteUrl = normalizeSiteUrl(input.values.siteUrl ?? "");
   const username = (input.values.username ?? "").trim();
-  // WordPress displays application passwords in spaced groups; the spaces
-  // are presentational and the API rejects them.
   const applicationPassword = (input.values.applicationPassword ?? "").replace(
     /\s+/g,
     "",
@@ -154,8 +136,6 @@ async function publish(
 
   const authorization = buildBasicAuthHeader(input.accessToken);
 
-  // A cover image becomes the featured image, which is what a WordPress
-  // theme expects, rather than being inlined at the top of the content.
   let featuredMediaId: number | null = null;
   if (input.mediaType === "image" && input.mediaUrl) {
     const uploadResult = await uploadMedia(
@@ -210,9 +190,6 @@ type MediaUploadResult =
   | { ok: false; message: string };
 
 /**
- * Uploads media to the site's library. Our own signed URL supplies the
- * bytes, so that read needs no SSRF guard; the site call gets one.
- *
  * WordPress accepts a raw body with Content-Disposition rather than a
  * multipart envelope, which keeps this simple.
  */
@@ -226,8 +203,6 @@ async function uploadMedia(
   const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
   if (!storedMedia.ok) return storedMedia;
 
-  // Strip anything that could break out of the header value; the filename
-  // comes from stored data but this header is attacker-adjacent input.
   const safeFileName = fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "upload";
 
   const uploadResult = await providerFetch(`${siteUrl}/wp-json/wp/v2/media`, {

@@ -24,15 +24,7 @@ import {
 } from "./_shared/fetchStoredMedia";
 
 /**
- * Mastodon provider. Covers mastodon.social and every other instance,
- * including self-hosted ones, because the instance URL is a connect field.
- *
- * The user creates an application in their own instance settings and pastes
- * the resulting access token, so nothing needs registering on our side. The
- * token does not expire, which is why this provider declares no refresh.
- *
- * The instance URL is untrusted input and every call goes through
- * providerFetch (DNS validated, IP pinned, redirects refused).
+ * The token does not expire, which is why this provider declares no refresh.
  *
  * sourceRef: docs.joinmastodon.org REST API (accounts/verify_credentials,
  * v2/media, statuses).
@@ -40,7 +32,6 @@ import {
 
 const MASTODON_TIMEOUT_MS = 20_000;
 
-/** Media upload can transcode video, so it gets a longer ceiling. */
 const MASTODON_MEDIA_TIMEOUT_MS = 60_000;
 
 const MEDIA_PROCESSING_POLL_INTERVAL_MS = 2_000;
@@ -76,8 +67,6 @@ async function connect(
     };
   }
 
-  // verify_credentials both proves the token works and gives us the
-  // account identity in one call.
   const verifyResult = await providerFetch(
     `${instanceUrl}/api/v1/accounts/verify_credentials`,
     {
@@ -114,8 +103,6 @@ async function connect(
     ok: true,
     accessToken,
     refreshToken: null,
-    // Mastodon application tokens do not expire; null keeps ensureValidToken
-    // from ever trying to refresh one.
     expiresIn: null,
     identity: {
       accountIdentifier: accountId,
@@ -200,11 +187,6 @@ function buildStatusText(input: ProviderPublishInput): string {
   return `${trimmedTitle}\n\n${trimmedBody}`;
 }
 
-/**
- * Stable short key for the Idempotency-Key header. Not a security value:
- * it only needs to be identical across retries of the same post and
- * different across different posts.
- */
 function hashForIdempotency(statusText: string): string {
   let accumulator = 0;
   for (let index = 0; index < statusText.length; index++) {
@@ -217,10 +199,6 @@ type MediaUploadResult =
   | { ok: true; mediaId: string }
   | { ok: false; message: string };
 
-/**
- * Uploads media to the instance. Our own signed URL supplies the bytes, so
- * that read needs no SSRF guard; the instance call gets one.
- */
 async function uploadMedia(
   instanceUrl: string,
   accessToken: string,
@@ -270,7 +248,6 @@ async function uploadMedia(
   return { ok: true, mediaId };
 }
 
-/** Polls the attachment until the instance finishes processing it, within MEDIA_PROCESSING_DEADLINE_MS. */
 async function waitForProcessedMedia(
   instanceUrl: string,
   accessToken: string,

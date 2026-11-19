@@ -11,7 +11,6 @@ const STORED_MEDIA_TIMEOUT_MS = 60_000;
 
 const BYTES_PER_MB = 1024 * 1024;
 
-/** The largest file any plan can store, so no stored post media exceeds it. */
 export const STORED_MEDIA_MAX_BYTES = RUNTIME.maxVideoMB * BYTES_PER_MB;
 
 export type StoredMediaResult =
@@ -19,10 +18,8 @@ export type StoredMediaResult =
   | { ok: false; message: string };
 
 /**
- * Reads a post's media from our own signed storage URL, so the host needs
- * no SSRF guard. undici's fetch returns a node:buffer Blob, the Blob type
- * providerFetch takes as a body. A declared size over maxBytes is refused
- * before any byte is downloaded.
+ * undici's fetch returns a node:buffer Blob, the Blob type providerFetch
+ * takes as a body.
  */
 export async function fetchStoredMedia(
   mediaUrl: string,

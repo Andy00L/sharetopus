@@ -18,18 +18,7 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 
-/**
- * Credentials-based long-form providers: Hashnode, Medium, Lemmy.
- * Grouped in one module because each is a compact single-credential API.
- *
- * sourceRef: apidocs.hashnode.com (gql.hashnode.com publishPost),
- * github.com/Medium/medium-api-docs (v1/me, users/{id}/posts),
- * join-lemmy.org/api (user/login, post, community/list).
- */
-
 const BLOG_TIMEOUT_MS = 30_000;
-
-// ── Hashnode ──────────────────────────────────────────────────────────────
 
 const HASHNODE_GQL = "https://gql.hashnode.com";
 
@@ -79,8 +68,6 @@ async function hashnodeConnect(
   const userId = meNode && typeof meNode.id === "string" ? meNode.id : null;
   if (!userId) return { ok: false, message: "Hashnode token is not valid." };
 
-  // Default publication: the first one on the account. listPublications
-  // lets an agent pick another.
   const publications = toJsonObject(meNode?.publications);
   const edges: unknown[] = Array.isArray(publications?.edges) ? publications.edges : [];
   const firstNode = toJsonObject(toJsonObject(edges[0])?.node);
@@ -173,8 +160,6 @@ export const hashnodeBehavior: ProviderBehavior = {
   publish: hashnodePublish,
   runTool: hashnodeRunTool,
 };
-
-// ── Medium ────────────────────────────────────────────────────────────────
 
 const MEDIUM_API = "https://api.medium.com/v1";
 
@@ -275,8 +260,6 @@ export const mediumBehavior: ProviderBehavior = {
   publish: mediumPublish,
 };
 
-// ── Lemmy ─────────────────────────────────────────────────────────────────
-
 function normalizeLemmyInstance(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
 }
@@ -318,7 +301,6 @@ async function lemmyConnect(
 
   return {
     ok: true,
-    // The password is deliberately NOT stored; the session JWT replaces it.
     accessToken: jwt,
     refreshToken: null,
     expiresIn: null,
