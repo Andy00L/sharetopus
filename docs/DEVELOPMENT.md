@@ -356,7 +356,6 @@ Production uses Vercel environment variables with production keys. `NODE_ENV=pro
 |---|---|
 | `package.json` | Scripts, dependencies |
 | `tsconfig.json` | Path aliases, compiler options |
-| `vercel.json` | Vercel deployment configuration |
 | `drizzle.config.ts` | drizzle-kit settings for the `db:*` scripts |
 | `src/db/schema.ts`, `src/db/client.ts` | Database schema and Drizzle client |
 | `.env.example` | Full list of environment variables with documentation |
