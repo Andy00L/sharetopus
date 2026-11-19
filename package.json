@@ -79,6 +79,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.4",
+    "@types/bun": "^1.4.4",
     "@types/node": "^20.19.39",
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",

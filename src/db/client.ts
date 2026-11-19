@@ -27,6 +27,18 @@ const IDLE_CONNECTION_TIMEOUT_SECONDS = 20;
  */
 const MAX_CONNECTIONS_PER_INSTANCE = 1;
 
+/**
+ * postgres.js pipelines queries that have no bound values, and the transaction
+ * pooler stalls the connection on them. max_pipeline=0 sends each query only
+ * after the previous one finished. The option is read from the URL because the
+ * package types omit it. sourceRef: node_modules/postgres/cjs/src/connection.js (max_pipeline).
+ */
+function disableQueryPipelining(databaseUrl: string): string {
+  const connectionUrl = new URL(databaseUrl);
+  connectionUrl.searchParams.set("max_pipeline", "0");
+  return connectionUrl.toString();
+}
+
 function createDatabaseClient() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -36,7 +48,7 @@ function createDatabaseClient() {
       "[createDatabaseClient] DATABASE_URL is not set. Use the Supabase transaction pooler connection string (port 6543).",
     );
   }
-  const queryClient = postgres(databaseUrl, {
+  const queryClient = postgres(disableQueryPipelining(databaseUrl), {
     // postgres.js only negotiates TLS when asked, and the pooler also
     // accepts unencrypted connections, so without this every query and row
     // crossed the network in clear text. "require" encrypts without checking
