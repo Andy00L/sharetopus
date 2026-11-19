@@ -1,4 +1,3 @@
-// app/api/storage/generate-upload-url/route.ts
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import {
   generateServerSignedUploadUrl,
@@ -6,6 +5,7 @@ import {
 } from "@/actions/server/data/generateServerSignedUploadUrl";
 import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 const REASON_TO_STATUS: Record<GenerateUploadUrlReason, number> = {
   invalid_input: 400,
@@ -15,13 +15,36 @@ const REASON_TO_STATUS: Record<GenerateUploadUrlReason, number> = {
   supabase_error: 500,
 };
 
+const UploadUrlRequestSchema = z.object({
+  filename: z.string().min(1),
+  contentType: z.string().min(1),
+  fileSize: z.number().positive(),
+  isScheduled: z.boolean().optional(),
+});
+
+type UploadUrlRequestRead =
+  | { ok: true; uploadRequest: z.infer<typeof UploadUrlRequestSchema> }
+  | { ok: false; reason: "body_not_json" | "fields_invalid" };
+
+async function readUploadUrlRequest(req: NextRequest): Promise<UploadUrlRequestRead> {
+  let rawBody: unknown;
+  try {
+    rawBody = await req.json();
+  } catch {
+    return { ok: false, reason: "body_not_json" };
+  }
+  const parseResult = UploadUrlRequestSchema.safeParse(rawBody);
+  return parseResult.success
+    ? { ok: true, uploadRequest: parseResult.data }
+    : { ok: false, reason: "fields_invalid" };
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // 1. Clerk auth
     const { userId } = await auth();
 
     if (!userId) {
-      console.error("[Generate Upload URL] Authentication error: No userId");
+      console.error("[POST] Authentication error: No userId");
       return NextResponse.json(
         {
           success: false,
@@ -32,15 +55,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Parse body (same shape as before for backward compat)
-    const body = await req.json();
-    const { filename, contentType, fileSize, isScheduled } = body;
-
-    if (!filename || !contentType || !fileSize) {
-      console.error("[Generate Upload URL] Missing parameters:", {
-        filename,
-        contentType,
-      });
+    const requestRead = await readUploadUrlRequest(req);
+    if (!requestRead.ok) {
+      console.error(
+        `[POST] Invalid upload request from user ${userId}: ${requestRead.reason}`,
+      );
       return NextResponse.json(
         {
           success: false,
@@ -51,7 +70,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Subscription check. A failed read is ours: 503 and a retry,
+    // A failed subscription read is ours: 503 and a retry,
     // never a "subscription required" to a paying user.
     const subscriptionCheck = await checkActiveSubscription(userId);
     if (subscriptionCheck.status === "unavailable") {
@@ -75,7 +94,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Delegate to shared helper
+    const { filename, contentType, fileSize, isScheduled } =
+      requestRead.uploadRequest;
     const result = await generateServerSignedUploadUrl({
       principalId: userId,
       tier: subscriptionCheck.tier,
@@ -90,7 +110,7 @@ export async function POST(req: NextRequest) {
         ? REASON_TO_STATUS[result.reason]
         : 500;
       console.error(
-        `[Generate Upload URL] Helper rejected: ${result.reason} -- ${result.message}`
+        `[POST] Helper rejected: ${result.reason} -- ${result.message}`
       );
       return NextResponse.json(
         {
@@ -102,7 +122,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 5. Success (same response shape as before)
     return NextResponse.json({
       success: true,
       uploadUrl: result.uploadUrl,
@@ -110,7 +129,7 @@ export async function POST(req: NextRequest) {
       token: result.token,
     });
   } catch (err) {
-    console.error("[Generate Upload URL] Unexpected error:", err);
+    console.error("[POST] Unexpected error:", err);
     return NextResponse.json(
       {
         success: false,

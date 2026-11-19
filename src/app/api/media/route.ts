@@ -1,8 +1,22 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { fitPhotoForTikTok } from "@/lib/api/tiktok/fitPhotoForTikTok";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
+
+const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
+
+async function fetchUpstreamWithHeadersTimeout(signedUrl: string): Promise<Response> {
+  const headersAbortController = new AbortController();
+  const headersTimer = setTimeout(
+    () => headersAbortController.abort(),
+    UPSTREAM_HEADERS_TIMEOUT_MS,
+  );
+  try {
+    return await fetch(signedUrl, { signal: headersAbortController.signal });
+  } finally {
+    clearTimeout(headersTimer);
+  }
+}
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -134,7 +148,7 @@ export async function GET(request: NextRequest) {
     // Pinterest's S3 ingester also rejects redirects in some configs.
     let upstream: Response;
     try {
-      upstream = await fetch(data.signedUrl);
+      upstream = await fetchUpstreamWithHeadersTimeout(data.signedUrl);
     } catch (fetchErr) {
       console.error("[GET /api/media] Upstream fetch failed:", fetchErr);
       return new Response("Upstream fetch failed", {
@@ -185,6 +199,9 @@ export async function GET(request: NextRequest) {
     // TikTok boundary, so the stored file other platforms use keeps its
     // full resolution.
     if (/^image\//i.test(contentType)) {
+      const { fitPhotoForTikTok } = await import(
+        "@/lib/api/tiktok/fitPhotoForTikTok"
+      );
       const fitResult = await fitPhotoForTikTok(
         Buffer.from(await upstream.arrayBuffer()),
       );

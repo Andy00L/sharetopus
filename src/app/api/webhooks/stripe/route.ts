@@ -71,6 +71,12 @@ export async function POST(req: NextRequest) {
     return err("Invalid signature", 400);
   }
 
+  const runEventHandler = selectEventHandler(event);
+  if (!runEventHandler) {
+    console.log(`[POST] Ignored Stripe event type: ${event.type}`);
+    return ok({ ignored: event.type });
+  }
+
   // Stripe retries an event until it gets a 2xx (for up to three days) and
   // may deliver one twice. An event counts as processed only once its
   // processing succeeded; see stripeEventLog.ts.
@@ -86,7 +92,7 @@ export async function POST(req: NextRequest) {
   // retry is how a failed step gets run again.
   let response: NextResponse;
   try {
-    response = await processEvent(event);
+    response = await runEventHandler();
   } catch (processingErr) {
     console.error(
       `[Stripe webhook] Processing failed for ${event.id}:`,
@@ -108,19 +114,20 @@ export async function POST(req: NextRequest) {
   return response;
 }
 
-async function processEvent(event: Stripe.Event): Promise<NextResponse> {
+function selectEventHandler(
+  event: Stripe.Event,
+): (() => Promise<NextResponse>) | null {
   switch (event.type) {
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
-      return handleSubscriptionEvent(event);
+      return () => handleSubscriptionEvent(event);
     case "invoice.payment_succeeded":
-      return handleInvoiceEvent(event, "succeeded");
+      return () => handleInvoiceEvent(event, "succeeded");
     case "invoice.payment_failed":
-      return handleInvoiceEvent(event, "failed");
+      return () => handleInvoiceEvent(event, "failed");
     default:
-      console.log(`[Stripe webhook] Ignored event type: ${event.type}`);
-      return ok({ ignored: event.type });
+      return null;
   }
 }
 

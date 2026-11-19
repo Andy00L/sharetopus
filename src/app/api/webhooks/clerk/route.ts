@@ -1,5 +1,5 @@
 // app/api/webhooks/clerk/route.ts
-import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
+import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
 import { principals, users } from "@/db/schema";
 import stripe from "@/lib/stripe";
@@ -16,7 +16,7 @@ export async function POST(req: Request) {
       : process.env.CLERK_WEBHOOK_SECRET_DEV;
 
   if (!webhookSecret) {
-    console.error("[Clerk Routes]: Clerk webhook secret is not set");
+    console.error("[POST] Clerk webhook secret is not set");
     return new Response("Webhook configuration missing", { status: 500 });
   }
 
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       "svix-signature": svix_signature,
     });
   } catch (err) {
-    console.error("[Clerk Routes]: Webhook verification failed:", err);
+    console.error("[POST] Webhook verification failed:", err);
     return new Response("Signature verification failed", {
       status: 400,
     });
@@ -86,7 +86,7 @@ export async function POST(req: Request) {
         break;
       }
       default:
-        console.log("[Clerk Routes]: Unhandled event:", eventType);
+        console.log("[POST] Unhandled event:", eventType);
         break;
     }
 
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
     // The handlers throw when a step fails. The 500 makes Svix deliver the
     // event again, and every handler is safe to run twice.
     console.error(
-      "[Clerk Routes]: Webhook processing failed:",
+      "[POST] Webhook processing failed:",
       error,
     );
     return new Response("Webhook processing failed", {
@@ -134,10 +134,16 @@ function respondMalformedEvent(eventLabel: string): Response {
  * Creates the Stripe customer, then the principals and users rows. A failed
  * step throws so Svix retries, after deleting the customer made for a row
  * that was not written. A users row that already exists (ensureUserExists
- * got there first) ends the event: nothing is left to do.
+ * got there first, or an earlier delivery succeeded) ends the event before
+ * any Stripe call.
  */
 async function handleUserCreated(data: ClerkUserData) {
   const userId = data.id;
+  if (await hasUserRow(userId)) {
+    console.log(`[handleUserCreated] User ${userId} already exists`);
+    return;
+  }
+
   const email = data.email_addresses?.[0]?.email_address;
   // Extra fields from Clerk
   const username = data.username ?? null;
@@ -150,7 +156,7 @@ async function handleUserCreated(data: ClerkUserData) {
     (data.full_name ? data.full_name.split(" ").slice(1).join(" ") : "");
 
   if (!email) {
-    console.error("[Clerk Routes]: No email for user, aborting creation");
+    console.error("[handleUserCreated] No email for user, aborting creation");
     return;
   }
 
@@ -162,7 +168,7 @@ async function handleUserCreated(data: ClerkUserData) {
   });
   const stripeCustomerId = customer.id;
   console.log(
-    `[Clerk Routes]: Stripe customer created for user ${userId}: ${stripeCustomerId}`,
+    `[handleUserCreated] Stripe customer created for user ${userId}: ${stripeCustomerId}`,
   );
 
   // Upsert into principals first (users.id FK requires it)
@@ -192,11 +198,22 @@ async function handleUserCreated(data: ClerkUserData) {
     await rollBackStripeCustomer(stripeCustomerId);
     // 23505 is a unique violation: the users row already exists.
     if (insertError.code === "23505") {
-      console.log(`[Clerk Routes]: User ${userId} already exists`);
+      console.log(`[handleUserCreated] User ${userId} already exists`);
       return;
     }
     throw new Error(`User insert failed: ${insertError.message}`);
   }
+}
+
+/** Whether the users row exists. A failed read throws so Svix retries. */
+async function hasUserRow(userId: string): Promise<boolean> {
+  const { data: userRows, error } = await runQuery(
+    db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+  );
+  if (error) {
+    throw new Error(`User existence check failed: ${error.message}`);
+  }
+  return userRows.length > 0;
 }
 
 /**
@@ -207,11 +224,11 @@ async function rollBackStripeCustomer(stripeCustomerId: string) {
   try {
     await stripe.customers.del(stripeCustomerId);
     console.log(
-      `[Clerk Routes]: Stripe customer ${stripeCustomerId} deleted after a failed user write`,
+      `[rollBackStripeCustomer] Stripe customer ${stripeCustomerId} deleted after a failed user write`,
     );
   } catch (deleteError) {
     console.error(
-      `[Clerk Routes]: Stripe customer ${stripeCustomerId} could not be rolled back:`,
+      `[rollBackStripeCustomer] Stripe customer ${stripeCustomerId} could not be rolled back:`,
       deleteError,
     );
   }
@@ -253,7 +270,7 @@ async function handleUserUpdated(data: ClerkUserData) {
   const stripeCustomerId = updatedRows[0]?.stripe_customer_id;
   if (stripeCustomerId) {
     await stripe.customers.update(stripeCustomerId, { email: email });
-    console.log(`[Clerk Routes]: Stripe customer updated: ${stripeCustomerId}`);
+    console.log(`[handleUserUpdated] Stripe customer updated: ${stripeCustomerId}`);
   }
 }
 
@@ -291,22 +308,13 @@ async function handleUserDeleted(data: { id: string }) {
     throw new Error(`User delete failed: ${deleteError.message}`);
   }
 
-  // Delete user folder from storage
-  const { success, message } = await deleteSupabaseFileAction(
-    userId,
-    null,
-    true,
-    process.env.CRON_SECRET_KEY,
-  );
+  const { success, message } = await deleteSupabaseFile(userId, null, true);
   if (!success) {
     console.error(
-      "[Clerk Routes]: Storage folder delete failed for user:",
-      message,
+      `[handleUserDeleted] Storage folder delete failed for user ${userId}: ${message}`,
     );
   } else {
-    console.log(
-      `[Clerk Routes]: Storage folder deleted for user ${userId}`,
-    );
+    console.log(`[handleUserDeleted] Storage folder deleted for user ${userId}`);
   }
 }
 
@@ -318,14 +326,14 @@ async function handleUserDeleted(data: { id: string }) {
 async function deleteStripeCustomer(stripeCustomerId: string) {
   try {
     await stripe.customers.del(stripeCustomerId);
-    console.log(`[Clerk Routes]: Stripe customer deleted: ${stripeCustomerId}`);
+    console.log(`[deleteStripeCustomer] Stripe customer deleted: ${stripeCustomerId}`);
   } catch (stripeError) {
     const isAlreadyDeleted =
       stripeError instanceof Stripe.errors.StripeInvalidRequestError &&
       stripeError.code === "resource_missing";
     if (!isAlreadyDeleted) throw stripeError;
     console.log(
-      `[Clerk Routes]: Stripe customer ${stripeCustomerId} was already deleted`,
+      `[deleteStripeCustomer] Stripe customer ${stripeCustomerId} was already deleted`,
     );
   }
 }
