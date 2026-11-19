@@ -3,42 +3,28 @@ import {
   TIER_UPLOAD_LIMITS,
 } from "@/components/core/create/constants/uploadLimits";
 
-// Largest video upload any plan allows, in MB; sizes worker concurrency against the memory ceiling.
 const MAX_VIDEO_MB = Math.max(
   ...Object.values(TIER_UPLOAD_LIMITS).map((tierLimits) => tierLimits.video),
   DEFAULT_UPLOAD_LIMITS.video,
 );
 
-// Overhead per worker beyond the video buffer (V8 heap, Node runtime,
-// multipart envelope, platform SDK objects, etc.).
 const NODE_OVERHEAD_MB = 100;
 
-// Vercel function memory ceiling. Defaults to 2048 MB (Hobby/Pro).
-// Override via env var if the project uses a different setting.
+// Vercel's default function memory on Hobby and Pro is 2048 MB:
+// https://vercel.com/docs/functions/limitations#memory-size-limits
 const VERCEL_INSTANCE_MEMORY_MB = readPositiveInt(
   "VERCEL_INSTANCE_MEMORY_MB",
   2048,
 );
 
-// workerConcurrency self-adjusts: Pinterest video buffers up to
-// MAX_VIDEO_MB. Worst case per worker = MAX_VIDEO_MB + Node overhead.
-// We cap concurrency so concurrent workers don't OOM the Vercel
-// function memory ceiling.
-// At 250MB max video and 2048MB ceiling: floor(2048 / 350) = 5.
 const computedWorkerConcurrency = Math.max(
   1,
   Math.floor(VERCEL_INSTANCE_MEMORY_MB / (MAX_VIDEO_MB + NODE_OVERHEAD_MB)),
 );
 
-/**
- * Operator-controlled runtime knobs. Set in Vercel env vars.
- * Defaults are safe for Vercel Hobby with Fluid Compute (300s ceiling).
- * workerConcurrency derives from MAX_VIDEO_MB automatically.
- *
- * MAX_DURATION_S must match the maxDuration export in
- * src/app/api/inngest/route.ts AND maxRuntime on the Inngest client.
- */
 export const RUNTIME = {
+  // Vercel Hobby with Fluid compute caps a function at 300 s:
+  // https://vercel.com/docs/functions/limitations#max-duration
   maxDurationS: readPositiveInt("MAX_DURATION_S", 300),
   workerConcurrency: computedWorkerConcurrency,
   maxVideoMB: MAX_VIDEO_MB,
@@ -50,10 +36,9 @@ export const RUNTIME = {
   dispatcherBatchSize: readPositiveInt("DISPATCHER_BATCH_SIZE", 200),
   signedUrlTtlS: readPositiveInt("SIGNED_URL_TTL_S", 300),
 
-  // TikTok publish status polling (safety net for webhooks).
-  // Webhook is the fast path; polling catches missed deliveries.
-  // Total ceiling = 60 x 60s = 60 minutes (matches TikTok's
-  // documented 1-hour PROCESSING_DOWNLOAD timeout).
+  // 60 x 60 s spans TikTok's one-hour URL download timeout
+  // (video_pull_failed):
+  // https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status
   tikTokPublishPollMaxAttempts: 60,
   tikTokPublishPollIntervalMs: 60_000,
 } as const;
@@ -68,7 +53,6 @@ const INNGEST_RETRY_VALUES = [
 
 export type InngestRetryCount = (typeof INNGEST_RETRY_VALUES)[number];
 
-/** Clamps WORKER_MAX_RETRIES into Inngest's 0-20 range; indexing the tuple yields the literal union without a cast. */
 export function toInngestRetryCount(requested: number): InngestRetryCount {
   const clamped = Math.min(
     Math.max(Math.trunc(requested), 0),

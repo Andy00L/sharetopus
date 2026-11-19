@@ -22,19 +22,9 @@ type SweepOutcome =
     }
   | { ok: false; reason: string };
 
-/**
- * Daily cron that sweeps storage files older than 24h with no reference
- * in any of 4 tables (scheduled_posts, failed_posts, pending_tiktok_pulls,
- * pending_direct_posts).
- *
- * Runs at 03:00 UTC. No retries (next daily run catches any failures).
- * Partial success is acceptable: failed batches are logged and retried
- * on the next run (the 24h cutoff makes them eligible again).
- *
- * One step that returns counts only: Inngest stores every step result, and
- * the listed paths (up to MAX_FILES_PER_RUN with their sizes) would be
- * stored and replayed to each later step for nothing.
- */
+// One step that returns counts only: Inngest stores every step result, so
+// the listed paths would be stored and replayed to each later step.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const sweepOrphanStorageFiles = inngest.createFunction(
   {
     id: "sweep-orphan-storage-files",

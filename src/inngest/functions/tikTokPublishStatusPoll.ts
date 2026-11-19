@@ -10,13 +10,11 @@ import {
 import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 import { resolveTikTokAccessTokenForAccount } from "./tikTokPublishStatusPollHelpers";
 
-/** The fields read from the data dispatchTikTokPublishPollEvent sends. */
 const PollEventDataSchema = z.object({
   publish_id: z.string(),
   social_account_id: z.string(),
 });
 
-/** One poll attempt: the token could not be resolved, or TikTok answered. */
 type PollAttemptResult =
   | { kind: "token_unavailable"; message: string }
   | {
@@ -24,26 +22,8 @@ type PollAttemptResult =
       status: Awaited<ReturnType<typeof getTikTokPublishStatus>>;
     };
 
-/**
- * Inngest worker that polls TikTok's /v2/post/publish/status/fetch/
- * endpoint until the publish reaches a terminal state.
- *
- * Triggered by the "tiktok.publish.poll" event dispatched after a
- * successful TikTok init (image or video). Runs up to
- * RUNTIME.tikTokPublishPollMaxAttempts iterations with
- * RUNTIME.tikTokPublishPollIntervalMs between each.
- *
- * All finalization goes through finalizeTikTokPostByPublishId, which
- * handles pending_tiktok_pulls status, content_history updates, and
- * media cleanup. The webhook worker uses the same function, so both
- * paths converge. Early-exit at top of each iteration detects when
- * the webhook already finalized the post.
- *
- * Every step is safe to repeat (reads, a status fetch, an idempotent
- * finalize), so a database error throws inside its step and Inngest
- * retries that step. When retries run out, onFailure finalizes the pull as
- * failed so it never stays 'pending' with no worker watching it.
- */
+// A database error throws inside its step so Inngest retries that step;
+// reads, a status fetch and an idempotent finalize are safe to repeat.
 export const tikTokPublishStatusPollWorker = inngest.createFunction(
   {
     id: "tiktok-publish-status-poll",
@@ -80,9 +60,6 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     };
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Early-exit: if webhook already finalized this post, stop polling.
-      // The lookup reports a missing row and a failed query the same way,
-      // so both throw and retry: a failed query must not end the poll.
       const currentPull = await step.run(
         `check-pending-${attempt}`,
         async () => {
@@ -99,11 +76,9 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         return { outcome: "skipped", reason: "already_finalized" };
       }
 
-      // Resolve a fresh access token (refreshing it if expired) and poll in
-      // one step: Inngest stores every step result, so a token returned
-      // from its own step would sit in the run's history. The step id is
-      // new (the two steps used to be separate) so a run already in flight
-      // does not replay an old result shape.
+      // Token and poll share one step: Inngest stores every step result,
+      // so a token returned from its own step would sit in the run's
+      // history: https://www.inngest.com/docs/learn/how-functions-are-executed
       const attemptResult = await step.run(
         `status-check-${attempt}`,
         async (): Promise<PollAttemptResult> => {
@@ -155,7 +130,6 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         continue;
       }
 
-      // Reset consecutive errors on a successful API call
       consecutiveErrors = 0;
 
       if (status.terminal && status.kind === "completed") {
@@ -181,11 +155,9 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
         };
       }
 
-      // Non-terminal: TikTok is still processing. Wait and retry.
       await step.sleep(`wait-${attempt}`, `${intervalMs}ms`);
     }
 
-    // Max attempts exhausted without terminal status
     await finalizeInStep("finalize-timeout", {
       source: "poll",
       outcome: "failed",
@@ -196,14 +168,7 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
   },
 );
 
-/**
- * Finalizes the pull as failed once the poll run exhausts its retries, so
- * the post shows a reason instead of staying 'pending' with no worker
- * watching it. A pull a webhook already finalized is left as it is.
- */
 async function finalizeAbandonedPoll(
-  // Structural shape of Inngest's FailureEventPayload: the original event
-  // is nested at data.event. sourceRef: node_modules/inngest/types.d.ts.
   failureEvent: { data: { event: { data?: unknown } } },
   error: Error,
 ): Promise<{ finalized: boolean }> {

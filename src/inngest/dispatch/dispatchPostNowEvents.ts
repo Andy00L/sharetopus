@@ -15,7 +15,6 @@ type PostNowEvent = { name: "post.now"; data: PostNowEventData };
 
 type DispatchablePostNowEvent = PostNowEvent & { data: { dispatch_id: string } };
 
-/** True when the event carries the non-empty dispatch_id its lock row needs. */
 function hasDispatchId(
   postEvent: PostNowEvent,
 ): postEvent is DispatchablePostNowEvent {
@@ -25,31 +24,6 @@ function hasDispatchId(
   );
 }
 
-/**
- * Inserts pending_direct_posts lock rows for every event, then sends to
- * Inngest only the events whose lock row this call wrote.
- *
- * Idempotency: the lock insert skips a row whose event_id or
- * (principal_id, idempotency_key) already exists
- * (pending_direct_posts_principal_idem_uq). The database decides, so a
- * retry and two concurrent dispatches of one batch both send each post
- * once. The returned eventIds keep input order; a skipped keyed event
- * reports the event_id of the row that already holds its key.
- *
- * Each sent event carries id post.now-{dispatch_id}, so a repeated send
- * of the same event is dropped by Inngest's 24-hour event deduplication.
- *
- * Failure semantics:
- *   - Lock insert fails: { success: false, phase: "lock_insert" }, nothing
- *     sent.
- *   - Inngest send fails AFTER locks inserted: { success: false, phase:
- *     "inngest_send" }. Locks stay in 'processing'; sweepStuckDirectPosts
- *     finalizes them as 'failed' after 10 minutes, which frees storage
- *     cleanup.
- *
- * Callers: web direct-post path (handleSocialMediaPost.dispatchDirectPostEvents),
- *          directPostBatch (MCP publish_posts, REST, x402).
- */
 export async function dispatchPostNowEvents(
   events: PostNowEvent[]
 ): Promise<DispatchPostNowEventsResult> {
@@ -120,6 +94,8 @@ export async function dispatchPostNowEvents(
       await inngest.send(
         eventsToSend.map((postEvent) => ({
           ...postEvent,
+          // Inngest drops a repeated event id for 24 hours:
+          // https://www.inngest.com/docs/guides/handling-idempotency
           id: `post.now-${postEvent.data.dispatch_id}`,
         })),
       );
@@ -154,12 +130,6 @@ export async function dispatchPostNowEvents(
   return { success: true, eventIds, freshCount: eventsToSend.length };
 }
 
-/**
- * Maps the idempotency keys of skipped events to the event_id of the lock
- * row that already holds each key. A failed read degrades to an empty map:
- * the dispatch itself already succeeded, and the caller then reports the
- * skipped events under their own dispatch_ids.
- */
 async function readExistingEventIdsByKey(
   skippedEvents: DispatchablePostNowEvent[],
 ): Promise<Map<string, string>> {

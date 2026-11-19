@@ -9,13 +9,6 @@ import { inngest } from "../client";
 
 const RETENTION_DAYS = 90;
 
-/**
- * Daily cleanup of rest_audit_log rows older than 90 days, the retention of
- * the other request logs (cleanupMcpAuditLogCron, cleanupX402AccessLogCron).
- *
- * Runs at 07:00 UTC. rest_audit_log is append-only by convention and has
- * no reject_mutation trigger, so a plain DELETE goes through.
- */
 export const cleanupRestAuditLogCron = inngest.createFunction(
   {
     id: "cleanup-rest-audit-log",

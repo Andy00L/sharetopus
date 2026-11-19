@@ -5,11 +5,8 @@ import {
   markPostsAsQueued,
 } from "./scheduledPostsTickHelpers";
 
-/**
- * Dispatches due scheduled posts every 5 minutes on Inngest's cron. Every
- * step is safe to repeat (a read, a send deduplicated by event id, a
- * CAS-guarded update), so each throws on failure and Inngest retries it.
- */
+// Each step throws on failure so Inngest retries it; a read, a send
+// deduplicated by event id and a CAS-guarded update are safe to repeat.
 export const scheduledPostsTick = inngest.createFunction(
   {
     id: "scheduled-posts-tick",
@@ -32,8 +29,9 @@ export const scheduledPostsTick = inngest.createFunction(
       return { enqueued: 0, marked: 0, message: "no due posts" };
     }
 
-    // Inngest dedupes events with an identical id within 24h. The id
-    // includes scheduled_at so a rescheduled post gets a fresh event.
+    // Inngest drops a repeated event id for 24 hours, so the id carries
+    // scheduled_at to give a rescheduled post a fresh event:
+    // https://www.inngest.com/docs/guides/handling-idempotency
     const events = duePosts.map((post) => ({
       name: "post.due" as const,
       id: `post.due-${post.id}-${post.scheduled_at}`,

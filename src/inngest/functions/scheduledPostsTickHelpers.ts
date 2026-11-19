@@ -6,7 +6,6 @@ import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 
-/** The scheduled_posts columns a post.due event carries (platform is plain text). */
 export type DuePost = Pick<
   typeof scheduled_posts.$inferSelect,
   "id" | "principal_id" | "social_account_id" | "platform" | "scheduled_at"
@@ -59,13 +58,6 @@ export type MarkQueuedResult =
   | { success: true; message: string; updated: number }
   | { success: false; message: string; updated: 0 };
 
-/**
- * Flips the dispatched rows from 'scheduled' to 'queued'. Each row must
- * still carry the scheduled_at its event was sent with: a post rescheduled
- * between dispatch and this update stays 'scheduled' for the tick at its
- * new time, instead of sitting in 'queued' where no tick reads it and the
- * stale event's claim refuses it.
- */
 export async function markPostsAsQueued(
   dispatchedPosts: Pick<DuePost, "id" | "scheduled_at">[],
 ): Promise<MarkQueuedResult> {

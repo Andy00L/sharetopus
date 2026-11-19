@@ -1,22 +1,8 @@
 import { inngest } from "@/inngest/client";
 import { sweepStuckPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
 
-const STUCK_AGE_MS = 10 * 60 * 1000; // 10 minutes
+const STUCK_AGE_MS = 10 * 60 * 1000;
 
-/**
- * Sweeps pending_direct_posts rows stuck in 'processing' for >10 minutes.
- *
- * Why: the direct-post worker UPDATEs its row to 'completed'/'failed' at
- * terminal. If the worker crashes (OOM, Vercel timeout, Inngest aborts),
- * the row stays at 'processing' and blocks file cleanup forever.
- *
- * 10-minute cutoff: a single direct-post run today completes in <30s
- * (worst case TikTok poll up to ~3 minutes for terminal). 10 minutes
- * is conservative and well past any legitimate run time.
- *
- * Idempotent: rows already terminal are not touched (sweepStuckPendingDirectPosts
- * filters by status='processing').
- */
 export const sweepStuckDirectPosts = inngest.createFunction(
   {
     id: "sweep-stuck-direct-posts",

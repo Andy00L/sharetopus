@@ -19,8 +19,6 @@ import {
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
-// ---------- event data type ----------
-
 export type PostNowEventData = {
   batch_id: string;
   principal_id: string;
@@ -50,27 +48,13 @@ export type PostNowEventData = {
   dispatch_id?: string;
   created_via?: "web" | "mcp" | "x402" | "api";
   idempotency_key?: string;
-  // Correlation ID propagated from the originating request. Optional because
-  // pre-existing scheduled posts may dispatch events without one.
   request_id?: string | null;
-  /**
-   * Per-post provider options for registry platforms (subreddit,
-   * communityId, ...). Optional so legacy in-flight events without it stay
-   * valid; legacy platforms read platform_options instead.
-   */
   post_options?: Record<string, unknown> | null;
 };
 
-/**
- * The post.now trigger, typed with PostNowEventData. The schema is
- * type-only (no runtime check): the one sender, dispatchPostNowEvents,
- * already takes PostNowEventData.
- */
 export const postNowEvent = eventType("post.now", {
   schema: staticSchema<PostNowEventData>(),
 });
-
-// ---------- call-platform-direct-post ----------
 
 export type DirectPostResult = {
   success: boolean;
@@ -78,13 +62,6 @@ export type DirectPostResult = {
   contentId: string | null;
 };
 
-/**
- * Adapts the event payload to the directPostFor* function signatures.
- * Each platform function takes slightly different args; this switch
- * normalizes them. Modeled on callPlatformDirectPost in
- * processSinglePostHelpers but reads from event data instead of a
- * ScheduledPost row.
- */
 export async function callDirectPostFromEvent(
   data: PostNowEventData,
   account: SocialAccount,
@@ -148,7 +125,7 @@ export async function callDirectPostFromEvent(
           fileName: file_name,
           batchId: batch_id,
           postType: post_type,
-          isCronJob: true, // skip rate limiting in worker context
+          isCronJob: true,
           createdVia,
         });
         break;
@@ -171,8 +148,6 @@ export async function callDirectPostFromEvent(
         break;
       }
       case "instagram": {
-        // Instagram takes media only; callers validate the media type, so
-        // this guards a malformed event rather than a normal path.
         if (post_type === "text") {
           return {
             success: false,
@@ -236,10 +211,6 @@ export async function callDirectPostFromEvent(
         break;
       }
       default: {
-        // Registry platforms. The event's media_url is caller-minted with
-        // the default short TTL, so it is re-minted here with the
-        // hotlink-aware lifetime; hotlinking providers embed the URL in
-        // durable content and a 5-minute link would die published.
         let registryMediaUrl: string | null = media_url ?? null;
         if (media_path && media_path !== "") {
           const signed = await getServerSignedViewUrl(

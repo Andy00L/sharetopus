@@ -1,13 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { sweepStaleOauthClients } from "@/actions/server/data/sweepStaleOauthClients";
 
-/**
- * Daily cron at 04:00 UTC. Runs one hour after sweepOrphanStorageFiles
- * to avoid contention.
- *
- * Deletes unverified OAuth clients older than 90 days with no recent
- * session activity. Verified clients preserved indefinitely.
- */
 export const sweepStaleOauthClientsCron = inngest.createFunction(
   {
     id: "sweep-stale-oauth-clients",

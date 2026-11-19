@@ -9,16 +9,6 @@ import { inngest } from "../client";
 
 const RETENTION_DAYS = 90;
 
-/**
- * Daily cleanup of x402_access_log rows older than 90 days.
- *
- * Runs at 06:00 UTC. Like mcp_audit_log, the table's append-only trigger
- * (reject_mutation) refuses a DELETE unless the transaction sets
- * app.allow_append_only_delete = 'on', so the DELETE runs in its own
- * transaction that sets it (see cleanupMcpAuditLogCron).
- *
- * Mirrors cleanupMcpAuditLogCron retention policy.
- */
 export const cleanupX402AccessLogCron = inngest.createFunction(
   {
     id: "cleanup-x402-access-log",

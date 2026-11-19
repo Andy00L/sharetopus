@@ -8,14 +8,8 @@ import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { inngest } from "@/inngest/client";
 import { isJsonObject } from "@/lib/utils/jsonObject";
 
-/**
- * Resolves a fresh TikTok access token for a social account.
- * Fetches the account row, then calls ensureValidToken to handle
- * refresh if needed. Call it inside the step that uses the token; never
- * return the token from a step (Inngest stores step results).
- *
- * Returns: { success, token } or { success: false, message }.
- */
+// Call it inside the step that uses the token; never return the token
+// from a step, because Inngest stores step results.
 export async function resolveTikTokAccessTokenForAccount(
   social_account_id: string
 ): Promise<
@@ -39,16 +33,6 @@ export async function resolveTikTokAccessTokenForAccount(
   return { success: true, token: tokenResult.token };
 }
 
-/**
- * Updates a content_history row to status='failed' and merges the
- * failure reason into the extra jsonb column. Preserves existing
- * extra fields via application-level merge.
- *
- * No-ops if content_history_id is null (post was never recorded).
- *
- * Returns: { success, message }.
- * Persists: content_history.status='failed', extra += failure info.
- */
 export async function updateContentHistoryStatusToFailed(
   content_history_id: string | null,
   reason: string
@@ -62,7 +46,6 @@ export async function updateContentHistoryStatusToFailed(
     return { success: true, message: "Skipped (no content_history_id)" };
   }
 
-  // Fetch current extra to merge
   const { data: currentRows, error: fetchErr } = await runQuery(
     db
       .select({ extra: content_history.extra })
@@ -93,7 +76,6 @@ export async function updateContentHistoryStatusToFailed(
     };
   }
 
-  // Merge failure info into existing extra
   const existingExtra = isJsonObject(current.extra) ? current.extra : {};
 
   const mergedExtra: Json = {
@@ -129,13 +111,6 @@ export async function updateContentHistoryStatusToFailed(
   return { success: true, message: "Content history marked failed" };
 }
 
-/**
- * Dispatches a tiktok.publish.poll Inngest event to trigger the
- * polling worker for a specific publish_id.
- *
- * Returns: { success, message }.
- * Persists: one Inngest event.
- */
 export async function dispatchTikTokPublishPollEvent(input: {
   publish_id: string;
   content_history_id: string | null;

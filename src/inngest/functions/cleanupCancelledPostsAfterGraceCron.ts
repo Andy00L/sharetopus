@@ -1,15 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { cleanupCancelledPostsAfterGrace } from "@/actions/server/data/cleanupCancelledPostsAfterGrace";
 
-/**
- * Daily cron at 05:00 UTC. Runs after sweepStaleOauthClientsCron (04:00)
- * and sweepOrphanStorageFiles (03:00).
- *
- * Deletes scheduled_posts rows that were cancelled by the subscription
- * webhook more than 7 days ago, IF the user has not resubscribed.
- * Orphan media files are picked up by sweepOrphanStorageFiles the
- * following day.
- */
 export const cleanupCancelledPostsAfterGraceCron = inngest.createFunction(
   {
     id: "cleanup-cancelled-posts-after-grace",

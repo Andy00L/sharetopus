@@ -7,19 +7,10 @@ import { tiktok_webhook_events } from "@/db/schema";
 
 import { inngest } from "../client";
 
-/**
- * Days a dispatched TikTok event stays logged. TikTok redelivers an event for
- * 72 hours at most, so 90 days, the retention of stripe_webhook_events
- * (cleanupStripeWebhookEvents), is far past any redelivery.
- */
+// Must outlast TikTok's 72-hour redelivery window:
+// https://developers.tiktok.com/doc/webhooks-overview
 const RETENTION_DAYS = 90;
 
-/**
- * Daily cleanup of tiktok_webhook_events rows older than 90 days. Runs at
- * 08:00 UTC, after the other retention crons. The table is append-only by
- * convention and has no reject_mutation trigger, so a plain DELETE goes
- * through.
- */
 export const cleanupTikTokWebhookEventsCron = inngest.createFunction(
   {
     id: "cleanup-tiktok-webhook-events",

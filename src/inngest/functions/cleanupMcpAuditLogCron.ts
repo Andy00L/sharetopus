@@ -9,25 +9,6 @@ import { inngest } from "../client";
 
 const RETENTION_DAYS = 90;
 
-/**
- * Daily cleanup of mcp_audit_log rows older than 90 days.
- *
- * Runs at 04:00 UTC. The table's append-only trigger (reject_mutation)
- * refuses every UPDATE and DELETE unless the transaction sets
- * app.allow_append_only_delete = 'on', so the DELETE runs in its own
- * transaction that sets it; set_config(..., true) keeps the setting local
- * to that transaction. Until 2026-09-24 nothing set it and every run failed
- * at the DELETE. sourceRef: public.reject_mutation(), docs/DATABASE.md
- * (append-only tables).
- *
- * Retention rationale:
- *   - 90 days covers most compliance / forensics windows
- *   - Recent debugging usually happens within 30 days
- *   - Older rows are storage waste with diminishing analytics value
- *
- * Adjust RETENTION_DAYS upward if a regulator or contract requires
- * longer retention.
- */
 export const cleanupMcpAuditLogCron = inngest.createFunction(
   {
     id: "cleanup-mcp-audit-log",
@@ -43,6 +24,8 @@ export const cleanupMcpAuditLogCron = inngest.createFunction(
     const result = await step.run("delete-old-audit-rows", async () => {
       const { data: deletedCount, error } = await runQuery(
         db.transaction(async (transaction) => {
+          // set_config's third argument true limits the setting to this
+          // transaction: https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET
           await transaction.execute(
             sql`select set_config('app.allow_append_only_delete', 'on', true)`,
           );

@@ -2,27 +2,23 @@ import "server-only";
 
 import { isIP } from "node:net";
 
-// SSRF blocklist shared by every path that resolves a user-supplied host (media download, webhook delivery).
-
-/** True when a dotted-decimal IPv4 address is private, reserved, loopback, link-local, CGNAT, multicast or broadcast. */
 function isPrivateIpv4(addr: string): boolean {
   const parts = addr.split(".");
   const firstOctet = Number(parts[0]);
   const secondOctet = Number(parts[1]);
 
-  if (firstOctet === 0) return true; // 0.0.0.0/8
-  if (firstOctet === 10) return true; // 10.0.0.0/8
-  if (firstOctet === 100 && (secondOctet & 0xc0) === 64) return true; // 100.64.0.0/10 (CGNAT)
-  if (firstOctet === 127) return true; // 127.0.0.0/8
-  if (firstOctet === 169 && secondOctet === 254) return true; // 169.254.0.0/16
-  if (firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) return true; // 172.16.0.0/12
-  if (firstOctet === 192 && secondOctet === 168) return true; // 192.168.0.0/16
-  if (firstOctet >= 224 && firstOctet <= 239) return true; // 224.0.0.0/4 (multicast)
-  if (firstOctet >= 240) return true; // 240.0.0.0/4 (reserved + broadcast)
+  if (firstOctet === 0) return true;
+  if (firstOctet === 10) return true;
+  if (firstOctet === 100 && (secondOctet & 0xc0) === 64) return true;
+  if (firstOctet === 127) return true;
+  if (firstOctet === 169 && secondOctet === 254) return true;
+  if (firstOctet === 172 && secondOctet >= 16 && secondOctet <= 31) return true;
+  if (firstOctet === 192 && secondOctet === 168) return true;
+  if (firstOctet >= 224 && firstOctet <= 239) return true;
+  if (firstOctet >= 240) return true;
   return false;
 }
 
-/** Parses an IPv6 address (with :: expansion and an embedded IPv4 suffix) into 16 bytes. */
 function parseIpv6ToBytes(raw: string): Uint8Array {
   const bytes = new Uint8Array(16);
   let addr = raw;
@@ -73,11 +69,9 @@ function parseIpv6ToBytes(raw: string): Uint8Array {
   return bytes;
 }
 
-/** True when an IPv6 address is blocked, including IPv4-mapped addresses with a private IPv4. */
 function isPrivateIpv6(addr: string): boolean {
   const bytes = parseIpv6ToBytes(addr);
 
-  // ::1/128 (loopback)
   if (
     bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0 &&
     bytes[4] === 0 && bytes[5] === 0 && bytes[6] === 0 && bytes[7] === 0 &&
@@ -87,7 +81,6 @@ function isPrivateIpv6(addr: string): boolean {
     return true;
   }
 
-  // ::/128 (unspecified)
   if (
     bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0 &&
     bytes[4] === 0 && bytes[5] === 0 && bytes[6] === 0 && bytes[7] === 0 &&
@@ -97,13 +90,10 @@ function isPrivateIpv6(addr: string): boolean {
     return true;
   }
 
-  // fe80::/10 (link-local)
   if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return true;
 
-  // fc00::/7 (ULA)
   if ((bytes[0] & 0xfe) === 0xfc) return true;
 
-  // ::ffff:0:0/96 (IPv4-mapped): extract embedded IPv4 and re-check
   const isIpv4Mapped =
     bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0 &&
     bytes[4] === 0 && bytes[5] === 0 && bytes[6] === 0 && bytes[7] === 0 &&
@@ -117,10 +107,9 @@ function isPrivateIpv6(addr: string): boolean {
   return false;
 }
 
-/** True when an IPv4 or IPv6 address is in a blocked range; fails closed on anything unparseable. */
 export function isPrivateOrReservedIp(addr: string): boolean {
   const version = isIP(addr);
   if (version === 4) return isPrivateIpv4(addr);
   if (version === 6) return isPrivateIpv6(addr);
-  return true; // unrecognized -> fail closed
+  return true;
 }

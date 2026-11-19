@@ -9,38 +9,29 @@ import { ENCRYPTED_TOKEN_PREFIX, isEncryptedToken } from "@/lib/crypto/tokenEncr
 
 import { inngest } from "../client";
 
-/** Rows rewritten per table per run. Each table holds a few rows per user. */
 const BATCH_SIZE = 500;
 
-/** A LIKE pattern that matches every value the encrypting column wrote. */
 const ENCRYPTED_VALUE_PATTERN = `${ENCRYPTED_TOKEN_PREFIX}%`;
 
 type EncryptionPassResult = { found: number; encrypted: number };
 
 /**
- * One table's pass: select the rows still in plaintext, then rewrite each
- * one through its encrypting column. Selects read raw values on purpose:
- * an sql`` field skips the column's decrypting decoder, and like() would
- * bind its pattern through the encrypting encoder, so filters and guards
- * are sql`` templates too.
+ * Drizzle decodes an sql`` select field with a no-op decoder, so it reads
+ * the stored ciphertext or plaintext raw, and eq() binds its value through
+ * the column's encrypting encoder, so the guards compare in sql`` too.
+ * sourceRef: node_modules/drizzle-orm/utils.js (mapResultRow),
+ * node_modules/drizzle-orm/sql/expressions/conditions.js (bindIfParam).
  */
 type PlaintextPass<Row extends { id: string }> = {
-  /** Names the table in logs and errors. */
   table: string;
   selectPlaintext: () => Promise<QueryResult<Row[]>>;
-  /**
-   * Guarded on the stored values just read: a value rewritten in the
-   * meantime is already encrypted by its own write and is left alone.
-   */
   rewrite: (row: Row) => Promise<QueryResult<unknown>>;
 };
 
 /**
- * Runs one pass and returns counts only: Inngest stores step results, and
- * a token must never land there. Called inside step.run, so it throws on
- * failure (the Inngest retry exception to errors as values): a failed
- * select, or any failed row, marks the run failed and the next run picks
- * the rows up again.
+ * Returns counts only: Inngest stores step results, and a token must never
+ * land there. Throws on failure because it runs inside step.run and Inngest
+ * retries only a throw: https://www.inngest.com/docs/learn/how-functions-are-executed
  */
 async function encryptPlaintextRows<Row extends { id: string }>(
   pass: PlaintextPass<Row>,
@@ -72,7 +63,6 @@ async function encryptPlaintextRows<Row extends { id: string }>(
   return { found: plaintextRows.length, encrypted: encryptedRows };
 }
 
-/** social_accounts: the OAuth access and refresh tokens. */
 const socialTokensPass: PlaintextPass<{
   id: string;
   storedAccessToken: string | null;
@@ -97,8 +87,6 @@ const socialTokensPass: PlaintextPass<{
         .limit(BATCH_SIZE),
     ),
   rewrite: ({ id, storedAccessToken, storedRefreshToken }) => {
-    // Only the columns still in plaintext are rewritten; set() sends them
-    // through the encrypting column.
     const tokenUpdate: { access_token?: string; refresh_token?: string } = {};
     if (storedAccessToken !== null && !isEncryptedToken(storedAccessToken)) {
       tokenUpdate.access_token = storedAccessToken;
@@ -121,7 +109,6 @@ const socialTokensPass: PlaintextPass<{
   },
 };
 
-/** webhook_subscriptions: the secret that signs each delivery. */
 const webhookSecretsPass: PlaintextPass<{ id: string; storedSecret: string }> = {
   table: "webhook_subscriptions",
   selectPlaintext: () =>
@@ -149,11 +136,6 @@ const webhookSecretsPass: PlaintextPass<{ id: string; storedSecret: string }> = 
     ),
 };
 
-/**
- * share_links: the token. token_hash is written in the same update, so a
- * row created before hashing shipped stays reachable once its token is
- * encrypted.
- */
 const shareLinkTokensPass: PlaintextPass<{ id: string; storedToken: string }> = {
   table: "share_links",
   selectPlaintext: () =>
@@ -176,19 +158,6 @@ const shareLinkTokensPass: PlaintextPass<{ id: string; storedToken: string }> = 
     ),
 };
 
-/**
- * Rewrites every value still stored in plaintext through its encrypting
- * column (schema.ts, encryptedText): social account tokens, webhook secrets
- * and share-link tokens. Runs daily at 09:00 UTC and on the
- * "social-tokens.encrypt" event, so it can be sent from the Inngest
- * dashboard right after a deploy that encrypts a column. Once every row is
- * encrypted, a run is three queries that find nothing; it also catches a
- * row that a still-running old instance wrote in plaintext during a rollout.
- *
- * It runs inside the deployment, with the deployment's key: a backfill from
- * a laptop with a different key would leave every value unreadable. The id
- * and event name predate the two newer tables and stay for continuity.
- */
 export const encryptSocialTokensCron = inngest.createFunction(
   {
     id: "encrypt-social-tokens",

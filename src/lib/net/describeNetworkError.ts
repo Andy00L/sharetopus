@@ -1,8 +1,5 @@
-/**
- * Names a failed outbound request with its root cause. undici's fetch
- * reports every network failure as "fetch failed" and keeps the reason
- * (ECONNREFUSED, ERR_INVALID_IP_ADDRESS, a TLS error) on error.cause.
- */
+// undici's fetch reports every network failure as "fetch failed" and keeps
+// the reason on error.cause. sourceRef: node_modules/undici/lib/web/fetch/index.js
 export function describeNetworkError(error: unknown): string {
   if (!(error instanceof Error)) return "unknown network error";
   const cause = error.cause;

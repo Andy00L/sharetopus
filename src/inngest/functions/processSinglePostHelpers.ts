@@ -38,10 +38,7 @@ import {
   type PlatformPostOutcome,
 } from "./platformErrors";
 
-/** A scheduled_posts row as the worker reads it. */
 type ScheduledPost = typeof scheduled_posts.$inferSelect;
-
-// ---------- load-post ----------
 
 export type LoadPostResult =
   | { kind: "ready"; post: ScheduledPost }
@@ -49,12 +46,8 @@ export type LoadPostResult =
   | { kind: "terminal"; message: string }
   | { kind: "lookup_failed"; message: string };
 
-/**
- * Loads the post and checks its account still exists. "terminal" means the
- * row is gone or already posted, failed or cancelled, so a re-invocation is
- * a no-op. Only the account id is checked, never its tokens: this result is
- * returned from an Inngest step, which stores it.
- */
+// Reads only the account id, never its tokens: this result is returned
+// from an Inngest step, which stores it.
 export async function loadPostForProcessing(
   scheduledPostId: string,
 ): Promise<LoadPostResult> {
@@ -96,18 +89,10 @@ export async function loadPostForProcessing(
 
 const TERMINAL_POST_STATUSES: readonly PostStatus[] = ["posted", "failed", "cancelled"];
 
-// ---------- claim-post ----------
-
 export type ClaimResult =
   | { success: true; claimed: boolean }
   | { success: false; message: string };
 
-/**
- * UPDATE ... SET status='processing' WHERE id=? AND status IN
- * ('scheduled','queued') AND scheduled_at = the dispatched time. Zero rows
- * means another run took it, the row moved on, or it was rescheduled after
- * this event was sent (the tick dispatches the new time with a new event).
- */
 export async function claimPostForProcessing(input: {
   scheduledPostId: string;
   dispatchedScheduledAt: string;
@@ -139,18 +124,10 @@ export async function claimPostForProcessing(input: {
   return { success: true, claimed: data.length > 0 };
 }
 
-// ---------- duplicate-publish guard ----------
-
 export type PublishedCheckResult =
   | { success: true; isPublished: boolean }
   | { success: false; message: string };
 
-/**
- * True when a content_history row already records this scheduled post.
- * Every publish path writes one right after the platform accepts the post,
- * with batch_id = post.batch_id ?? post.id, so the lookup rides
- * idx_content_history_batch.
- */
 export async function findPublishedContentHistory(
   post: Pick<ScheduledPost, "id" | "batch_id">,
 ): Promise<PublishedCheckResult> {
@@ -172,8 +149,6 @@ export async function findPublishedContentHistory(
   return { success: true, isPublished: data.length > 0 };
 }
 
-// ---------- build-signed-urls ----------
-
 export type SignedUrlsResult =
   | {
       success: true;
@@ -183,22 +158,6 @@ export type SignedUrlsResult =
     }
   | { success: false; message: string };
 
-/**
- * Mirrors handleSocialMediaPost URL-minting logic:
- *   - Pinterest/LinkedIn/Instagram/Facebook: getServerSignedViewUrl (the
- *     platform pulls the media from the URL, or the adapter streams it)
- *   - TikTok: buildTikTokMediaUrl (proxy or supabase_direct per env)
- *   - YouTube/X: no URL minted; their adapters fetch the file bytes from
- *     storage and upload them directly
- * For text posts (no media_storage_path) both are null.
- */
-/**
- * Signed-URL lifetime for hotlinking registry providers, in seconds
- * (30 days). Their publish embeds the URL in durable content (markdown
- * image, link post, chat message), so the default short TTL would leave a
- * dead link minutes after publishing. The media file itself is preserved
- * by the cleanup skip in processSinglePost.
- */
 export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
 
 export async function buildPlatformSignedUrls(
@@ -214,9 +173,6 @@ export async function buildPlatformSignedUrls(
     };
   }
 
-  // Registry providers all take one https media URL; only the lifetime
-  // differs (see HOTLINK_SIGNED_URL_TTL_S). Checked before the legacy
-  // special cases so those stay exactly as they were.
   if (!isPostingPlatform(platform)) {
     const registrySigned = await getServerSignedViewUrl(
       post.media_storage_path,
@@ -281,8 +237,6 @@ export async function buildPlatformSignedUrls(
   };
 }
 
-// ---------- platform compatibility check ----------
-
 export type CompatibilityResult = {
   success: true;
   message: string;
@@ -290,12 +244,6 @@ export type CompatibilityResult = {
   reason: string;
 };
 
-/**
- * Per-platform post-type rules, read from the shared capability map in
- * src/lib/platforms/capabilities.ts (single source of truth also used by
- * the create form, the REST schema, and the account selector).
- * If incompatible, the worker records it as invalid_input (terminal).
- */
 export function checkPlatformCompatibility(
   platform: string,
   mediaType: ScheduledPost["media_type"],
@@ -319,11 +267,8 @@ export function checkPlatformCompatibility(
   };
 }
 
-// ---------- call platform direct-post function ----------
-
 export type CallPlatformResult = PlatformPostOutcome;
 
-/** Every PrivacyLevel (dbTypes), keyed by itself so a new level fails compilation here. */
 const PRIVACY_LEVELS = {
   PUBLIC_TO_EVERYONE: "PUBLIC_TO_EVERYONE",
   MUTUAL_FOLLOW_FRIENDS: "MUTUAL_FOLLOW_FRIENDS",
@@ -333,11 +278,6 @@ const PRIVACY_LEVELS = {
   PROTECTED: "PROTECTED",
 } as const satisfies { [Level in PrivacyLevel]: Level };
 
-/**
- * The post_options keys the seven legacy adapters read, as
- * SchedulePostData["postOptions"] writes them. Registry keys are stripped
- * (the registry arm reads post_options itself); a null reads as absent.
- */
 const PostOptionsSchema = z.object({
   link: z.string().nullish(),
   board: z.string().nullish(),
@@ -351,16 +291,9 @@ const PostOptionsSchema = z.object({
   yourBrand: z.boolean().nullish(),
   brandedContent: z.boolean().nullish(),
   isAigc: z.boolean().nullish(),
-  /** YouTube videos.insert status.privacyStatus (dbTypes YouTubeOptions). */
   privacyStatus: z.enum(["public", "unlisted", "private"]).nullish(),
 });
 
-/**
- * Dispatches to the right per-account direct-post function based on
- * platform. Failed-post recording is centralized in recordPostStatus;
- * the directPostFor functions no longer write to failed_posts.
- * LinkedIn still receives isCronJob:true to skip rate limiting.
- */
 export async function callPlatformDirectPost(args: {
   post: ScheduledPost;
   account: SocialAccount;
@@ -373,7 +306,6 @@ export async function callPlatformDirectPost(args: {
 
   const createdVia = post.created_via ?? "web";
 
-  // scheduled_posts.platform is plain text; an unknown value stops here.
   const platform = post.platform;
   if (!isSchedulablePlatform(platform)) {
     return {
@@ -403,7 +335,6 @@ export async function callPlatformDirectPost(args: {
     isCustomized: true,
   };
 
-  // Platform options shape mirrors handleSocialMediaPost
   const platformOptions: PlatformOptions = {
     pinterest: {
       privacyLevel: options.privacyLevel ?? "PUBLIC",
@@ -414,7 +345,6 @@ export async function callPlatformDirectPost(args: {
       visibility: options.visibility ?? "PUBLIC",
     },
     tiktok: {
-      // Set only by the web composer; resolveTikTokPrivacyLevel decides the rest.
       privacyLevel: options.privacyLevel ?? undefined,
       disableComment: options.disableComment ?? false,
       disableDuet: options.disableDuet ?? false,
@@ -443,9 +373,6 @@ export async function callPlatformDirectPost(args: {
             message: "No board configured in post_options",
           };
         }
-        // FIX 17.2: fallback to 1000ms (1 second) instead of 0 because
-        // TikTok rejects 0 as "too small". Pinterest and Instagram
-        // tolerate it but the shared default keeps the value safe.
         result = await directPostForPinterestAccounts({
           account,
           mediaPath: post.media_storage_path,
@@ -506,8 +433,6 @@ export async function callPlatformDirectPost(args: {
         break;
       }
       case "instagram": {
-        // Instagram takes media only; the compatibility check rejects text
-        // before this point, so this guards a malformed row.
         if (post.media_type === "text") {
           return {
             ok: false,
@@ -575,9 +500,6 @@ export async function callPlatformDirectPost(args: {
         break;
       }
       default: {
-        // Everything outside the seven legacy adapters publishes through
-        // the provider registry. A provider that is not available comes
-        // back as a message and classifies as terminal below.
         result = await publishViaRegistry({
           account,
           principalId: post.principal_id,
@@ -597,8 +519,6 @@ export async function callPlatformDirectPost(args: {
     }
 
     if (result.success && result.count > 0) {
-      // The directPostFor functions write content_history themselves
-      // via storeContentHistory. We do not duplicate that write here.
       return {
         ok: true,
         contentId: post.id,
@@ -613,7 +533,6 @@ export async function callPlatformDirectPost(args: {
       message: result.message ?? "Failed without message",
     };
   } catch (err) {
-    // Network / unexpected. Classify to drive retry decisions.
     const message = err instanceof Error ? err.message : String(err);
     const reason: PlatformErrorReason = classifyDirectPostFailure(
       platform,
@@ -623,22 +542,10 @@ export async function callPlatformDirectPost(args: {
   }
 }
 
-// ---------- record final status ----------
-
 export type RecordStatusResult =
   | { success: true; updated: boolean }
   | { success: false; message: string };
 
-/**
- * Moves a 'processing' row to posted or failed. CAS-guarded on
- * status='processing', so a re-invocation after the row moved on updates
- * nothing and sends no duplicate webhook or failed_posts row. A failed
- * UPDATE comes back as success:false for the caller to retry.
- *
- * For success, content_history (with scheduled_post_id lineage) is already
- * written by the publish path; the row stays so the content_history FK
- * (ON DELETE SET NULL) keeps its lineage.
- */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
   result: PlatformPostOutcome;
@@ -750,19 +657,12 @@ export async function recordPostStatus(args: {
   return { success: true, updated: true };
 }
 
-// ---------- cleanup storage ----------
-
 export type CleanupResult = {
   success: true;
   message: string;
   deleted: boolean;
 };
 
-/**
- * Uses the internal delete helper (no auth checks needed in worker
- * context). Already idempotent. No-ops if other scheduled_posts or
- * failed_posts rows still reference the same path.
- */
 export async function cleanupMediaIfUnreferenced(
   mediaPath: string,
   principalId: string,

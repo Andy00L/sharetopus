@@ -10,18 +10,6 @@ import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { finalizePendingDirectPost } from "@/actions/server/data/pendingDirectPosts";
 
-/**
- * Processes ONE direct-post item for ONE social_account on ONE platform.
- * Triggered by the "post.now" event sent from handleSocialMediaPost.
- *
- * No retries: direct posts are fire-and-forget from the user's
- * perspective. Failures surface via the polling endpoint.
- *
- * Cleanup:
- *   - Non-TikTok platforms: cleanup at end of this worker run.
- *   - TikTok success: poll worker handles cleanup after terminal.
- *   - TikTok failure (init failed): cleanup here.
- */
 export const processDirectPost = inngest.createFunction(
   {
     id: "process-direct-post",
@@ -38,10 +26,9 @@ export const processDirectPost = inngest.createFunction(
   async ({ event, step }) => {
     const data = event.data;
 
-    // Steps 1-2: load the account and publish, in one step. Inngest stores
-    // every step result and the account row carries the OAuth tokens, so the
-    // account is loaded where it is used and never returned. An account that
-    // cannot be loaded fails the post, and step 3 finalizes its lock.
+    // Inngest stores every step result and the account row carries the
+    // OAuth tokens, so the account is loaded inside the step that uses it:
+    // https://www.inngest.com/docs/learn/how-functions-are-executed
     const result = await step.run(
       "call-platform-direct-post",
       async (): Promise<DirectPostResult> => {
@@ -53,9 +40,6 @@ export const processDirectPost = inngest.createFunction(
       },
     );
 
-    // Step 3: finalize THIS worker's lock (release self before cleanup check).
-    // dispatch_id may be undefined for legacy in-flight events that predate
-    // the FIX RACE-1 deploy. Skip finalize in that case.
     const dispatchId = data.dispatch_id;
     if (dispatchId) {
       await step.run("finalize-pending-direct-post", () =>
@@ -67,13 +51,6 @@ export const processDirectPost = inngest.createFunction(
       );
     }
 
-    // Step 4: cleanup media
-    // For TikTok success: do NOT cleanup here. The tikTokPublishStatusPollWorker
-    // handles cleanup after the publish reaches a terminal state.
-    // For TikTok failure (init failed): cleanup here because no pending pull was created.
-    // Hotlinking registry platforms embed the media URL in the published
-    // content, so the file must outlive the post (mirrors the skip in
-    // processSinglePost).
     const keepsMediaAlive = platformHotlinksMedia(data.platform) && result.success;
     const isTikTokSuccess = data.platform === "tiktok" && result.success;
     if (!isTikTokSuccess && !keepsMediaAlive && data.media_path) {

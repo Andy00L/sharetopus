@@ -11,16 +11,12 @@ import { getNetworkConfig } from "@/lib/x402/networks";
 
 import { inngest } from "../client";
 
-/** How far back the sweep looks, in days. Older rows are handled by hand. */
 const LOOKBACK_DAYS = 30;
 
-/** A pending charge older than this has outlived any request that could finish it, in minutes. */
 const STALE_PENDING_MINUTES = 15;
 
-/** Upper bound on rows read per table per run. */
 const MAX_ROWS_PER_RUN = 500;
 
-/** Reason recorded when the sweep, not a request, records a refund. */
 const SWEEP_REFUND_REASON = "refund confirmed on-chain by the reconciliation sweep";
 
 interface OpenItem {
@@ -39,24 +35,9 @@ interface SweepSummary {
   open: OpenItem[];
 }
 
-/**
- * Hourly reader for x402_reconciliation and stuck pending charges: the one
- * consumer of the trail the request path writes when it cannot close a
- * money window itself (charges/recordReconciliation.ts).
- *
- * It closes what the chain proves (a refund that landed after its request
- * stopped waiting is recorded as refunded) and fails the run while anything
- * is still open, so the Inngest dashboard and its failure alerts surface an
- * x402 money problem within the hour instead of leaving it in Vercel logs
- * that expire. Throwing is how Inngest marks a run failed, the documented
- * exception to errors-as-values for background jobs.
- *
- * Items close from the data, with no acknowledgement column: a settle item
- * closes once its charge leaves pending, a refund item once the charge has
- * an x402_refunds row. A refund sent by hand is closed by recording it
- * there. Rows with no charge to check can only age out of the
- * LOOKBACK_DAYS window.
- */
+// Throwing is how Inngest marks a run failed, the documented exception to
+// errors-as-values for background jobs:
+// https://www.inngest.com/docs/guides/error-handling
 export const sweepX402ReconciliationCron = inngest.createFunction(
   {
     id: "sweep-x402-reconciliation",
@@ -200,14 +181,11 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       continue;
     }
 
-    // refund_failed: resolved once a refund is on record for the charge.
     if (refundedChargeIds.has(charge.id)) {
       summary.resolved += 1;
       continue;
     }
     if (!row.tx_hash) {
-      // A send whose reply was lost also lands here, so the refund may have
-      // gone out anyway; refunding again blind could pay the payer twice.
       markOpen({
         ...openItem,
         note: "No refund transaction hash was recorded. Check the sender wallet's outgoing transfers to the payer before refunding by hand.",
@@ -253,12 +231,6 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   return summary;
 }
 
-/**
- * Records a refund the chain confirmed after its request stopped waiting.
- * A settled charge moves to refunded (which writes x402_refunds); a charge
- * already marked refunded only gets its missing x402_refunds row. Anything
- * else is left for a human.
- */
 async function recordConfirmedRefund(
   charge: { id: string; status: string; amount_usdc: number; principal_id: string },
   refundTxHash: string,

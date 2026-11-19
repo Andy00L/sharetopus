@@ -18,30 +18,15 @@ import {
   recordPostStatus,
 } from "./processSinglePostHelpers";
 
-/**
- * The post.due fields this worker reads. scheduledPostsTick also sends
- * principal_id and social_account_id (the throttle key).
- */
 const PostDueEventDataSchema = z.object({
   scheduled_post_id: z.string(),
-  // scheduled_posts.platform is plain text; checkPlatformCompatibility
-  // fails an unknown value.
   platform: z.string(),
   scheduled_at: z.string(),
 });
 
-/**
- * Processes ONE scheduled_posts row for ONE social_account on ONE
- * platform, calling the platform adapter in-process.
- *
- * Retry contract: a step that wants to be retried throws INSIDE itself.
- * Inngest checkpoints completed step results, so a throw placed after a
- * step never re-executes it. Reads and status writes throw on a database
- * error (repeating them is safe); the publish step throws only for a rate
- * limit (isSafeToRetryPost) and returns every other failure as a value.
- * When retries run out, onFailure finalizes the row so a claimed post
- * cannot be stranded in 'processing' (nothing sweeps that status).
- */
+// A step that wants to be retried throws inside itself: Inngest stores
+// completed step results, so a throw placed after a step never re-runs it.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const processSinglePost = inngest.createFunction(
   {
     id: "process-single-post",
@@ -128,8 +113,6 @@ export const processSinglePost = inngest.createFunction(
       return { skipped: true, reason: "claimed-by-another-worker" };
     }
 
-    // Minting a signed URL is side-effect free, so throwing inside the step
-    // is safe and is the only placement that actually re-mints on retry.
     const urls = await step.run("build-signed-urls", async () => {
       const minted = await buildPlatformSignedUrls(post, data.platform);
       if (!minted.success) {
@@ -145,9 +128,6 @@ export const processSinglePost = inngest.createFunction(
     const mediaType = deriveMediaMimeType(fileName, post.media_type);
 
     const result = await step.run("call-platform-direct-post", async () => {
-      // A re-executed step (a crash or timeout after the platform accepted
-      // the post) must not publish twice: the publish path writes
-      // content_history right after the platform accepts.
       const published = await findPublishedContentHistory(post);
       if (!published.success) {
         throw new Error(`publish-guard-failure: ${published.message}`);
@@ -162,8 +142,7 @@ export const processSinglePost = inngest.createFunction(
       }
 
       // Loaded here, not in an earlier step: Inngest stores every step
-      // result, and the row carries the OAuth tokens. Reading it here also
-      // picks up a token another run refreshed since.
+      // result, and the row carries the OAuth tokens.
       const accountForPublish = await fetchAccountForPublish(post.social_account_id);
       if (!accountForPublish.success) {
         if (accountForPublish.reason === "lookup_failed") {
@@ -186,8 +165,6 @@ export const processSinglePost = inngest.createFunction(
         mediaType,
       });
 
-      // Only rate limits throw: the platform refused the request, so
-      // nothing was published and a backoff retry cannot duplicate it.
       if (!outcome.ok && isSafeToRetryPost(outcome.reason)) {
         throw new Error(`retryable: ${outcome.reason}: ${outcome.message}`);
       }
@@ -196,11 +173,6 @@ export const processSinglePost = inngest.createFunction(
 
     await recordOutcome("record-status", result);
 
-    // Hotlinking registry providers embed the media URL in the published
-    // content (markdown image, link post), so the file must outlive the
-    // post: deleting it here would kill the live embed. deleteSupabaseFile
-    // only preserves files referenced by scheduled/processing rows, and by
-    // this point the row is posted, so the skip has to happen here.
     if (post.media_storage_path && !platformHotlinksMedia(data.platform)) {
       await step.run("cleanup-storage", () =>
         cleanupMediaIfUnreferenced(post.media_storage_path, post.principal_id),
@@ -215,19 +187,7 @@ export const processSinglePost = inngest.createFunction(
   },
 );
 
-/**
- * Finalizes a post whose run exhausted every retry, so it cannot sit in
- * 'queued' or 'processing' forever (nothing sweeps either status). A row
- * not yet claimed is claimed first, guarded on the dispatched scheduled_at
- * so a post rescheduled meanwhile is left for its new run. A post whose
- * content_history row exists was published, so it is recorded as posted.
- * recordPostStatus is CAS-guarded on 'processing', so a row that already
- * reached a terminal state is left untouched.
- */
 async function finalizeExhaustedPost(
-  // Structural shape of Inngest's FailureEventPayload: the original event
-  // is nested at data.event, and its own `data` is optional on EventPayload.
-  // sourceRef: node_modules/inngest/types.d.ts, FailureEventPayload.
   failureEvent: { data: { event: { data?: unknown } } },
   error: Error,
 ): Promise<{ finalized: boolean; reason?: string }> {
