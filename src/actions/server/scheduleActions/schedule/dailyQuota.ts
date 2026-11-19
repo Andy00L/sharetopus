@@ -1,4 +1,3 @@
-/** A platform whose daily cap the batch would pass. */
 export type DailyQuotaViolation = {
   platform: string;
   existingCount: number;
@@ -6,7 +5,6 @@ export type DailyQuotaViolation = {
   dailyCap: number;
 };
 
-/** How many posts of the batch go to each platform, in first-seen order. */
 export function countPostsByPlatform(
   posts: { platform: string }[],
 ): Map<string, number> {
@@ -20,11 +18,6 @@ export function countPostsByPlatform(
   return postCountByPlatform;
 }
 
-/**
- * The first platform, in batch order, where the posts already due in the
- * window plus the new ones pass the daily cap. A platform without a
- * platform_quotas row gets defaultDailyCap. Null when every platform fits.
- */
 export function findDailyQuotaViolation(input: {
   addedCountByPlatform: Map<string, number>;
   existingCountByPlatform: Map<string, number>;

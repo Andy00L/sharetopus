@@ -7,26 +7,8 @@ import { referral_codes, referrals, users } from "@/db/schema";
 import { triggerReferralGrant } from "./triggerReferralGrant";
 
 /**
- * Records a referral for a newly created user, then asks the grant function
- * whether the referrer has earned a free week.
- *
- * The referral code is passed in: the caller reads the attribution cookie
- * while the page renders, and this runs afterwards inside after(), where
- * request cookies are unavailable. It never writes cookies. Next.js throws
- * on a cookie write during a Server Component render, and the old cookie
- * cleanup here did exactly that, so every grant was silently skipped. The
- * UNIQUE constraint on referrals.referred_id already makes attribution
- * one-time, so the cookie is left to expire.
- *
  * Clerk verifies the email before the user exists, so the referral is
  * inserted directly as "verified".
- *
- * Best-effort: failures are logged and returned as values; it never blocks
- * user creation.
- *
- * Called by: ensureUserExists, on FIRST user creation only.
- * Tables: referral_codes joined with users (one read), referrals (insert)
- * Side effects: may call triggerReferralGrant (RPC + cache invalidation)
  */
 export async function recordReferralOnSignup(params: {
   newUserId: string;
@@ -35,8 +17,6 @@ export async function recordReferralOnSignup(params: {
 }): Promise<{ success: true } | { success: false; message: string }> {
   const { newUserId, newUserEmail, referralCode } = params;
   try {
-    // The code's owner and their email in one read: the email feeds the
-    // self-referral check below.
     const { data: codeRows, error: codeError } = await runQuery(
       db
         .select({ user_id: referral_codes.user_id, email: users.email })
@@ -46,9 +26,6 @@ export async function recordReferralOnSignup(params: {
         .limit(1),
     );
 
-    // Without the referrer's email the self-referral check cannot run, and
-    // recording the referral anyway let a second account of the referrer
-    // earn the reward. The attribution is dropped instead.
     if (codeError) {
       console.error(
         `[recordReferralOnSignup] Failed to resolve code "${referralCode}":`,
@@ -91,7 +68,6 @@ export async function recordReferralOnSignup(params: {
     );
 
     if (insertError) {
-      // UNIQUE (referred_id): this user was already attributed.
       if (insertError.code === "23505") {
         console.warn(
           `[recordReferralOnSignup] Duplicate referral for ${newUserId} -- already attributed`,
@@ -110,10 +86,8 @@ export async function recordReferralOnSignup(params: {
       `[recordReferralOnSignup] Referral recorded: ${referrerId} -> ${newUserId}`,
     );
 
-    // May award a week if the referrer now has enough verified referrals.
     const grantResult = await triggerReferralGrant(referrerId);
     if (!grantResult.success) {
-      // Non-fatal: the referral is recorded and the next grant call picks it up.
       console.error(
         `[recordReferralOnSignup] Grant trigger failed for referrer ${referrerId}: ${grantResult.message}`,
       );

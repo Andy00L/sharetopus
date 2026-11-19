@@ -1,4 +1,3 @@
-// actions/server/accounts/disconnectAction.ts
 "use server";
 
 import { disconnectSocialAccount } from "./disconnectSocialAccount";

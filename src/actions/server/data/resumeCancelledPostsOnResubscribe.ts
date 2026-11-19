@@ -13,27 +13,6 @@ export type ResumeResult =
   | { success: true; resumed: number; bumped: number }
   | { success: false; message: string };
 
-/**
- * Restores all of a user's system-cancelled posts (those tagged with
- * `cancelled_by_sub_at IS NOT NULL`) back to `status='scheduled'` in one
- * UPDATE, so the posts come back together or not at all.
- *
- * Posts whose `scheduled_at` has elapsed during the cancellation period
- * are bumped to `now() + 1 hour` (buildResumeSchedule). The `bumped` count
- * in the result reflects how many were rescheduled vs. kept at their
- * original time.
- *
- * `cancelled_by_sub_at` is cleared on resumption so the row is no longer
- * targeted by the 7-day cleanup cron.
- *
- * Manual user cancellations (`cancelled_by_sub_at IS NULL`) are NEVER
- * touched by this helper.
- *
- * Idempotent: re-running yields zero changes because the WHERE clause
- * requires `cancelled_by_sub_at IS NOT NULL`. A failed UPDATE fails the
- * call, so the Stripe webhook answers 500 and its retry resumes whatever
- * is still tagged.
- */
 export async function resumeCancelledPostsOnResubscribe(
   principalId: string,
 ): Promise<ResumeResult> {

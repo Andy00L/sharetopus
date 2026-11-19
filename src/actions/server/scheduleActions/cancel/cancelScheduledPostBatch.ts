@@ -8,11 +8,6 @@ import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type CancelScheduledPostBatchResult = {
   message: string;
   resetIn?: number;
@@ -24,26 +19,6 @@ export type CancelScheduledPostBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Cancels scheduled posts in batch. Sets status='cancelled' on rows
- * currently in 'scheduled' status that belong to `principalId`, and clears
- * cancelled_by_sub_at: only a subscription lapse sets that tag, and the
- * 7-day grace cleanup deletes the posts that carry it. The update repeats
- * the status check, so a post the publisher queued or claimed after the
- * read is left to publish and is not counted as cancelled.
- *
- * **Authentication:** Does not call Clerk. Caller must validate
- * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
- *
- * **Rate limiting:** 30 requests per 60s, scoped per source (e.g.
- * `web_cancel_scheduled_posts`, `mcp_cancel_scheduled_posts`).
- *
- * **Tables:** `scheduled_posts` (read + update).
- *
- * @param postIds - Array of scheduled_posts.id to cancel
- * @param principalId - Owner principal; ownership check enforced
- * @param source - Channel label; drives rate-limit scope
- */
 export async function cancelScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -62,7 +37,6 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_cancel_scheduled_posts`;
     const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
     if (!rateCheck.success) {
@@ -74,7 +48,6 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
@@ -119,7 +92,6 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 3: filter cancellable posts (only 'scheduled' status)
     const cancellablePosts = posts.filter(
       (post) => post.status === "scheduled",
     );

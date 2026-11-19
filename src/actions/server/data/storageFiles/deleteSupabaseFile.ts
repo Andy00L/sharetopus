@@ -6,29 +6,8 @@ import { findReferencedMediaPaths } from "./mediaReferences";
 
 const PAGE_SIZE = 1000;
 
-/** Paths per Storage remove call. */
 const REMOVE_BATCH_SIZE = 1000;
 
-/**
- * Deletes files from Supabase Storage with reference checking. No auth.
- *
- * This is the data-layer version of the public deleteSupabaseFileAction.
- * It does NOT call authCheck or authCheckCronJob. The caller is responsible
- * for verifying the principal before calling this function.
- *
- * Allowed callers: actions/server/data/storageFiles/deleteSupabaseFileAction.ts,
- *                  actions/server/scheduleActions/*, src/lib/mcp/*, Inngest workers.
- *
- * Before removing a file from storage, checks that no row still needs it
- * (findReferencedMediaPaths, scope "in_use"). If one does, the file is
- * preserved.
- *
- * Storage cleanup failures do not throw. They are logged via console.error
- * and surfaced as { success: false, message }.
- *
- * Tables read: scheduled_posts, failed_posts, pending_tiktok_pulls, pending_direct_posts
- * Storage written: MEDIA_BUCKET (delete)
- */
 export async function deleteSupabaseFile(
   principalId: string,
   filePath: string | null,
@@ -122,13 +101,6 @@ export type DeleteUnreferencedMediaResult =
   | { success: true; removedCount: number; preservedCount: number }
   | { success: false; message: string };
 
-/**
- * deleteSupabaseFile for many files at once: one reference check and one
- * Storage call per REMOVE_BATCH_SIZE paths, instead of a check and a call
- * per file. Paths outside the principal's folder are skipped. removedCount
- * is what Storage reports as removed, so a preserved file is never counted
- * as deleted.
- */
 export async function deleteUnreferencedMediaFiles(
   principalId: string,
   filePaths: string[],
@@ -193,7 +165,6 @@ async function removeStorageFiles(
   return { success: true, removedCount };
 }
 
-/** Deletes every file in the principal's folder, keeping referenced ones unless forceDelete. */
 async function deletePrincipalFolder(
   principalId: string,
   forceDelete: boolean,

@@ -18,11 +18,6 @@ type FinalizeResult =
   | { success: true; message: string; alreadyFinalized?: boolean }
   | { success: false; message: string };
 
-/**
- * Builds the canonical TikTok deep link or returns null when
- * required pieces are missing. Path segment derived from publish_id
- * prefix: p_pub_ = photo, v_pub_ = video, unknown = null.
- */
 function buildTikTokDeepLink(input: {
   creator_username: string | null;
   tiktok_post_id: string | null;
@@ -45,30 +40,12 @@ function buildTikTokDeepLink(input: {
   return `https://www.tiktok.com/@${input.creator_username}/${segment}/${input.tiktok_post_id}`;
 }
 
-/**
- * Single finalization entry point for TikTok posts. Called by both
- * the polling worker and the webhook worker. Idempotent: if the
- * pending_tiktok_pulls row is already non-pending, returns
- * alreadyFinalized=true and (when applicable) backfills tiktok_post_id
- * and content_history.media_url if the new caller has data the prior
- * one lacked.
- *
- * Persists:
- *   - pending_tiktok_pulls: status, tiktok_post_id, failure_reason,
- *     finalized_at
- *   - content_history: media_url (success path, when deep link buildable)
- *   - content_history: status='failed' + extra (fail path)
- * Cleans up:
- *   - storage media if unreferenced
- */
 export async function finalizeTikTokPostByPublishId(
   publish_id: string,
   opts: FinalizeInput,
 ): Promise<FinalizeResult> {
   const pull = await findPendingTikTokPullByPublishId(publish_id);
   if (!pull.success) {
-    // Not our publish_id. Webhook for a post we did not create, or
-    // already deleted row. Safe no-op.
     console.log(
       `[finalizeTikTokPostByPublishId] No pull row for ${publish_id} (source=${opts.source}), ignoring`,
     );
@@ -77,8 +54,6 @@ export async function finalizeTikTokPostByPublishId(
 
   const row = pull.pull;
 
-  // Already finalized path. If webhook brought new data poll did not
-  // have, backfill the missing piece.
   if (row.status !== "pending") {
     const shouldBackfillPostId =
       opts.tiktok_post_id && !row.tiktok_post_id && opts.outcome === "completed";
@@ -121,7 +96,6 @@ export async function finalizeTikTokPostByPublishId(
             "[finalizeTikTokPostByPublishId] Backfill media_url failed:",
             histErr.message,
           );
-          // Non-fatal: post_id is still saved.
         } else {
           console.log(
             `[finalizeTikTokPostByPublishId] Backfilled media_url for ${publish_id}`,
@@ -137,9 +111,6 @@ export async function finalizeTikTokPostByPublishId(
     };
   }
 
-  // First finalization path. The status = 'pending' guard decides the race
-  // between the poll and the webhook: only the caller whose UPDATE returns
-  // the row goes on to write content_history and clean up.
   if (opts.outcome === "completed") {
     const { data: completedRows, error: updErr } = await runQuery(
       db
@@ -188,7 +159,6 @@ export async function finalizeTikTokPostByPublishId(
           "[finalizeTikTokPostByPublishId] Update media_url failed:",
           histErr.message,
         );
-        // Non-fatal.
       } else {
         console.log(
           `[finalizeTikTokPostByPublishId] Set media_url for ${publish_id}: ${deepLink}`,
@@ -212,7 +182,6 @@ export async function finalizeTikTokPostByPublishId(
     return { success: true, message: "Finalized as completed" };
   }
 
-  // opts.outcome === "failed"
   const failReason = opts.fail_reason ?? "Unknown failure";
 
   const { data: failedRows, error: updErr } = await runQuery(
@@ -252,7 +221,6 @@ export async function finalizeTikTokPostByPublishId(
       "[finalizeTikTokPostByPublishId] content_history update failed:",
       histRes.message,
     );
-    // Non-fatal: pull is still marked failed.
   }
 
   const cleanup = await cleanupMediaIfUnreferenced(
@@ -271,11 +239,6 @@ export async function finalizeTikTokPostByPublishId(
   return { success: true, message: "Finalized as failed" };
 }
 
-/**
- * The other caller (poll or webhook) finalized the pull between this
- * caller's read and its UPDATE. Writing content_history now would contradict
- * that outcome (a media_url on a failed post, or "failed" on a live one).
- */
 function finalizedByConcurrentCaller(
   publishId: string,
   source: FinalizeInput["source"],

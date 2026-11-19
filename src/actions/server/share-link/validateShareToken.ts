@@ -6,20 +6,6 @@ import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
 import { hashToken } from "@/lib/api/tokens";
 
-/**
- * Read-only validation of a share link token.
- *
- * Checks format, existence, revocation status, expiry, and usage cap
- * WITHOUT mutating used_count. Used by the landing page to pre-validate
- * before rendering, and by the initiate route before starting OAuth.
- *
- * The actual consumption (used_count increment) happens only via the
- * consume_share_link RPC at OAuth callback success.
- *
- * Called by: share landing page, initiate route, OAuth callback (re-check)
- * Tables read: share_links (select only)
- */
-
 type ShareLinkRow = typeof share_links.$inferSelect;
 
 type ValidateSuccess = {
@@ -27,11 +13,6 @@ type ValidateSuccess = {
   data: ShareLinkRow;
 };
 
-/**
- * Why a share link cannot be used. "lookup_failed" is a failed database
- * read: the link may be fine, so the visitor is asked to retry instead of
- * being told it does not exist.
- */
 export type ShareLinkRefusal =
   | "invalid_format"
   | "not_found"
@@ -47,19 +28,15 @@ type ValidateFailure = {
 
 export type ValidateShareTokenResult = ValidateSuccess | ValidateFailure;
 
-/** Base64url tokens from randomBytes(32) are exactly 43 characters, [A-Za-z0-9_-]. */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export async function validateShareToken(
   token: string,
 ): Promise<ValidateShareTokenResult> {
-  // Format check: base64url, 43 chars
   if (!TOKEN_PATTERN.test(token)) {
     return { success: false, reason: "invalid_format" };
   }
 
-  // The token column is encrypted with a random IV, so an equality on it
-  // can never match; token_hash holds its SHA-256 (createShareLink).
   const { data: shareLinkRows, error } = await runQuery(
     db
       .select()
@@ -78,15 +55,6 @@ export async function validateShareToken(
   return evaluateShareLink(shareLinkRows[0]);
 }
 
-/**
- * Validates a share link by its id rather than token.
- *
- * Used during the OAuth callback when we have the share_link_id from
- * the social_connections row but not the original token.
- *
- * Called by: handleOAuthCallback (share link re-validation step)
- * Tables read: share_links (select only)
- */
 export async function validateShareLinkById(
   shareLinkId: string,
 ): Promise<ValidateShareTokenResult> {
@@ -108,7 +76,6 @@ export async function validateShareLinkById(
   return evaluateShareLink(shareLinkRows[0]);
 }
 
-/** A share link that exists is usable unless revoked, expired, or out of uses. */
 function evaluateShareLink(
   shareLink: ShareLinkRow | undefined,
 ): ValidateShareTokenResult {
@@ -127,7 +94,6 @@ function evaluateShareLink(
     return { success: false, reason: "expired" };
   }
 
-  // Defensive >= (not just ==) to catch any over-increment bugs
   if (
     shareLink.max_uses !== null &&
     shareLink.used_count >= shareLink.max_uses

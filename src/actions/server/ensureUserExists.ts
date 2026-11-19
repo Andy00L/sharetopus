@@ -18,22 +18,10 @@ import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
 import stripe from "@/lib/stripe";
 import { recordReferralOnSignup } from "@/actions/server/referral/recordReferralOnSignup";
 
-/** Minimum gap between two Stripe syncs of one user, across all instances. */
 const STRIPE_SYNC_INTERVAL_SECONDS = 600;
 
-/** Invoices the sync reads per run, newest first. */
 const STRIPE_SYNC_INVOICE_LIMIT = 20;
 
-/**
- * Ensures the signed-in Clerk user has a users row and a Stripe customer,
- * and mirrors their Stripe subscriptions and invoices into the database as
- * a fallback for webhooks that never arrived (e.g. dev mode without ngrok).
- *
- * Runs on every protected render, so the common path is one database read:
- * the user id comes from the session token (no Clerk API call), and the
- * Stripe sync runs after the response, at most once per user per
- * STRIPE_SYNC_INTERVAL_SECONDS.
- */
 export async function ensureUserExists() {
   const { userId } = await auth();
   if (!userId) return;
@@ -46,9 +34,6 @@ export async function ensureUserExists() {
       .limit(1)
   );
 
-  // A failed lookup says nothing about the row. Reading it as "no user"
-  // created a second Stripe customer for an existing user; the next page
-  // load checks again.
   if (lookupError) {
     console.error(
       `[ensureUserExists] User lookup failed for ${userId}:`,
@@ -67,12 +52,6 @@ export async function ensureUserExists() {
   await createUserWithStripeCustomer();
 }
 
-/**
- * First visit: creates the Stripe customer, then the principals and users
- * rows, and deletes the customer again when a row cannot be written. A
- * customer created a moment ago has no subscriptions or invoices, so no
- * Stripe sync follows.
- */
 async function createUserWithStripeCustomer() {
   const user = await currentUser();
   if (!user) return;
@@ -132,11 +111,9 @@ async function createUserWithStripeCustomer() {
 
   console.log(`[ensureUserExists] User ${user.id} synced to Supabase + Stripe`);
 
-  // Referral attribution, first creation only. The cookie is read now,
-  // while the request is live; the attribution runs after the response,
-  // and after() keeps the serverless function alive until it finishes
-  // (a floating promise can be frozen mid-write). Best-effort: it logs its
-  // own failures and never blocks user creation.
+  // The cookie is read now, while the request is live; the attribution runs
+  // after the response, and after() keeps the serverless function alive
+  // until it finishes (a floating promise can be frozen mid-write).
   const referralCode = (await cookies()).get(REFERRAL_COOKIE_NAME)?.value;
   if (referralCode) {
     after(() =>
@@ -153,11 +130,6 @@ async function rollBackStripeCustomer(stripeCustomerId: string) {
   }
 }
 
-/**
- * Runs the Stripe sync unless another request synced this user within
- * STRIPE_SYNC_INTERVAL_SECONDS. A Redis outage only costs the throttle: the
- * sync runs.
- */
 async function syncStripeAccountIfDue(userId: string, stripeCustomerId: string) {
   if (!(await claimStripeSyncSlot(userId))) return;
   await Promise.all([
@@ -182,13 +154,6 @@ async function claimStripeSyncSlot(userId: string): Promise<boolean> {
   }
 }
 
-/**
- * Mirrors every Stripe subscription of the customer into
- * stripe_subscriptions in one upsert, the way the webhook's
- * subscription.created / .updated / .deleted handler writes them. A stored
- * row is rewritten only when its status, price or billing period differs
- * from Stripe's.
- */
 async function syncStripeSubscriptions(
   userId: string,
   stripeCustomerId: string
@@ -250,11 +215,6 @@ async function syncStripeSubscriptions(
   }
 }
 
-/**
- * Syncs Stripe invoices into the stripe_invoices table through the writer
- * the webhook's invoice.payment_succeeded / .payment_failed use, so an
- * invoice paid after a failed attempt ends up succeeded here too.
- */
 async function syncStripeInvoices(
   userId: string,
   stripeCustomerId: string
@@ -289,11 +249,6 @@ async function syncStripeInvoices(
   }
 }
 
-/**
- * The payment outcome an invoice shows: paid, or tried and failed. Drafts,
- * voided invoices and open ones not charged yet have none. This sync used to
- * record every unpaid invoice as failed, a draft included.
- */
 function toPaymentOutcome(invoice: Stripe.Invoice): InvoicePaymentOutcome | null {
   if (invoice.status === "paid") return "succeeded";
   if (invoice.status === "uncollectible") return "failed";

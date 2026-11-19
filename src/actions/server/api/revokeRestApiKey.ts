@@ -3,14 +3,6 @@
 import { authCheck } from "@/actions/server/authCheck";
 import { revokeApiKeyForPrincipal } from "@/lib/api/revokeApiKeyForPrincipal";
 
-/**
- * Revokes one of the caller's REST API keys. The key row stays for audit
- * purposes; resolveRestApiKey filters on revoked_at IS NULL, so the key
- * stops authenticating at once.
- *
- * The MCP twin is src/actions/server/mcp/revokeApiKey.ts; both run
- * revokeApiKeyForPrincipal, this one with kind 'rest'.
- */
 export async function revokeRestApiKey(
   userId: string | null,
   keyId: string,

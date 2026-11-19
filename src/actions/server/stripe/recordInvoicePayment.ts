@@ -16,11 +16,8 @@ export type InvoicePayment = {
 };
 
 /**
- * Records how a Stripe invoice's payment went, for the Stripe webhook and
- * the ensureUserExists sync. Stripe can deliver a failed attempt after the
- * payment that settled the invoice, so a failure never replaces a success.
- * A success replaces an earlier failure, the one update the stripe_invoices
- * trigger accepts (drizzle/0002_append_only_detach_and_invoice_payment.sql).
+ * Stripe can deliver a failed attempt after the payment that settled the
+ * invoice, so a failure never replaces a success.
  */
 export async function recordInvoicePayment(
   payment: InvoicePayment,
@@ -28,10 +25,6 @@ export async function recordInvoicePayment(
   return recordInvoicePayments([payment]);
 }
 
-/**
- * recordInvoicePayment for many invoices in at most two statements, one
- * per outcome, instead of one round trip per invoice.
- */
 export async function recordInvoicePayments(
   payments: InvoicePayment[],
 ): Promise<{ ok: boolean }> {

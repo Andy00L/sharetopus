@@ -6,14 +6,6 @@ import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import type { PostRejection } from "@/lib/types/postBatch";
 
-/**
- * The platform of each listed social account the principal owns, keyed by
- * account id, in one query. An id missing from the map is not the
- * principal's or was deleted (a deleted account cannot publish).
- *
- * Called by: directPostBatch, schedulePostBatch, and their pre-payment
- * checks (preflightDirectPost, preflightSchedulePost)
- */
 export async function loadOwnedAccountPlatforms(
   socialAccountIds: string[],
   principalId: string,
@@ -45,11 +37,6 @@ export async function loadOwnedAccountPlatforms(
   };
 }
 
-/**
- * Why a post cannot go to its account: the principal does not own it, or
- * the account is on another platform than the post declares. Null when the
- * post can go ahead.
- */
 export function describeAccountMismatch(
   platformByAccountId: Map<string, string>,
   post: { socialAccountId: string; platform: string },

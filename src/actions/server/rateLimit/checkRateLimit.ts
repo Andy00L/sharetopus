@@ -8,29 +8,10 @@ import { headers } from "next/headers";
 import { resolveClientIp } from "@/lib/net/clientIp";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
-/**
- * Get the client IP address from request headers.
- * Returns null if the IP can't be determined.
- *
- * Delegates to the shared resolver so the rate-limit bucket key and the
- * audit-log IP hash can never disagree about who the caller is. The
- * resolver deliberately ignores the caller-supplied head of
- * x-forwarded-for; see lib/net/clientIp.ts.
- */
 async function getIpAddress(): Promise<string | null> {
   return resolveClientIp(await headers());
 }
 
-/**
- * A refused check says why, with a message fit to show a person:
- *   - "limited": the caller hit the limit. resetIn is the wait in seconds.
- *   - "unidentified": there was no user id or IP to key the limit on.
- *   - "unavailable": the limiter itself failed (Redis unreachable). The
- *     caller did nothing wrong, so no surface may answer it with 429 or
- *     "too many requests".
- * Callers pass message on instead of writing their own, which is how an
- * outage stays an outage all the way to the person or agent.
- */
 export type RateLimitRefusal =
   | { success: false; reason: "limited"; message: string; resetIn: number }
   | {
@@ -69,16 +50,6 @@ function getLimiter(
   return limiter;
 }
 
-/**
- * Apply rate limiting to any operation
- *
- * @param operationName - Name of operation (e.g., 'fetchData', 'submitForm')
- * @param userId - Optional user ID for rate limiting (overrides IP-based limiting)
- * @param limit - Number of requests allowed (default: 20)
- * @param window - Time window in seconds (default: 60)
- * @param bypassSecret - Optional secret to bypass rate limiting (for internal/cron use)
- * @returns { success: true }, or a RateLimitRefusal naming the reason.
- */
 export async function checkRateLimit(
   operationName: string,
   userId?: string | null,
@@ -87,8 +58,6 @@ export async function checkRateLimit(
   bypassSecret?: string | undefined
 ): Promise<RateLimitCheck> {
   try {
-    // Check for valid bypass secret. Compared in constant time: a plain
-    // === leaks the shared cron secret's prefix through response timing.
     const validBypassSecret = process.env.CRON_SECRET_KEY;
     if (
       bypassSecret &&
@@ -103,7 +72,6 @@ export async function checkRateLimit(
 
     const limiter = getLimiter(operationName, limit, window);
 
-    // Get identifier (userId or IP)
     const identifier = userId ?? (await getIpAddress());
 
     if (!identifier) {

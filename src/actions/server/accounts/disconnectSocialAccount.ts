@@ -6,21 +6,6 @@ import "server-only";
 import { deleteUnreferencedMediaFiles } from "../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
-/**
- * Disconnects a social media account from the user's profile and cleans up associated resources
- *
- * This function:
- * 1. Verifies user authentication and ownership of the account
- * 2. Performs rate limiting to prevent abuse (max 30 requests per minute)
- * 3. Identifies media files used by scheduled posts for this account
- * 4. Removes the social account from the database
- * 5. Deletes orphaned media files no longer used by any posts
- * 6. Returns a structured response with the operation result
- *
- * @param accountId - ID of the social account to disconnect
- * @param userId - ID of the authenticated user
- * @returns Object with success status, message, and optional reset time
- */
 export async function disconnectSocialAccount(
   accountId: string,
   userId: string | null,
@@ -30,7 +15,6 @@ export async function disconnectSocialAccount(
       `[disconnectSocialAccount] Processing account: ${accountId}, user: ${userId}`,
     );
 
-    // Verify user is properly authenticated
     if (!userId || !(await authCheck(userId))) {
       return {
         success: false,
@@ -38,12 +22,11 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 2: Check rate limits to prevent abuse
     const rateCheck = await checkRateLimit(
-      "disconnectSocialAccount", // Unique identifier for this operation
-      userId, // User identifier
-      30, // Limit (30 requests)
-      60, // Window (60 seconds)
+      "disconnectSocialAccount",
+      userId,
+      30,
+      60,
     );
 
     if (!rateCheck.success) {
@@ -59,7 +42,6 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 3: fetch account, verify ownership.
     const { data: accountRows, error: fetchError } = await runQuery(
       db
         .select({
@@ -70,8 +52,6 @@ export async function disconnectSocialAccount(
         .where(eq(social_accounts.id, accountId))
         .limit(1),
     );
-    // A failed read is not a missing account: "already disconnected" would
-    // tell the user their account is gone while it is still connected.
     if (fetchError) {
       console.error(
         `[disconnectSocialAccount]: Account fetch error:`,
@@ -92,7 +72,6 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Security check: ensure the account belongs to this user
     if (account.principal_id !== userId) {
       console.warn(
         `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.principal_id}`,
@@ -103,7 +82,6 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 4: collect media paths of the account's unpublished posts BEFORE the cascade delete wipes them.
     const { data: mediaPaths, error: postsError } = await runQuery(
       db
         .selectDistinct({ media_storage_path: scheduled_posts.media_storage_path })
@@ -122,10 +100,8 @@ export async function disconnectSocialAccount(
         `[disconnectSocialAccount]: Error fetching media paths:`,
         postsError.message,
       );
-      // Continue anyway - we'll just not be able to clean up files
     }
 
-    // Step 5: Extract unique file paths to check
     const filesToCheck = [
       ...new Set(
         (mediaPaths ?? [])
@@ -134,7 +110,6 @@ export async function disconnectSocialAccount(
       ),
     ];
 
-    // Step 6: delete the account. FK CASCADE wipes scheduled_posts, pending_*, social_connections.
     const { error: deleteError } = await runQuery(
       db.delete(social_accounts).where(eq(social_accounts.id, accountId)),
     );
@@ -171,7 +146,6 @@ export async function disconnectSocialAccount(
       }`,
     };
   } catch (err) {
-    // Step 10: Handle unexpected errors
     console.error(`[disconnectSocialAccount]: Unexpected error:`, err);
     return {
       success: false,

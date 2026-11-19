@@ -39,15 +39,9 @@ export type DirectPostData = {
   pinterestBoardName?: string;
   pinterestLink?: string;
   idempotency_key?: string;
-  /** Registry-provider per-post options; null/absent for legacy platforms. */
   postOptions?: Record<string, unknown> | null;
 };
 
-/**
- * A failed batch carries `failure` (see PostBatchFailure) so each caller can
- * answer in its own terms; `message` is safe to show and never carries a
- * database error.
- */
 export type DirectPostBatchResult = {
   message: string;
   batchId: string;
@@ -61,26 +55,6 @@ export type DirectPostBatchResult = {
   eventIds: string[];
 } & ({ success: true } | { success: false; failure: PostBatchFailure });
 
-/**
- * Dispatches N direct-post events in a single batch. Shared core for
- * web/MCP/x402.
- *
- * **Authentication:** Does not call Clerk. Caller validates `principalId`.
- * **Rate limiting:** 20 calls per 60s per source.
- * **Tables:** social_accounts (ownership + platform match), pending_direct_posts (locks).
- * **Inngest events:** post.now per accepted post.
- *
- * Flow:
- *   1. Size + per-post validation (Pinterest fields, caption length, media presence)
- *   2. Rate limit
- *   3. Ownership + platform match (1 query, IN(...))
- *   4. Mint URLs cached by media path
- *   5. Build PostNowEventData per post
- *   6. Idempotency keys derive from batch_id when agent supplies it
- *   7. dispatchPostNowEvents (lock insert + inngest.send)
- *
- * Single post = batch with N=1. Same code path.
- */
 export async function directPostBatch(
   posts: DirectPostData[],
   principalId: string,
@@ -103,7 +77,6 @@ export async function directPostBatch(
   };
 
   try {
-    // Step 0: shape checks
     if (!posts || posts.length === 0) {
       return {
         success: false,
@@ -125,8 +98,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 1: rate limit. A limiter that could not answer is not the
-    // caller's doing, so it is not reported as "too many requests".
     const rateCheck = await checkRateLimit(
       `${source}_direct_post_batch`,
       principalId,
@@ -145,7 +116,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 2: per-post validation, partial success
     const rejected: PostRejection[] = [];
     const validPosts: DirectPostData[] = [];
 
@@ -178,7 +148,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 3: ownership + platform match
     const ownership = await loadOwnedAccountPlatforms(
       validPosts.map((post) => post.socialAccountId),
       principalId,
@@ -228,7 +197,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 4: mint URLs cached by media path
     const urlResult = await buildMediaUrlsCached(ownedPosts, principalId);
     if (!urlResult.success) {
       console.error(
@@ -249,7 +217,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 5: build events
     const events = buildEventPayloads(
       ownedPosts,
       batchId,
@@ -261,7 +228,6 @@ export async function directPostBatch(
       requestId,
     );
 
-    // Step 6: lock + dispatch
     const dispatch = await dispatchPostNowEvents(events);
     if (!dispatch.success) {
       console.error(
@@ -313,13 +279,6 @@ export async function directPostBatch(
   }
 }
 
-/**
- * Pre-payment check for one post: the field, media-path, ownership and
- * platform rules directPostBatch applies, plus a duplicate idempotency key,
- * without the rate limit or the dispatch. A paid caller (x402 post-now) runs
- * it before settlement so a post that cannot be dispatched costs nothing.
- * directPostBatch still enforces the same rules when it runs.
- */
 export async function preflightDirectPost(
   post: DirectPostData,
   principalId: string,
@@ -329,7 +288,6 @@ export async function preflightDirectPost(
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
   }
 
-  // A paying agent sees these messages: the database text stays in the log.
   const ownership = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
   if (!ownership.success) {
     console.error(`[preflightDirectPost] ${ownership.message}`);
@@ -353,8 +311,6 @@ export async function preflightDirectPost(
     };
   }
 
-  // dispatchPostNowEvents skips an already-used key and reports success, so a
-  // paid retry with the same key would be charged for a post it never gets.
   if (post.idempotency_key) {
     const { data: existingLocks, error: lockLookupError } = await runQuery(
       db
@@ -390,9 +346,6 @@ export async function preflightDirectPost(
   return { ok: true };
 }
 
-// ---------- helpers ----------
-
-/** Returns null if valid, error message if invalid. */
 function validatePostFields(
   post: DirectPostData,
   principalId: string,
@@ -404,14 +357,12 @@ function validatePostFields(
     return `Media file is required for ${post.postType} posts.`;
   }
 
-  // Vuln 1 fix: prevent cross-user media file reference.
   if (
     post.mediaStoragePath &&
     !post.mediaStoragePath.startsWith(`${principalId}/`)
   ) {
     return "Media path is not owned by the calling principal.";
   }
-  // Pinterest rules
   if (post.platform === "pinterest" && !post.pinterestBoardId) {
     return "Pinterest posts require pinterestBoardId.";
   }
@@ -422,8 +373,6 @@ function validatePostFields(
     return "Pinterest-specific fields are only valid when platform='pinterest'.";
   }
 
-  // Caption length. Registry platforms answer from their catalog rules; the
-  // legacy map alone gave every one of them the 2200 default.
   if (post.description) {
     const limit = resolvePlatformTextLimit(post.platform);
     if (post.description.length > limit) {

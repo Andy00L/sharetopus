@@ -11,11 +11,6 @@ import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 const RATE_LIMIT = 30;
 const RATE_WINDOW_SECONDS = 60;
 
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type UpdateScheduledTimeBatchResult = {
   message: string;
   resetIn?: number;
@@ -32,27 +27,6 @@ export type UpdateScheduledTimeBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Reschedules N posts to a new time. Shared core for web/MCP/x402.
- *
- * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
- * **Rate limiting:** 30 calls per 60s per source.
- * **Tables:** scheduled_posts (read + update).
- *
- * Cancelled posts get auto-resumed (status -> scheduled) along with the
- * time update, and lose their cancelled_by_sub_at tag like a manual resume
- * (see resumeScheduledPostBatch). Posts in terminal states (posted,
- * failed) are skipped. One UPDATE moves the batch and repeats the status
- * check, so a post the publisher queued after the read keeps publishing
- * instead of being reported as rescheduled. A 'scheduled' row never carries
- * cancelled_by_sub_at (every move to 'scheduled' clears it), so clearing it
- * for both statuses changes nothing for scheduled rows.
- *
- * @param postIds - Post IDs to reschedule
- * @param newScheduledTime - New datetime (must be in the future)
- * @param principalId - Owner (caller-validated)
- * @param source - Drives rate-limit scope
- */
 export async function updateScheduledTimeBatch(
   postIds: string[],
   newScheduledTime: string | Date,
@@ -89,7 +63,6 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    // Rate limit (anti-spam)
     const rateLimitScope = `${source}_update_scheduled_time_batch`;
     const rateCheck = await checkRateLimit(
       rateLimitScope,
@@ -106,7 +79,6 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    // Fetch + ownership check (single query)
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({

@@ -6,15 +6,6 @@ import { authCheck } from "@/actions/server/authCheck";
 import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
 
-/**
- * Lists MCP API keys for the authenticated user.
- *
- * Returns the prefix, name, created_at, and last_used_at. Never returns
- * the token_hash or the raw key.
- *
- * Called by: src/app/(protected)/integrations/page.tsx
- * Tables read: api_keys
- */
 export async function listApiKeys(
   userId: string | null
 ): Promise<{

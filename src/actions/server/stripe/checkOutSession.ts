@@ -11,22 +11,6 @@ import { priceIdToTier } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
-/**
- * Creates a Stripe checkout session for subscription purchase
- *
- * This function handles the entire process of creating a checkout session:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse (max 15 requests per minute)
- * 3. Retrieves the user's Stripe customer ID from the database
- * 4. Creates a Stripe checkout session for the selected price/plan
- * 5. Returns the session URL for client-side redirect
- *
- * @param {object} params - The function parameters
- * @param {string} params.priceId - The Stripe price ID for the subscription plan
- * @returns {Promise<{success: boolean; message: string; data?: string; resetIn?: number}>}
- *   Success response contains the checkout URL in the data field
- *   Error response includes descriptive message and optional resetIn time for rate limits
- */
 export async function checkOutSession(priceId: string): Promise<{
   success: boolean;
   message: string;
@@ -50,7 +34,6 @@ export async function checkOutSession(priceId: string): Promise<{
 
     const { userId } = await auth();
 
-    // Verify user is properly authenticated
     const authResult = await authCheck(userId);
     if (!authResult || !userId) {
       console.error(
@@ -67,10 +50,10 @@ export async function checkOutSession(priceId: string): Promise<{
 
     console.log(`[checkOutSession]: Checking rate limits for user: ${userId}`);
     const rateCheck = await checkRateLimit(
-      "stripeCheckOutSession", // Unique identifier for this operation
-      userId, // User identifier
-      15, // Limit (15 requests)
-      60 // Window (60 seconds)
+      "stripeCheckOutSession",
+      userId,
+      15,
+      60
     );
     if (!rateCheck.success) {
       console.warn(
@@ -107,7 +90,6 @@ export async function checkOutSession(priceId: string): Promise<{
       };
     }
 
-    // Step 3: Retrieve the user's Stripe customer ID from the database
     console.log(
       `[checkOutSession]: Fetching Stripe customer ID for user: ${userId}`
     );
@@ -119,7 +101,6 @@ export async function checkOutSession(priceId: string): Promise<{
         .limit(1)
     );
 
-    // A missing users row gets the same reply as a failed lookup.
     const userRow = userRows?.[0];
     if (error || !userRow) {
       console.error(
@@ -132,7 +113,6 @@ export async function checkOutSession(priceId: string): Promise<{
       };
     }
 
-    // Check if customer ID exists
     if (!userRow.stripe_customer_id) {
       console.error(
         `[checkOutSession]: No Stripe customer ID found for user: ${userId}`
@@ -148,7 +128,6 @@ export async function checkOutSession(priceId: string): Promise<{
     );
     const customerId = userRow.stripe_customer_id;
 
-    // Step 4: Create the Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
@@ -161,7 +140,6 @@ export async function checkOutSession(priceId: string): Promise<{
       allow_promotion_codes: true,
     });
 
-    // Add this validation block
     if (!session || !session.url) {
       console.error(
         `[checkOutSession]: Stripe returned invalid session object: ${JSON.stringify(
@@ -177,7 +155,6 @@ export async function checkOutSession(priceId: string): Promise<{
       `[checkOutSession]: Successfully created checkout session URL: ${session.url}`
     );
 
-    // Return success with the checkout URL
     return {
       success: true,
       message: "Checkout session created successfully",

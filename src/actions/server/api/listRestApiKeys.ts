@@ -6,15 +6,6 @@ import { authCheck } from "@/actions/server/authCheck";
 import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
 
-/**
- * Lists REST API keys for the authenticated user.
- *
- * Returns the prefix, name, created_at, and last_used_at. Never returns
- * the token_hash or the raw key.
- *
- * Mirrors src/actions/server/mcp/listApiKeys.ts but filters on
- * kind='rest' instead of kind='mcp'.
- */
 export async function listRestApiKeys(
   userId: string | null,
 ): Promise<{

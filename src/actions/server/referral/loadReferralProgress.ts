@@ -15,7 +15,6 @@ export type ReferralProgressResult =
     }
   | { success: false; message: string };
 
-/** One user's referral counts and banked access, read in one statement. */
 export type ReferralStanding = {
   verifiedCount: number;
   redeemedCount: number;
@@ -23,13 +22,6 @@ export type ReferralStanding = {
   creatorAccessUntil: string | null;
 };
 
-/**
- * The user's verified and redeemed referral counts, weeks earned and
- * creator_access_until in one round trip (scalar subqueries on the users
- * row). `standing` is null when the user has no users row.
- *
- * Called by: loadReferralProgress, getReferralSummary
- */
 export async function loadReferralStanding(
   userId: string,
 ): Promise<
@@ -65,23 +57,6 @@ export async function loadReferralStanding(
   return { success: true, standing: standingRows[0] ?? null };
 }
 
-/**
- * Referral progress for one user: verified referrals counting toward the
- * next free week, total weeks earned, and whether the lifetime cap is
- * reached.
- *
- * The count is derived from the referrals table: verified referrals that
- * have NOT yet been redeemed count toward the next week. The grant function
- * redeems them in batches, so towardNextWeek stays below
- * REFERRALS_PER_FREE_WEEK unless the cap stopped redeeming.
- *
- * Server-only on purpose: the userId is trusted here. Client code reaches it
- * through the getReferralProgress action, which takes the user from the
- * session.
- *
- * Tables: users, referrals, referral_reward_grants (one read)
- * Called by: getReferralProgress (sidebar badge)
- */
 export async function loadReferralProgress(userId: string): Promise<ReferralProgressResult> {
   const standingResult = await loadReferralStanding(userId);
   if (!standingResult.success) return standingResult;

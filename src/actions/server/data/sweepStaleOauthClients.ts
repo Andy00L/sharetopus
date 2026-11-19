@@ -16,23 +16,9 @@ export type SweepResult =
       message: string;
     };
 
-/**
- * Days without a tool call before an unverified client is swept. Must not
- * exceed the mcp_audit_log retention, where recent activity is read from
- * (sourceRef: RETENTION_DAYS = 90 in
- * src/inngest/functions/cleanupMcpAuditLogCron.ts).
- */
 const STALE_DAYS = 90;
 const MAX_DELETE_PER_RUN = 1000;
 
-/**
- * Deletes OAuth client rows that are:
- *   - older than STALE_DAYS
- *   - trust_level = 'unverified'
- *   - without a tool call in mcp_audit_log in the last STALE_DAYS
- *
- * Returns errors-as-values. Designed for Inngest step execution.
- */
 export async function sweepStaleOauthClients(): Promise<SweepResult> {
   try {
     const cutoff = new Date(
@@ -65,8 +51,6 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
 
     const candidateIds = candidates.map((candidate) => candidate.client_id);
 
-    // One DISTINCT query answers "which candidates made a call since the
-    // cutoff", whatever the number of calls per client.
     const { data: activeRows, error: activityErr } = await runQuery(
       db
         .selectDistinct({ oauth_client_id: mcp_audit_log.oauth_client_id })

@@ -3,11 +3,6 @@ import "server-only";
 
 type NoEntries = Record<never, never>;
 
-/**
- * The schema this client is typed with: no tables, views or functions.
- * Every table query goes through Drizzle (src/db/client.ts), so
- * `adminSupabase.from(...)` is a type error instead of an untyped query.
- */
 type StorageOnlyDatabase = {
   public: {
     Tables: NoEntries;

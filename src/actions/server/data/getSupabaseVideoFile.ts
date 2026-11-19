@@ -2,12 +2,10 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
 
-/** Downloads one of the user's stored files as a Buffer; the path must start with their id. */
 export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string; buffer?: Buffer }> {
-  // Security Check: Ensure the file path starts with the user's ID
   if (!filePath?.startsWith(`${userId}/`)) {
     console.warn(
       `[Get Supabase video File]  Attempt to access invalid/unauthorized path by user ${userId}: ${filePath}`
@@ -23,7 +21,6 @@ export async function getSupabaseVideoFile(
       `[Get Supabase video File]  Fetching file for user ${userId}: ${filePath}`
     );
 
-    // Get the file from Supabase Storage
     const { data, error } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
       .download(filePath);
@@ -47,7 +44,6 @@ export async function getSupabaseVideoFile(
       };
     }
 
-    // Convert the downloaded blob to buffer for server-side processing
     const buffer = Buffer.from(await data.arrayBuffer());
 
     console.log(

@@ -5,15 +5,6 @@ import { db, runQuery } from "@/db/client";
 import { pending_tiktok_pulls } from "@/db/schema";
 import type { PendingTikTokPull } from "@/lib/types/dbTypes";
 
-/**
- * Inserts a new pending TikTok pull record. Called after a successful
- * TikTok init (image or video) returns a publish_id. The row tracks
- * the async pull so cleanup logic can gate file deletion on pull
- * completion.
- *
- * Returns: { success: true } or { success: false, message }.
- * Persists: one row in pending_tiktok_pulls with status='pending'.
- */
 export async function insertPendingTikTokPull(input: {
   publish_id: string;
   principal_id: string;
@@ -51,20 +42,11 @@ export async function insertPendingTikTokPull(input: {
   return { success: true };
 }
 
-/**
- * Increments the attempt count and updates last_polled_at for a pending
- * TikTok pull. Called on each poll iteration before the status fetch.
- *
- * Returns: { success, message }.
- * Persists: attempt_count + 1, last_polled_at=now().
- */
 export async function incrementTikTokPullAttemptCount(
   publish_id: string
 ): Promise<
   { success: true; message: string } | { success: false; message: string }
 > {
-  // One statement: the database adds 1 to the stored count, so two
-  // concurrent polls of one publish_id cannot lose an increment.
   const { data: updatedRows, error } = await runQuery(
     db
       .update(pending_tiktok_pulls)
@@ -101,13 +83,6 @@ export async function incrementTikTokPullAttemptCount(
   };
 }
 
-/**
- * Fetches a pending TikTok pull row by publish_id.
- * Returns success: false with a descriptive message if not found.
- *
- * Returns: { success, pull } or { success: false, message }.
- * Persists: nothing (read-only).
- */
 export async function findPendingTikTokPullByPublishId(
   publish_id: string
 ): Promise<

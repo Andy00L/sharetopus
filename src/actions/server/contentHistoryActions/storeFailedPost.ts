@@ -1,4 +1,3 @@
-// actions/server/contentHistoryActions/storeFailedPost.ts
 import "server-only";
 
 import { db, runQuery } from "@/db/client";
@@ -24,9 +23,6 @@ type FailedPostData = {
   x402_charge_id?: string | null;
 };
 
-/**
- * Stores a record of a failed post attempt in the failed_posts table
- */
 export async function storeFailedPost(
   data: FailedPostData,
 ): Promise<{ success: boolean; message: string; recordId?: string }> {

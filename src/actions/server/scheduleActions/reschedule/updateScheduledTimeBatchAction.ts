@@ -7,12 +7,6 @@ import {
   type UpdateScheduledTimeBatchResult,
 } from "./updateScheduledTimeBatch";
 
-/**
- * Server Action wrapper for web callers. Authenticates via Clerk,
- * then delegates to the shared core.
- *
- * Called by: BatchedPostCard (client component).
- */
 export async function updateScheduledTimeBatchAction(
   postIds: string[],
   newScheduledTime: string | Date,

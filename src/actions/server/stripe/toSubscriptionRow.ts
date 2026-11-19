@@ -4,11 +4,6 @@ import type Stripe from "stripe";
 
 import type { stripe_subscriptions } from "@/db/schema";
 
-/**
- * The stripe_subscriptions row for a Stripe subscription. The Stripe webhook
- * and the ensureUserExists sync both write through it, so a synced row has
- * the webhook's columns (the sync used to leave current_period_end empty).
- */
 export function toSubscriptionRow(
   subscription: Stripe.Subscription,
   userId: string,

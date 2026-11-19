@@ -2,14 +2,6 @@ import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
 
-/**
- * Server-side helper to generate a Supabase signed view URL.
- * Calls adminSupabase directly instead of going through the HTTP route
- * (which requires Clerk auth and is intended for browser callers).
- *
- * Returns: { success, url } or { success: false, message }.
- * Persists: nothing (the signed URL is ephemeral).
- */
 export async function getServerSignedViewUrl(
   path: string,
   expiresInSeconds: number = 300,
@@ -51,11 +43,6 @@ export async function getServerSignedViewUrl(
   }
 }
 
-/**
- * getServerSignedViewUrl for many paths in one Storage call. Fails as a
- * whole when any path cannot be signed, so the caller never publishes a
- * post without its media.
- */
 export async function getServerSignedViewUrls(
   paths: string[],
   expiresInSeconds: number = 300,

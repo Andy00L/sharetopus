@@ -40,7 +40,6 @@ export async function checkAccountLimits(
     };
   }
 
-  // tier is passed in directly from the reader. No conversion happens here.
   const maxAllowed = TIER_ACCOUNT_LIMITS[tier];
   const isUnlimited = !Number.isFinite(maxAllowed);
 

@@ -9,18 +9,6 @@ export type CancelResult =
   | { success: true; cancelled: number }
   | { success: false; message: string };
 
-/**
- * Cancels all of a user's scheduled posts whose scheduled_at is in the
- * future. Tags each cancelled row with `cancelled_by_sub_at = now()` so
- * the resume-on-resubscribe and 7-day cleanup paths can distinguish
- * system cancellations from manual user cancellations.
- *
- * Idempotent: re-running for the same user produces zero additional
- * cancellations because the WHERE clause requires status='scheduled'.
- *
- * Called from the Stripe webhook handler on customer.subscription.deleted
- * after the active sub status flip.
- */
 export async function cancelFutureScheduledPostsOnSubCancel(
   principalId: string
 ): Promise<CancelResult> {

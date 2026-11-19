@@ -3,7 +3,6 @@
 import { authCheck } from "@/actions/server/authCheck";
 import { revokeApiKeyForPrincipal } from "@/lib/api/revokeApiKeyForPrincipal";
 
-/** Revokes one of the caller's MCP API keys; the row stays for audit and stops authenticating at once. */
 export async function revokeApiKey(
   userId: string | null,
   keyId: string

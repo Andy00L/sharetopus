@@ -1,4 +1,3 @@
-// actions/server/contentHistoryActions/storeContentHistory.ts
 import "server-only";
 
 import { db, runQuery } from "@/db/client";
@@ -20,15 +19,11 @@ export type StoreContentHistoryInput = {
   created_via: "web" | "mcp" | "x402" | "api";
 };
 
-/**
- * Stores a record of posted content in the content_history table
- */
 export async function storeContentHistory(
   data: StoreContentHistoryInput,
   userId: string | null,
 ): Promise<{ success: boolean; message: string; recordId?: string }> {
   try {
-    // Basic validation
     if (
       !userId ||
       !data.platform ||
@@ -49,7 +44,6 @@ export async function storeContentHistory(
       };
     }
 
-    // Prepare data for insertion
     const insertData: typeof content_history.$inferInsert = {
       principal_id: userId,
       platform: data.platform,
@@ -66,7 +60,6 @@ export async function storeContentHistory(
       created_via: data.created_via,
     };
 
-    // Insert the record into the content_history table
     const { data: insertedRows, error } = await runQuery(
       db
         .insert(content_history)

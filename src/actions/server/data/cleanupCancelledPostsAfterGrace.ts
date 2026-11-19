@@ -18,24 +18,6 @@ export type CleanupResult =
 const GRACE_DAYS = 7;
 const MAX_DELETE_PER_RUN = 2000;
 
-/**
- * Deletes system-cancelled scheduled_posts past the grace period.
- *
- * Selection criteria:
- *   - status = 'cancelled'
- *   - cancelled_by_sub_at IS NOT NULL
- *   - cancelled_by_sub_at < now() - 7 days
- *
- * Before deleting, the function double-checks the owners' current
- * subscription status in one query. If a user has resubscribed (active or
- * trialing) but the resume-on-resubscribe webhook handler failed for any
- * reason, we skip the delete and log so the user is not silently
- * penalized. A check that fails is treated the same way: the posts stay
- * until a run can confirm the user has no subscription. The eligible posts
- * go in one DELETE.
- *
- * Errors-as-values. Designed for Inngest step execution.
- */
 export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> {
   try {
     const cutoff = new Date(
@@ -79,9 +61,6 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
     const postIdsByPrincipal = groupPostIdsByPrincipal(candidates);
     const principalIds = [...postIdsByPrincipal.keys()];
 
-    // One read for every candidate owner. A user who resubscribed keeps
-    // their posts until tomorrow's run: the resume-on-resubscribe handler
-    // should have cleared the tag by then.
     const { data: activeSubscriptionRows, error: subscriptionError } =
       await runQuery(
         db
@@ -95,8 +74,6 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
           ),
       );
 
-    // A failed check says nothing about the subscriptions. Reading it as
-    // "not subscribed" deleted the posts of users who had resubscribed.
     if (subscriptionError) {
       console.error(
         `[cleanupCancelledPostsAfterGrace] Subscription check failed, keeping ${candidates.length} posts: ${subscriptionError.message}`
@@ -128,9 +105,6 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
 
     let deleted = 0;
     if (deletablePostIds.length > 0) {
-      // The DELETE repeats the selection criteria so a post resumed or
-      // cancelled again since the candidate query is left alone, and
-      // RETURNING counts only the rows actually removed.
       const { data: deletedRows, error: deleteErr } = await runQuery(
         db
           .delete(scheduled_posts)

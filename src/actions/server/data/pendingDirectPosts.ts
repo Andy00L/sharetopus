@@ -20,21 +20,10 @@ export type InsertPendingDirectPostsResult =
       success: true;
       message: string;
       insertedCount: number;
-      /** The event_ids whose lock row this call wrote. Only these may be sent to Inngest. */
       insertedEventIds: string[];
     }
   | { success: false; message: string };
 
-/**
- * Bulk insert lock rows BEFORE inngest.send. Caller must abort dispatch
- * if this returns success: false.
- *
- * Idempotency: a row whose event_id (PK) or (principal_id, idempotency_key)
- * (pending_direct_posts_principal_idem_uq) already exists is skipped, and
- * insertedEventIds lists only the rows written. Two concurrent dispatches
- * of one batch both pass the caller's pre-check; only the one whose lock
- * rows land may send, or the post goes out twice.
- */
 export async function insertPendingDirectPosts(
   rows: PendingDirectPostInput[],
 ): Promise<InsertPendingDirectPostsResult> {
@@ -87,13 +76,6 @@ export async function insertPendingDirectPosts(
   };
 }
 
-/**
- * Marks a row terminal. Idempotent: only acts if status is currently
- * 'processing'. Re-invocation after terminal is a no-op.
- *
- * status: "completed" on worker success, "failed" on worker failure.
- * failureReason: short string, max 1000 chars, only when status="failed".
- */
 export async function finalizePendingDirectPost(
   eventId: string,
   status: "completed" | "failed",
@@ -141,10 +123,6 @@ export async function finalizePendingDirectPost(
   };
 }
 
-/**
- * Marks rows stuck in 'processing' older than cutoffIso as 'failed'.
- * Used by the sweeper Inngest cron. Returns the count of rows updated.
- */
 export async function sweepStuckPendingDirectPosts(
   cutoffIso: string,
 ): Promise<

@@ -31,18 +31,6 @@ export type CreateRestApiKeyResult =
       message: string;
     };
 
-/**
- * Creates a REST API key for the authenticated user.
- *
- * Mirrors src/actions/server/mcp/createApiKey.ts but with kind='rest'
- * and prefix 'stp_rest_': the same creation rate limit and the same cap on
- * unrevoked keys (checkActiveApiKeyCap). Raw key returned ONCE; later reads
- * only see the prefix.
- *
- * Requires an active Clerk session. Unlike MCP, creation does not check the
- * subscription: resolveRestApiKey gates every request made with the key, and
- * the integrations page that calls this is gated too.
- */
 export async function createRestApiKey(
   input: CreateRestApiKeyInput,
 ): Promise<CreateRestApiKeyResult> {

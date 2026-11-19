@@ -8,10 +8,6 @@ import type { CreatedVia } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
-/**
- * The principal's social accounts, never deleted ones; filterByAvailability
- * keeps only is_available rows. Caller validates principalId. 30 calls per 60 s per source.
- */
 export async function fetchSocialAccounts(
   principalId: string,
   source: CreatedVia,

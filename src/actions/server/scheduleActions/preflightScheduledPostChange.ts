@@ -7,18 +7,6 @@ import { scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
 
-/**
- * Pre-payment check shared by cancel, delete and reschedule. It mirrors the
- * rules the three batch functions enforce (cancelScheduledPostBatch,
- * deleteScheduledPostBatch, updateScheduledTimeBatch): at least one of the
- * ids must exist, none may belong to another principal, and when
- * eligibleStatuses is given at least one post must be in one of them. A paid
- * caller (x402) runs it before settlement so a change that cannot happen
- * costs nothing; the batch functions still enforce the same rules.
- *
- * Called by: src/app/api/x402/{cancel,delete,reschedule}/route.ts
- * Tables touched: scheduled_posts (read)
- */
 export async function preflightScheduledPostChange(params: {
   postIds: string[];
   principalId: string;

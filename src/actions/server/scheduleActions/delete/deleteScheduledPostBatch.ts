@@ -1,4 +1,3 @@
-// src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts
 import "server-only";
 
 import { inArray } from "drizzle-orm";
@@ -10,11 +9,6 @@ import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type DeleteScheduledPostBatchResult = {
   message: string;
   resetIn?: number;
@@ -31,28 +25,6 @@ export type DeleteScheduledPostBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Deletes scheduled posts in batch and cleans up orphaned media from Storage.
- *
- * **Authentication:** Does not call Clerk. Caller must validate
- * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
- *
- * **Rate limiting:** 30 requests per 60s, scoped per source.
- *
- * **Tables:** `scheduled_posts` (read + delete), Supabase Storage (delete).
- *
- * Flow:
- *   1. Rate limit check
- *   2. Fetch posts including media_storage_path
- *   3. Verify ownership
- *   4. Delete rows from scheduled_posts
- *   5. Media cleanup via deleteUnreferencedMediaFiles: one reference
- *      check and one Storage call for every path the deleted posts used
- *
- * @param postIds - Array of scheduled_posts.id to delete
- * @param principalId - Owner principal; ownership check enforced
- * @param source - Channel label; drives rate-limit scope
- */
 export async function deleteScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -72,7 +44,6 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_delete_scheduled_posts`;
     const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
     if (!rateCheck.success) {
@@ -84,7 +55,6 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
@@ -129,7 +99,6 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 3: delete posts from DB
     const postIdsToDelete = posts.map((post) => post.id);
     const { error: deleteError } = await runQuery(
       db

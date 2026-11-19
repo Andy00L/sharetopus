@@ -13,10 +13,6 @@ type CreateApiKeyResult =
   | { success: true; rawKey: string; keyId: string; prefix: string; expiresAtIso: string }
   | { success: false; message: string };
 
-/**
- * Creates an MCP API key for a subscribed user; the raw key is returned once,
- * only its hash is stored.
- */
 export async function createApiKey(
   userId: string | null,
   name: string,
@@ -28,7 +24,6 @@ export async function createApiKey(
       return { success: false, message: "Authentication required." };
     }
 
-    // MCP is a paid feature. Block key creation for users without an active subscription.
     const sub = await checkActiveSubscription(userId);
     if (sub.status === "unavailable") {
       return {

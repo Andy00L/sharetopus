@@ -1,7 +1,6 @@
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 
-/** One error per account with no content, no Pinterest board, or no LinkedIn identifier. */
 export function validateAccountContent(
   accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
@@ -25,7 +24,6 @@ export function validateAccountContent(
       return;
     }
 
-    // Platform-specific validations
     if (platform === "pinterest" && postType !== "text") {
       const hasSelectedBoard = boards?.some(
         (board) => board.accountId === account.id && board.isSelected,

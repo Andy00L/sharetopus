@@ -5,15 +5,6 @@ import { share_links } from "@/db/schema";
 import { auth } from "@clerk/nextjs/server";
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 
-/**
- * Lists all active (non-revoked, non-expired) share links for the
- * authenticated user. Used by the connections page to display the
- * creator's active share links.
- *
- * Called by: the connections page (server), which passes the result to ShareLinkList
- * Tables read: share_links (select)
- */
-
 export interface ShareLinkSummary {
   id: string;
   platform: string;

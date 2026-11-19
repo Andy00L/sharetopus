@@ -1,6 +1,3 @@
-/**
- * Type for the response from the generate-upload-url API
- */
 export interface SignedUrlResponse {
   success: boolean;
   uploadUrl?: string;
@@ -10,18 +7,12 @@ export interface SignedUrlResponse {
   message?: string;
 }
 
-/**
- * Options for the uploadWithSignedUrl function
- */
 export interface UploadOptions {
   onProgress?: (progress: number) => void;
   onSuccess?: (path: string) => void;
   onError?: (error: Error) => void;
 }
 
-/**
- * Request a signed upload URL from the server
- */
 export async function getSignedUploadUrl(
   filename: string,
   contentType: string,
@@ -63,9 +54,6 @@ export async function getSignedUploadUrl(
   }
 }
 
-/**
- * Upload a file using a signed URL
- */
 export async function uploadWithSignedUrl(
   file: File,
   isScheduled: boolean,
@@ -74,7 +62,6 @@ export async function uploadWithSignedUrl(
   const { onProgress, onSuccess, onError } = options;
 
   try {
-    // Step 1: Get a signed upload URL from our API
     const signedUrlResponse = await getSignedUploadUrl(
       file.name,
       file.type,
@@ -99,11 +86,9 @@ export async function uploadWithSignedUrl(
       onError?.(new Error(errorMessage));
       return { success: false, message: errorMessage };
     }
-    // Step 2: Upload the file directly to Supabase Storage using the signed URL
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
 
-      // Track upload progress
       xhr.upload.addEventListener("progress", (event) => {
         if (event.lengthComputable) {
           const percentComplete = Math.round(
@@ -113,7 +98,6 @@ export async function uploadWithSignedUrl(
         }
       });
 
-      // Handle success
       xhr.addEventListener("load", () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           console.log(`[uploadWithSignedUrl] Upload complete: ${path}`);
@@ -129,7 +113,6 @@ export async function uploadWithSignedUrl(
         }
       });
 
-      // Handle errors
       xhr.addEventListener("error", () => {
         const errorMessage =
           "Upload failed due to network error. Please check your connection and try again.";
@@ -143,7 +126,6 @@ export async function uploadWithSignedUrl(
         resolve({ success: false, message: errorMessage });
       });
 
-      // Start the upload
       xhr.open("PUT", uploadUrl);
       xhr.setRequestHeader("Content-Type", file.type);
       xhr.send(file);

@@ -6,15 +6,6 @@ import { findReferencedMediaPaths } from "./storageFiles/mediaReferences";
 /** Paths per Storage list page, the API's maximum. */
 const LIST_PAGE_SIZE = 1000;
 
-/**
- * Lists every file in the bucket older than `cutoffIso`, recursing into
- * principal-prefixed folders. Skips `.emptyFolderPlaceholder`. Skips
- * top-level files (none should exist; logs a warning if any are found).
- *
- * Pagination: up to 1000 per page per folder.
- * Hard cap: returns at most `maxFiles` candidate paths (default 10000).
- * If cap is hit, returns `truncated: true` so the caller logs a warning.
- */
 export async function listAgedStorageFiles(input: {
   bucket: string;
   cutoffIso: string;
@@ -46,14 +37,12 @@ export async function listAgedStorageFiles(input: {
 
     // Folders have id=null in Supabase storage list responses
     if (entry.id !== null) {
-      // Top-level file (unexpected). Log warning, skip.
       console.warn(
         `[listAgedStorageFiles] Unexpected top-level file: ${entry.name}`
       );
       continue;
     }
 
-    // This is a folder (principal ID prefix)
     folderCount++;
     const folderResult = await listFolderFiles(
       input.bucket,
@@ -63,7 +52,6 @@ export async function listAgedStorageFiles(input: {
     );
 
     if (!folderResult.success) {
-      // Log and continue with other folders (partial success acceptable)
       console.error(
         `[listAgedStorageFiles] Failed to list folder ${entry.name}:`,
         folderResult.message
@@ -85,10 +73,6 @@ export async function listAgedStorageFiles(input: {
   return { success: true, paths, pathSizes, folderCount, truncated };
 }
 
-/**
- * Every entry at the bucket root, page by page. One page used to be read,
- * so the folders past the first 1000 users were never swept.
- */
 async function listBucketRoot(
   bucket: string
 ): Promise<
@@ -141,11 +125,10 @@ async function listFolderFiles(
 
     for (const file of data) {
       if (file.name === ".emptyFolderPlaceholder") continue;
-      // Folders within principal folders are not expected but skip them
       if (file.id === null) continue;
 
       const createdAt = file.created_at ? new Date(file.created_at).getTime() : 0;
-      if (createdAt >= cutoffMs) continue; // Too new, skip
+      if (createdAt >= cutoffMs) continue;
 
       files.push({
         path: `${folder}/${file.name}`,
@@ -162,15 +145,6 @@ async function listFolderFiles(
   return { success: true, files };
 }
 
-/**
- * Returns the subset of `paths` that any row of scheduled_posts,
- * failed_posts, pending_tiktok_pulls or pending_direct_posts references,
- * whatever its status (findReferencedMediaPaths, scope "any_row"): the
- * sweep deletes only files nothing mentions.
- *
- * Everything this function fails to report as referenced gets DELETED from
- * storage by the caller, so any failed statement aborts the whole sweep.
- */
 export async function findReferencedStoragePaths(
   paths: string[]
 ): Promise<
@@ -185,11 +159,6 @@ export async function findReferencedStoragePaths(
   return { success: true, referenced: Array.from(refCheck.referenced) };
 }
 
-/**
- * Removes `paths` from the bucket in batches of `batchSize` (default 100).
- * On any batch failure, logs and continues to next batch (partial success
- * is preferred over zero progress).
- */
 export async function batchDeleteStorageFiles(input: {
   bucket: string;
   paths: string[];
@@ -225,11 +194,9 @@ export async function batchDeleteStorageFiles(input: {
       continue;
     }
 
-    // data is the array of deleted FileObjects (or null on some edge cases)
     const deleted = data?.length ?? 0;
     deletedCount += deleted;
 
-    // If data returned fewer than batch size, count the rest as failed
     if (deleted < batch.length) {
       failedCount += batch.length - deleted;
     }

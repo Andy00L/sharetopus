@@ -10,20 +10,10 @@ export type FetchAccountForPublishResult =
   | { success: true; account: SocialAccount }
   | {
       success: false;
-      /** not_found: deleted or never existed. lookup_failed: the read failed. */
       reason: "not_found" | "lookup_failed";
       message: string;
     };
 
-/**
- * The social account row a publish or a status poll needs, OAuth tokens
- * included. Call it inside the Inngest step that uses the tokens and never
- * return the account from a step: Inngest stores every step result, so a
- * returned row would keep the tokens in the run's history.
- *
- * Called by: processSinglePost, processDirectPost,
- * resolveTikTokAccessTokenForAccount
- */
 export async function fetchAccountForPublish(
   socialAccountId: string,
 ): Promise<FetchAccountForPublishResult> {

@@ -12,23 +12,8 @@ import {
 } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 
-/**
- * Which rows keep a media file alive:
- *   - "in_use": a scheduled post that can still publish or be resumed
- *     (scheduled, queued, processing, cancelled), any failed_posts row, a
- *     TikTok pull still pending, a direct post still processing. The test
- *     every user-facing delete and post-publish cleanup runs.
- *   - "any_row": every row of the four tables, whatever its status. The
- *     orphan sweep's test: it deletes only files nothing mentions.
- */
 export type MediaReferenceScope = "in_use" | "any_row";
 
-/**
- * Scheduled-post statuses whose media must stay. queued sits between the
- * tick and the worker's claim; cancelled posts come back through resume and
- * reschedule. Leaving either out let the first post of a fan-out delete the
- * file its siblings still needed.
- */
 const MEDIA_HOLDING_POST_STATUSES: PostStatus[] = [
   "scheduled",
   "queued",
@@ -36,20 +21,12 @@ const MEDIA_HOLDING_POST_STATUSES: PostStatus[] = [
   "cancelled",
 ];
 
-/** Paths per statement. Each path is bound once per table: 4 x 250 = 1000 parameters. */
 const PATHS_PER_STATEMENT = 250;
 
 export type ReferencedMediaPathsResult =
   | { success: true; referenced: Set<string> }
   | { success: false; message: string };
 
-/**
- * The subset of `paths` some row still references, one UNION statement per
- * PATHS_PER_STATEMENT paths instead of one query per table and path.
- *
- * Whatever this misses gets deleted by the caller, so any failed statement
- * fails the whole call and the caller keeps every file.
- */
 export async function findReferencedMediaPaths(
   paths: string[],
   scope: MediaReferenceScope,

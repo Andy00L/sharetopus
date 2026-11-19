@@ -1,4 +1,3 @@
-// src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
 import "server-only";
 
 import { and, eq, inArray } from "drizzle-orm";
@@ -12,19 +11,6 @@ import {
   countBumpedRows,
 } from "./_shared/bumpPastScheduleToFuture";
 
-/**
- * Resumes cancelled posts back to "scheduled" status.
- *
- * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
- * **Rate limiting:** 30 requests per 60s, scoped per source.
- * **Tables:** `scheduled_posts` (read + update).
- *
- * If a post's scheduled_at is in the past, bumps it to 1 hour from now.
- * Clears cancelled_by_sub_at: a post the user brings back is no longer a
- * subscription cancellation, and a stale tag let the 7-day grace cleanup
- * delete it after a later manual cancel. One UPDATE resumes the batch and
- * repeats the 'cancelled' check, so the counts are the rows it changed.
- */
 export async function resumeScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -50,7 +36,6 @@ export async function resumeScheduledPostBatch(
       return { success: false, message: "No post IDs provided." };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_resume_scheduled_posts`;
     const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
     if (!rateCheck.success) {
@@ -61,7 +46,6 @@ export async function resumeScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
