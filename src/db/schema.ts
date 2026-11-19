@@ -432,7 +432,7 @@ export const scheduled_posts = pgTable("scheduled_posts", {
 }, (table): PgTableExtraConfigValue[] => [
   index("idx_scheduled_posts_batch").on(table.batch_id).where(sql`(batch_id IS NOT NULL)`),
   index("idx_scheduled_posts_cancelled_by_sub_at").on(table.cancelled_by_sub_at).where(sql`(cancelled_by_sub_at IS NOT NULL)`),
-  index("idx_scheduled_posts_media_storage_path_active").on(table.media_storage_path).where(sql`(status = ANY (ARRAY['scheduled'::text, 'processing'::text]))`),
+  index("idx_scheduled_posts_media_storage_path").on(table.media_storage_path),
   index("idx_scheduled_posts_principal_platform_window").on(table.principal_id, table.platform, table.scheduled_at).where(sql`(status = ANY (ARRAY['scheduled'::text, 'queued'::text, 'processing'::text]))`),
   index("idx_scheduled_posts_principal_recent").on(table.principal_id, table.created_at.desc().nullsFirst()),
   index("idx_scheduled_posts_status_due").on(table.status, table.scheduled_at).where(sql`(status = ANY (ARRAY['scheduled'::text, 'queued'::text, 'processing'::text]))`),
@@ -553,7 +553,7 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
     columns: [table.content_history_id],
     foreignColumns: [content_history.id],
     name: "pending_tiktok_pulls_content_history_id_fkey",
-  }),
+  }).onDelete("set null"),
   foreignKey({
     columns: [table.principal_id],
     foreignColumns: [principals.id],
@@ -563,7 +563,7 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
     columns: [table.scheduled_post_id],
     foreignColumns: [scheduled_posts.id],
     name: "pending_tiktok_pulls_scheduled_post_id_fkey",
-  }),
+  }).onDelete("set null"),
   foreignKey({
     columns: [table.social_account_id],
     foreignColumns: [social_accounts.id],
