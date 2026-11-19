@@ -1,7 +1,7 @@
 // src/actions/server/scheduleActions/schedule/schedulePostBatch.ts
 import "server-only";
 
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, count, eq, gte, inArray, lte } from "drizzle-orm";
 
 import {
   describeAccountMismatch,
@@ -10,18 +10,22 @@ import {
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts } from "@/db/schema";
-import type { CreatedVia } from "@/db/schema";
+import type { CreatedVia, PostStatus } from "@/db/schema";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { countPostsByPlatform, findDailyQuotaViolation } from "./dailyQuota";
 
 const MAX_BATCH_SIZE = 50;
 const RATE_LIMIT = 10;
 const RATE_WINDOW_SECONDS = 60;
 const DEFAULT_PLATFORM_DAILY_CAP = 50;
+const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** The statuses that still publish; the same list as idx_scheduled_posts_principal_platform_window. */
+const QUOTA_COUNTED_STATUSES: PostStatus[] = ["scheduled", "queued", "processing"];
 
 type ScheduledPostInsertRow = typeof scheduled_posts.$inferInsert;
 
@@ -529,9 +533,11 @@ function validatePostFields(
 }
 
 /**
- * Per-platform daily cap enforcement. Counts existing scheduled_posts in the
- * next 24h for each (principal, platform), adds N from this batch, compares
- * to platform_quotas.daily_cap. Fails on first violation.
+ * Per-platform daily cap enforcement: the principal's posts still due in the
+ * next 24h (scheduled, queued or processing) plus this batch, against
+ * platform_quotas.daily_cap. Two queries for any number of platforms.
+ * Cancelled, failed and posted rows never publish again, so they no longer
+ * count toward the cap.
  *
  * Applies to web, mcp, and x402 alike.
  */
@@ -543,63 +549,73 @@ async function checkPlatformDailyQuotas(
   | { success: true }
   | { success: false; failure: "quota_exceeded" | "unavailable"; message: string }
 > {
-  const platforms = [...new Set(posts.map((post) => post.platform))];
+  const addedCountByPlatform = countPostsByPlatform(posts);
+  const platforms = [...addedCountByPlatform.keys()];
   const now = new Date();
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const windowEnd = new Date(now.getTime() + QUOTA_WINDOW_MS);
 
-  for (const platform of platforms) {
-    const postsForPlatform = posts.filter(
-      (post) => post.platform === platform,
-    ).length;
-
-    const { data: existingCount, error: countError } = await runQuery(
-      db.$count(
-        scheduled_posts,
+  const { data: existingCounts, error: countError } = await runQuery(
+    db
+      .select({
+        platform: scheduled_posts.platform,
+        dueCount: count(),
+      })
+      .from(scheduled_posts)
+      .where(
         and(
           eq(scheduled_posts.principal_id, principalId),
-          eq(scheduled_posts.platform, platform),
+          inArray(scheduled_posts.platform, platforms),
+          inArray(scheduled_posts.status, QUOTA_COUNTED_STATUSES),
           gte(scheduled_posts.scheduled_at, now.toISOString()),
-          lte(scheduled_posts.scheduled_at, tomorrow.toISOString()),
+          lte(scheduled_posts.scheduled_at, windowEnd.toISOString()),
         ),
-      ),
+      )
+      .groupBy(scheduled_posts.platform),
+  );
+
+  if (countError) {
+    console.error(
+      `[checkPlatformDailyQuotas] [req=${requestId ?? "?"}] Quota count failed:`,
+      countError.message,
     );
+    return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
+  }
 
-    if (countError) {
-      console.error(
-        `[schedulePostBatch] [req=${requestId ?? "?"}] Quota count failed for ${platform}:`,
-        countError.message,
-      );
-      return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
-    }
+  const { data: quotaRows, error: quotaError } = await runQuery(
+    db
+      .select({
+        platform: platform_quotas.platform,
+        daily_cap: platform_quotas.daily_cap,
+      })
+      .from(platform_quotas)
+      .where(inArray(platform_quotas.platform, platforms)),
+  );
 
-    const { data: quotaRows, error: quotaError } = await runQuery(
-      db
-        .select({ daily_cap: platform_quotas.daily_cap })
-        .from(platform_quotas)
-        .where(eq(platform_quotas.platform, platform))
-        .limit(1),
+  if (quotaError) {
+    console.error(
+      `[checkPlatformDailyQuotas] [req=${requestId ?? "?"}] Quota fetch failed:`,
+      quotaError.message,
     );
+    return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
+  }
 
-    if (quotaError) {
-      console.error(
-        `[schedulePostBatch] [req=${requestId ?? "?"}] Quota fetch failed for ${platform}:`,
-        quotaError.message,
-      );
-      return { success: false, failure: "unavailable", message: "Platform quota lookup failed." };
-    }
+  const violation = findDailyQuotaViolation({
+    addedCountByPlatform,
+    existingCountByPlatform: new Map(
+      existingCounts.map((countRow) => [countRow.platform, countRow.dueCount]),
+    ),
+    dailyCapByPlatform: new Map(
+      quotaRows.map((quotaRow) => [quotaRow.platform, quotaRow.daily_cap]),
+    ),
+    defaultDailyCap: DEFAULT_PLATFORM_DAILY_CAP,
+  });
 
-    // No platform_quotas row for this platform: the default cap applies.
-    const quota = quotaRows[0];
-    const dailyCap = quota?.daily_cap ?? DEFAULT_PLATFORM_DAILY_CAP;
-    const totalAfter = existingCount + postsForPlatform;
-
-    if (totalAfter > dailyCap) {
-      return {
-        success: false,
-        failure: "quota_exceeded",
-        message: `Platform quota exceeded for ${platform}. ${existingCount} already scheduled in next 24h, adding ${postsForPlatform} would exceed daily cap of ${dailyCap}.`,
-      };
-    }
+  if (violation) {
+    return {
+      success: false,
+      failure: "quota_exceeded",
+      message: `Platform quota exceeded for ${violation.platform}. ${violation.existingCount} already scheduled in next 24h, adding ${violation.addedCount} would exceed daily cap of ${violation.dailyCap}.`,
+    };
   }
 
   return { success: true };

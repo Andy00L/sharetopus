@@ -2,10 +2,12 @@
 
 import { eq } from "drizzle-orm";
 
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { db, runQuery } from "@/db/client";
 import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
+import { priceIdToTier } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
@@ -36,9 +38,10 @@ export async function checkOutSession(priceId: string): Promise<{
       "[checkOutSession]: Starting checkout session creation process"
     );
 
-    // Validate price ID input
-    if (!priceId) {
-      console.error("[checkOutSession]: Missing required price ID");
+    // A server action takes any string from the browser: only the plan
+    // prices the app sells may open a checkout.
+    if (!priceId || priceIdToTier(priceId) === null) {
+      console.error(`[checkOutSession]: Unknown or missing price ID: ${priceId}`);
       return {
         success: false,
         message: "Subscription plan not specified. Please select a valid plan.",
@@ -82,6 +85,27 @@ export async function checkOutSession(priceId: string): Promise<{
       };
     }
     console.log("[checkOutSession]: Rate limit check passed");
+
+    // A second checkout would start a second subscription: a subscriber
+    // changes plans in the billing portal. Banked referral weeks are not a
+    // Stripe subscription, so those users may still buy one.
+    const subscription = await checkActiveSubscription(userId);
+    if (subscription.status === "unavailable") {
+      return {
+        success: false,
+        message: "Could not check your subscription. Please try again.",
+      };
+    }
+    if (subscription.status === "active" || subscription.status === "trialing") {
+      console.warn(
+        `[checkOutSession]: User ${userId} already has a ${subscription.status} subscription`
+      );
+      return {
+        success: false,
+        message:
+          "You already have an active subscription. Manage it from the billing portal.",
+      };
+    }
 
     // Step 3: Retrieve the user's Stripe customer ID from the database
     console.log(

@@ -45,16 +45,14 @@ export async function checkAccountLimits(
   const isUnlimited = !Number.isFinite(maxAllowed);
 
   try {
-    const { data, error } = await runQuery(
-      db
-        .select({ id: social_accounts.id })
-        .from(social_accounts)
-        .where(
-          and(
-            eq(social_accounts.principal_id, userId),
-            isNull(social_accounts.deleted_at),
-          ),
+    const { data: currentCount, error } = await runQuery(
+      db.$count(
+        social_accounts,
+        and(
+          eq(social_accounts.principal_id, userId),
+          isNull(social_accounts.deleted_at),
         ),
+      ),
     );
 
     if (error) {
@@ -69,7 +67,6 @@ export async function checkAccountLimits(
       };
     }
 
-    const currentCount = data.length;
     const canAddMore = isUnlimited || currentCount < maxAllowed;
 
     return {

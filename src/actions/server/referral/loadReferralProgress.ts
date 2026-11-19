@@ -1,9 +1,9 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { referral_reward_grants, referrals } from "@/db/schema";
+import { referral_reward_grants, referrals, users } from "@/db/schema";
 import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
 
 export type ReferralProgressResult =
@@ -14,6 +14,56 @@ export type ReferralProgressResult =
       capReached: boolean;
     }
   | { success: false; message: string };
+
+/** One user's referral counts and banked access, read in one statement. */
+export type ReferralStanding = {
+  verifiedCount: number;
+  redeemedCount: number;
+  weeksEarned: number;
+  creatorAccessUntil: string | null;
+};
+
+/**
+ * The user's verified and redeemed referral counts, weeks earned and
+ * creator_access_until in one round trip (scalar subqueries on the users
+ * row). `standing` is null when the user has no users row.
+ *
+ * Called by: loadReferralProgress, getReferralSummary
+ */
+export async function loadReferralStanding(
+  userId: string,
+): Promise<
+  | { success: true; standing: ReferralStanding | null }
+  | { success: false; message: string }
+> {
+  const { data: standingRows, error } = await runQuery(
+    db
+      .select({
+        verifiedCount: db.$count(
+          referrals,
+          and(eq(referrals.referrer_id, userId), eq(referrals.status, "verified")),
+        ),
+        redeemedCount: db.$count(
+          referrals,
+          and(eq(referrals.referrer_id, userId), eq(referrals.status, "redeemed")),
+        ),
+        weeksEarned: sql`(select coalesce(sum(${referral_reward_grants.weeks_granted}), 0)::int from ${referral_reward_grants} where ${referral_reward_grants.user_id} = ${userId})`.mapWith(Number),
+        creatorAccessUntil: users.creator_access_until,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1),
+  );
+
+  if (error) {
+    console.error(
+      `[loadReferralStanding] Failed to load referral standing for ${userId}:`,
+      error.message,
+    );
+    return { success: false, message: "Failed to load referral progress" };
+  }
+  return { success: true, standing: standingRows[0] ?? null };
+}
 
 /**
  * Referral progress for one user: verified referrals counting toward the
@@ -29,45 +79,15 @@ export type ReferralProgressResult =
  * through the getReferralProgress action, which takes the user from the
  * session.
  *
- * Tables: referrals (read), referral_reward_grants (read)
- * Called by: getReferralProgress (sidebar badge), getReferralSummary (referral page)
+ * Tables: users, referrals, referral_reward_grants (one read)
+ * Called by: getReferralProgress (sidebar badge)
  */
 export async function loadReferralProgress(userId: string): Promise<ReferralProgressResult> {
-  const { data: verifiedCount, error: verifiedError } = await runQuery(
-    db.$count(
-      referrals,
-      and(eq(referrals.referrer_id, userId), eq(referrals.status, "verified")),
-    ),
-  );
+  const standingResult = await loadReferralStanding(userId);
+  if (!standingResult.success) return standingResult;
 
-  if (verifiedError) {
-    console.error(
-      `[loadReferralProgress] Failed to count verified referrals for ${userId}:`,
-      verifiedError.message,
-    );
-    return { success: false, message: "Failed to load referral progress" };
-  }
-
-  const { data: grantRows, error: grantsError } = await runQuery(
-    db
-      .select({ weeks_granted: referral_reward_grants.weeks_granted })
-      .from(referral_reward_grants)
-      .where(eq(referral_reward_grants.user_id, userId)),
-  );
-
-  if (grantsError) {
-    console.error(
-      `[loadReferralProgress] Failed to load grants for ${userId}:`,
-      grantsError.message,
-    );
-    return { success: false, message: "Failed to load referral grants" };
-  }
-
-  const weeksEarned = grantRows.reduce(
-    (sum, row) => sum + row.weeks_granted,
-    0,
-  );
-
+  const verifiedCount = standingResult.standing?.verifiedCount ?? 0;
+  const weeksEarned = standingResult.standing?.weeksEarned ?? 0;
   return {
     success: true,
     towardNextWeek: verifiedCount,

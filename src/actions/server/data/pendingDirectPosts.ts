@@ -16,22 +16,35 @@ export type PendingDirectPostInput = {
 };
 
 export type InsertPendingDirectPostsResult =
-  | { success: true; message: string; insertedCount: number }
+  | {
+      success: true;
+      message: string;
+      insertedCount: number;
+      /** The event_ids whose lock row this call wrote. Only these may be sent to Inngest. */
+      insertedEventIds: string[];
+    }
   | { success: false; message: string };
 
 /**
  * Bulk insert lock rows BEFORE inngest.send. Caller must abort dispatch
  * if this returns success: false.
  *
- * Idempotency: event_id is the PK. Re-inserting the same event_id will
- * fail with a 23505 unique violation. Treat this as success (lock already
- * exists, dispatch can proceed).
+ * Idempotency: a row whose event_id (PK) or (principal_id, idempotency_key)
+ * (pending_direct_posts_principal_idem_uq) already exists is skipped, and
+ * insertedEventIds lists only the rows written. Two concurrent dispatches
+ * of one batch both pass the caller's pre-check; only the one whose lock
+ * rows land may send, or the post goes out twice.
  */
 export async function insertPendingDirectPosts(
   rows: PendingDirectPostInput[],
 ): Promise<InsertPendingDirectPostsResult> {
   if (rows.length === 0) {
-    return { success: true, message: "No rows to insert", insertedCount: 0 };
+    return {
+      success: true,
+      message: "No rows to insert",
+      insertedCount: 0,
+      insertedEventIds: [],
+    };
   }
 
   const insertRows = rows.map((lockInput) => ({
@@ -45,33 +58,33 @@ export async function insertPendingDirectPosts(
     idempotency_key: lockInput.idempotency_key ?? null,
   }));
 
-  // One multi-row INSERT: all rows land or none do.
-  const { error } = await runQuery(
-    db.insert(pending_direct_posts).values(insertRows),
+  const { data: insertedRows, error } = await runQuery(
+    db
+      .insert(pending_direct_posts)
+      .values(insertRows)
+      .onConflictDoNothing()
+      .returning({ event_id: pending_direct_posts.event_id }),
   );
 
   if (error) {
-    // 23505 = unique_violation on either event_id PK (replay) or the
-    // (principal_id, idempotency_key) unique constraint
-    // pending_direct_posts_principal_idem_uq (retry).
-    // Both mean "already dispatched, do not re-dispatch."
-    if (error.code === "23505") {
-      console.warn(
-        "[insertPendingDirectPosts] Unique violation (event_id PK or idempotency_key), treating as idempotent:",
-        error.message,
-      );
-      return {
-        success: true,
-        message: "Already inserted (idempotent)",
-        insertedCount: rows.length,
-      };
-    }
     console.error("[insertPendingDirectPosts] Insert failed:", error.message);
     return { success: false, message: `Insert failed: ${error.message}` };
   }
 
-  console.log(`[insertPendingDirectPosts] Inserted ${rows.length} lock row(s)`);
-  return { success: true, message: "Inserted", insertedCount: rows.length };
+  const insertedEventIds = insertedRows.map((insertedRow) => insertedRow.event_id);
+  const skippedCount = rows.length - insertedEventIds.length;
+  if (skippedCount > 0) {
+    console.warn(
+      `[insertPendingDirectPosts] ${skippedCount} lock row(s) already existed (event_id or idempotency_key), not re-dispatched`,
+    );
+  }
+  console.log(`[insertPendingDirectPosts] Inserted ${insertedEventIds.length} lock row(s)`);
+  return {
+    success: true,
+    message: skippedCount > 0 ? "Inserted, duplicates skipped" : "Inserted",
+    insertedCount: insertedEventIds.length,
+    insertedEventIds,
+  };
 }
 
 /**
@@ -126,37 +139,6 @@ export async function finalizePendingDirectPost(
     message: updated ? `Marked ${status}` : "Already finalized",
     updated,
   };
-}
-
-/**
- * Counts active rows for a media path. Used by the cleanup safety check.
- * Returns success: false on DB error so the caller can preserve the file
- * conservatively (mirrors countPendingTikTokPullsForMediaPath behavior).
- */
-export async function countPendingDirectPostsForMediaPath(
-  mediaPath: string,
-): Promise<
-  { success: true; count: number } | { success: false; message: string }
-> {
-  const { data: count, error } = await runQuery(
-    db.$count(
-      pending_direct_posts,
-      and(
-        eq(pending_direct_posts.media_storage_path, mediaPath),
-        eq(pending_direct_posts.status, "processing"),
-      ),
-    ),
-  );
-
-  if (error) {
-    console.error(
-      "[countPendingDirectPostsForMediaPath] Query failed:",
-      error.message,
-    );
-    return { success: false, message: `Query failed: ${error.message}` };
-  }
-
-  return { success: true, count };
 }
 
 /**

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
@@ -42,7 +42,11 @@ export type UpdateScheduledTimeBatchResult = {
  * Cancelled posts get auto-resumed (status -> scheduled) along with the
  * time update, and lose their cancelled_by_sub_at tag like a manual resume
  * (see resumeScheduledPostBatch). Posts in terminal states (posted,
- * failed) are skipped.
+ * failed) are skipped. One UPDATE moves the batch and repeats the status
+ * check, so a post the publisher queued after the read keeps publishing
+ * instead of being reported as rescheduled. A 'scheduled' row never carries
+ * cancelled_by_sub_at (every move to 'scheduled' clears it), so clearing it
+ * for both statuses changes nothing for scheduled rows.
  *
  * @param postIds - Post IDs to reschedule
  * @param newScheduledTime - New datetime (must be in the future)
@@ -151,58 +155,55 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    const scheduledIds = reschedulable
-      .filter((post) => post.status === "scheduled")
-      .map((post) => post.id);
-    const cancelledIds = reschedulable
-      .filter((post) => post.status === "cancelled")
-      .map((post) => post.id);
+    const cancelledIds = new Set(
+      reschedulable
+        .filter((post) => post.status === "cancelled")
+        .map((post) => post.id),
+    );
 
-    let ok = true;
+    const { data: movedRows, error: updateError } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          scheduled_at: scheduledTime.toISOString(),
+          status: "scheduled",
+          cancelled_by_sub_at: null,
+        })
+        .where(
+          and(
+            inArray(
+              scheduled_posts.id,
+              reschedulable.map((post) => post.id),
+            ),
+            eq(scheduled_posts.principal_id, principalId),
+            inArray(scheduled_posts.status, ["scheduled", "cancelled"]),
+          ),
+        )
+        .returning({ id: scheduled_posts.id }),
+    );
 
-    if (scheduledIds.length > 0) {
-      const { error } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({ scheduled_at: scheduledTime.toISOString() })
-          .where(inArray(scheduled_posts.id, scheduledIds)),
+    if (updateError) {
+      console.error(
+        `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update error:`,
+        updateError.message,
       );
-      if (error) {
-        console.error(
-          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update scheduled error:`,
-          error.message,
-        );
-        ok = false;
-      }
-    }
-
-    if (cancelledIds.length > 0) {
-      const { error } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({
-            scheduled_at: scheduledTime.toISOString(),
-            status: "scheduled",
-            cancelled_by_sub_at: null,
-          })
-          .where(inArray(scheduled_posts.id, cancelledIds)),
-      );
-      if (error) {
-        console.error(
-          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update cancelled error:`,
-          error.message,
-        );
-        ok = false;
-      }
-    }
-
-    if (!ok) {
       return {
         success: false,
         failure: "internal",
         message: "Database error rescheduling posts.",
       };
     }
+    if (movedRows.length === 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: "Only scheduled or cancelled posts can be rescheduled.",
+      };
+    }
+
+    const resumedCount = movedRows.filter((movedRow) =>
+      cancelledIds.has(movedRow.id),
+    ).length;
 
     const formattedDate = scheduledTime.toLocaleString("en-US", {
       month: "short",
@@ -215,12 +216,12 @@ export async function updateScheduledTimeBatch(
 
     return {
       success: true,
-      message: `Rescheduled ${reschedulable.length} post(s) to ${formattedDate}.`,
+      message: `Rescheduled ${movedRows.length} post(s) to ${formattedDate}.`,
       details: {
         total: postIds.length,
-        succeeded: reschedulable.length,
-        failed: postIds.length - reschedulable.length,
-        resumedCount: cancelledIds.length,
+        succeeded: movedRows.length,
+        failed: postIds.length - movedRows.length,
+        resumedCount,
       },
     };
   } catch (err) {

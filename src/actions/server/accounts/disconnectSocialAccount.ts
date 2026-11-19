@@ -3,7 +3,7 @@ import { db, runQuery } from "@/db/client";
 import { scheduled_posts, social_accounts } from "@/db/schema";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import "server-only";
-import { deleteSupabaseFile } from "../data/storageFiles/deleteSupabaseFile";
+import { deleteUnreferencedMediaFiles } from "../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
 /**
@@ -103,15 +103,15 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 4: collect media paths from active scheduled posts BEFORE the cascade delete wipes them.
+    // Step 4: collect media paths of the account's unpublished posts BEFORE the cascade delete wipes them.
     const { data: mediaPaths, error: postsError } = await runQuery(
       db
-        .select({ media_storage_path: scheduled_posts.media_storage_path })
+        .selectDistinct({ media_storage_path: scheduled_posts.media_storage_path })
         .from(scheduled_posts)
         .where(
           and(
             eq(scheduled_posts.social_account_id, accountId),
-            inArray(scheduled_posts.status, ["scheduled", "processing"]),
+            inArray(scheduled_posts.status, ["scheduled", "queued", "processing", "cancelled"]),
             isNotNull(scheduled_posts.media_storage_path),
           ),
         ),
@@ -150,27 +150,14 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 7: try to delete each media file. deleteSupabaseFile re-checks all reference
-    // tables (scheduled_posts, failed_posts, pending pulls, pending direct posts) and
-    // preserves files still referenced.
-
-    const deleteResults = await Promise.allSettled(
-      filesToCheck.map((filePath) =>
-        deleteSupabaseFile(userId, filePath, false),
-      ),
-    );
-
-    let deletedFiles = 0;
-    for (const result of deleteResults) {
-      if (result.status === "fulfilled" && result.value.success === true) {
-        deletedFiles++;
-      } else if (result.status === "rejected") {
-        console.error(
-          "[disconnectSocialAccount] File deletion threw:",
-          result.reason,
-        );
-      }
+    const mediaCleanup = await deleteUnreferencedMediaFiles(userId, filesToCheck);
+    if (!mediaCleanup.success) {
+      console.error(
+        "[disconnectSocialAccount] Media cleanup failed:",
+        mediaCleanup.message,
+      );
     }
+    const deletedFiles = mediaCleanup.success ? mediaCleanup.removedCount : 0;
 
     const platformName =
       account.platform.charAt(0).toUpperCase() + account.platform.slice(1);

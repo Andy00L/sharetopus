@@ -7,7 +7,7 @@ import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
-import { deleteSupabaseFile } from "../../data/storageFiles/deleteSupabaseFile";
+import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
 /**
@@ -46,8 +46,8 @@ export type DeleteScheduledPostBatchResult = {
  *   2. Fetch posts including media_storage_path
  *   3. Verify ownership
  *   4. Delete rows from scheduled_posts
- *   5. Parallel cleanup of unique media paths via deleteSupabaseFile
- *      (which checks if any other table still references each file)
+ *   5. Media cleanup via deleteUnreferencedMediaFiles: one reference
+ *      check and one Storage call for every path the deleted posts used
  *
  * @param postIds - Array of scheduled_posts.id to delete
  * @param principalId - Owner principal; ownership check enforced
@@ -149,40 +149,17 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 4: parallel media cleanup. deleteSupabaseFile re-checks all
-    // reference tables (failed_posts, pending pulls, etc.) and preserves
-    // files still referenced.
-    const uniqueMediaPaths = [
-      ...new Set(
-        posts
-          .map((post) => post.media_storage_path)
-          .filter(
-            (path): path is string =>
-              typeof path === "string" && path.length > 0,
-          ),
-      ),
-    ];
-
-    const cleanupResults = await Promise.allSettled(
-      uniqueMediaPaths.map((mediaPath) =>
-        deleteSupabaseFile(principalId, mediaPath, false),
-      ),
+    const mediaCleanup = await deleteUnreferencedMediaFiles(
+      principalId,
+      posts.map((post) => post.media_storage_path),
     );
-
-    let mediaDeleted = 0;
-    for (const cleanupResult of cleanupResults) {
-      if (
-        cleanupResult.status === "fulfilled" &&
-        cleanupResult.value.success === true
-      ) {
-        mediaDeleted++;
-      } else if (cleanupResult.status === "rejected") {
-        console.error(
-          `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Media cleanup threw:`,
-          cleanupResult.reason,
-        );
-      }
+    if (!mediaCleanup.success) {
+      console.error(
+        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Media cleanup failed:`,
+        mediaCleanup.message,
+      );
     }
+    const mediaDeleted = mediaCleanup.success ? mediaCleanup.removedCount : 0;
 
     return {
       success: true,

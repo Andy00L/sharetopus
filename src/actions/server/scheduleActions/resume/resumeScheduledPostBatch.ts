@@ -1,13 +1,16 @@
 // src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
-import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
+import {
+  buildResumeSchedule,
+  countBumpedRows,
+} from "./_shared/bumpPastScheduleToFuture";
 
 /**
  * Resumes cancelled posts back to "scheduled" status.
@@ -19,7 +22,8 @@ import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
  * If a post's scheduled_at is in the past, bumps it to 1 hour from now.
  * Clears cancelled_by_sub_at: a post the user brings back is no longer a
  * subscription cancellation, and a stale tag let the 7-day grace cleanup
- * delete it after a later manual cancel.
+ * delete it after a later manual cancel. One UPDATE resumes the batch and
+ * repeats the 'cancelled' check, so the counts are the rows it changed.
  */
 export async function resumeScheduledPostBatch(
   postIds: string[],
@@ -64,7 +68,6 @@ export async function resumeScheduledPostBatch(
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
           status: scheduled_posts.status,
-          scheduled_at: scheduled_posts.scheduled_at,
         })
         .from(scheduled_posts)
         .where(inArray(scheduled_posts.id, postIds)),
@@ -97,81 +100,58 @@ export async function resumeScheduledPostBatch(
       };
     }
 
-    // Step 3: split resumable posts by past/future scheduled_at
-    const resumablePosts = posts.filter((post) => post.status === "cancelled");
-    if (resumablePosts.length === 0) {
+    const resumableIds = posts
+      .filter((post) => post.status === "cancelled")
+      .map((post) => post.id);
+    if (resumableIds.length === 0) {
       return {
         success: false,
         message: "No posts are in a resumable (cancelled) state.",
       };
     }
 
-    const pastIds: string[] = [];
-    const futureIds: string[] = [];
-    let timeUpdated = 0;
+    const resumeSchedule = buildResumeSchedule(new Date());
+    const { data: resumedRows, error: updateError } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          status: "scheduled",
+          scheduled_at: resumeSchedule.scheduledAt,
+          cancelled_by_sub_at: null,
+        })
+        .where(
+          and(
+            inArray(scheduled_posts.id, resumableIds),
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "cancelled"),
+          ),
+        )
+        .returning({ scheduled_at: scheduled_posts.scheduled_at }),
+    );
 
-    for (const post of resumablePosts) {
-      const originalDate = new Date(post.scheduled_at);
-      const bumpedDate = bumpPastScheduleToFuture(originalDate);
-      if (bumpedDate.getTime() !== originalDate.getTime()) {
-        pastIds.push(post.id);
-        timeUpdated++;
-      } else {
-        futureIds.push(post.id);
-      }
-    }
-
-    // Step 4: update DB. Past-scheduled posts get a new time; future ones just flip status.
-    let allUpdatesOk = true;
-
-    if (pastIds.length > 0) {
-      const newScheduledAt = bumpPastScheduleToFuture(new Date(0));
-      const { error: updatePastError } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({
-            status: "scheduled",
-            scheduled_at: newScheduledAt.toISOString(),
-            cancelled_by_sub_at: null,
-          })
-          .where(inArray(scheduled_posts.id, pastIds)),
+    if (updateError) {
+      console.error(
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Update error:`,
+        updateError.message,
       );
-      if (updatePastError) {
-        console.error(
-          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Past update error:`,
-          updatePastError.message,
-        );
-        allUpdatesOk = false;
-      }
-    }
-
-    if (futureIds.length > 0) {
-      const { error: updateFutureError } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({ status: "scheduled", cancelled_by_sub_at: null })
-          .where(inArray(scheduled_posts.id, futureIds)),
-      );
-      if (updateFutureError) {
-        console.error(
-          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Future update error:`,
-          updateFutureError.message,
-        );
-        allUpdatesOk = false;
-      }
-    }
-
-    if (!allUpdatesOk) {
       return { success: false, message: "Database error resuming posts." };
     }
+    if (resumedRows.length === 0) {
+      return {
+        success: false,
+        message: "No posts are in a resumable (cancelled) state.",
+      };
+    }
+
+    const timeUpdated = countBumpedRows(resumedRows, resumeSchedule.bumpedAtIso);
 
     return {
       success: true,
-      message: `Resumed ${resumablePosts.length} post(s)${timeUpdated > 0 ? `, ${timeUpdated} rescheduled` : ""}.`,
+      message: `Resumed ${resumedRows.length} post(s)${timeUpdated > 0 ? `, ${timeUpdated} rescheduled` : ""}.`,
       details: {
         total: postIds.length,
-        succeeded: resumablePosts.length,
-        failed: postIds.length - resumablePosts.length,
+        succeeded: resumedRows.length,
+        failed: postIds.length - resumedRows.length,
         timeUpdated,
       },
     };

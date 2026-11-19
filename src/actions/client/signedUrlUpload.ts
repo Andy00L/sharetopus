@@ -1,4 +1,3 @@
-// lib/client/signedUrlUpload.ts
 /**
  * Type for the response from the generate-upload-url API
  */
@@ -55,7 +54,7 @@ export async function getSignedUploadUrl(
 
     return data;
   } catch (error) {
-    console.error("[Signed URL] Error getting signed URL:", error);
+    console.error("[getSignedUploadUrl] Error getting signed URL:", error);
     return {
       success: false,
       error: "Connection error",
@@ -101,8 +100,6 @@ export async function uploadWithSignedUrl(
       return { success: false, message: errorMessage };
     }
     // Step 2: Upload the file directly to Supabase Storage using the signed URL
-    //console.log(`[Signed URL] Starting upload to path: ${path}`);
-    // Use XMLHttpRequest for progress tracking
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
 
@@ -112,21 +109,16 @@ export async function uploadWithSignedUrl(
           const percentComplete = Math.round(
             (event.loaded / event.total) * 100
           );
-          console.log(`[Signed URL] Upload progress: ${percentComplete}%`);
           onProgress?.(percentComplete);
         }
       });
 
       // Handle success
       xhr.addEventListener("load", () => {
-        /* console.log(
-          `[Signed URL] Upload response: Status ${xhr.status}, Response: ${xhr.responseText}`
-        );*/
-
         if (xhr.status >= 200 && xhr.status < 300) {
-          console.log(`[Signed URL] Upload complete: ${path}`);
-          onSuccess?.(path!);
-          resolve({ success: true, path: path! });
+          console.log(`[uploadWithSignedUrl] Upload complete: ${path}`);
+          onSuccess?.(path);
+          resolve({ success: true, path });
         } else {
           const errorMessage =
             xhr.status === 413
@@ -159,6 +151,6 @@ export async function uploadWithSignedUrl(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     onError?.(new Error(errorMessage));
-    return { success: false, message: errorMessage }; // ✅ Consistent
+    return { success: false, message: errorMessage };
   }
 }

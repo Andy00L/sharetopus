@@ -25,7 +25,7 @@ import { triggerReferralGrant } from "./triggerReferralGrant";
  * user creation.
  *
  * Called by: ensureUserExists, on FIRST user creation only.
- * Tables: referral_codes (read), referrals (insert), users (read)
+ * Tables: referral_codes joined with users (one read), referrals (insert)
  * Side effects: may call triggerReferralGrant (RPC + cache invalidation)
  */
 export async function recordReferralOnSignup(params: {
@@ -35,14 +35,20 @@ export async function recordReferralOnSignup(params: {
 }): Promise<{ success: true } | { success: false; message: string }> {
   const { newUserId, newUserEmail, referralCode } = params;
   try {
+    // The code's owner and their email in one read: the email feeds the
+    // self-referral check below.
     const { data: codeRows, error: codeError } = await runQuery(
       db
-        .select({ user_id: referral_codes.user_id })
+        .select({ user_id: referral_codes.user_id, email: users.email })
         .from(referral_codes)
+        .innerJoin(users, eq(users.id, referral_codes.user_id))
         .where(eq(referral_codes.code, referralCode))
         .limit(1),
     );
 
+    // Without the referrer's email the self-referral check cannot run, and
+    // recording the referral anyway let a second account of the referrer
+    // earn the reward. The attribution is dropped instead.
     if (codeError) {
       console.error(
         `[recordReferralOnSignup] Failed to resolve code "${referralCode}":`,
@@ -68,30 +74,7 @@ export async function recordReferralOnSignup(params: {
       return { success: false, message: "Self-referral not allowed" };
     }
 
-    const { data: referrerUserRows, error: referrerError } = await runQuery(
-      db
-        .select({ email: users.email })
-        .from(users)
-        .where(eq(users.id, referrerId))
-        .limit(1),
-    );
-
-    // Without the referrer's email the self-referral check cannot run, and
-    // recording the referral anyway let a second account of the referrer
-    // earn the reward. The attribution is dropped instead.
-    if (referrerError) {
-      console.error(
-        `[recordReferralOnSignup] Referrer lookup failed for ${referrerId}:`,
-        referrerError.message,
-      );
-      return { success: false, message: "Failed to verify the referrer" };
-    }
-
-    const referrerUser = referrerUserRows[0];
-    if (
-      referrerUser?.email &&
-      referrerUser.email.toLowerCase() === newUserEmail.toLowerCase()
-    ) {
+    if (codeRow.email.toLowerCase() === newUserEmail.toLowerCase()) {
       console.warn(
         `[recordReferralOnSignup] Self-referral blocked (same email) for ${newUserId}`,
       );

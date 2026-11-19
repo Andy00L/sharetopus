@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pending_tiktok_pulls } from "@/db/schema";
@@ -139,38 +139,4 @@ export async function findPendingTikTokPullByPublishId(
   }
 
   return { success: true, pull };
-}
-
-/**
- * Counts the number of pending TikTok pulls for a given media storage
- * path. Used by the cleanup gate to determine if a file is safe to
- * delete.
- *
- * Returns: { success, count } or { success: false, message }.
- * Persists: nothing (read-only).
- */
-export async function countPendingTikTokPullsForMediaPath(
-  media_storage_path: string
-): Promise<
-  { success: true; count: number } | { success: false; message: string }
-> {
-  const { data: count, error } = await runQuery(
-    db.$count(
-      pending_tiktok_pulls,
-      and(
-        eq(pending_tiktok_pulls.media_storage_path, media_storage_path),
-        eq(pending_tiktok_pulls.status, "pending"),
-      ),
-    ),
-  );
-
-  if (error) {
-    console.error(
-      "[countPendingTikTokPullsForMediaPath] Query failed:",
-      error.message
-    );
-    return { success: false, message: `Query failed: ${error.message}` };
-  }
-
-  return { success: true, count };
 }

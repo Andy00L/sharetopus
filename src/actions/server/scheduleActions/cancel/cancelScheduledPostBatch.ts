@@ -1,6 +1,6 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
@@ -28,7 +28,9 @@ export type CancelScheduledPostBatchResult = {
  * Cancels scheduled posts in batch. Sets status='cancelled' on rows
  * currently in 'scheduled' status that belong to `principalId`, and clears
  * cancelled_by_sub_at: only a subscription lapse sets that tag, and the
- * 7-day grace cleanup deletes the posts that carry it.
+ * 7-day grace cleanup deletes the posts that carry it. The update repeats
+ * the status check, so a post the publisher queued or claimed after the
+ * read is left to publish and is not counted as cancelled.
  *
  * **Authentication:** Does not call Clerk. Caller must validate
  * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
@@ -129,13 +131,19 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 4: batch update to 'cancelled'
     const cancellableIds = cancellablePosts.map((post) => post.id);
-    const { error: updateError } = await runQuery(
+    const { data: cancelledRows, error: updateError } = await runQuery(
       db
         .update(scheduled_posts)
         .set({ status: "cancelled", cancelled_by_sub_at: null })
-        .where(inArray(scheduled_posts.id, cancellableIds)),
+        .where(
+          and(
+            inArray(scheduled_posts.id, cancellableIds),
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "scheduled"),
+          ),
+        )
+        .returning({ id: scheduled_posts.id }),
     );
 
     if (updateError) {
@@ -150,13 +158,21 @@ export async function cancelScheduledPostBatch(
       };
     }
 
+    if (cancelledRows.length === 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: "Only scheduled posts can be cancelled.",
+      };
+    }
+
     return {
       success: true,
-      message: `Cancelled ${cancellablePosts.length} post(s).`,
+      message: `Cancelled ${cancelledRows.length} post(s).`,
       details: {
         total: postIds.length,
-        succeeded: cancellablePosts.length,
-        failed: postIds.length - cancellablePosts.length,
+        succeeded: cancelledRows.length,
+        failed: postIds.length - cancelledRows.length,
       },
     };
   } catch (err) {

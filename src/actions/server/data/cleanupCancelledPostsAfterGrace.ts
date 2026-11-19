@@ -26,12 +26,13 @@ const MAX_DELETE_PER_RUN = 2000;
  *   - cancelled_by_sub_at IS NOT NULL
  *   - cancelled_by_sub_at < now() - 7 days
  *
- * Before deleting, the function double-checks the user's current
- * subscription status. If the user has resubscribed (active or trialing)
- * but the resume-on-resubscribe webhook handler failed for any reason,
- * we skip the delete and log so the user is not silently penalized. A
- * check that fails is treated the same way: the posts stay until a run
- * can confirm the user has no subscription.
+ * Before deleting, the function double-checks the owners' current
+ * subscription status in one query. If a user has resubscribed (active or
+ * trialing) but the resume-on-resubscribe webhook handler failed for any
+ * reason, we skip the delete and log so the user is not silently
+ * penalized. A check that fails is treated the same way: the posts stay
+ * until a run can confirm the user has no subscription. The eligible posts
+ * go in one DELETE.
  *
  * Errors-as-values. Designed for Inngest step execution.
  */
@@ -75,55 +76,58 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       };
     }
 
-    // Group by principal_id to minimize subscription lookups
-    const byPrincipal = new Map<string, string[]>();
-    for (const row of candidates) {
-      const list = byPrincipal.get(row.principal_id) ?? [];
-      list.push(row.id);
-      byPrincipal.set(row.principal_id, list);
+    const postIdsByPrincipal = groupPostIdsByPrincipal(candidates);
+    const principalIds = [...postIdsByPrincipal.keys()];
+
+    // One read for every candidate owner. A user who resubscribed keeps
+    // their posts until tomorrow's run: the resume-on-resubscribe handler
+    // should have cleared the tag by then.
+    const { data: activeSubscriptionRows, error: subscriptionError } =
+      await runQuery(
+        db
+          .selectDistinct({ user_id: stripe_subscriptions.user_id })
+          .from(stripe_subscriptions)
+          .where(
+            and(
+              inArray(stripe_subscriptions.user_id, principalIds),
+              inArray(stripe_subscriptions.status, ["active", "trialing"]),
+            ),
+          ),
+      );
+
+    // A failed check says nothing about the subscriptions. Reading it as
+    // "not subscribed" deleted the posts of users who had resubscribed.
+    if (subscriptionError) {
+      console.error(
+        `[cleanupCancelledPostsAfterGrace] Subscription check failed, keeping ${candidates.length} posts: ${subscriptionError.message}`
+      );
+      return {
+        success: true,
+        candidatesFound: candidates.length,
+        deleted: 0,
+        skippedDueToResubscribe: 0,
+        skippedDueToCheckError: candidates.length,
+      };
     }
 
-    let deleted = 0;
+    const resubscribedPrincipals = new Set(
+      activeSubscriptionRows.map((subscriptionRow) => subscriptionRow.user_id)
+    );
+    const deletablePostIds: string[] = [];
     let skipped = 0;
-    let skippedDueToCheckError = 0;
-
-    for (const [principalId, postIds] of byPrincipal) {
-      // Re-check subscription. If user resubscribed, skip and let
-      // tomorrow's run re-evaluate (the resume-on-resubscribe handler
-      // should have cleared the cancellation tag by then).
-      const { data: subscriptionRows, error: subscriptionError } =
-        await runQuery(
-          db
-            .select({ status: stripe_subscriptions.status })
-            .from(stripe_subscriptions)
-            .where(
-              and(
-                eq(stripe_subscriptions.user_id, principalId),
-                inArray(stripe_subscriptions.status, ["active", "trialing"]),
-              ),
-            )
-            .limit(1),
-        );
-
-      // A failed check says nothing about the subscription. Reading it as
-      // "not subscribed" deleted the posts of users who had resubscribed.
-      if (subscriptionError) {
-        console.error(
-          `[cleanupCancelledPostsAfterGrace] Subscription check failed for ${principalId}, keeping ${postIds.length} posts: ${subscriptionError.message}`
-        );
-        skippedDueToCheckError += postIds.length;
-        continue;
-      }
-
-      const activeSubscription = subscriptionRows[0];
-      if (activeSubscription) {
+    for (const [principalId, postIds] of postIdsByPrincipal) {
+      if (resubscribedPrincipals.has(principalId)) {
         console.log(
-          `[cleanupCancelledPostsAfterGrace] Skipping ${postIds.length} posts for ${principalId} (resubscribed, status=${activeSubscription.status})`
+          `[cleanupCancelledPostsAfterGrace] Skipping ${postIds.length} posts for ${principalId} (resubscribed)`
         );
         skipped += postIds.length;
         continue;
       }
+      deletablePostIds.push(...postIds);
+    }
 
+    let deleted = 0;
+    if (deletablePostIds.length > 0) {
       // The DELETE repeats the selection criteria so a post resumed or
       // cancelled again since the candidate query is left alone, and
       // RETURNING counts only the rows actually removed.
@@ -132,7 +136,7 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
           .delete(scheduled_posts)
           .where(
             and(
-              inArray(scheduled_posts.id, postIds),
+              inArray(scheduled_posts.id, deletablePostIds),
               eq(scheduled_posts.status, "cancelled"),
               lt(scheduled_posts.cancelled_by_sub_at, cutoff),
             ),
@@ -141,16 +145,15 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       );
 
       if (deleteErr) {
-        console.error(
-          `[cleanupCancelledPostsAfterGrace] Delete failed for ${principalId}: ${deleteErr.message}`
-        );
-        continue;
+        return {
+          success: false,
+          message: `[cleanupCancelledPostsAfterGrace] Delete failed: ${deleteErr.message}`,
+        };
       }
-      deleted += deletedRows.length;
+      deleted = deletedRows.length;
     }
-
     console.log(
-      `[cleanupCancelledPostsAfterGrace] candidates=${candidates.length} deleted=${deleted} skipped=${skipped} skippedDueToCheckError=${skippedDueToCheckError}`
+      `[cleanupCancelledPostsAfterGrace] candidates=${candidates.length} deleted=${deleted} skipped=${skipped}`
     );
 
     return {
@@ -158,7 +161,7 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       candidatesFound: candidates.length,
       deleted,
       skippedDueToResubscribe: skipped,
-      skippedDueToCheckError,
+      skippedDueToCheckError: 0,
     };
   } catch (err) {
     return {
@@ -166,4 +169,16 @@ export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> 
       message: `[cleanupCancelledPostsAfterGrace] Unexpected: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+}
+
+function groupPostIdsByPrincipal(
+  candidates: { id: string; principal_id: string }[]
+): Map<string, string[]> {
+  const postIdsByPrincipal = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    const postIds = postIdsByPrincipal.get(candidate.principal_id) ?? [];
+    postIds.push(candidate.id);
+    postIdsByPrincipal.set(candidate.principal_id, postIds);
+  }
+  return postIdsByPrincipal;
 }

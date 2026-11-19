@@ -1,8 +1,8 @@
-//rate-limit.ts
 import "server-only";
 
 import { redis } from "@/actions/api/upstash";
 import { Ratelimit } from "@upstash/ratelimit";
+import { waitUntil } from "@vercel/functions";
 import { headers } from "next/headers";
 
 import { resolveClientIp } from "@/lib/net/clientIp";
@@ -43,6 +43,33 @@ export type RateLimitRefusal =
 export type RateLimitCheck = { success: true } | RateLimitRefusal;
 
 /**
+ * One limiter per operation, limit and window, kept for the life of the
+ * instance. A limiter built per call cost an allocation per request and
+ * lost its ephemeral cache, the in-memory list of callers already over the
+ * limit that @upstash/ratelimit answers without a Redis round trip
+ * (sourceRef: RegionRatelimitConfig.ephemeralCache).
+ */
+const limitersByKey = new Map<string, Ratelimit>();
+
+function getLimiter(
+  operationName: string,
+  limit: number,
+  windowSeconds: number,
+): Ratelimit {
+  const limiterKey = `${operationName}:${limit}:${windowSeconds}`;
+  const cachedLimiter = limitersByKey.get(limiterKey);
+  if (cachedLimiter) return cachedLimiter;
+  const limiter = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(limit, `${windowSeconds} s`),
+    analytics: true,
+    prefix: `ratelimit_${operationName}`,
+  });
+  limitersByKey.set(limiterKey, limiter);
+  return limiter;
+}
+
+/**
  * Apply rate limiting to any operation
  *
  * @param operationName - Name of operation (e.g., 'fetchData', 'submitForm')
@@ -74,13 +101,7 @@ export async function checkRateLimit(
       return { success: true };
     }
 
-    // Create a rate limiter for this operation
-    const limiter = new Ratelimit({
-      redis,
-      limiter: Ratelimit.slidingWindow(limit, `${window} s`),
-      analytics: true,
-      prefix: `ratelimit_${operationName}`,
-    });
+    const limiter = getLimiter(operationName, limit, window);
 
     // Get identifier (userId or IP)
     const identifier = userId ?? (await getIpAddress());
@@ -97,8 +118,10 @@ export async function checkRateLimit(
       };
     }
 
-    // Apply rate limiting
-    const { success, reset } = await limiter.limit(identifier);
+    const { success, reset, pending } = await limiter.limit(identifier);
+    // The analytics write finishes after the answer; waitUntil keeps the
+    // function alive for it (sourceRef: @upstash/ratelimit LimitResponse.pending).
+    waitUntil(pending);
 
     if (success) {
       return {

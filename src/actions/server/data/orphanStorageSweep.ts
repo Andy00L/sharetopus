@@ -1,15 +1,10 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
-
 import { adminSupabase } from "@/actions/api/adminSupabase";
-import { db, runQuery } from "@/db/client";
-import {
-  failed_posts,
-  pending_direct_posts,
-  pending_tiktok_pulls,
-  scheduled_posts,
-} from "@/db/schema";
+import { findReferencedMediaPaths } from "./storageFiles/mediaReferences";
+
+/** Paths per Storage list page, the API's maximum. */
+const LIST_PAGE_SIZE = 1000;
 
 /**
  * Lists every file in the bucket older than `cutoffIso`, recursing into
@@ -37,22 +32,9 @@ export async function listAgedStorageFiles(input: {
   const maxFiles = input.maxFiles ?? 10_000;
   const cutoffMs = new Date(input.cutoffIso).getTime();
 
-  // List top-level entries (folders = principal IDs)
-  const { data: topLevel, error: topError } = await adminSupabase.storage
-    .from(input.bucket)
-    .list("", { limit: 1000, offset: 0 });
-
-  if (topError) {
-    console.error(
-      "[listAgedStorageFiles] Failed to list bucket root:",
-      topError.message
-    );
-    return { success: false, message: `Bucket root list failed: ${topError.message}` };
-  }
-
-  if (!topLevel) {
-    return { success: false, message: "Bucket root list returned null data" };
-  }
+  const rootListing = await listBucketRoot(input.bucket);
+  if (!rootListing.success) return rootListing;
+  const topLevel = rootListing.entries;
 
   const paths: string[] = [];
   const pathSizes: Record<string, number> = {};
@@ -103,6 +85,37 @@ export async function listAgedStorageFiles(input: {
   return { success: true, paths, pathSizes, folderCount, truncated };
 }
 
+/**
+ * Every entry at the bucket root, page by page. One page used to be read,
+ * so the folders past the first 1000 users were never swept.
+ */
+async function listBucketRoot(
+  bucket: string
+): Promise<
+  | { success: true; entries: { name: string; id: string | null }[] }
+  | { success: false; message: string }
+> {
+  const entries: { name: string; id: string | null }[] = [];
+  for (let offset = 0; ; offset += LIST_PAGE_SIZE) {
+    const { data: page, error } = await adminSupabase.storage
+      .from(bucket)
+      .list("", { limit: LIST_PAGE_SIZE, offset });
+    if (error) {
+      console.error(
+        "[listBucketRoot] Failed to list bucket root:",
+        error.message
+      );
+      return { success: false, message: `Bucket root list failed: ${error.message}` };
+    }
+    if (!page) {
+      return { success: false, message: "Bucket root list returned null data" };
+    }
+    entries.push(...page);
+    if (page.length < LIST_PAGE_SIZE) break;
+  }
+  return { success: true, entries };
+}
+
 async function listFolderFiles(
   bucket: string,
   folder: string,
@@ -114,12 +127,11 @@ async function listFolderFiles(
 > {
   const files: Array<{ path: string; size: number }> = [];
   let offset = 0;
-  const pageSize = 1000;
 
   while (remaining > 0) {
     const { data, error } = await adminSupabase.storage
       .from(bucket)
-      .list(folder, { limit: pageSize, offset });
+      .list(folder, { limit: LIST_PAGE_SIZE, offset });
 
     if (error) {
       return { success: false, message: `list(${folder}) failed: ${error.message}` };
@@ -143,40 +155,21 @@ async function listFolderFiles(
       if (remaining <= 0) break;
     }
 
-    // If the page was full, there may be more
-    if (data.length < pageSize) break;
-    offset += pageSize;
+    if (data.length < LIST_PAGE_SIZE) break;
+    offset += LIST_PAGE_SIZE;
   }
 
   return { success: true, files };
 }
 
 /**
- * Number of paths per `IN (...)` filter. Each path is one bound parameter;
- * 200 keeps every statement small and the caller loops over the chunks.
- */
-const REFERENCE_CHUNK_SIZE = 200;
-
-/** The four tables whose media_storage_path keeps a storage file alive. */
-const MEDIA_REFERENCE_TABLES = {
-  scheduled_posts,
-  failed_posts,
-  pending_tiktok_pulls,
-  pending_direct_posts,
-};
-
-/**
- * Returns the subset of `paths` that are referenced by any of the four
- * media-storage-path tables: scheduled_posts, failed_posts,
- * pending_tiktok_pulls, pending_direct_posts.
+ * Returns the subset of `paths` that any row of scheduled_posts,
+ * failed_posts, pending_tiktok_pulls or pending_direct_posts references,
+ * whatever its status (findReferencedMediaPaths, scope "any_row"): the
+ * sweep deletes only files nothing mentions.
  *
- * No status filters: the orphan sweep is conservative (any reference = keep).
- *
- * Correctness note: everything this function fails to report as referenced
- * gets DELETED from storage by the caller. A silently short result is
- * therefore user data loss, not a missed optimization, which is why each
- * chunk query reads every match in one statement and any error aborts the
- * whole sweep.
+ * Everything this function fails to report as referenced gets DELETED from
+ * storage by the caller, so any failed statement aborts the whole sweep.
  */
 export async function findReferencedStoragePaths(
   paths: string[]
@@ -184,111 +177,12 @@ export async function findReferencedStoragePaths(
   | { success: true; referenced: string[] }
   | { success: false; message: string }
 > {
-  if (paths.length === 0) {
-    return { success: true, referenced: [] };
+  const refCheck = await findReferencedMediaPaths(paths, "any_row");
+  if (!refCheck.success) {
+    console.error("[findReferencedStoragePaths]", refCheck.message);
+    return refCheck;
   }
-
-  const referencedSet = new Set<string>();
-
-  for (
-    let chunkStart = 0;
-    chunkStart < paths.length;
-    chunkStart += REFERENCE_CHUNK_SIZE
-  ) {
-    const chunk = paths.slice(chunkStart, chunkStart + REFERENCE_CHUNK_SIZE);
-    const result = await queryReferencesForChunk(chunk);
-    if (!result.success) return result;
-    for (const referencedPath of result.found) {
-      referencedSet.add(referencedPath);
-    }
-  }
-
-  return { success: true, referenced: Array.from(referencedSet) };
-}
-
-async function queryReferencesForChunk(
-  chunk: string[]
-): Promise<
-  | { success: true; found: string[] }
-  | { success: false; message: string }
-> {
-  const tables = [
-    "scheduled_posts",
-    "failed_posts",
-    "pending_tiktok_pulls",
-    "pending_direct_posts",
-  ] as const;
-
-  const results = await Promise.allSettled(
-    tables.map((table) => readAllReferencesFromTable(table, chunk))
-  );
-
-  const found: string[] = [];
-
-  for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
-    const result = results[resultIndex];
-    if (result.status === "rejected") {
-      console.error(
-        `[findReferencedStoragePaths] Query to ${tables[resultIndex]} threw:`,
-        result.reason
-      );
-      return {
-        success: false,
-        message: `Query to ${tables[resultIndex]} threw: ${result.reason}`,
-      };
-    }
-
-    if (!result.value.success) {
-      console.error(
-        `[findReferencedStoragePaths] Query to ${tables[resultIndex]} failed:`,
-        result.value.message
-      );
-      return {
-        success: false,
-        message: `Query to ${tables[resultIndex]} failed: ${result.value.message}`,
-      };
-    }
-
-    found.push(...result.value.found);
-  }
-
-  return { success: true, found };
-}
-
-/**
- * Reads every distinct media_storage_path of one table that is in `chunk`.
- *
- * One storage path can be referenced by many rows (the same media fanned
- * out across platforms, or reused across posts). DISTINCT caps the result
- * at the chunk size, so a single statement returns every match; no paging,
- * and no page boundary that could leave a reference unread (an unread
- * reference is taken for an orphan and its file deleted).
- */
-async function readAllReferencesFromTable(
-  table: keyof typeof MEDIA_REFERENCE_TABLES,
-  chunk: string[]
-): Promise<
-  { success: true; found: string[] } | { success: false; message: string }
-> {
-  const referenceTable = MEDIA_REFERENCE_TABLES[table];
-  const { data: referenceRows, error } = await runQuery(
-    db
-      .selectDistinct({ media_storage_path: referenceTable.media_storage_path })
-      .from(referenceTable)
-      .where(inArray(referenceTable.media_storage_path, chunk)),
-  );
-
-  if (error) {
-    return { success: false, message: error.message };
-  }
-
-  const found: string[] = [];
-  for (const row of referenceRows) {
-    if (row.media_storage_path) {
-      found.push(row.media_storage_path);
-    }
-  }
-  return { success: true, found };
+  return { success: true, referenced: Array.from(refCheck.referenced) };
 }
 
 /**

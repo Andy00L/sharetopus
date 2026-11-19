@@ -137,9 +137,11 @@ export async function finalizeTikTokPostByPublishId(
     };
   }
 
-  // First finalization path.
+  // First finalization path. The status = 'pending' guard decides the race
+  // between the poll and the webhook: only the caller whose UPDATE returns
+  // the row goes on to write content_history and clean up.
   if (opts.outcome === "completed") {
-    const { error: updErr } = await runQuery(
+    const { data: completedRows, error: updErr } = await runQuery(
       db
         .update(pending_tiktok_pulls)
         .set({
@@ -152,7 +154,8 @@ export async function finalizeTikTokPostByPublishId(
             eq(pending_tiktok_pulls.publish_id, publish_id),
             eq(pending_tiktok_pulls.status, "pending"),
           ),
-        ),
+        )
+        .returning({ publish_id: pending_tiktok_pulls.publish_id }),
     );
 
     if (updErr) {
@@ -161,6 +164,9 @@ export async function finalizeTikTokPostByPublishId(
         updErr.message,
       );
       return { success: false, message: `Update failed: ${updErr.message}` };
+    }
+    if (completedRows.length === 0) {
+      return finalizedByConcurrentCaller(publish_id, opts.source);
     }
 
     const deepLink = buildTikTokDeepLink({
@@ -209,7 +215,7 @@ export async function finalizeTikTokPostByPublishId(
   // opts.outcome === "failed"
   const failReason = opts.fail_reason ?? "Unknown failure";
 
-  const { error: updErr } = await runQuery(
+  const { data: failedRows, error: updErr } = await runQuery(
     db
       .update(pending_tiktok_pulls)
       .set({
@@ -222,7 +228,8 @@ export async function finalizeTikTokPostByPublishId(
           eq(pending_tiktok_pulls.publish_id, publish_id),
           eq(pending_tiktok_pulls.status, "pending"),
         ),
-      ),
+      )
+      .returning({ publish_id: pending_tiktok_pulls.publish_id }),
   );
 
   if (updErr) {
@@ -231,6 +238,9 @@ export async function finalizeTikTokPostByPublishId(
       updErr.message,
     );
     return { success: false, message: `Update failed: ${updErr.message}` };
+  }
+  if (failedRows.length === 0) {
+    return finalizedByConcurrentCaller(publish_id, opts.source);
   }
 
   const histRes = await updateContentHistoryStatusToFailed(
@@ -259,4 +269,23 @@ export async function finalizeTikTokPostByPublishId(
     `[finalizeTikTokPostByPublishId] Failed ${publish_id} (source=${opts.source}, reason=${failReason})`,
   );
   return { success: true, message: "Finalized as failed" };
+}
+
+/**
+ * The other caller (poll or webhook) finalized the pull between this
+ * caller's read and its UPDATE. Writing content_history now would contradict
+ * that outcome (a media_url on a failed post, or "failed" on a live one).
+ */
+function finalizedByConcurrentCaller(
+  publishId: string,
+  source: FinalizeInput["source"],
+): FinalizeResult {
+  console.log(
+    `[finalizedByConcurrentCaller] ${publishId} was finalized by a concurrent caller (source=${source}), skipping`,
+  );
+  return {
+    success: true,
+    message: "Already finalized by a concurrent caller",
+    alreadyFinalized: true,
+  };
 }

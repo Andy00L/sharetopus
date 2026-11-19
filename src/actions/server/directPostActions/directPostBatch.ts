@@ -2,7 +2,7 @@ import "server-only";
 
 import { and, eq } from "drizzle-orm";
 
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { getServerSignedViewUrls } from "@/actions/server/data/getServerSignedViewUrl";
 import {
   describeAccountMismatch,
   loadOwnedAccountPlatforms,
@@ -454,19 +454,16 @@ async function buildMediaUrlsCached(
     else signedPaths.add(post.mediaStoragePath);
   }
 
-  const signedByPath = new Map<string, string>();
   const tiktokByPath = new Map<string, string>();
 
-  for (const path of signedPaths) {
-    const result = await getServerSignedViewUrl(path);
-    if (!result.success) {
-      return {
-        success: false,
-        message: `Failed to mint signed URL for ${path}: ${result.message}`,
-      };
-    }
-    signedByPath.set(path, result.url);
+  const signedUrls = await getServerSignedViewUrls([...signedPaths]);
+  if (!signedUrls.success) {
+    return {
+      success: false,
+      message: `Failed to mint signed URLs: ${signedUrls.message}`,
+    };
   }
+  const signedByPath = signedUrls.urlByPath;
 
   for (const path of tiktokPaths) {
     const result = buildProxiedTikTokMediaUrl({
