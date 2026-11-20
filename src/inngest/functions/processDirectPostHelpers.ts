@@ -1,7 +1,11 @@
 import "server-only";
 
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 import { eventType, staticSchema } from "inngest";
 
+import type { DirectPostLockRow } from "@/actions/server/data/pendingDirectPosts";
+import { db, runQuery } from "@/db/client";
+import { content_history } from "@/db/schema";
 import type { MediaType, Platform } from "@/db/schema";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
@@ -15,6 +19,7 @@ import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
 import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
 import {
   HOTLINK_SIGNED_URL_TTL_S,
+  type PublishedCheckResult,
 } from "@/inngest/functions/processSinglePostHelpers";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
@@ -61,6 +66,33 @@ export type DirectPostResult = {
   message: string | null;
   contentId: string | null;
 };
+
+export async function findPublishedDirectPost(input: {
+  lock: Pick<DirectPostLockRow, "batch_id" | "social_account_id" | "platform" | "created_at">;
+  description: string;
+}): Promise<PublishedCheckResult> {
+  const { lock, description } = input;
+  const { data, error } = await runQuery(
+    db
+      .select({ id: content_history.id })
+      .from(content_history)
+      .where(
+        and(
+          eq(content_history.batch_id, lock.batch_id),
+          eq(content_history.social_account_id, lock.social_account_id),
+          eq(content_history.platform, lock.platform),
+          isNull(content_history.scheduled_post_id),
+          gte(content_history.created_at, lock.created_at),
+          eq(sql`coalesce(${content_history.description}, '')`, description),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `content history lookup failed: ${error.message}` };
+  }
+  return { success: true, isPublished: data.length > 0 };
+}
 
 export async function callDirectPostFromEvent(
   data: PostNowEventData,

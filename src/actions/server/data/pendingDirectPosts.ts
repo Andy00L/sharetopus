@@ -1,100 +1,236 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
 import type { Platform } from "@/db/schema";
 import "server-only";
 
-export type PendingDirectPostInput = {
+export type PendingDirectPostLock = {
   event_id: string;
   batch_id: string;
   principal_id: string;
   social_account_id: string;
   platform: Platform;
   media_storage_path: string;
-  idempotency_key?: string | null;
+  idempotency_key: string | null;
 };
 
-export type InsertPendingDirectPostsResult =
-  | {
-      success: true;
-      message: string;
-      insertedCount: number;
-      insertedEventIds: string[];
-    }
+type DirectPostLockEntry<Item> =
+  | { kind: "locked"; item: Item }
+  | { kind: "already_locked"; item: Item; existingEventId: string };
+
+type LockPendingDirectPostsResult<Item> =
+  | { success: true; entries: DirectPostLockEntry<Item>[] }
   | { success: false; message: string };
 
-export async function insertPendingDirectPosts(
-  rows: PendingDirectPostInput[],
-): Promise<InsertPendingDirectPostsResult> {
-  if (rows.length === 0) {
-    return {
-      success: true,
-      message: "No rows to insert",
-      insertedCount: 0,
-      insertedEventIds: [],
-    };
-  }
+type LockCandidate<Item> = { item: Item; lock: PendingDirectPostLock };
 
-  const insertRows = rows.map((lockInput) => ({
-    event_id: lockInput.event_id,
-    batch_id: lockInput.batch_id,
-    principal_id: lockInput.principal_id,
-    social_account_id: lockInput.social_account_id,
-    platform: lockInput.platform,
-    media_storage_path: lockInput.media_storage_path,
-    status: "processing" as const,
-    idempotency_key: lockInput.idempotency_key ?? null,
-  }));
+export async function lockPendingDirectPosts<Item>(
+  items: Item[],
+  toLock: (item: Item) => PendingDirectPostLock,
+): Promise<LockPendingDirectPostsResult<Item>> {
+  const candidates = items.map((item): LockCandidate<Item> => ({ item, lock: toLock(item) }));
+  if (candidates.length === 0) return { success: true, entries: [] };
 
   const { data: insertedRows, error } = await runQuery(
     db
       .insert(pending_direct_posts)
-      .values(insertRows)
+      .values(candidates.map((candidate) => ({ ...candidate.lock, status: "processing" as const })))
       .onConflictDoNothing()
       .returning({ event_id: pending_direct_posts.event_id }),
   );
-
   if (error) {
-    console.error("[insertPendingDirectPosts] Insert failed:", error.message);
+    console.error("[lockPendingDirectPosts] Insert failed:", error.message);
     return { success: false, message: `Insert failed: ${error.message}` };
   }
 
   const insertedEventIds = insertedRows.map((insertedRow) => insertedRow.event_id);
-  const skippedCount = rows.length - insertedEventIds.length;
-  if (skippedCount > 0) {
-    console.warn(
-      `[insertPendingDirectPosts] ${skippedCount} lock row(s) already existed (event_id or idempotency_key), not re-dispatched`,
-    );
+  const insertedEventIdSet = new Set(insertedEventIds);
+  const skippedLocks = candidates
+    .map((candidate) => candidate.lock)
+    .filter((lock) => !insertedEventIdSet.has(lock.event_id));
+  console.log(
+    `[lockPendingDirectPosts] Inserted ${insertedEventIds.length} lock row(s), ${skippedLocks.length} already existed`,
+  );
+
+  const existing =
+    skippedLocks.length > 0
+      ? await findEventIdsByIdempotencyKey(skippedLocks)
+      : { success: true as const, eventIdByKey: new Map<string, string>() };
+  if (!existing.success) {
+    return failAfterReleasing(insertedEventIds, existing.message);
   }
-  console.log(`[insertPendingDirectPosts] Inserted ${insertedEventIds.length} lock row(s)`);
+
+  const entries: DirectPostLockEntry<Item>[] = [];
+  for (const candidate of candidates) {
+    if (insertedEventIdSet.has(candidate.lock.event_id)) {
+      entries.push({ kind: "locked", item: candidate.item });
+      continue;
+    }
+    const existingEventId = existing.eventIdByKey.get(toIdempotencyMapKey(candidate.lock));
+    if (!existingEventId) {
+      return failAfterReleasing(
+        insertedEventIds,
+        `Lock for event ${candidate.lock.event_id} was neither written nor found by idempotency key`,
+      );
+    }
+    entries.push({ kind: "already_locked", item: candidate.item, existingEventId });
+  }
+  return { success: true, entries };
+}
+
+function toIdempotencyMapKey(lock: Pick<PendingDirectPostLock, "principal_id" | "idempotency_key">): string {
+  return JSON.stringify([lock.principal_id, lock.idempotency_key]);
+}
+
+async function findEventIdsByIdempotencyKey(
+  locks: PendingDirectPostLock[],
+): Promise<
+  { success: true; eventIdByKey: Map<string, string> } | { success: false; message: string }
+> {
+  const keyedLockFilters = locks.flatMap((lock) =>
+    lock.idempotency_key === null
+      ? []
+      : [
+          and(
+            eq(pending_direct_posts.principal_id, lock.principal_id),
+            eq(pending_direct_posts.idempotency_key, lock.idempotency_key),
+          ),
+        ],
+  );
+  if (keyedLockFilters.length === 0) return { success: true, eventIdByKey: new Map() };
+
+  const { data: existingRows, error } = await runQuery(
+    db
+      .select({
+        event_id: pending_direct_posts.event_id,
+        principal_id: pending_direct_posts.principal_id,
+        idempotency_key: pending_direct_posts.idempotency_key,
+      })
+      .from(pending_direct_posts)
+      .where(or(...keyedLockFilters)),
+  );
+  if (error) {
+    console.error("[findEventIdsByIdempotencyKey] Lookup failed:", error.message);
+    return { success: false, message: `Existing lock lookup failed: ${error.message}` };
+  }
   return {
     success: true,
-    message: skippedCount > 0 ? "Inserted, duplicates skipped" : "Inserted",
-    insertedCount: insertedEventIds.length,
-    insertedEventIds,
+    eventIdByKey: new Map(
+      existingRows.map((existingRow) => [toIdempotencyMapKey(existingRow), existingRow.event_id]),
+    ),
   };
 }
 
-export async function finalizePendingDirectPost(
+async function failAfterReleasing(
+  insertedEventIds: string[],
+  message: string,
+): Promise<{ success: false; message: string }> {
+  const released = await releasePendingDirectPosts(insertedEventIds);
+  return {
+    success: false,
+    message: released.success ? message : `${message}; ${released.message}`,
+  };
+}
+
+type ReleasePendingDirectPostsResult =
+  | { success: true; releasedCount: number }
+  | { success: false; message: string };
+
+export async function releasePendingDirectPosts(
+  eventIds: string[],
+): Promise<ReleasePendingDirectPostsResult> {
+  if (eventIds.length === 0) return { success: true, releasedCount: 0 };
+
+  const { data: releasedRows, error } = await runQuery(
+    db
+      .delete(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.event_id, eventIds),
+          eq(pending_direct_posts.status, "processing"),
+        ),
+      )
+      .returning({ event_id: pending_direct_posts.event_id }),
+  );
+  if (error) {
+    console.error(
+      `[releasePendingDirectPosts] Could not release ${eventIds.length} unsent lock row(s):`,
+      error.message,
+    );
+    return { success: false, message: `Lock release failed: ${error.message}` };
+  }
+  console.log(`[releasePendingDirectPosts] Released ${releasedRows.length} unsent lock row(s)`);
+  return { success: true, releasedCount: releasedRows.length };
+}
+
+export type DirectPostLockRow = Pick<
+  typeof pending_direct_posts.$inferSelect,
+  "batch_id" | "social_account_id" | "platform" | "status" | "created_at"
+>;
+
+export async function readDirectPostLock(
   eventId: string,
-  status: "completed" | "failed",
-  failureReason: string | null,
-): Promise<{ success: boolean; message: string; updated: boolean }> {
-  const now = new Date().toISOString();
+): Promise<{ success: true; lock: DirectPostLockRow | null } | { success: false; message: string }> {
+  const { data: lockRows, error } = await runQuery(
+    db
+      .select({
+        batch_id: pending_direct_posts.batch_id,
+        social_account_id: pending_direct_posts.social_account_id,
+        platform: pending_direct_posts.platform,
+        status: pending_direct_posts.status,
+        created_at: pending_direct_posts.created_at,
+      })
+      .from(pending_direct_posts)
+      .where(eq(pending_direct_posts.event_id, eventId))
+      .limit(1),
+  );
+  if (error) {
+    console.error(`[readDirectPostLock] Lookup of ${eventId} failed:`, error.message);
+    return { success: false, message: `Lock lookup failed: ${error.message}` };
+  }
+  return { success: true, lock: lockRows[0] ?? null };
+}
+
+const FAILURE_REASON_MAX_CHARS = 1000;
+
+const STALE_WORKER_SWEPT_REASON = "stale_worker_swept";
+
+export type DirectPostOutcome =
+  | { status: "completed" }
+  | { status: "failed"; failureReason: string };
+
+type FinalizePendingDirectPostResult =
+  | { success: true; updated: boolean }
+  | { success: false; message: string };
+
+export async function finalizePendingDirectPost(input: {
+  eventId: string;
+  outcome: DirectPostOutcome;
+}): Promise<FinalizePendingDirectPostResult> {
+  const { eventId, outcome } = input;
 
   const { data: updatedRows, error } = await runQuery(
     db
       .update(pending_direct_posts)
       .set({
-        status,
-        finished_at: now,
-        failure_reason: failureReason,
+        status: outcome.status,
+        finished_at: new Date().toISOString(),
+        failure_reason:
+          outcome.status === "failed"
+            ? outcome.failureReason.slice(0, FAILURE_REASON_MAX_CHARS)
+            : null,
       })
       .where(
         and(
           eq(pending_direct_posts.event_id, eventId),
-          eq(pending_direct_posts.status, "processing"),
+          or(
+            eq(pending_direct_posts.status, "processing"),
+            and(
+              eq(pending_direct_posts.status, "failed"),
+              eq(pending_direct_posts.failure_reason, STALE_WORKER_SWEPT_REASON),
+            ),
+          ),
         ),
       )
       .returning({ event_id: pending_direct_posts.event_id }),
@@ -102,25 +238,16 @@ export async function finalizePendingDirectPost(
 
   if (error) {
     console.error("[finalizePendingDirectPost] Update failed:", error.message);
-    return {
-      success: false,
-      message: `Update failed: ${error.message}`,
-      updated: false,
-    };
+    return { success: false, message: `Update failed: ${error.message}` };
   }
 
   const updated = updatedRows.length > 0;
-  if (!updated) {
-    console.log(`[finalizePendingDirectPost] Already finalized: ${eventId}`);
-  } else {
-    console.log(`[finalizePendingDirectPost] Marked ${status}: ${eventId}`);
-  }
-
-  return {
-    success: true,
-    message: updated ? `Marked ${status}` : "Already finalized",
-    updated,
-  };
+  console.log(
+    updated
+      ? `[finalizePendingDirectPost] Marked ${outcome.status}: ${eventId}`
+      : `[finalizePendingDirectPost] Already finalized: ${eventId}`,
+  );
+  return { success: true, updated };
 }
 
 export async function sweepStuckPendingDirectPosts(
@@ -136,7 +263,7 @@ export async function sweepStuckPendingDirectPosts(
       .set({
         status: "failed" as const,
         finished_at: now,
-        failure_reason: "stale_worker_swept",
+        failure_reason: STALE_WORKER_SWEPT_REASON,
       })
       .where(
         and(
