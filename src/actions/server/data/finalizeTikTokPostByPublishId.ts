@@ -1,254 +1,274 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { content_history, pending_tiktok_pulls } from "@/db/schema";
-import { findPendingTikTokPullByPublishId } from "@/actions/server/data/pendingTikTokPulls";
-import { updateContentHistoryStatusToFailed } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
-import { cleanupMediaIfUnreferenced } from "@/inngest/functions/processSinglePostHelpers";
+import { content_history, pending_tiktok_pulls, scheduled_posts } from "@/db/schema";
+import type { PostStatus } from "@/db/schema";
+import type { PlatformErrorReason } from "@/inngest/functions/platformErrors";
 
-type FinalizeInput = {
-  source: "poll" | "webhook";
-  outcome: "completed" | "failed";
-  tiktok_post_id?: string | null;
-  fail_reason?: string;
+export type TikTokPullOutcome =
+  | { outcome: "completed"; tiktokPostId: string | null }
+  | { outcome: "failed"; reason: PlatformErrorReason; message: string };
+
+export type FailedScheduledTikTokPost = {
+  scheduledPostId: string;
+  reason: PlatformErrorReason;
+  message: string;
 };
 
-type FinalizeResult =
-  | { success: true; message: string; alreadyFinalized?: boolean }
+type FinalizeSuccess =
+  | { success: true; kind: "not_found" | "already_finalized" }
+  | {
+      success: true;
+      kind: "finalized";
+      principalId: string;
+      mediaStoragePath: string;
+      failedScheduledPost: FailedScheduledTikTokPost | null;
+    };
+
+export type FinalizeTikTokPullResult =
+  | FinalizeSuccess
   | { success: false; message: string };
 
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+const SCHEDULED_STATUSES_A_TIKTOK_FAILURE_OVERRIDES: PostStatus[] = [
+  "processing",
+  "posted",
+];
+
+const STORED_MESSAGE_MAX_CHARS = 1000;
+
+export async function finalizeTikTokPostByPublishId(input: {
+  publishId: string;
+  source: "poll" | "webhook";
+  result: TikTokPullOutcome;
+}): Promise<FinalizeTikTokPullResult> {
+  const { data: finalized, error } = await runQuery(
+    db.transaction((transaction) =>
+      applyTikTokPullOutcome(transaction, input.publishId, input.result),
+    ),
+  );
+
+  if (error) {
+    console.error(
+      `[finalizeTikTokPostByPublishId] ${input.publishId} rolled back (source=${input.source}): ${error.message}`,
+    );
+    return { success: false, message: `Finalize failed: ${error.message}` };
+  }
+
+  console.log(
+    `[finalizeTikTokPostByPublishId] ${input.publishId} ${finalized.kind} (source=${input.source}, outcome=${input.result.outcome})`,
+  );
+  return finalized;
+}
+
+async function applyTikTokPullOutcome(
+  transaction: Transaction,
+  publishId: string,
+  result: TikTokPullOutcome,
+): Promise<FinalizeSuccess> {
+  const finalizedAt = new Date().toISOString();
+  const pullUpdate: Partial<typeof pending_tiktok_pulls.$inferInsert> =
+    result.outcome === "completed"
+      ? { status: "completed", tiktok_post_id: result.tiktokPostId, finalized_at: finalizedAt }
+      : {
+          status: "failed",
+          failure_reason: result.message.slice(0, STORED_MESSAGE_MAX_CHARS),
+          finalized_at: finalizedAt,
+        };
+
+  const [claimedPull] = await transaction
+    .update(pending_tiktok_pulls)
+    .set(pullUpdate)
+    .where(
+      and(
+        eq(pending_tiktok_pulls.publish_id, publishId),
+        eq(pending_tiktok_pulls.status, "pending"),
+      ),
+    )
+    .returning({
+      principal_id: pending_tiktok_pulls.principal_id,
+      media_storage_path: pending_tiktok_pulls.media_storage_path,
+      content_history_id: pending_tiktok_pulls.content_history_id,
+      scheduled_post_id: pending_tiktok_pulls.scheduled_post_id,
+      creator_username: pending_tiktok_pulls.creator_username,
+    });
+
+  if (!claimedPull) {
+    return backfillFinalizedPull(transaction, publishId, result);
+  }
+
+  if (result.outcome === "completed") {
+    await writeTikTokDeepLink(transaction, {
+      contentHistoryId: claimedPull.content_history_id,
+      creatorUsername: claimedPull.creator_username,
+      tiktokPostId: result.tiktokPostId,
+      publishId,
+    });
+    return {
+      success: true,
+      kind: "finalized",
+      principalId: claimedPull.principal_id,
+      mediaStoragePath: claimedPull.media_storage_path,
+      failedScheduledPost: null,
+    };
+  }
+
+  await markContentHistoryFailed(transaction, {
+    contentHistoryId: claimedPull.content_history_id,
+    message: result.message,
+    failedAt: finalizedAt,
+  });
+  const failedScheduledPost = await markScheduledPostFailed(transaction, {
+    scheduledPostId: claimedPull.scheduled_post_id,
+    result,
+    failedAt: finalizedAt,
+  });
+
+  return {
+    success: true,
+    kind: "finalized",
+    principalId: claimedPull.principal_id,
+    mediaStoragePath: claimedPull.media_storage_path,
+    failedScheduledPost,
+  };
+}
+
+async function backfillFinalizedPull(
+  transaction: Transaction,
+  publishId: string,
+  result: TikTokPullOutcome,
+): Promise<FinalizeSuccess> {
+  const [existingPull] = await transaction
+    .select({
+      tiktok_post_id: pending_tiktok_pulls.tiktok_post_id,
+      content_history_id: pending_tiktok_pulls.content_history_id,
+      creator_username: pending_tiktok_pulls.creator_username,
+    })
+    .from(pending_tiktok_pulls)
+    .where(eq(pending_tiktok_pulls.publish_id, publishId))
+    .limit(1);
+
+  if (!existingPull) return { success: true, kind: "not_found" };
+
+  const isPostIdNew =
+    result.outcome === "completed" &&
+    result.tiktokPostId !== null &&
+    existingPull.tiktok_post_id === null;
+  if (!isPostIdNew) return { success: true, kind: "already_finalized" };
+
+  const [backfilledPull] = await transaction
+    .update(pending_tiktok_pulls)
+    .set({ tiktok_post_id: result.tiktokPostId })
+    .where(
+      and(
+        eq(pending_tiktok_pulls.publish_id, publishId),
+        isNull(pending_tiktok_pulls.tiktok_post_id),
+      ),
+    )
+    .returning({ publish_id: pending_tiktok_pulls.publish_id });
+
+  if (backfilledPull) {
+    await writeTikTokDeepLink(transaction, {
+      contentHistoryId: existingPull.content_history_id,
+      creatorUsername: existingPull.creator_username,
+      tiktokPostId: result.tiktokPostId,
+      publishId,
+    });
+  }
+  return { success: true, kind: "already_finalized" };
+}
+
+async function writeTikTokDeepLink(
+  transaction: Transaction,
+  input: {
+    contentHistoryId: string | null;
+    creatorUsername: string | null;
+    tiktokPostId: string | null;
+    publishId: string;
+  },
+): Promise<void> {
+  if (!input.contentHistoryId) return;
+  const deepLink = buildTikTokDeepLink(input);
+  if (!deepLink) return;
+  await transaction
+    .update(content_history)
+    .set({ media_url: deepLink })
+    .where(eq(content_history.id, input.contentHistoryId));
+}
+
+async function markContentHistoryFailed(
+  transaction: Transaction,
+  input: { contentHistoryId: string | null; message: string; failedAt: string },
+): Promise<void> {
+  if (!input.contentHistoryId) return;
+  const failurePatch = JSON.stringify({
+    failure_reason: input.message,
+    failed_at: input.failedAt,
+  });
+  await transaction
+    .update(content_history)
+    .set({
+      status: "failed",
+      extra: sql`(case when jsonb_typeof(${content_history.extra}) = 'object' then ${content_history.extra} else '{}'::jsonb end) || ${failurePatch}::jsonb`,
+    })
+    .where(eq(content_history.id, input.contentHistoryId));
+}
+
+async function markScheduledPostFailed(
+  transaction: Transaction,
+  input: {
+    scheduledPostId: string | null;
+    result: Extract<TikTokPullOutcome, { outcome: "failed" }>;
+    failedAt: string;
+  },
+): Promise<FailedScheduledTikTokPost | null> {
+  if (!input.scheduledPostId) return null;
+  const [failedPost] = await transaction
+    .update(scheduled_posts)
+    .set({
+      status: "failed",
+      error_message: `${input.result.reason}: ${input.result.message}`.slice(
+        0,
+        STORED_MESSAGE_MAX_CHARS,
+      ),
+      updated_at: input.failedAt,
+    })
+    .where(
+      and(
+        eq(scheduled_posts.id, input.scheduledPostId),
+        inArray(scheduled_posts.status, SCHEDULED_STATUSES_A_TIKTOK_FAILURE_OVERRIDES),
+      ),
+    )
+    .returning({ id: scheduled_posts.id });
+
+  if (!failedPost) return null;
+  return {
+    scheduledPostId: failedPost.id,
+    reason: input.result.reason,
+    message: input.result.message,
+  };
+}
+
 function buildTikTokDeepLink(input: {
-  creator_username: string | null;
-  tiktok_post_id: string | null;
-  publish_id: string;
+  creatorUsername: string | null;
+  tiktokPostId: string | null;
+  publishId: string;
 }): string | null {
-  if (!input.creator_username || !input.tiktok_post_id) return null;
+  if (!input.creatorUsername || !input.tiktokPostId) return null;
 
   let segment: "photo" | "video";
-  if (input.publish_id.startsWith("p_pub_")) {
+  if (input.publishId.startsWith("p_pub_")) {
     segment = "photo";
-  } else if (input.publish_id.startsWith("v_pub_")) {
+  } else if (input.publishId.startsWith("v_pub_")) {
     segment = "video";
   } else {
     console.warn(
-      `[buildTikTokDeepLink] Unknown publish_id prefix: ${input.publish_id}`,
+      `[buildTikTokDeepLink] Unknown publish_id prefix: ${input.publishId}`,
     );
     return null;
   }
 
-  return `https://www.tiktok.com/@${input.creator_username}/${segment}/${input.tiktok_post_id}`;
-}
-
-export async function finalizeTikTokPostByPublishId(
-  publish_id: string,
-  opts: FinalizeInput,
-): Promise<FinalizeResult> {
-  const pull = await findPendingTikTokPullByPublishId(publish_id);
-  if (!pull.success) {
-    console.log(
-      `[finalizeTikTokPostByPublishId] No pull row for ${publish_id} (source=${opts.source}), ignoring`,
-    );
-    return { success: true, message: "No matching pull row, ignored" };
-  }
-
-  const row = pull.pull;
-
-  if (row.status !== "pending") {
-    const shouldBackfillPostId =
-      opts.tiktok_post_id && !row.tiktok_post_id && opts.outcome === "completed";
-
-    if (shouldBackfillPostId) {
-      const { error: updErr } = await runQuery(
-        db
-          .update(pending_tiktok_pulls)
-          .set({ tiktok_post_id: opts.tiktok_post_id })
-          .where(eq(pending_tiktok_pulls.publish_id, publish_id)),
-      );
-
-      if (updErr) {
-        console.error(
-          "[finalizeTikTokPostByPublishId] Backfill post_id failed:",
-          updErr.message,
-        );
-        return {
-          success: false,
-          message: `Backfill failed: ${updErr.message}`,
-        };
-      }
-
-      const deepLink = buildTikTokDeepLink({
-        creator_username: row.creator_username,
-        tiktok_post_id: opts.tiktok_post_id ?? null,
-        publish_id,
-      });
-
-      if (deepLink && row.content_history_id) {
-        const { error: histErr } = await runQuery(
-          db
-            .update(content_history)
-            .set({ media_url: deepLink })
-            .where(eq(content_history.id, row.content_history_id)),
-        );
-
-        if (histErr) {
-          console.error(
-            "[finalizeTikTokPostByPublishId] Backfill media_url failed:",
-            histErr.message,
-          );
-        } else {
-          console.log(
-            `[finalizeTikTokPostByPublishId] Backfilled media_url for ${publish_id}`,
-          );
-        }
-      }
-    }
-
-    return {
-      success: true,
-      message: `Already finalized (status=${row.status})`,
-      alreadyFinalized: true,
-    };
-  }
-
-  if (opts.outcome === "completed") {
-    const { data: completedRows, error: updErr } = await runQuery(
-      db
-        .update(pending_tiktok_pulls)
-        .set({
-          status: "completed" as const,
-          tiktok_post_id: opts.tiktok_post_id ?? null,
-          finalized_at: new Date().toISOString(),
-        })
-        .where(
-          and(
-            eq(pending_tiktok_pulls.publish_id, publish_id),
-            eq(pending_tiktok_pulls.status, "pending"),
-          ),
-        )
-        .returning({ publish_id: pending_tiktok_pulls.publish_id }),
-    );
-
-    if (updErr) {
-      console.error(
-        "[finalizeTikTokPostByPublishId] Mark completed failed:",
-        updErr.message,
-      );
-      return { success: false, message: `Update failed: ${updErr.message}` };
-    }
-    if (completedRows.length === 0) {
-      return finalizedByConcurrentCaller(publish_id, opts.source);
-    }
-
-    const deepLink = buildTikTokDeepLink({
-      creator_username: row.creator_username,
-      tiktok_post_id: opts.tiktok_post_id ?? null,
-      publish_id,
-    });
-
-    if (deepLink && row.content_history_id) {
-      const { error: histErr } = await runQuery(
-        db
-          .update(content_history)
-          .set({ media_url: deepLink })
-          .where(eq(content_history.id, row.content_history_id)),
-      );
-
-      if (histErr) {
-        console.error(
-          "[finalizeTikTokPostByPublishId] Update media_url failed:",
-          histErr.message,
-        );
-      } else {
-        console.log(
-          `[finalizeTikTokPostByPublishId] Set media_url for ${publish_id}: ${deepLink}`,
-        );
-      }
-    }
-
-    const cleanup = await cleanupMediaIfUnreferenced(
-      row.media_storage_path,
-      row.principal_id,
-    );
-    if (!cleanup.deleted) {
-      console.log(
-        `[finalizeTikTokPostByPublishId] Media cleanup skipped: ${cleanup.message}`,
-      );
-    }
-
-    console.log(
-      `[finalizeTikTokPostByPublishId] Completed ${publish_id} (source=${opts.source}, post_id=${opts.tiktok_post_id ?? "null"})`,
-    );
-    return { success: true, message: "Finalized as completed" };
-  }
-
-  const failReason = opts.fail_reason ?? "Unknown failure";
-
-  const { data: failedRows, error: updErr } = await runQuery(
-    db
-      .update(pending_tiktok_pulls)
-      .set({
-        status: "failed" as const,
-        failure_reason: failReason,
-        finalized_at: new Date().toISOString(),
-      })
-      .where(
-        and(
-          eq(pending_tiktok_pulls.publish_id, publish_id),
-          eq(pending_tiktok_pulls.status, "pending"),
-        ),
-      )
-      .returning({ publish_id: pending_tiktok_pulls.publish_id }),
-  );
-
-  if (updErr) {
-    console.error(
-      "[finalizeTikTokPostByPublishId] Mark failed failed:",
-      updErr.message,
-    );
-    return { success: false, message: `Update failed: ${updErr.message}` };
-  }
-  if (failedRows.length === 0) {
-    return finalizedByConcurrentCaller(publish_id, opts.source);
-  }
-
-  const histRes = await updateContentHistoryStatusToFailed(
-    row.content_history_id,
-    failReason,
-  );
-  if (!histRes.success) {
-    console.error(
-      "[finalizeTikTokPostByPublishId] content_history update failed:",
-      histRes.message,
-    );
-  }
-
-  const cleanup = await cleanupMediaIfUnreferenced(
-    row.media_storage_path,
-    row.principal_id,
-  );
-  if (!cleanup.deleted) {
-    console.log(
-      `[finalizeTikTokPostByPublishId] Media cleanup skipped: ${cleanup.message}`,
-    );
-  }
-
-  console.log(
-    `[finalizeTikTokPostByPublishId] Failed ${publish_id} (source=${opts.source}, reason=${failReason})`,
-  );
-  return { success: true, message: "Finalized as failed" };
-}
-
-function finalizedByConcurrentCaller(
-  publishId: string,
-  source: FinalizeInput["source"],
-): FinalizeResult {
-  console.log(
-    `[finalizedByConcurrentCaller] ${publishId} was finalized by a concurrent caller (source=${source}), skipping`,
-  );
-  return {
-    success: true,
-    message: "Already finalized by a concurrent caller",
-    alreadyFinalized: true,
-  };
+  return `https://www.tiktok.com/@${input.creatorUsername}/${segment}/${input.tiktokPostId}`;
 }

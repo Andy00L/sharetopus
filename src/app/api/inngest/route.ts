@@ -21,11 +21,6 @@ import { serve } from "inngest/next";
 
 export const runtime = "nodejs";
 
-/**
- * MUST equal RUNTIME.maxDurationS. Vercel cannot read expressions
- * at build time, so this is a literal. If RUNTIME.maxDurationS is
- * raised, update this literal to match.
- */
 export const maxDuration = 300;
 
 export const { GET, POST, PUT } = serve({

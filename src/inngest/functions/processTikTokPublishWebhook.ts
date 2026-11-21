@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import type { TikTokPullOutcome } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 import { inngest } from "@/inngest/client";
-import { finalizeTikTokPostByPublishId } from "@/actions/server/data/finalizeTikTokPostByPublishId";
+import { classifyTikTokFailReason } from "./tikTokFailReason";
+import { finalizeTikTokPullInSteps } from "./tikTokPullFinalizeSteps";
 
 const WebhookEventDataSchema = z.object({
   event: z.string(),
@@ -24,7 +26,7 @@ export const processTikTokPublishWebhook = inngest.createFunction(
     retries: 3,
     triggers: [{ event: "tiktok.publish.webhook.received" }],
   },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const eventData = WebhookEventDataSchema.safeParse(event.data);
     if (!eventData.success || eventData.data.content === undefined) {
       console.error("[processTikTokPublishWebhook] Event data has no content");
@@ -66,16 +68,25 @@ export const processTikTokPublishWebhook = inngest.createFunction(
       return { outcome: "ignored", reason: "inbox_share" };
     }
 
+    const publishId = parsed.publish_id;
+    const finalizeInSteps = (result: TikTokPullOutcome) =>
+      finalizeTikTokPullInSteps({
+        step,
+        stepId: "finalize-pull",
+        publishId,
+        source: "webhook",
+        result,
+      });
+
     switch (eventName) {
       case "post.publish.complete": {
-        const result = await finalizeOrThrow(parsed.publish_id, {
-          source: "webhook",
+        const result = await finalizeInSteps({
           outcome: "completed",
           // post.publish.complete carries no post_id; only
           // post.publish.publicly_available does, and a non-public post
           // never triggers it:
           // https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status
-          tiktok_post_id: null,
+          tiktokPostId: null,
         });
         return {
           outcome: "completed",
@@ -90,10 +101,9 @@ export const processTikTokPublishWebhook = inngest.createFunction(
             ? String(parsed.post_id)
             : null;
 
-        const result = await finalizeOrThrow(parsed.publish_id, {
-          source: "webhook",
+        const result = await finalizeInSteps({
           outcome: "completed",
-          tiktok_post_id: tiktokPostId,
+          tiktokPostId,
         });
         return {
           outcome: "publicly_available",
@@ -104,10 +114,10 @@ export const processTikTokPublishWebhook = inngest.createFunction(
       }
 
       case "post.publish.failed": {
-        const result = await finalizeOrThrow(parsed.publish_id, {
-          source: "webhook",
+        const result = await finalizeInSteps({
           outcome: "failed",
-          fail_reason: parsed.reason ?? "TikTok webhook reported failure",
+          reason: classifyTikTokFailReason(parsed.reason),
+          message: parsed.reason ?? "TikTok webhook reported failure",
         });
         return {
           outcome: "failed",
@@ -128,18 +138,3 @@ export const processTikTokPublishWebhook = inngest.createFunction(
     }
   },
 );
-
-/**
- * Finalizes and throws on failure, the Inngest retry exception to errors
- * as values: this handler has no step.run, so a throw re-runs it whole.
- */
-async function finalizeOrThrow(
-  publishId: string,
-  outcome: Parameters<typeof finalizeTikTokPostByPublishId>[1],
-): Promise<Awaited<ReturnType<typeof finalizeTikTokPostByPublishId>>> {
-  const finalized = await finalizeTikTokPostByPublishId(publishId, outcome);
-  if (!finalized.success) {
-    throw new Error(`[finalizeOrThrow] ${publishId}: ${finalized.message}`);
-  }
-  return finalized;
-}

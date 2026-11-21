@@ -29,17 +29,21 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
   {
     id: "sweep-orphan-storage-files",
     name: "Sweep orphan storage files older than 24h",
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "0 3 * * *" }],
   },
   async ({ step }) => {
-    const outcome = await step.run("sweep-orphans", () =>
-      sweepOrphans(new Date(Date.now() - CUTOFF_HOURS * 3_600_000).toISOString()),
-    );
-    if (!outcome.ok) {
-      console.error("[sweepOrphanStorageFiles] Sweep failed:", outcome.reason);
-      return outcome;
-    }
+    const outcome = await step.run("sweep-orphans", async () => {
+      const sweepResult = await sweepOrphans(
+        new Date(Date.now() - CUTOFF_HOURS * 3_600_000).toISOString(),
+      );
+      // Inngest marks a step failed, and retries it, only when it throws:
+      // https://www.inngest.com/docs/guides/error-handling
+      if (!sweepResult.ok) {
+        throw new Error(`[sweepOrphanStorageFiles] Sweep failed: ${sweepResult.reason}`);
+      }
+      return sweepResult;
+    });
     console.log(
       `[sweepOrphanStorageFiles] scanned=${outcome.scanned} referenced=${outcome.referenced} ` +
         `orphans=${outcome.orphansFound} deleted=${outcome.deleted} failed=${outcome.failed} ` +

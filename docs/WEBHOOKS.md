@@ -81,14 +81,13 @@ sequenceDiagram
         Endpoint-->>Worker: success
         Worker->>DB: INSERT webhook_deliveries (delivered_at set)
         Worker->>DB: UPDATE subscription (failure_count=0)
-    else Failure (5xx, timeout, network)
+    else Retryable failure (408, 429, 5xx, timeout, network), attempts left
+        Worker->>DB: INSERT webhook_deliveries (failed_at set)
+        Worker->>Worker: step.sleep (30s, 2m, 10m), then POST again
+    else Last attempt failed, or terminal failure (other 4xx)
         Worker->>DB: INSERT webhook_deliveries (failed_at set)
         Worker->>DB: UPDATE subscription (failure_count++)
-        Worker-->>Inngest: throw (triggers retry)
-    else Terminal failure (4xx except 408/429)
-        Worker->>DB: INSERT webhook_deliveries (failed_at set)
-        Worker->>DB: UPDATE subscription (failure_count++)
-        Worker-->>Inngest: return (no retry)
+        Worker-->>Inngest: NonRetriableError (retryable) or return (terminal)
     end
 ```
 
@@ -134,22 +133,32 @@ Use the raw request body as a string (before JSON parsing). Use constant-time co
 
 ## Retry behavior
 
-Delivery retries are handled by Inngest, not inline in the HTTP request.
+One `deliver-webhook` run makes every attempt for one event and one subscription. Each side effect is its own Inngest step, and Inngest retries only the step that threw:
 
-- **Max retries:** 3 (configured on the `deliver-webhook` Inngest function)
-- **Backoff:** Inngest default exponential backoff
+- `send-N`: load the subscription, sign the body, POST (attempt N).
+- `record-delivery-N`: insert the `webhook_deliveries` row for attempt N.
+- `reset-failure-count` after a 2xx, or `count-failure` once after the last failed attempt.
+
+Limits:
+
+- **Attempts:** at most 4 POSTs per event and subscription, with waits of 30 s, 2 min and 10 min between them (`RETRY_DELAYS_BEFORE_NEXT_ATTEMPT` in `deliverWebhook.ts`).
+- **Step retries:** a step that throws on a database error is retried up to 3 times. A failed log or counter write never sends the POST again.
 - **Throttle:** 100 deliveries per 60 seconds per subscription (keyed on `event.data.subscription_id`)
 - **Timeout:** 10 seconds per delivery attempt (`DELIVERY_TIMEOUT_MS` in `deliverWebhook.ts`)
+- **Event schema:** `webhookDispatchEvent` in `src/inngest/events/webhookDispatch.ts`. Inngest validates the event data before the handler runs, so a malformed event is one failed run.
 
-**Retryable failures** (trigger Inngest retry):
+**Retryable failures** (next attempt after the wait):
 - Status codes: 408, 429, 500, 502, 503, 504
 - Network errors (timeout, connection refused, DNS failure)
+- After the 4th retryable failure, `count-failure` runs and the run fails with `NonRetriableError`.
 
-**Terminal failures** (no retry):
+**Terminal failures** (no further attempt):
 - All other 4xx status codes (400, 401, 403, 404, etc.)
-- Recorded in `webhook_deliveries` but do not trigger Inngest retry
+- Recorded in `webhook_deliveries`, then `count-failure` runs and the run ends.
 
-**Database errors:** a failed subscription lookup throws before anything is sent, so Inngest retries the event. A failed write after the POST (the delivery log row or the failure count) is logged and not retried, because a retry would send the subscriber the same event again.
+**At least once:** if the process stops after a POST and before Inngest stores the `send-N` result, the step runs again and the subscriber receives the same `event_id` with a new `delivery_id`. Receivers deduplicate on `event_id`.
+
+**Deleted subscription:** if the subscription is deleted between the POST and the log insert, the insert fails on the foreign key (the table cascades on delete) and the worker skips the row.
 
 ---
 

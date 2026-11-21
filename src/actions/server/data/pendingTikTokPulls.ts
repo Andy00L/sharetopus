@@ -83,12 +83,13 @@ export async function incrementTikTokPullAttemptCount(
   };
 }
 
+export type PendingTikTokPullLookup =
+  | { success: true; pull: PendingTikTokPull }
+  | { success: false; reason: "not_found" | "lookup_failed"; message: string };
+
 export async function findPendingTikTokPullByPublishId(
   publish_id: string
-): Promise<
-  | { success: true; pull: PendingTikTokPull }
-  | { success: false; message: string }
-> {
+): Promise<PendingTikTokPullLookup> {
   const { data: pullRows, error } = await runQuery(
     db
       .select()
@@ -102,13 +103,18 @@ export async function findPendingTikTokPullByPublishId(
       "[findPendingTikTokPullByPublishId] Query failed:",
       error.message
     );
-    return { success: false, message: `Query failed: ${error.message}` };
+    return {
+      success: false,
+      reason: "lookup_failed",
+      message: `Query failed: ${error.message}`,
+    };
   }
 
   const pull = pullRows[0];
   if (!pull) {
     return {
       success: false,
+      reason: "not_found",
       message: `No pending pull found for publish_id: ${publish_id}`,
     };
   }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne, notExists, or } from "drizzle-orm";
 import { union } from "drizzle-orm/pg-core";
 
 import { db, runQuery } from "@/db/client";
@@ -67,7 +67,10 @@ function buildReferenceQuery(chunk: string[], scope: MediaReferenceScope) {
         and(
           inArray(scheduled_posts.media_storage_path, chunk),
           isInUseScope
-            ? inArray(scheduled_posts.status, MEDIA_HOLDING_POST_STATUSES)
+            ? or(
+                inArray(scheduled_posts.status, MEDIA_HOLDING_POST_STATUSES),
+                isPostedTikTokPostAwaitingPull(),
+              )
             : undefined,
         ),
       ),
@@ -95,5 +98,23 @@ function buildReferenceQuery(chunk: string[], scope: MediaReferenceScope) {
             : undefined,
         ),
       ),
+  );
+}
+
+function isPostedTikTokPostAwaitingPull() {
+  return and(
+    eq(scheduled_posts.platform, "tiktok"),
+    eq(scheduled_posts.status, "posted"),
+    notExists(
+      db
+        .select({ publish_id: pending_tiktok_pulls.publish_id })
+        .from(pending_tiktok_pulls)
+        .where(
+          and(
+            eq(pending_tiktok_pulls.scheduled_post_id, scheduled_posts.id),
+            ne(pending_tiktok_pulls.status, "pending"),
+          ),
+        ),
+    ),
   );
 }

@@ -12,7 +12,7 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
   {
     id: "cleanup-social-connections",
     name: "Cleanup stale social connections (30d retention)",
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "0 2 * * *" }],
   },
   async ({ step }) => {
@@ -49,11 +49,11 @@ export const cleanupSocialConnectionsCron = inngest.createFunction(
         );
 
         if (error) {
-          console.error(
-            `[cleanupSocialConnectionsCron] Delete failed on iteration ${iteration}:`,
-            error.message,
+          // Inngest marks a step failed, and retries it, only when it throws:
+          // https://www.inngest.com/docs/guides/error-handling
+          throw new Error(
+            `[cleanupSocialConnectionsCron] Delete failed on iteration ${iteration} after ${totalDeleted} deleted: ${error.message}`,
           );
-          return { deleted: totalDeleted, cutoff, error: error.message };
         }
 
         const deletedInBatch = deleteResult.count;

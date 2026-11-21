@@ -25,7 +25,8 @@ const computedWorkerConcurrency = Math.max(
 export const RUNTIME = {
   // Vercel Hobby with Fluid compute caps a function at 300 s:
   // https://vercel.com/docs/functions/limitations#max-duration
-  maxDurationS: readPositiveInt("MAX_DURATION_S", 300),
+  maxDurationS: 300,
+  minStepBudgetS: 290,
   workerConcurrency: computedWorkerConcurrency,
   maxVideoMB: MAX_VIDEO_MB,
   perAccountThrottlePerMinute: readPositiveInt(

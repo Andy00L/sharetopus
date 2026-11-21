@@ -334,7 +334,8 @@ Retryable status codes: 408, 429, 500, 502, 503, 504. Terminal failures (other 4
 
 | Setting | Default | Env Override |
 |---|---|---|
-| maxDurationS | 300 | `MAX_DURATION_S` |
+| maxDurationS | 300 (equals `maxDuration` in `src/app/api/inngest/route.ts`; `runtimeConfig.test.ts` checks it) | |
+| minStepBudgetS | 290 (the client sets `checkpointing.maxRuntime` to `maxDurationS - minStepBudgetS`, 10 s, so every step starts with at least 290 s left) | |
 | workerConcurrency | 5 (auto-computed: `floor(2048/350)`) | |
 | perAccountThrottlePerMinute | 5 | `PER_ACCOUNT_THROTTLE_PER_MIN` |
 | maxFileMb | 100 | `MAX_FILE_MB` |

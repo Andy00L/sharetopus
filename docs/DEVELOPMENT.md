@@ -240,7 +240,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `FRONTEND_URL` | Yes | Default: `http://localhost:3000` |
 | `NEXT_PUBLIC_BASE_URL` | No | Default: `https://sharetopus.com` |
 | `NEXT_PUBLIC_APP_URL` | No | Origin for share links and OAuth callback redirects. Default: `NEXT_PUBLIC_BASE_URL` |
-| `MAX_DURATION_S`, `MAX_FILE_MB`, `POLL_WINDOW_S`, `WORKER_MAX_RETRIES`, `DISPATCHER_BATCH_SIZE`, `SIGNED_URL_TTL_S` | No | Background job tuning, see [INNGEST.md](./INNGEST.md#runtime-configuration) |
+| `MAX_FILE_MB`, `POLL_WINDOW_S`, `WORKER_MAX_RETRIES`, `DISPATCHER_BATCH_SIZE`, `SIGNED_URL_TTL_S` | No | Background job tuning, see [INNGEST.md](./INNGEST.md#runtime-configuration) |
 | `CRON_SECRET_KEY` | Yes | Shared secret for cron auth bypass |
 | `MEDIA_PROXY_HMAC_SECRET` | Yes | 64 hex chars. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `MCP_IP_HASH_SALT` | Prod | 32 bytes base64. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
