@@ -1,20 +1,22 @@
 import { TikTokOptions } from "@/lib/types/dbTypes";
-import { toJsonObject } from "@/lib/utils/jsonObject";
+import {
+  buildHttpFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import "server-only";
 import { z } from "zod";
 import type { TikTokPostResult } from "./postToTikTok";
 import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
-/**
- * Direct Post init answer (photo and video): the publish_id the status
- * poll tracks. Also read by handleVideoPost.
- * sourceRef: developers.tiktok.com/doc/content-posting-api-reference-direct-post
- */
+// Direct Post init answer:
+// https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 export const TikTokPostInitSchema = z.object({
   data: z.object({ publish_id: z.string() }),
 });
 
-/** Starts a TikTok photo Direct Post that TikTok pulls from media_url. */
 export async function handleImagePost({
   accessToken,
   title,
@@ -59,36 +61,35 @@ export async function handleImagePost({
           post_mode: "DIRECT_POST",
           media_type: "PHOTO",
         }),
+        signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
       }
     );
+    const initText = await initResponse.text();
 
     if (!initResponse.ok) {
-      const errorData: unknown = await initResponse.json();
       console.error(
-        "[Tiktok Post Function] Image initialization error:",
-        errorData
+        `[handleImagePost] Image initialization failed (${initResponse.status}): ${initText}`
       );
-      return {
-        success: false,
-        error: "Failed to initialize image post",
-        details: toJsonObject(errorData) ?? undefined,
-      };
+      return buildHttpFailure({
+        platform: "tiktok",
+        action: "TikTok image post initialization",
+        httpStatus: initResponse.status,
+        responseText: initText,
+        isPublishRequest: true,
+      });
     }
 
-    const initData = TikTokPostInitSchema.safeParse(await initResponse.json());
+    const initData = TikTokPostInitSchema.safeParse(parseJsonObject(initText));
     if (!initData.success) {
-      console.error(
-        "[Tiktok Post Function] Image initialization returned no publish_id"
-      );
-      return {
-        success: false,
-        error: "Failed to initialize image post",
-        message: "TikTok returned no publish_id",
-      };
+      console.error("[handleImagePost] Image initialization returned no publish_id");
+      return buildUnreadableAnswerFailure({
+        action: "TikTok image post initialization",
+        isPublishRequest: true,
+      });
     }
     const publishId = initData.data.data.publish_id;
     console.log(
-      `[Tiktok Post Function] Image post initialized successfully with publish_id: ${publishId}`
+      `[handleImagePost] Image post initialized successfully with publish_id: ${publishId}`
     );
 
     return {
@@ -101,12 +102,13 @@ export async function handleImagePost({
       content_id: publishId,
       creator_username: creatorUsername,
     };
-  } catch (error) {
-    console.error("[Tiktok Post Function] Image post error:", error);
-    return {
-      success: false,
-      error: "Failed to post image to TikTok",
-      message: error instanceof Error ? error.message : String(error),
-    };
+  } catch (requestError) {
+    const failure = buildNetworkFailure({
+      action: "TikTok image post initialization",
+      requestError,
+      isPublishRequest: true,
+    });
+    console.error("[handleImagePost]", failure.error);
+    return failure;
   }
 }

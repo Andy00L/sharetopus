@@ -7,6 +7,8 @@ Outbound webhook subsystem for notifying external services when events occur in 
 ## Table of contents
 
 - [Event types](#event-types)
+- [Payloads](#payloads)
+- [When post events fire](#when-post-events-fire)
 - [Subscription lifecycle](#subscription-lifecycle)
 - [Delivery pipeline](#delivery-pipeline)
 - [Signing and verification](#signing-and-verification)
@@ -31,9 +33,46 @@ Outbound webhook subsystem for notifying external services when events occur in 
 | `post.published` | A post was published successfully |
 | `post.failed` | A post failed to publish (terminal) |
 | `connection.connected` | A social account was connected |
-| `connection.expired` | A social account token expired |
+| `connection.expired` | A post failed because its social account's login expired (`auth_expired`) |
 
 Subscribers select which events they want when creating a subscription. Only matching events are dispatched.
+
+---
+
+## Payloads
+
+Every delivery body is `{ event_type, event_id, delivery_id, created_at, data }` (`deliverWebhook.ts`). `data` holds the event's payload:
+
+| Event | `data` |
+|-------|--------|
+| `post.scheduled` | `{ post_id, batch_id }` |
+| `post.published` for a scheduled post | `{ post_id, platform }` |
+| `post.published` for a publish-now dispatch | `{ dispatch_id, batch_id, platform, social_account_id }` |
+| `post.failed` for a scheduled post | `{ post_id, platform, reason, error_message, may_have_published }` |
+| `post.failed` for a publish-now dispatch | `{ dispatch_id, batch_id, platform, social_account_id, reason, error_message, may_have_published }` |
+| `connection.connected` | `{ connection_id, social_account_id, platform, initiated_via, share_link_id }` |
+| `connection.expired` | `{ social_account_id, platform, reason: "auth_expired" }` |
+
+- `dispatch_id` is the id the publish-now answer returned for that post (`dispatch_id` in the REST 202, `event_ids` in the MCP `publish_posts` answer, `eventIds` in the x402 post-now answer), so a client can match the event to its request. `batch_id` is the batch the post was sent in.
+- `reason` is one of `auth_expired`, `rate_limited`, `transient`, `policy_rejected`, `invalid_input`, `unknown` (`PlatformFailureReason` in `src/lib/api/_shared/platformFailure.ts`).
+- `may_have_published` is `true` when the post may be live although it was recorded failed: the platform's answer was unclear, a publish attempt stopped before it reported a result, or a sweep failed a post whose publish attempt had started. Check the account before posting again. It is `false` when the platform refused the post (a TikTok rejection included), or when the hourly publish-now sweep failed a dispatch whose publish attempt never started.
+- `src/lib/api/rest/webhooks/postWebhookPayloads.ts` builds the publish-now fields, the three failure fields and the `connection.expired` payload, so every producer names them the same way.
+
+---
+
+## When post events fire
+
+| Producer | Fires |
+|----------|-------|
+| Scheduled post run (`process-single-post`, its failure handler, and the 2 h safety net in `scheduled-posts-tick`) | `post.published` or `post.failed` once the post's row moves from `processing` to `posted` or `failed`; `connection.expired` with an `auth_expired` failure. The safety net records `failed` with `may_have_published: true`. |
+| Publish-now run (`process-direct-post` and its failure handler) | `post.published` or `post.failed` once the dispatch is recorded `completed` or `failed`; `connection.expired` with an `auth_expired` failure. |
+| Hourly publish-now sweep (`sweep-stuck-direct-posts`) | `post.failed` with `reason: "unknown"` for a dispatch still `processing` 1 h after it was created whose publish claim is null or also older than 1 h. With a claim, `may_have_published: true` and `error_message` "Publishing stopped without a result; the post may have published"; with no claim (the post never reached the platform), `may_have_published: false` and "Publishing never started before the hourly sweep; the post was not published". The stored failure reason is the first text in both cases. |
+| TikTok status (`tiktok-publish-status-poll` and `process-tiktok-publish-webhook`) | `post.failed` with `may_have_published: false` when TikTok rejects a post after accepting its upload (`content/init`). The scheduled post moves from `processing` or `posted` to `failed`, the dispatch from `processing` or `completed`. A post already `failed` fires nothing. A TikTok success after a post was recorded `failed` changes nothing. |
+
+- An event fires only after the write that recorded the outcome matched the row, so two writers never both fire for one outcome. A dispatch the sweep failed stays failed: a run that ends later records nothing and fires nothing.
+- A TikTok rejection can follow the `post.published` that the accepted upload fired. Take the later `post.failed` as the final state.
+- A worker stopped while it sends an event can send the same outcome again under a new `event_id`. Deduplicate on `post_id` or `dispatch_id` with the event type.
+- A publish-now TikTok post reaches its dispatch through `pending_tiktok_pulls.dispatch_id`, written when TikTok accepts the upload. A pull written before that column existed falls back to its `content_history` row (same batch, account, platform and media file); when two dispatches of one batch match, neither changes and no event fires.
 
 ---
 
@@ -65,12 +104,10 @@ sequenceDiagram
     participant Worker as deliver-webhook
     participant Endpoint as Subscriber URL
 
-    Caller->>Dispatch: dispatchWebhook(principalId, eventType, payload)
+    Caller->>Dispatch: dispatchWebhook(principalId, eventType, payload) or dispatchWebhooks(..., payloads)
     Dispatch->>DB: SELECT webhook_subscriptions WHERE active=true AND events @> [eventType]
     DB-->>Dispatch: matching subscriptions (0..N)
-    loop Each subscription
-        Dispatch->>Inngest: send webhook.dispatch.v1 event
-    end
+    Dispatch->>Inngest: one send: a webhook.dispatch.v1 event per (payload, subscription)
 
     Inngest->>Worker: trigger deliver-webhook
     Worker->>DB: Load subscription (verify still active)
@@ -81,18 +118,17 @@ sequenceDiagram
         Endpoint-->>Worker: success
         Worker->>DB: INSERT webhook_deliveries (delivered_at set)
         Worker->>DB: UPDATE subscription (failure_count=0)
-    else Failure (5xx, timeout, network)
+    else Retryable failure (408, 429, 5xx, timeout, network), attempts left
+        Worker->>DB: INSERT webhook_deliveries (failed_at set)
+        Worker->>Worker: step.sleep (30s, 2m, 10m), then POST again
+    else Last attempt failed, or terminal failure (other 4xx)
         Worker->>DB: INSERT webhook_deliveries (failed_at set)
         Worker->>DB: UPDATE subscription (failure_count++)
-        Worker-->>Inngest: throw (triggers retry)
-    else Terminal failure (4xx except 408/429)
-        Worker->>DB: INSERT webhook_deliveries (failed_at set)
-        Worker->>DB: UPDATE subscription (failure_count++)
-        Worker-->>Inngest: return (no retry)
+        Worker-->>Inngest: NonRetriableError (retryable) or return (terminal)
     end
 ```
 
-`dispatchWebhook()` in `src/lib/api/rest/webhooks/dispatch.ts` is fire-and-forget. It never throws. If no subscriptions match, it returns silently. Each matching subscription gets its own Inngest event so retries and failures are per-subscription.
+`dispatchWebhook()` and `dispatchWebhooks()` in `src/lib/api/rest/webhooks/dispatch.ts` are fire-and-forget. They never throw: a failed read or send is logged. If no subscriptions match, they return silently. `dispatchWebhooks` takes a list of payloads and makes one subscription read and one Inngest send for the whole list; each payload gets its own `event_id`, and each (payload, subscription) pair its own Inngest event, so retries and failures are per subscription. The work is registered with `waitUntil` (`@vercel/functions`), so a caller that does not await it still has the send finish before the function is frozen.
 
 ---
 
@@ -134,28 +170,38 @@ Use the raw request body as a string (before JSON parsing). Use constant-time co
 
 ## Retry behavior
 
-Delivery retries are handled by Inngest, not inline in the HTTP request.
+One `deliver-webhook` run makes every attempt for one event and one subscription. Each side effect is its own Inngest step, and Inngest retries only the step that threw:
 
-- **Max retries:** 3 (configured on the `deliver-webhook` Inngest function)
-- **Backoff:** Inngest default exponential backoff
+- `send-N`: load the subscription, sign the body, POST (attempt N).
+- `record-delivery-N`: insert the `webhook_deliveries` row for attempt N.
+- `reset-failure-count` after a 2xx, or `count-failure` once after the last failed attempt.
+
+Limits:
+
+- **Attempts:** at most 4 POSTs per event and subscription, with waits of 30 s, 2 min and 10 min between them (`RETRY_DELAYS_BEFORE_NEXT_ATTEMPT` in `deliverWebhook.ts`).
+- **Step retries:** a step that throws on a database error is retried up to 3 times. A failed log or counter write never sends the POST again.
 - **Throttle:** 100 deliveries per 60 seconds per subscription (keyed on `event.data.subscription_id`)
 - **Timeout:** 10 seconds per delivery attempt (`DELIVERY_TIMEOUT_MS` in `deliverWebhook.ts`)
+- **Event schema:** `webhookDispatchEvent` in `src/inngest/events/webhookDispatch.ts`. Inngest validates the event data before the handler runs, so a malformed event is one failed run.
 
-**Retryable failures** (trigger Inngest retry):
+**Retryable failures** (next attempt after the wait):
 - Status codes: 408, 429, 500, 502, 503, 504
 - Network errors (timeout, connection refused, DNS failure)
+- After the 4th retryable failure, `count-failure` runs and the run fails with `NonRetriableError`.
 
-**Terminal failures** (no retry):
+**Terminal failures** (no further attempt):
 - All other 4xx status codes (400, 401, 403, 404, etc.)
-- Recorded in `webhook_deliveries` but do not trigger Inngest retry
+- Recorded in `webhook_deliveries`, then `count-failure` runs and the run ends.
 
-**Database errors:** a failed subscription lookup throws before anything is sent, so Inngest retries the event. A failed write after the POST (the delivery log row or the failure count) is logged and not retried, because a retry would send the subscriber the same event again.
+**At least once:** if the process stops after a POST and before Inngest stores the `send-N` result, the step runs again and the subscriber receives the same `event_id` with a new `delivery_id`. Receivers deduplicate on `event_id`.
+
+**Deleted subscription:** if the subscription is deleted between the POST and the log insert, the insert fails on the foreign key (the table cascades on delete) and the worker skips the row.
 
 ---
 
 ## Auto-disable
 
-Subscriptions are automatically disabled after 10 consecutive delivery failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`). The worker increments `failure_count` in a single UPDATE from the stored value, so concurrent deliveries do not overwrite each other's counts, and a subscription the user disabled while a delivery was running stays disabled.
+Subscriptions are automatically disabled after 10 failed deliveries in a row (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`). A delivery counts once, after its last attempt, not once per POST. The worker increments `failure_count` in a single UPDATE from the stored value, so concurrent deliveries do not overwrite each other's counts, and a subscription the user disabled while a delivery was running stays disabled.
 
 When disabled:
 - `active` is set to `false`
@@ -243,15 +289,18 @@ Two tables in Supabase:
 
 ## Dispatch integration points
 
-`dispatchWebhook()` is called from these locations:
+`dispatchWebhook()` and `dispatchWebhooks()` are called from these locations:
 
 | Location | Event dispatched |
 |----------|-----------------|
-| `src/inngest/functions/processSinglePostHelpers.ts` | `post.published`, `post.failed` (after scheduled post processing) |
-| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | `post.scheduled` (after scheduling) |
-| `src/lib/x402/oauth/callback/handleOAuthCallback.ts` | `connection.connected` (after OAuth callback) |
+| `src/inngest/functions/processSinglePostHelpers.ts` (`writePostOutcome`, for `recordPostStatus` and `finalizeProcessingPost`) | `post.published`, `post.failed` (after a scheduled post is recorded `posted` or `failed`), `connection.expired` (when that failure is `auth_expired`) |
+| `src/inngest/functions/processDirectPost.ts` (`notifyDirectPostOutcome`) | `post.published`, `post.failed` (after a publish-now dispatch is recorded `completed` or `failed`, by the run or its failure handler), `connection.expired` (when that failure is `auth_expired`) |
+| `src/inngest/functions/sweepStuckDirectPosts.ts` | `post.failed` (one `dispatchWebhooks` call per principal for the dispatches the hourly sweep failed) |
+| `src/inngest/functions/tikTokPullFinalizeSteps.ts` | `post.failed` (TikTok rejected a scheduled post or a publish-now dispatch after content/init) |
+| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | `post.scheduled` (one `dispatchWebhooks` call for every inserted row) |
+| `src/lib/x402/oauth/callback/handleOAuthCallback.ts` | `connection.connected` (after the REST, MCP, share-link or x402 OAuth callback) |
 
-Connection expiry events (`connection.expired`) are dispatched when token refresh fails during post processing.
+A connection made from the web app fires no `connection.connected`.
 
 ---
 
@@ -269,6 +318,7 @@ Connection expiry events (`connection.expired`) are dispatched when token refres
 |------|-------------|
 | `src/lib/api/rest/webhooks/dispatch.ts` | `dispatchWebhook()` fire-and-forget dispatcher, `sendWebhookDispatchEvent()` (one event to one subscription, also used by replay) |
 | `src/lib/api/rest/webhooks/eventTypes.ts` | `WEBHOOK_EVENT_TYPES` array (5 events) |
+| `src/lib/api/rest/webhooks/postWebhookPayloads.ts` | Publish-now fields, `post.failed` failure fields and the `connection.expired` payload |
 | `src/lib/api/rest/webhooks/signWebhookPayload.ts` | HMAC-SHA256 signing function |
 | `src/lib/api/rest/webhooks/secretGenerator.ts` | `generateWebhookSecret()` (`whsec_` prefix + 32 bytes hex) |
 | `src/lib/api/rest/webhooks/verifyWebhookConfig.ts` | Subscription URL validation |

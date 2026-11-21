@@ -2,13 +2,10 @@ import "server-only";
 
 import { z } from "zod";
 
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import type { FacebookPage } from "@/lib/types/socialProfiles";
 
-/** Outbound Graph API calls are bounded to 15s. */
 const PAGES_TIMEOUT_MS = 15_000;
-
-/** Graph API version pinned across the repo; see exchangeFacebookCode.ts. */
-const GRAPH_API_VERSION = "v23.0";
 
 /**
  * GET /me/accounts response (fields this module requests).
@@ -34,21 +31,11 @@ export type FacebookPagesResult =
   | { success: true; pages: FacebookPage[] }
   | { success: false; message: string };
 
-/**
- * List the Pages the user manages, each with its Page access token. Page
- * tokens returned for a long-lived user token do not expire, so
- * social_accounts rows for Facebook store token_expires_at = null.
- *
- * Posting requires at least one Page: a user with zero Pages cannot be
- * connected and the caller must fail the connect flow.
- *
- * Called by: connectPlatformAccounts (web popup and x402/REST callback)
- */
 export async function getFacebookPages(
   userAccessToken: string,
 ): Promise<FacebookPagesResult> {
   const url =
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/me/accounts` +
+    `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/accounts` +
     `?fields=id,name,access_token,category,picture{url}`;
 
   try {

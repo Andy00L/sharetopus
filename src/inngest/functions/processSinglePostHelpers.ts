@@ -1,99 +1,66 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
-import { z } from "zod";
+import { and, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 
+import {
+  checkActiveSubscription,
+  needsOwnerAccessToPublish,
+} from "@/actions/checkActiveSubscription";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { buildAccessPauseValues } from "@/actions/server/data/cancelFutureScheduledPostsOnSubCancel";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
-import { scheduled_posts, social_accounts } from "@/db/schema";
+import { content_history, scheduled_posts, social_accounts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
-import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
-import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
-import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
-import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
-import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
-import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
-import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
-import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
 import {
   PLATFORM_LABELS,
-  isPostingPlatform,
-  isSchedulablePlatform,
-  platformHotlinksMedia,
+  isAdapterPlatform,
   platformSupportsMediaType,
 } from "@/lib/platforms/capabilities";
-import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
-import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
-import type {
-  PlatformOptions,
-  PrivacyLevel,
-  SocialAccount,
-} from "@/lib/types/dbTypes";
+import {
+  buildConnectionExpiredPayload,
+  buildPostFailedFields,
+} from "@/lib/api/rest/webhooks/postWebhookPayloads";
+import { decodeStoredPostOptions } from "@/inngest/events/postOptions";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 import { toJsonObject } from "@/lib/utils/jsonObject";
 import "server-only";
 import {
-  classifyDirectPostFailure,
-  type PlatformErrorReason,
+  buildInputRefusal,
   type PlatformPostOutcome,
+  type PublishFailure,
 } from "./platformErrors";
+import type { PublishMediaUrls, PublishRequest } from "./publishToPlatform";
 
-/** A scheduled_posts row as the worker reads it. */
 type ScheduledPost = typeof scheduled_posts.$inferSelect;
 
-// ---------- fetch-post-and-account ----------
+export type LoadPostResult =
+  | { kind: "ready"; post: ScheduledPost }
+  | { kind: "account_missing"; post: ScheduledPost }
+  | { kind: "terminal"; message: string }
+  | { kind: "lookup_failed"; message: string };
 
-export type FetchPostResult =
-  | {
-      success: true;
-      message: string;
-      skip: false;
-      post: ScheduledPost;
-      /** The account exists and is not deleted; only its id, never its tokens. */
-      account: Pick<SocialAccount, "id">;
-    }
-  | { success: true; message: string; skip: true }
-  | { success: false; message: string };
-
-/**
- * Returns skip:true if the row no longer exists or its status is
- * terminal (posted/failed/cancelled), so a re-invocation is a no-op.
- */
-export async function fetchPostAndAccount(
+// Reads only the account id, never its tokens: this result is returned
+// from an Inngest step, which stores it.
+export async function loadPostForProcessing(
   scheduledPostId: string,
-): Promise<FetchPostResult> {
-  const { data: postRows, error: postErr } = await runQuery(
+): Promise<LoadPostResult> {
+  const { data: postRows, error: postError } = await runQuery(
     db
       .select()
       .from(scheduled_posts)
       .where(eq(scheduled_posts.id, scheduledPostId))
       .limit(1),
   );
-
-  if (postErr) {
-    return {
-      success: false,
-      message: `Failed to fetch post: ${postErr.message}`,
-    };
+  if (postError) {
+    return { kind: "lookup_failed", message: `Failed to fetch post: ${postError.message}` };
   }
   const post = postRows[0];
-  if (!post) {
-    return { success: true, message: "post not found", skip: true };
+  if (!post) return { kind: "terminal", message: "post not found" };
+  if (TERMINAL_POST_STATUSES.includes(post.status)) {
+    return { kind: "terminal", message: `post already ${post.status}` };
   }
 
-  const terminalStates: PostStatus[] = ["posted", "failed", "cancelled"];
-  if (terminalStates.includes(post.status)) {
-    return {
-      success: true,
-      message: `post already ${post.status}`,
-      skip: true,
-    };
-  }
-
-  // Only the id: this result is returned from an Inngest step, which stores
-  // it, and the full row carries the OAuth tokens. The publish step loads
-  // the row itself (fetchAccountForPublish).
-  const { data: accountRows, error: accErr } = await runQuery(
+  const { data: accountRows, error: accountError } = await runQuery(
     db
       .select({ id: social_accounts.id })
       .from(social_accounts)
@@ -105,190 +72,198 @@ export async function fetchPostAndAccount(
       )
       .limit(1),
   );
-
-  if (accErr) {
-    return {
-      success: false,
-      message: `Failed to fetch account: ${accErr.message}`,
-    };
+  if (accountError) {
+    return { kind: "lookup_failed", message: `Failed to fetch account: ${accountError.message}` };
   }
-  const account = accountRows[0];
-  if (!account) {
-    return {
-      success: false,
-      message: "Social account not found or deleted",
-    };
-  }
-
-  return {
-    success: true,
-    message: "fetched",
-    skip: false,
-    post,
-    account,
-  };
+  return accountRows.length > 0
+    ? { kind: "ready", post }
+    : { kind: "account_missing", post };
 }
 
-// ---------- claim-post ----------
+const TERMINAL_POST_STATUSES: readonly PostStatus[] = ["posted", "failed", "cancelled"];
 
-export type ClaimResult = {
-  success: true;
-  message: string;
-  claimed: boolean;
+type RunTarget = {
+  scheduledPostId: string;
+  dispatchedScheduledAt: string;
 };
 
-/**
- * UPDATE ... SET status='processing' WHERE id=? AND status IN
- * ('scheduled','queued'). Zero rows updated means another worker
- * took it OR the row already moved on; return claimed=false.
- */
-export async function claimPostForProcessing(
-  scheduledPostId: string,
-): Promise<ClaimResult> {
+function isWaitingForThisRun(target: RunTarget) {
+  return and(
+    eq(scheduled_posts.id, target.scheduledPostId),
+    inArray(
+      scheduled_posts.status,
+      ["scheduled", "queued"] satisfies PostStatus[],
+    ),
+    eq(scheduled_posts.scheduled_at, target.dispatchedScheduledAt),
+  );
+}
+
+export type ClaimResult =
+  | { success: true; claimed: boolean }
+  | { success: false; message: string };
+
+export async function claimPostForProcessing(target: RunTarget): Promise<ClaimResult> {
   const { data, error } = await runQuery(
     db
       .update(scheduled_posts)
       .set({
         status: "processing" satisfies PostStatus,
         updated_at: new Date().toISOString(),
+        publish_started_at: null,
       })
-      .where(
-        and(
-          eq(scheduled_posts.id, scheduledPostId),
-          inArray(
-            scheduled_posts.status,
-            ["scheduled", "queued"] satisfies PostStatus[],
-          ),
-        ),
-      )
+      .where(isWaitingForThisRun(target))
       .returning({ id: scheduled_posts.id }),
   );
 
   if (error) {
-    console.error("[processSinglePost] claim failed:", error.message);
-    return {
-      success: true,
-      message: `claim error: ${error.message}`,
-      claimed: false,
-    };
+    console.error("[claimPostForProcessing] claim failed:", error.message);
+    return { success: false, message: `claim error: ${error.message}` };
   }
-  return {
-    success: true,
-    message: data.length > 0 ? "claimed" : "not claimed",
-    claimed: data.length > 0,
-  };
+  return { success: true, claimed: data.length > 0 };
 }
 
-// ---------- build-signed-urls ----------
+export type AccessGateResult =
+  | { success: true; isOpen: true }
+  | { success: true; isOpen: false; isPaused: boolean }
+  | { success: false; message: string };
 
-export type SignedUrlsResult =
+export async function gatePostOnOwnerAccess(input: {
+  post: Pick<ScheduledPost, "id" | "principal_id" | "created_via">;
+  dispatchedScheduledAt: string;
+}): Promise<AccessGateResult> {
+  const { post, dispatchedScheduledAt } = input;
+  if (!needsOwnerAccessToPublish(post)) return { success: true, isOpen: true };
+
+  const access = await checkActiveSubscription(post.principal_id);
+  if (access.status === "unavailable") {
+    return { success: false, message: `access check unavailable for post ${post.id}` };
+  }
+  if (access.isActive) return { success: true, isOpen: true };
+
+  const nowIso = new Date().toISOString();
+  const { data: pausedRows, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ ...buildAccessPauseValues(nowIso), updated_at: nowIso })
+      .where(isWaitingForThisRun({ scheduledPostId: post.id, dispatchedScheduledAt }))
+      .returning({ id: scheduled_posts.id }),
+  );
+  if (error) {
+    console.error("[gatePostOnOwnerAccess] pause failed:", error.message);
+    return { success: false, message: `pause error: ${error.message}` };
+  }
+  const isPaused = pausedRows.length > 0;
+  if (isPaused) {
+    console.log(
+      `[gatePostOnOwnerAccess] Paused post ${post.id}: principal ${post.principal_id} has no access`,
+    );
+  }
+  return { success: true, isOpen: false, isPaused };
+}
+
+export function resolvePostBatchId(post: Pick<ScheduledPost, "id" | "batch_id">): string {
+  return post.batch_id ?? post.id;
+}
+
+export type PublishedCheckResult =
+  | { success: true; isPublished: boolean }
+  | { success: false; message: string };
+
+export async function findPublishedContentHistory(
+  post: Pick<ScheduledPost, "id" | "batch_id">,
+): Promise<PublishedCheckResult> {
+  const { data, error } = await runQuery(
+    db
+      .select({ id: content_history.id })
+      .from(content_history)
+      .where(
+        and(
+          eq(content_history.batch_id, resolvePostBatchId(post)),
+          eq(content_history.scheduled_post_id, post.id),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `content history lookup failed: ${error.message}` };
+  }
+  return { success: true, isPublished: data.length > 0 };
+}
+
+type PostStatusReadResult =
+  | { success: true; status: PostStatus | null }
+  | { success: false; message: string };
+
+async function readPostStatus(scheduledPostId: string): Promise<PostStatusReadResult> {
+  const { data, error } = await runQuery(
+    db
+      .select({ status: scheduled_posts.status })
+      .from(scheduled_posts)
+      .where(eq(scheduled_posts.id, scheduledPostId))
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `status reread failed: ${error.message}` };
+  }
+  return { success: true, status: data[0]?.status ?? null };
+}
+
+export type PublishAttemptClaim =
   | {
       success: true;
-      message: string;
-      mediaUrl: string | null;
-      tiktokMediaUrl: string | null;
+      kind: "claimed" | "post-deleted" | "post-no-longer-processing" | "attempt-already-started";
     }
   | { success: false; message: string };
 
-/**
- * Mirrors handleSocialMediaPost URL-minting logic:
- *   - Pinterest/LinkedIn/Instagram/Facebook: getServerSignedViewUrl (the
- *     platform pulls the media from the URL, or the adapter streams it)
- *   - TikTok: buildTikTokMediaUrl (proxy or supabase_direct per env)
- *   - YouTube/X: no URL minted; their adapters fetch the file bytes from
- *     storage and upload them directly
- * For text posts (no media_storage_path) both are null.
- */
-/**
- * Signed-URL lifetime for hotlinking registry providers, in seconds
- * (30 days). Their publish embeds the URL in durable content (markdown
- * image, link post, chat message), so the default short TTL would leave a
- * dead link minutes after publishing. The media file itself is preserved
- * by the cleanup skip in processSinglePost.
- */
-export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
-
-export async function buildPlatformSignedUrls(
-  post: ScheduledPost,
-  platform: string,
-): Promise<SignedUrlsResult> {
-  if (!post.media_storage_path || post.media_storage_path === "") {
-    return {
-      success: true,
-      message: "no media",
-      mediaUrl: null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  // Registry providers all take one https media URL; only the lifetime
-  // differs (see HOTLINK_SIGNED_URL_TTL_S). Checked before the legacy
-  // special cases so those stay exactly as they were.
-  if (!isPostingPlatform(platform)) {
-    const registrySigned = await getServerSignedViewUrl(
-      post.media_storage_path,
-      platformHotlinksMedia(platform)
-        ? HOTLINK_SIGNED_URL_TTL_S
-        : RUNTIME.signedUrlTtlS,
-    );
-    if (!registrySigned.success) {
-      return {
-        success: false,
-        message: registrySigned.message ?? "Failed to mint signed URL",
-      };
-    }
-    return {
-      success: true,
-      message: "registry signed url minted",
-      mediaUrl: registrySigned.url ?? null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  if (platform === "youtube" || platform === "x") {
-    return {
-      success: true,
-      message: "buffer-upload platform, no url minted",
-      mediaUrl: null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  if (platform === "tiktok") {
-    const tiktokUrlResult = await buildTikTokMediaUrl({
-      mediaPath: post.media_storage_path,
-      principalId: post.principal_id,
-    });
-    if (!tiktokUrlResult.success) {
-      return { success: false, message: tiktokUrlResult.message };
-    }
-    return {
-      success: true,
-      message: `tiktok ${tiktokUrlResult.mode} url minted`,
-      mediaUrl: null,
-      tiktokMediaUrl: tiktokUrlResult.url,
-    };
-  }
-
-  const signed = await getServerSignedViewUrl(
-    post.media_storage_path,
-    RUNTIME.signedUrlTtlS,
+export async function claimPublishAttempt(scheduledPostId: string): Promise<PublishAttemptClaim> {
+  const { data: claimedRows, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ publish_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(scheduled_posts.id, scheduledPostId),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          isNull(scheduled_posts.publish_started_at),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
   );
-  if (!signed.success) {
-    return {
-      success: false,
-      message: signed.message ?? "Failed to mint signed URL",
-    };
+  if (error) {
+    console.error("[claimPublishAttempt] claim failed:", error.message);
+    return { success: false, message: `publish claim failed: ${error.message}` };
   }
-  return {
-    success: true,
-    message: "signed url minted",
-    mediaUrl: signed.url ?? null,
-    tiktokMediaUrl: null,
-  };
+  if (claimedRows.length > 0) return { success: true, kind: "claimed" };
+
+  const current = await readPostStatus(scheduledPostId);
+  if (!current.success) return current;
+  if (current.status === null) return { success: true, kind: "post-deleted" };
+  if (current.status !== "processing") return { success: true, kind: "post-no-longer-processing" };
+  return { success: true, kind: "attempt-already-started" };
 }
 
-// ---------- platform compatibility check ----------
+export type PublishAttemptRelease = { success: true } | { success: false; message: string };
+
+export async function releasePublishAttempt(
+  scheduledPostId: string,
+): Promise<PublishAttemptRelease> {
+  const { error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ publish_started_at: null })
+      .where(
+        and(
+          eq(scheduled_posts.id, scheduledPostId),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+        ),
+      ),
+  );
+  if (error) {
+    console.error("[releasePublishAttempt] release failed:", error.message);
+    return { success: false, message: `publish release failed: ${error.message}` };
+  }
+  return { success: true };
+}
 
 export type CompatibilityResult = {
   success: true;
@@ -297,18 +272,12 @@ export type CompatibilityResult = {
   reason: string;
 };
 
-/**
- * Per-platform post-type rules, read from the shared capability map in
- * src/lib/platforms/capabilities.ts (single source of truth also used by
- * the create form, the REST schema, and the account selector).
- * If incompatible, the worker records it as invalid_input (terminal).
- */
 export function checkPlatformCompatibility(
   platform: string,
   mediaType: ScheduledPost["media_type"],
 ): CompatibilityResult {
   if (!platformSupportsMediaType(platform, mediaType)) {
-    const platformLabel = isPostingPlatform(platform)
+    const platformLabel = isAdapterPlatform(platform)
       ? PLATFORM_LABELS[platform]
       : platform;
     return {
@@ -326,341 +295,61 @@ export function checkPlatformCompatibility(
   };
 }
 
-// ---------- call platform direct-post function ----------
+export type ScheduledPublishRequestResult =
+  | { ok: true; request: PublishRequest }
+  | PublishFailure;
 
-export type CallPlatformResult = PlatformPostOutcome;
-
-/** Every PrivacyLevel (dbTypes), keyed by itself so a new level fails compilation here. */
-const PRIVACY_LEVELS = {
-  PUBLIC_TO_EVERYONE: "PUBLIC_TO_EVERYONE",
-  MUTUAL_FOLLOW_FRIENDS: "MUTUAL_FOLLOW_FRIENDS",
-  FOLLOWER_OF_CREATOR: "FOLLOWER_OF_CREATOR",
-  SELF_ONLY: "SELF_ONLY",
-  PUBLIC: "PUBLIC",
-  PROTECTED: "PROTECTED",
-} as const satisfies { [Level in PrivacyLevel]: Level };
-
-/**
- * The post_options keys the seven legacy adapters read, as
- * SchedulePostData["postOptions"] writes them. Registry keys are stripped
- * (the registry arm reads post_options itself); a null reads as absent.
- */
-const PostOptionsSchema = z.object({
-  link: z.string().nullish(),
-  board: z.string().nullish(),
-  boardName: z.string().nullish(),
-  privacyLevel: z.enum(PRIVACY_LEVELS).nullish(),
-  visibility: z.string().nullish(),
-  disableComment: z.boolean().nullish(),
-  disableDuet: z.boolean().nullish(),
-  disableStitch: z.boolean().nullish(),
-  brandContentToggle: z.boolean().nullish(),
-  yourBrand: z.boolean().nullish(),
-  brandedContent: z.boolean().nullish(),
-  isAigc: z.boolean().nullish(),
-  /** YouTube videos.insert status.privacyStatus (dbTypes YouTubeOptions). */
-  privacyStatus: z.enum(["public", "unlisted", "private"]).nullish(),
-});
-
-/**
- * Dispatches to the right per-account direct-post function based on
- * platform. Failed-post recording is centralized in recordPostStatus;
- * the directPostFor functions no longer write to failed_posts.
- * LinkedIn still receives isCronJob:true to skip rate limiting.
- */
-export async function callPlatformDirectPost(args: {
+export function buildScheduledPublishRequest(input: {
   post: ScheduledPost;
   account: SocialAccount;
-  mediaUrl: string | null;
-  tiktokMediaUrl: string | null;
-  fileName: string;
-  mediaType: string;
-}): Promise<CallPlatformResult> {
-  const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } = args;
-
-  const createdVia = post.created_via ?? "web";
-
-  // scheduled_posts.platform is plain text; an unknown value stops here.
-  const platform = post.platform;
-  if (!isSchedulablePlatform(platform)) {
-    return {
-      ok: false,
-      reason: "invalid_input",
-      message: `Unsupported platform: ${platform}`,
-    };
+  urls: PublishMediaUrls;
+}): ScheduledPublishRequestResult {
+  const { post, account, urls } = input;
+  const decodedOptions = decodeStoredPostOptions(post.post_options);
+  if (!decodedOptions.ok) {
+    return buildInputRefusal(`Malformed post_options: ${decodedOptions.invalidKeys.join(", ")}`);
   }
+  const { platformOptions, pinterestBoard, link } = decodedOptions.decoded;
 
-  const parsedOptions = PostOptionsSchema.safeParse(post.post_options ?? {});
-  if (!parsedOptions.success) {
-    const invalidKeys = parsedOptions.error.issues
-      .map((issue) => issue.path.join("."))
-      .join(", ");
-    return {
-      ok: false,
-      reason: "invalid_input",
-      message: `Malformed post_options: ${invalidKeys}`,
-    };
-  }
-  const options = parsedOptions.data;
-  const accountContent = {
-    accountId: account.id,
-    title: post.post_title ?? "",
-    description: post.post_description ?? "",
-    link: options.link ?? "",
-    isCustomized: true,
-  };
-
-  // Platform options shape mirrors handleSocialMediaPost
-  const platformOptions: PlatformOptions = {
-    pinterest: {
-      privacyLevel: options.privacyLevel ?? "PUBLIC",
-      board: options.board ?? "",
-      link: options.link ?? "",
-    },
-    linkedin: {
-      visibility: options.visibility ?? "PUBLIC",
-    },
-    tiktok: {
-      // Set only by the web composer; resolveTikTokPrivacyLevel decides the rest.
-      privacyLevel: options.privacyLevel ?? undefined,
-      disableComment: options.disableComment ?? false,
-      disableDuet: options.disableDuet ?? false,
-      disableStitch: options.disableStitch ?? false,
-      brandContentToggle: options.brandContentToggle ?? undefined,
-      yourBrand: options.yourBrand ?? undefined,
-      brandedContent: options.brandedContent ?? undefined,
-      isAigc: options.isAigc ?? undefined,
-    },
-    youtube: {
-      privacyStatus: options.privacyStatus ?? "public",
+  return {
+    ok: true,
+    request: {
+      account,
+      principalId: post.principal_id,
+      platform: post.platform,
+      postType: post.media_type,
+      title: post.post_title ?? "",
+      description: post.post_description ?? "",
+      link,
+      platformOptions,
+      pinterestBoard,
+      registryOptions: post.post_options,
+      coverTimestampMs: post.cover_image_timestamp,
+      media: { storagePath: post.media_storage_path, urls },
+      batchId: resolvePostBatchId(post),
+      origin: { kind: "scheduled", scheduledPostId: post.id },
+      createdVia: post.created_via,
     },
   };
-
-  const batchId = post.batch_id ?? post.id;
-
-  try {
-    let result: { success: boolean; count: number; message?: string };
-
-    switch (platform) {
-      case "pinterest": {
-        if (!options.board) {
-          return {
-            ok: false,
-            reason: "invalid_input",
-            message: "No board configured in post_options",
-          };
-        }
-        // FIX 17.2: fallback to 1000ms (1 second) instead of 0 because
-        // TikTok rejects 0 as "too small". Pinterest and Instagram
-        // tolerate it but the shared default keeps the value safe.
-        result = await directPostForPinterestAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          boards: {
-            boardID: options.board,
-            boardName: options.boardName ?? "Board",
-            accountId: account.id,
-            isSelected: true,
-          },
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          fileName,
-          batchId,
-          mediaType,
-          postType: post.media_type,
-          mediaUrl: mediaUrl ?? "",
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "linkedin": {
-        result = await directPostForLinkedInAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? undefined,
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          fileName,
-          batchId,
-          postType: post.media_type,
-          isCronJob: true,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "tiktok": {
-        result = await directPostForTikTokAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          tiktokMediaUrl: tiktokMediaUrl ?? "",
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          postType: post.media_type,
-          fileName,
-          batchId,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "instagram": {
-        // Instagram takes media only; the compatibility check rejects text
-        // before this point, so this guards a malformed row.
-        if (post.media_type === "text") {
-          return {
-            ok: false,
-            reason: "invalid_input",
-            message: "Instagram does not support text posts",
-          };
-        }
-        result = await directPostForInstagramAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          mediaType,
-          accountContent,
-          userId: post.principal_id,
-          mediaUrl: mediaUrl ?? "",
-          postType: post.media_type,
-          fileName,
-          batchId,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "youtube": {
-        result = await directPostForYouTubeAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "x": {
-        result = await directPostForXAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          mediaType,
-          accountContent,
-          userId: post.principal_id,
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "facebook": {
-        result = await directPostForFacebookAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          accountContent,
-          userId: post.principal_id,
-          mediaUrl: mediaUrl ?? "",
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      default: {
-        // Everything outside the seven legacy adapters publishes through
-        // the provider registry. A provider that is not available comes
-        // back as a message and classifies as terminal below.
-        result = await publishViaRegistry({
-          account,
-          principalId: post.principal_id,
-          title: post.post_title,
-          body: post.post_description,
-          mediaType: post.media_type,
-          mediaUrl,
-          fileName,
-          mediaMimeType: mediaType,
-          options: post.post_options,
-          batchId: post.batch_id ?? post.id,
-          scheduledPostId: post.id,
-          createdVia: post.created_via ?? "web",
-        });
-        break;
-      }
-    }
-
-    if (result.success && result.count > 0) {
-      // The directPostFor functions write content_history themselves
-      // via storeContentHistory. We do not duplicate that write here.
-      return {
-        ok: true,
-        contentId: post.id,
-        mediaUrl: mediaUrl ?? null,
-      };
-    }
-
-    const reason = classifyDirectPostFailure(platform, result.message);
-    return {
-      ok: false,
-      reason,
-      message: result.message ?? "Failed without message",
-    };
-  } catch (err) {
-    // Network / unexpected. Classify to drive retry decisions.
-    const message = err instanceof Error ? err.message : String(err);
-    const reason: PlatformErrorReason = classifyDirectPostFailure(
-      platform,
-      message,
-    );
-    return { ok: false, reason, message };
-  }
 }
 
-// ---------- record final status ----------
+export type RecordStatusResult =
+  | { success: true; updated: boolean }
+  | { success: false; message: string };
 
-export type RecordStatusResult = {
-  success: true;
-  message: string;
-  updated: boolean;
-};
-
-/**
- * Idempotent: only acts if the row is currently 'processing'.
- * Re-invocation after success is a no-op (row already posted/failed).
- *
- * For terminal failures, this function both UPDATEs the scheduled_posts
- * row to status='failed' AND INSERTs a failed_posts record via
- * storeFailedPost. The failed_posts INSERT only fires when the CAS
- * guard matches (row was 'processing'), preventing duplicate rows on
- * re-invocation. If the INSERT fails, the error is logged and the
- * function continues (the scheduled_posts update already succeeded).
- *
- * For success, content_history (with scheduled_post_id lineage) is
- * already written by the directPostFor function; this step marks the
- * scheduled_posts row as status='posted'. The row stays alive so the
- * FK on content_history.scheduled_post_id is not cascaded (ON DELETE
- * SET NULL). The Scheduled UI filters out 'posted' rows by default.
- */
 export async function recordPostStatus(args: {
   post: ScheduledPost;
-  account: Pick<SocialAccount, "id">;
   result: PlatformPostOutcome;
 }): Promise<RecordStatusResult> {
-  const { post, account, result } = args;
+  return writePostOutcome({ ...args, settleCondition: undefined });
+}
+
+async function writePostOutcome(args: {
+  post: ScheduledPost;
+  result: PlatformPostOutcome;
+  settleCondition: SQL | undefined;
+}): Promise<RecordStatusResult> {
+  const { post, result, settleCondition } = args;
   const nowIso = new Date().toISOString();
 
   if (result.ok) {
@@ -677,38 +366,26 @@ export async function recordPostStatus(args: {
           and(
             eq(scheduled_posts.id, post.id),
             eq(scheduled_posts.status, "processing" satisfies PostStatus),
+            settleCondition,
           ),
         )
         .returning({ id: scheduled_posts.id }),
     );
 
     if (error) {
-      console.error("[recordPostStatus] mark posted failed:", error.message);
-      return {
-        success: true,
-        message: `mark-posted error: ${error.message}`,
-        updated: false,
-      };
+      console.error("[writePostOutcome] mark posted failed:", error.message);
+      return { success: false, message: `mark-posted error: ${error.message}` };
     }
     const wasPosted = data.length > 0;
-
-    // Dispatch post.published webhook on successful status transition.
     if (wasPosted) {
       dispatchWebhook(post.principal_id, "post.published", {
         post_id: post.id,
         platform: post.platform,
       });
     }
-
-    return {
-      success: true,
-      message: wasPosted ? "marked posted" : "already moved on",
-      updated: wasPosted,
-    };
+    return { success: true, updated: wasPosted };
   }
 
-  // Terminal failure path. Retryable failures throw upstream and
-  // never reach this branch.
   const errorMessage = `${result.reason}: ${result.message}`.slice(0, 1000);
 
   const { data, error } = await runQuery(
@@ -723,84 +400,90 @@ export async function recordPostStatus(args: {
         and(
           eq(scheduled_posts.id, post.id),
           eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          settleCondition,
         ),
       )
       .returning({ id: scheduled_posts.id }),
   );
 
   if (error) {
-    console.error("[recordPostStatus] mark failed failed:", error.message);
-    return {
-      success: true,
-      message: `mark-failed error: ${error.message}`,
-      updated: false,
-    };
+    console.error("[writePostOutcome] mark failed failed:", error.message);
+    return { success: false, message: `mark-failed error: ${error.message}` };
   }
 
   const wasUpdated = data.length > 0;
+  if (!wasUpdated) return { success: true, updated: false };
 
-  // Write a failed_posts row only when we actually transitioned the
-  // row to 'failed'. The CAS guard prevents duplicate rows on
-  // re-invocation (wasUpdated is false if the row already moved on).
-  if (wasUpdated) {
-    const storeResult = await storeFailedPost({
-      principal_id: post.principal_id,
-      social_account_id: post.social_account_id ?? account.id,
-      platform: post.platform,
-      post_title: post.post_title ?? null,
-      post_description: post.post_description ?? null,
-      post_options: toJsonObject(post.post_options) ?? {},
-      media_type: post.media_type,
-      media_storage_path: post.media_storage_path ?? "",
-      coverTimestamp: post.cover_image_timestamp ?? undefined,
-      batch_id: post.batch_id ?? post.id,
-      idempotency_key: post.idempotency_key,
-      x402_charge_id: post.x402_charge_id,
-      extra_data: {
-        reason: result.reason,
-        message: result.message,
-        timestamp: nowIso,
-      },
-      created_via: post.created_via ?? "web",
-    });
-
-    if (!storeResult.success) {
-      console.error(
-        "[recordPostStatus] Failed to store failed post record:",
-        storeResult.message,
-      );
-      // Continue. The scheduled_posts UPDATE already succeeded;
-      // losing the failed_posts row is non-fatal.
-    }
-  }
-
-  // Dispatch post.failed webhook on terminal failure transition.
-  if (wasUpdated) {
-    dispatchWebhook(post.principal_id, "post.failed", {
-      post_id: post.id,
-      platform: post.platform,
+  const storeResult = await storeFailedPost({
+    principal_id: post.principal_id,
+    social_account_id: post.social_account_id,
+    platform: post.platform,
+    post_title: post.post_title ?? null,
+    post_description: post.post_description ?? null,
+    post_options: toJsonObject(post.post_options) ?? {},
+    media_type: post.media_type,
+    media_storage_path: post.media_storage_path ?? "",
+    coverTimestamp: post.cover_image_timestamp ?? undefined,
+    batch_id: resolvePostBatchId(post),
+    idempotency_key: post.idempotency_key,
+    x402_charge_id: post.x402_charge_id,
+    extra_data: {
       reason: result.reason,
-      error_message: result.message,
-    });
-
-    // If the failure reason is auth_expired, also notify about the connection.
-    if (result.reason === "auth_expired") {
-      dispatchWebhook(post.principal_id, "connection.expired", {
-        social_account_id: account.id,
-        platform: post.platform,
-        reason: "auth_expired",
-      });
-    }
+      message: result.message,
+      timestamp: nowIso,
+    },
+    created_via: post.created_via,
+  });
+  if (!storeResult.success) {
+    console.error(
+      "[writePostOutcome] Failed to store failed post record:",
+      storeResult.message,
+    );
   }
 
-  return {
-    success: true,
-    message: wasUpdated ? "marked failed" : "already moved on",
-    updated: wasUpdated,
-  };
+  dispatchWebhook(post.principal_id, "post.failed", {
+    post_id: post.id,
+    platform: post.platform,
+    ...buildPostFailedFields(result),
+  });
+  if (result.reason === "auth_expired") {
+    dispatchWebhook(post.principal_id, "connection.expired", buildConnectionExpiredPayload(post));
+  }
+
+  return { success: true, updated: true };
 }
 
-// ---------- cleanup storage ----------
+export type FinalizeProcessingResult =
+  | { success: true; outcome: PlatformPostOutcome; updated: boolean }
+  | { success: false; message: string };
+
+function hasNoLiveAttempt(abandonedClaimBeforeIso: string | null): SQL | undefined {
+  const hasNoClaim = isNull(scheduled_posts.publish_started_at);
+  return abandonedClaimBeforeIso === null
+    ? hasNoClaim
+    : or(hasNoClaim, lt(scheduled_posts.publish_started_at, abandonedClaimBeforeIso));
+}
+
+export async function finalizeProcessingPost(input: {
+  post: ScheduledPost;
+  failureMessage: string;
+  abandonedClaimBeforeIso: string | null;
+}): Promise<FinalizeProcessingResult> {
+  const { post, failureMessage, abandonedClaimBeforeIso } = input;
+  const published = await findPublishedContentHistory(post);
+  if (!published.success) return { success: false, message: published.message };
+
+  const outcome: PlatformPostOutcome = published.isPublished
+    ? { ok: true, contentId: post.id }
+    : { ok: false, reason: "transient", message: failureMessage, mayHavePublished: true };
+  const recorded = await writePostOutcome({
+    post,
+    result: outcome,
+    settleCondition: hasNoLiveAttempt(abandonedClaimBeforeIso),
+  });
+  if (!recorded.success) return recorded;
+  return { success: true, outcome, updated: recorded.updated };
+}
 
 export type CleanupResult = {
   success: true;
@@ -808,34 +491,21 @@ export type CleanupResult = {
   deleted: boolean;
 };
 
-/**
- * Uses the internal delete helper (no auth checks needed in worker
- * context). Already idempotent. No-ops if other scheduled_posts or
- * failed_posts rows still reference the same path.
- */
 export async function cleanupMediaIfUnreferenced(
   mediaPath: string,
   principalId: string,
 ): Promise<CleanupResult> {
-  if (!mediaPath || mediaPath === "") {
+  if (mediaPath === "") {
     return { success: true, message: "no media to clean", deleted: false };
   }
-  try {
-    const result = await deleteSupabaseFile(principalId, mediaPath, false);
-    return {
-      success: true,
-      message: result.success
-        ? `cleanup done for ${mediaPath}`
-        : `cleanup skipped: ${result.message}`,
-      deleted: result.success,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[processSinglePost] cleanup error: ${message}`);
-    return {
-      success: true,
-      message: `cleanup error (non-blocking): ${message}`,
-      deleted: false,
-    };
+  const result = await deleteSupabaseFile(principalId, mediaPath, false);
+  if (!result.success) {
+    console.warn(`[cleanupMediaIfUnreferenced] ${mediaPath} not cleaned up: ${result.message}`);
+    return { success: true, message: `cleanup skipped: ${result.message}`, deleted: false };
   }
+  return {
+    success: true,
+    message: result.removed ? `deleted ${mediaPath}` : `kept ${mediaPath}: ${result.message}`,
+    deleted: result.removed,
+  };
 }

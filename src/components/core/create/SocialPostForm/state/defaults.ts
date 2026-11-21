@@ -2,8 +2,8 @@ import { PlatformOptions } from "@/lib/types/dbTypes";
 import { format } from "date-fns";
 
 export const defaultPlatformOptions: PlatformOptions = {
-  // TikTok's Content Sharing Guidelines: no privacy default (the user must
-  // pick one), every interaction off until ticked, disclosure off.
+  // TikTok Content Sharing Guidelines, Required UX Implementation 2b, 2c and 3a:
+  // no privacy default, no interaction allowed until ticked, disclosure off.
   tiktok: {
     disableComment: true,
     disableDuet: true,

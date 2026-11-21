@@ -8,18 +8,6 @@ import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * GET /api/x402/connections
- *
- * Pays the list_connections action (price per pricing_actions). Reads
- * connected social accounts.
- * Steps:
- * 1. Parse query params (include_unavailable).
- * 2. x402 middleware handles payment and the charge.
- * 3. Query social_accounts filtered by principal_id.
- * 4. Strip tokens and return safe projection.
- */
-
 type ConnectionsParams = {
   includeUnavailable: boolean;
 };
@@ -51,25 +39,18 @@ export const GET = x402PaidEndpoint<ConnectionsParams, ConnectionsResult>({
   resolveAction: () => ({ success: true, action: "list_connections" }),
 
   handler: async ({ body, principal }) => {
-    // filterByAvailability=true means only available accounts shown.
-    // When include_unavailable=true, we pass false to show all.
-    const fetchResult = await fetchSocialAccounts(
-      principal.principalId,
-      "x402",
-      !body.includeUnavailable,
-    );
+    const shouldListOnlyAvailable = !body.includeUnavailable;
+    const fetchResult = await fetchSocialAccounts(principal.principalId, "x402", shouldListOnlyAvailable);
 
     if (!fetchResult.success) {
       return {
         success: false,
         errorKind: "query_failed",
         message: fetchResult.message,
-        refundable: true,
       };
     }
 
-    // Safe projection: strip tokens, refresh_tokens, and other sensitive fields.
-    const safeAccounts = (fetchResult.data ?? []).map((account) => ({
+    const safeAccounts = fetchResult.data.map((account) => ({
       id: account.id,
       platform: account.platform,
       display_name: account.display_name,

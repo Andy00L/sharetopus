@@ -3,13 +3,6 @@ import type {
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Webhooks resource of the /docs/rest reference. Field lists mirror
- * src/lib/api/rest/validation/webhookSchemas.ts (read in full); event
- * types mirror src/lib/api/rest/webhooks/eventTypes.ts; delivery and
- * signature details mirror the dispatch and signing modules.
- */
-
 const SUBSCRIPTION_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (WebhookSubscriptionDTO)",
   rows: [
@@ -97,12 +90,18 @@ export const REST_WEBHOOKS_SECTION: DocsSection = {
     columns: ["Event", "Fires when"],
     rows: [
       ["post.scheduled", "A post is successfully scheduled."],
-      ["post.published", "A post is published to a social platform."],
-      ["post.failed", "Publishing a post fails."],
+      [
+        "post.published",
+        "A post is published to a social platform. A scheduled post carries post_id; a publish-now dispatch carries dispatch_id and batch_id, the ids its answer returned.",
+      ],
+      [
+        "post.failed",
+        "Publishing a post fails. The payload carries reason, error_message and may_have_published (true when the post may be live although it was recorded failed).",
+      ],
       ["connection.connected", "An OAuth flow completes and the account is connected."],
       [
         "connection.expired",
-        "An account token expires and cannot be refreshed.",
+        "A post fails because its account's login expired; reconnect the account.",
       ],
     ],
   },
@@ -145,7 +144,7 @@ export const REST_WEBHOOKS_SECTION: DocsSection = {
       ],
       callouts: [
         {
-          tone: "amber",
+          tone: "warning",
           text: "The secret field appears only in this response. Store it immediately; recovering it later requires creating a new subscription.",
         },
       ],

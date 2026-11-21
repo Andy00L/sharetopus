@@ -28,13 +28,11 @@ interface MediaUploadProps {
   readonly maxSizeMB: number;
 }
 
-/** Click-or-drop area that hands the chosen image or video file to the parent. */
 export function MediaUpload({ kind, onFileSelected, maxSizeMB }: MediaUploadProps) {
   const copy = UPLOAD_COPY[kind];
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Child elements fire their own enter/leave events; the counter tells a real leave apart.
-  const dragDepth = useRef(0);
+  const nestedDragEnterCount = useRef(0);
 
   const stopBrowserDefault = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -43,19 +41,19 @@ export function MediaUpload({ kind, onFileSelected, maxSizeMB }: MediaUploadProp
 
   const handleDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
     stopBrowserDefault(event);
-    dragDepth.current += 1;
-    if (dragDepth.current === 1) setIsDragging(true);
+    nestedDragEnterCount.current += 1;
+    if (nestedDragEnterCount.current === 1) setIsDragging(true);
   };
 
   const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
     stopBrowserDefault(event);
-    dragDepth.current -= 1;
-    if (dragDepth.current === 0) setIsDragging(false);
+    nestedDragEnterCount.current -= 1;
+    if (nestedDragEnterCount.current === 0) setIsDragging(false);
   };
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     stopBrowserDefault(event);
-    dragDepth.current = 0;
+    nestedDragEnterCount.current = 0;
     setIsDragging(false);
     const file = event.dataTransfer.files?.[0];
     if (file) onFileSelected(file);

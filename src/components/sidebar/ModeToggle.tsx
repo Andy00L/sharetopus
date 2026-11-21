@@ -5,12 +5,8 @@ import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/button";
 
-/**
- * Light/dark toggle for the dashboard header. Both icons render and CSS
- * decides visibility (`dark:` classes), the standard SSR-safe pattern:
- * no mounted-state effect, no hydration mismatch. resolvedTheme is only
- * read inside the click handler, which cannot fire before mount.
- */
+// next-themes leaves resolvedTheme undefined until mount (node_modules/next-themes/README.md,
+// "Avoid Hydration Mismatch"): CSS picks the icon, and only the click handler reads the theme.
 export function ModeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
 

@@ -21,10 +21,9 @@ import { toast } from "sonner";
 
 interface Props {
   readonly account: ClientSocialAccount;
-  readonly userId: string;
 }
 
-export default function SocialAccountBadge({ account, userId }: Props) {
+export default function SocialAccountBadge({ account }: Props) {
   const router = useRouter();
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -35,7 +34,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
     try {
       setIsDisconnecting(true);
 
-      const result = await disconnectAccountAction(account.id, userId);
+      const result = await disconnectAccountAction(account.id);
 
       if (result.success) {
         toast.success(result.message);
@@ -54,7 +53,6 @@ export default function SocialAccountBadge({ account, userId }: Props) {
 
   return (
     <>
-      {/* Alert Dialog for confirmation */}
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -81,7 +79,6 @@ export default function SocialAccountBadge({ account, userId }: Props) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Account Badge */}
       <div
         className={`
   flex items-center gap-2 px-2 py-1 rounded-full 

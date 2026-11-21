@@ -18,13 +18,6 @@ const PinterestTokenSchema = z.object({
   token_type: z.string().optional(),
 });
 
-/**
- * Exchanges a Pinterest authorization code for tokens. The app
- * authenticates with HTTP Basic, as refreshPinterestToken does.
- * `redirectUri` must be the exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangePinterestCode(
   code: string,
   redirectUri: string,

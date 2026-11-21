@@ -1,14 +1,22 @@
 import "server-only";
 
+import { Blob } from "node:buffer";
+
+import { FormData } from "undici";
+
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import {
+  postToLinkedIn,
+  UNKNOWN_LINKEDIN_POST_ID,
+} from "@/lib/api/linkedin/post/postToLinkedIn";
 import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
 
 import {
@@ -18,29 +26,30 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
-
-/**
- * OAuth providers that are variants or approval-gated APIs: LinkedIn Page
- * (company pages on the existing LinkedIn app), Dribbble (shot upload
- * needs Dribbble's approved upload scope), Google My Business (API access
- * is approval-gated by Google). The code is complete; each activates when
- * its env pair is set and the platform-side approval exists.
- *
- * sourceRef: learn.microsoft.com/linkedin (organizationAcls, ugcPosts);
- * developer.dribbble.com/v2 (user, shots); developers.google.com/my-business
- * (accounts, locations, localPosts).
- */
+import { joinTitleAndBody } from "./_shared/postText";
+import { toUploadFileName } from "./_shared/uploadFileName";
 
 const VARIANT_TIMEOUT_MS = 30_000;
 
-// ── LinkedIn Page ─────────────────────────────────────────────────────────
+// developer.dribbble.com/v2/shots (Create a shot): "Status: 202 Accepted",
+// "Location: https://api.dribbble.com/v2/shots/471756".
+const DRIBBBLE_SHOT_LOCATION_PATTERN = /\/v2\/shots\/(\d+)\/?$/;
 
-/** Reuses the existing LinkedIn app; only the scopes differ. */
 const LINKEDIN_PAGE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
   tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
@@ -90,11 +99,8 @@ async function listAdministeredOrganizations(
 }
 
 async function linkedinPageConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "LinkedIn Page connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(LINKEDIN_PAGE_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -126,58 +132,35 @@ async function linkedinPageConnect(
 async function linkedinPagePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const organizationId =
-    typeof input.options.organizationId === "string" && input.options.organizationId
-      ? input.options.organizationId
-      : typeof input.config.organizationId === "string"
-        ? input.config.organizationId
-        : null;
+  const storedOrganizationId =
+    typeof input.config.organizationId === "string" ? input.config.organizationId : null;
+  const organizationId = input.options.organizationId || storedOrganizationId;
   if (!organizationId) {
-    return { ok: false, message: "Stored LinkedIn Page has no organization." };
+    return refusePublish("Stored LinkedIn Page has no organization.");
   }
 
-  const commentary = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  const commentary = joinTitleAndBody(input);
 
-  // Text posts, and media as an ARTICLE share pointing at the URL. The
-  // registerUpload asset pipeline (native image/video) is a follow-up; a
-  // link share is the honest form that works everywhere today.
-  const shareContent: Record<string, unknown> = {
-    shareCommentary: { text: commentary },
-    shareMediaCategory: input.mediaUrl ? "ARTICLE" : "NONE",
-  };
-  if (input.mediaUrl) {
-    shareContent.media = [{ status: "READY", originalUrl: input.mediaUrl }];
+  let mediaBuffer: Buffer | undefined;
+  if (input.postType !== "text") {
+    if (!input.mediaUrl) return refusePublish("The post media is missing.");
+    const storedMedia = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
+    if (!storedMedia.ok) return storedMedia;
+    mediaBuffer = Buffer.from(await storedMedia.media.arrayBuffer());
   }
 
-  const postResult = await providerFetch("https://api.linkedin.com/v2/ugcPosts", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${input.accessToken}`,
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
-    body: JSON.stringify({
-      author: `urn:li:organization:${organizationId}`,
-      lifecycleState: "PUBLISHED",
-      specificContent: { "com.linkedin.ugc.ShareContent": shareContent },
-      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    }),
-    timeoutMs: VARIANT_TIMEOUT_MS,
+  const shareResult = await postToLinkedIn({
+    accessToken: input.accessToken,
+    authorUrn: `urn:li:organization:${organizationId}`,
+    text: commentary,
+    postType: input.postType,
+    mediaType: input.mediaMimeType,
+    buffer: mediaBuffer,
   });
-
-  if (!postResult.ok) return { ok: false, message: postResult.message };
-  if (postResult.status !== 201) {
-    return {
-      ok: false,
-      message: `LinkedIn Page post failed (${postResult.status}): ${postResult.bodyText.slice(0, 200)}`,
-    };
+  if (!shareResult.success) {
+    return { ok: false, message: shareResult.error, failure: shareResult.failure };
   }
-
-  const postId = readStringField(parseJsonBody(postResult.bodyText), "id");
-  if (!postId) return { ok: false, message: "LinkedIn returned no post id." };
-  return { ok: true, postId, postUrl: null };
+  return { ok: true, postId: shareResult.postId ?? UNKNOWN_LINKEDIN_POST_ID, postUrl: null };
 }
 
 async function linkedinPageRunTool(
@@ -191,15 +174,14 @@ async function linkedinPageRunTool(
   return { ok: true, data: { pages: organizations.organizations } };
 }
 
-export const linkedinPageBehavior: ProviderBehavior = {
+export const linkedinPageBehavior = {
+  authKind: "oauth2",
   connect: linkedinPageConnect,
   publish: linkedinPagePublish,
   runTool: linkedinPageRunTool,
   buildAuthorizeUrl: (input) =>
     buildOAuth2AuthorizeUrl(LINKEDIN_PAGE_OAUTH, input),
-};
-
-// ── Dribbble ──────────────────────────────────────────────────────────────
+} satisfies ProviderBehavior;
 
 const DRIBBBLE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://dribbble.com/oauth/authorize",
@@ -211,11 +193,8 @@ const DRIBBBLE_OAUTH: OAuth2Config = {
 };
 
 async function dribbbleConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Dribbble connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(DRIBBBLE_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -250,77 +229,73 @@ async function dribbbleConnect(
 async function dribbblePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  if (input.mediaType !== "image" || !input.mediaUrl) {
-    return { ok: false, message: "Dribbble shots require an image." };
+  if (input.postType !== "image" || !input.mediaUrl) {
+    return refusePublish("Dribbble shots require an image.");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Dribbble shots require a title." };
+  if (!title) return refusePublish("Dribbble shots require a title.");
 
-  // Fetch our own signed URL for the bytes, then multipart-upload the shot.
-  let imageBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(input.mediaUrl);
-    if (!mediaResponse.ok) {
-      return { ok: false, message: `Could not read the shot image (HTTP ${mediaResponse.status}).` };
-    }
-    imageBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the shot image: ${mediaError instanceof Error ? mediaError.message : "unknown"}`,
-    };
-  }
+  const storedImage = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedImage.ok) return storedImage;
 
-  const boundary = `----sharetopus${Math.abs(Date.now() | 0).toString(36)}`;
-  const safeFileName = input.fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "shot.png";
-  const parts = Buffer.concat([
-    Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="title"\r\n\r\n${title}\r\n` +
-        `--${boundary}\r\nContent-Disposition: form-data; name="description"\r\n\r\n${input.body.trim()}\r\n` +
-        `--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="${safeFileName}"\r\nContent-Type: ${input.mediaMimeType}\r\n\r\n`,
-      "utf-8",
-    ),
-    Buffer.from(imageBytes),
-    Buffer.from(`\r\n--${boundary}--\r\n`, "utf-8"),
-  ]);
+  const shotForm = new FormData();
+  shotForm.append("title", title);
+  shotForm.append("description", input.body.trim());
+  shotForm.append(
+    "image",
+    new Blob([storedImage.media], { type: input.mediaMimeType }),
+    toUploadFileName(input.fileName, "shot.png"),
+  );
 
   const shotResult = await providerFetch("https://api.dribbble.com/v2/shots", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.accessToken}`,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-    },
-    body: new Uint8Array(parts),
+    headers: { Authorization: `Bearer ${input.accessToken}` },
+    body: shotForm,
     timeoutMs: VARIANT_TIMEOUT_MS,
   });
 
-  if (!shotResult.ok) return { ok: false, message: shotResult.message };
+  if (!shotResult.ok) {
+    return failProviderFetch({
+      platform: "dribbble",
+      stage: "publish",
+      fetchFailure: shotResult,
+    });
+  }
   if (shotResult.status === 403) {
-    return {
-      ok: false,
-      message:
-        "Dribbble refused the upload (403). The app needs Dribbble's approved upload scope.",
-    };
+    return failHttpAnswer({
+      platform: "dribbble",
+      stage: "publish",
+      action: "Dribbble upload (the app needs Dribbble's approved upload scope)",
+      httpStatus: shotResult.status,
+      bodyText: "",
+    });
   }
   if (shotResult.status !== 202 && shotResult.status !== 201) {
-    return {
-      ok: false,
-      message: `Dribbble upload failed (${shotResult.status}): ${shotResult.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "dribbble",
+      stage: "publish",
+      action: "Dribbble upload",
+      httpStatus: shotResult.status,
+      bodyText: shotResult.bodyText,
+    });
   }
 
-  // 202: processing. Dribbble returns no body; the shot id is not known
-  // yet, so record acceptance honestly rather than inventing an id.
-  return { ok: true, postId: "accepted", postUrl: null };
+  const shotId = DRIBBBLE_SHOT_LOCATION_PATTERN.exec(shotResult.headers.location ?? "")?.[1];
+  if (!shotId) {
+    return failUnreadableAnswer({
+      message: "Dribbble accepted the shot but returned no shot location.",
+      stage: "publish",
+    });
+  }
+  return { ok: true, postId: shotId, postUrl: null };
 }
 
-export const dribbbleBehavior: ProviderBehavior = {
+export const dribbbleBehavior = {
+  authKind: "oauth2",
   connect: dribbbleConnect,
   publish: dribbblePublish,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(DRIBBBLE_OAUTH, input),
-};
-
-// ── Google My Business ────────────────────────────────────────────────────
+} satisfies ProviderBehavior;
 
 const GMB_OAUTH: OAuth2Config = {
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -334,11 +309,8 @@ const GMB_OAUTH: OAuth2Config = {
 };
 
 async function gmbConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Google Business connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(GMB_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -382,62 +354,33 @@ async function gmbConnect(
       username: null,
       avatarUrl: null,
     },
-    // The posting location is chosen via the listLocations tool and stored
-    // in options; the account is the anchor.
     config: { accountName },
-  };
-}
-
-async function gmbRefresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(GMB_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
   };
 }
 
 async function gmbPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  // localPosts live under a location; the tool supplies valid names.
-  const locationName =
-    typeof input.options.locationName === "string"
-      ? input.options.locationName
-      : null;
+  const locationName = input.options.locationName ?? null;
   if (!locationName || !/^locations\/[0-9]+$/.test(locationName)) {
-    return {
-      ok: false,
-      message:
-        'A location is required (options.locationName, shaped "locations/<id>"). Use the listLocations tool.',
-    };
+    return refusePublish(
+      'A location is required (options.locationName, shaped "locations/<id>"). Use the listLocations tool.',
+    );
   }
   const accountName =
     typeof input.config.accountName === "string" ? input.config.accountName : null;
   if (!accountName || !/^accounts\/[0-9]+$/.test(accountName)) {
-    return { ok: false, message: "Stored Google Business account is invalid." };
+    return refusePublish("Stored Google Business account is invalid.");
   }
 
-  const summary = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n")
-    .slice(0, 1500);
+  const summary = joinTitleAndBody(input);
 
   const postPayload: Record<string, unknown> = {
     languageCode: "en",
     topicType: "STANDARD",
     summary,
   };
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     postPayload.media = [{ mediaFormat: "PHOTO", sourceUrl: input.mediaUrl }];
   }
 
@@ -454,19 +397,30 @@ async function gmbPublish(
     },
   );
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "gmb", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Google Business post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "gmb",
+      stage: "publish",
+      action: "Google Business post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const created = parseJsonBody(result.bodyText);
   const postName = readStringField(created, "name");
+  if (!postName) {
+    return failUnreadableAnswer({
+      message: "Google Business returned no post name.",
+      stage: "publish",
+    });
+  }
   return {
     ok: true,
-    postId: postName ?? "created",
+    postId: postName,
     postUrl: readStringField(created, "searchUrl"),
   };
 }
@@ -503,10 +457,14 @@ async function gmbRunTool(input: ProviderToolInput): Promise<ProviderToolResult>
   return { ok: true, data: { locations: list } };
 }
 
-export const gmbBehavior: ProviderBehavior = {
+export const gmbBehavior = {
+  authKind: "oauth2",
   connect: gmbConnect,
   publish: gmbPublish,
-  refresh: gmbRefresh,
+  refresh: (input) => refreshOAuth2Credential(GMB_OAUTH, input),
+  // Google issues the refresh token once and it stays valid until revoked:
+  // https://developers.google.com/identity/protocols/oauth2/web-server (Refreshing an access token)
+  refreshTokenRotation: "stable",
   runTool: gmbRunTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(GMB_OAUTH, input),
-};
+} satisfies ProviderBehavior;

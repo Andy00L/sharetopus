@@ -1,4 +1,3 @@
-/** Sent to every MCP client at initialize; the /docs/mcp page shows the same text. */
 export const MCP_SERVER_INSTRUCTIONS = [
   "Sharetopus publishes and schedules posts on the user's connected social accounts.",
   "",

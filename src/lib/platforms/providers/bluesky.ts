@@ -1,11 +1,17 @@
 import "server-only";
 
+import { BLUESKY_REQUEST_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
+  ProviderRefreshInput,
+  ProviderRefreshResult,
 } from "./types";
 import {
   parseJsonBody,
@@ -13,36 +19,27 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import { fetchStoredMedia } from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import { classifyTokenHttpStatus } from "./_shared/oauth2";
+import { joinTitleAndBody } from "./_shared/postText";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
-/**
- * Bluesky (AT Protocol) provider.
- *
- * Auth is an app password exchanged for a session, so a user can connect
- * without any app registration on our side. createSession returns a short
- * lived accessJwt plus a refreshJwt; the access token is what we post with
- * and refreshSession renews it.
- *
- * The service URL is a connect field because a user may run their own PDS.
- * That makes it untrusted input, so every call goes through providerFetch
- * (DNS validated, IP pinned, redirects refused).
- *
- * sourceRef: atproto XRPC (com.atproto.server.createSession,
- * com.atproto.repo.uploadBlob, com.atproto.repo.createRecord).
- */
-
-/** Public Bluesky PDS. Used when the user leaves the service field blank. */
 const DEFAULT_BLUESKY_SERVICE = "https://bsky.social";
 
-/** Bluesky sessions are short lived; renew well before the hour is out. */
 const BLUESKY_SESSION_TTL_SECONDS = 60 * 60;
 
-/** Per-request ceiling for XRPC calls. */
-const BLUESKY_TIMEOUT_MS = 20_000;
 
-/** Bluesky rejects blobs over roughly 1MB on the image path. */
-const BLUESKY_MAX_IMAGE_BYTES = 1_000_000;
+// bluesky-social/bsky lexicons/app/bsky/embed/images.json: the image blob
+// "May be up to 2 MB, formerly limited to 1 MB", "maxSize": 2000000.
+const BLUESKY_MAX_IMAGE_BYTES = 2_000_000;
 
-function resolveServiceUrl(config: Record<string, unknown>): string {
+function resolveServiceUrl(config: ProviderConfig): string {
   const configured = config.service;
   if (typeof configured === "string" && configured.trim().length > 0) {
     return configured.trim().replace(/\/+$/, "");
@@ -51,12 +48,8 @@ function resolveServiceUrl(config: Record<string, unknown>): string {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Bluesky connects with an app password." };
-  }
-
   const service = resolveServiceUrl(input.values);
   const identifier = (input.values.identifier ?? "").trim();
   const appPassword = input.values.appPassword ?? "";
@@ -71,7 +64,7 @@ async function connect(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier, password: appPassword }),
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
@@ -112,60 +105,55 @@ async function connect(
       username: handle,
       avatarUrl: null,
     },
-    // The DID and service are needed on every later call; the app password
-    // is deliberately NOT stored, the refresh token replaces it.
     config: { service, did, handle },
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
+async function refresh(input: ProviderRefreshInput): Promise<ProviderRefreshResult> {
+  if (!input.refreshToken) {
+    return { ok: false, message: "No Bluesky refresh token is stored.", reason: "auth_expired" };
+  }
   // refreshSession authenticates with the refresh JWT itself, and it is
-  // bound to the PDS that issued it. The default service covers the hosted
-  // case; a self-hosted PDS re-authenticates through connect instead.
+  // bound to the PDS that issued it.
   const refreshResult = await providerFetch(
-    `${DEFAULT_BLUESKY_SERVICE}/xrpc/com.atproto.server.refreshSession`,
+    `${resolveServiceUrl(input.config)}/xrpc/com.atproto.server.refreshSession`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${refreshToken}` },
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${input.refreshToken}` },
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
   if (!refreshResult.ok) {
-    return { ok: false, message: refreshResult.message };
+    return {
+      ok: false,
+      message: refreshResult.message,
+      reason: "transient",
+    };
   }
   if (refreshResult.status !== 200) {
     return {
       ok: false,
-      message: `Bluesky session refresh failed (HTTP ${refreshResult.status}). Reconnect the account.`,
+      message: `Bluesky session refresh failed (HTTP ${refreshResult.status}).`,
+      reason: classifyTokenHttpStatus(refreshResult.status),
     };
   }
 
   const session = parseJsonBody(refreshResult.bodyText);
   const accessJwt = readStringField(session, "accessJwt");
-  const nextRefreshJwt = readStringField(session, "refreshJwt");
-  const did = readStringField(session, "did");
-  const handle = readStringField(session, "handle");
-
-  if (!accessJwt || !did) {
+  if (!accessJwt) {
     return {
       ok: false,
-      message: "Bluesky refresh response was missing accessJwt or did.",
+      message: "Bluesky refresh response was missing accessJwt.",
+      reason: "transient",
     };
   }
 
   return {
     ok: true,
     accessToken: accessJwt,
-    refreshToken: nextRefreshJwt,
+    rotatedRefreshToken: readStringField(session, "refreshJwt"),
     expiresIn: BLUESKY_SESSION_TTL_SECONDS,
-    identity: {
-      accountIdentifier: did,
-      displayName: handle,
-      username: handle,
-      avatarUrl: null,
-    },
-    config: { service: DEFAULT_BLUESKY_SERVICE, did, handle },
   };
 }
 
@@ -175,24 +163,22 @@ async function publish(
   const service = resolveServiceUrl(input.config);
   const did = typeof input.config.did === "string" ? input.config.did : null;
   if (!did) {
-    return { ok: false, message: "Stored Bluesky account is missing its DID." };
+    return refusePublish("Stored Bluesky account is missing its DID.");
   }
 
-  const postText = buildPostText(input);
+  const postText = joinTitleAndBody(input);
 
   // Image posts need the bytes uploaded as a blob first; the returned blob
   // ref is embedded in the record. Text posts skip this entirely.
   let embed: Record<string, unknown> | null = null;
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     const blobResult = await uploadImageBlob(
       service,
       input.accessToken,
       input.mediaUrl,
       input.mediaMimeType,
     );
-    if (!blobResult.ok) {
-      return { ok: false, message: blobResult.message };
-    }
+    if (!blobResult.ok) return blobResult;
     embed = {
       $type: "app.bsky.embed.images",
       images: [{ alt: input.title || "", image: blobResult.blob }],
@@ -219,46 +205,41 @@ async function publish(
         collection: "app.bsky.feed.post",
         record,
       }),
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
   if (!createResult.ok) {
-    return { ok: false, message: createResult.message };
+    return failProviderFetch({
+      platform: "bluesky",
+      stage: "publish",
+      fetchFailure: createResult,
+    });
   }
   if (createResult.status !== 200) {
-    // Surface the status so the worker's classifier can tell a 429 from a
-    // 401 and decide whether a retry is worth attempting.
-    return {
-      ok: false,
-      message: `Bluesky createRecord failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "bluesky",
+      stage: "publish",
+      action: "Bluesky createRecord",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
 
   const created = parseJsonBody(createResult.bodyText);
   const uri = readStringField(created, "uri");
   if (!uri) {
-    return { ok: false, message: "Bluesky did not return a post URI." };
+    return failUnreadableAnswer({
+      message: "Bluesky did not return a post URI.",
+      stage: "publish",
+    });
   }
 
   return { ok: true, postId: uri, postUrl: buildPostUrl(input.config, uri) };
 }
 
-/** Bluesky has no title field, so a title becomes the first line. */
-function buildPostText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
-}
-
-/**
- * Converts an at:// record URI into the browsable bsky.app permalink.
- * Returns null when the handle is unknown rather than guessing a URL.
- */
 function buildPostUrl(
-  config: Record<string, unknown>,
+  config: ProviderConfig,
   recordUri: string,
 ): string | null {
   const handle = typeof config.handle === "string" ? config.handle : null;
@@ -267,49 +248,16 @@ function buildPostUrl(
   return `https://bsky.app/profile/${handle}/post/${recordKey}`;
 }
 
-type BlobUploadResult =
-  | { ok: true; blob: unknown }
-  | { ok: false; message: string };
+type BlobUploadResult = { ok: true; blob: unknown } | ProviderPublishFailure;
 
-/**
- * Fetches our own signed media URL and uploads the bytes to the PDS.
- *
- * The media URL is minted by us (Supabase signed URL), not supplied by the
- * user, so it does not need the SSRF guard; the PDS call does and gets it.
- */
 async function uploadImageBlob(
   service: string,
   accessToken: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   mimeType: string,
 ): Promise<BlobUploadResult> {
-  let imageBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    imageBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
-
-  if (imageBytes.byteLength > BLUESKY_MAX_IMAGE_BYTES) {
-    return {
-      ok: false,
-      message: `Image is ${Math.round(imageBytes.byteLength / 1024)}KB; Bluesky accepts up to ${
-        BLUESKY_MAX_IMAGE_BYTES / 1000
-      }KB.`,
-    };
-  }
+  const storedImage = await fetchStoredMedia(mediaUrl, BLUESKY_MAX_IMAGE_BYTES);
+  if (!storedImage.ok) return storedImage;
 
   const uploadResult = await providerFetch(
     `${service}/xrpc/com.atproto.repo.uploadBlob`,
@@ -319,29 +267,45 @@ async function uploadImageBlob(
         "Content-Type": mimeType,
         Authorization: `Bearer ${accessToken}`,
       },
-      body: imageBytes,
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      body: storedImage.media,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "bluesky",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Bluesky blob upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "bluesky",
+      stage: "prepare",
+      action: "Bluesky blob upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
-  const uploaded = parseJsonObject(uploadResult.bodyText);
-  if (!uploaded) {
-    return { ok: false, message: "Bluesky blob upload returned no JSON." };
-  }
-  const blob = uploaded.blob;
+  const blob = parseJsonObject(uploadResult.bodyText)?.blob;
   if (!blob) {
-    return { ok: false, message: "Bluesky blob upload returned no blob ref." };
+    return failUnreadableAnswer({
+      message: "Bluesky blob upload returned no blob ref.",
+      stage: "prepare",
+    });
   }
 
   return { ok: true, blob };
 }
 
-export const blueskyBehavior: ProviderBehavior = { connect, publish, refresh };
+export const blueskyBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+  refresh,
+  // refreshSession returns a new refresh JWT and revokes the old one after a grace period:
+  // https://github.com/bluesky-social/atproto/blob/main/packages/pds/src/account-manager/helpers/auth.ts
+  refreshTokenRotation: "rotating",
+} satisfies ProviderBehavior;

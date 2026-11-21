@@ -12,18 +12,6 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * GET /api/x402/history
- *
- * Pays the list_history action (price per pricing_actions). Reads content
- * history for the wallet.
- * Steps:
- * 1. Parse query params (platform, limit).
- * 2. x402 middleware handles payment and the charge.
- * 3. Query content_history filtered by principal_id.
- */
-
-/** Page size bounds for ?limit. */
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
 
@@ -60,8 +48,6 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
 
     let platform: SchedulablePlatform | undefined;
     if (platformParam) {
-      // The platform registry is the one list of platform values
-      // (src/lib/platforms/capabilities.ts), not a copy kept here.
       if (!isSchedulablePlatform(platformParam)) {
         return {
           success: false,
@@ -103,11 +89,9 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
         success: false,
         errorKind: "query_failed",
         message: result.message,
-        refundable: true,
       };
     }
 
-    // Safe projection: only the fields an agent needs.
     const history = (result.data ?? []).map((entry) => ({
       id: entry.id,
       platform: entry.platform,

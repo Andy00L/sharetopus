@@ -14,48 +14,51 @@ import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
+  loadChargeReplay,
   refundCharge,
   settleCharge,
   updateChargeRecord,
+  type ChargeMetadata,
+  type ChargeRecordFields,
   type ChargeReplay,
 } from "@/lib/x402/charges/chargeLifecycle";
-import { markChargeFailed } from "@/lib/x402/charges/chargeTransitions";
 import { getBaseUrl } from "@/lib/x402/config";
 import {
   verifyPayment,
+  type PresentedPayment,
   type SettlePaymentError,
+  type VerifiedPayment,
   type VerifyPaymentError,
 } from "@/lib/x402/facilitator";
 import { buildPaymentRequired, readPaymentHeader } from "@/lib/x402/http/paymentHttp";
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
 import { resolveRequestNetwork } from "@/lib/x402/http/resolveRequestNetwork";
+import {
+  KEY_RESERVATION_TTL_MS,
+  reserveIdempotencyKey,
+} from "@/lib/x402/middleware/idempotencyKeyReservation";
 import type { NetworkConfig } from "@/lib/x402/networks";
-import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import {
+  readActionPrice,
+  type PurchasableX402Action,
+} from "@/lib/x402/pricing/readActionPrice";
 import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+const RATE_LIMIT_WINDOW_SECONDS = 60;
+const KEY_IN_PROGRESS_RETRY_AFTER_SECONDS = 5;
+const KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS = 60;
+const REPLAY_RETRY_AFTER_SECONDS = 5;
+const DUPLICATE_KEY_ERROR_KIND = "duplicate_idempotency_key";
 
-/**
- * Resolves the pricing_actions key for this request.
- * Most routes return a constant. post-now/schedule resolve from body.
- */
 export type ActionResolver<TBody> = (
   body: TBody,
 ) =>
-  | { success: true; action: string }
+  | { success: true; action: PurchasableX402Action }
   | { success: false; httpStatus: number; errorKind: string; message: string };
 
-/**
- * A business rule checked BEFORE any money moves: ownership, eligibility,
- * quotas, duplicate idempotency keys. A rejection here costs the caller
- * nothing and costs Sharetopus no settlement fee or refund gas. It runs
- * after verify, because the rule usually depends on who is paying.
- */
 export type X402Precheck<TBody> = (params: {
   body: TBody;
   principal: WalletPrincipal;
@@ -66,16 +69,10 @@ export type X402HandlerResult<TResult> =
   | {
       success: true;
       data: TResult;
-      /** Extra metadata stored on the charge (e.g. post-now's batch_id). */
-      chargeMetadata?: { [key: string]: Json | undefined };
+      chargeRecord?: ChargeRecordFields;
     }
-  | { success: false; errorKind: string; message: string; refundable: boolean };
+  | { success: false; errorKind: string; message: string };
 
-/**
- * Business logic called AFTER payment is settled and the charge row reached
- * status="settled". Returns the response body on success, or a typed error
- * for the refund path.
- */
 export type X402Handler<TBody, TResult> = (params: {
   body: TBody;
   principal: WalletPrincipal;
@@ -83,49 +80,56 @@ export type X402Handler<TBody, TResult> = (params: {
   requestId: string;
 }) => Promise<X402HandlerResult<TResult>>;
 
+export type RecoveredReplayResult =
+  | { kind: "recovered"; data: Json }
+  | { kind: "not_found" }
+  | { kind: "lookup_failed"; message: string };
+
+export type ReplayResultRecovery<TBody> = (params: {
+  principal: WalletPrincipal;
+  chargeId: string;
+  storedMetadata: ChargeMetadata;
+  body: TBody;
+}) => Promise<RecoveredReplayResult>;
+
+export type KeyedReplayBatch =
+  | { kind: "found"; batchId: string }
+  | { kind: "not_found" }
+  | { kind: "lookup_failed"; message: string };
+
+export type KeyedReplayBatchLookup<TBody> = (params: {
+  principal: WalletPrincipal;
+  body: TBody;
+}) => Promise<KeyedReplayBatch>;
+
 export interface X402PaidEndpointOptions<TBody, TResult> {
-  /** Endpoint path for logging and resource URL (e.g. "/api/x402/post-now"). */
   endpointPath: string;
 
-  /** Action resolver. Maps the parsed body to a pricing_actions key. */
   resolveAction: ActionResolver<TBody>;
 
-  /**
-   * pricing_actions key used to price the 402 challenge when an UNPAID
-   * request carries a body that does not parse or resolve. A2MCP
-   * marketplace validators (OKX) probe registered endpoints with empty
-   * bodies and expect the standard 402 challenge, not a 400; the x402
-   * ordering is payment-first. Paid requests keep strict validation: an
-   * invalid body with a payment header is still a 400 before any
-   * verify/settle, so nobody is charged for a request that cannot run.
-   */
-  defaultAction: string;
+  defaultAction: PurchasableX402Action;
 
-  /**
-   * Parse and validate the request body (POST: JSON, GET: query params).
-   * Returns typed body on success or an error tuple on validation failure.
-   */
   parseBody: (req: NextRequest) => Promise<
     | { success: true; data: TBody }
     | { success: false; httpStatus: number; errorKind: string; message: string }
   >;
 
-  /** Optional business-rule check that runs before settlement. */
   precheck?: X402Precheck<TBody>;
 
-  /** Business logic handler called after payment is settled. */
+  idempotencyKey?: (body: TBody) => string | undefined;
+
+  requestDigest?: (body: TBody) => string;
+
   handler: X402Handler<TBody, TResult>;
 
-  /** Rate limit scope identifier (e.g. "x402:post-now"). */
+  recoverReplayResult?: ReplayResultRecovery<TBody>;
+
+  findKeyedReplayBatch?: KeyedReplayBatchLookup<TBody>;
+
   rateLimitScope: string;
 
-  /** Max requests per minute per IP for this endpoint. */
   rateLimitPerMinute: number;
 }
-
-// ---------------------------------------------------------------------------
-// Request context (audit + error responses)
-// ---------------------------------------------------------------------------
 
 type AuditStatus = X402AuditEntry["resultStatus"];
 
@@ -153,11 +157,6 @@ interface RequestContext {
   fail: (params: FailureParams) => Response;
 }
 
-/**
- * Per-request audit and failure helpers. Audit rows are written after the
- * response is sent (next/server after()), so logging never adds a database
- * round trip to the paid path's latency.
- */
 async function createRequestContext(endpointPath: string): Promise<RequestContext> {
   const startMs = performance.now();
   const ipHash = await extractIpHash();
@@ -195,29 +194,27 @@ async function createRequestContext(endpointPath: string): Promise<RequestContex
   return { endpointPath, audit, fail };
 }
 
-// ---------------------------------------------------------------------------
-// Shared preparation: rate limit, network, price
-// ---------------------------------------------------------------------------
-
 type PreparedRequest =
   | { ok: true; network: NetworkConfig; recipientAddress: string; usdcPrice: number }
   | { ok: false; response: Response };
 
 async function prepareRequest(params: {
   req: NextRequest;
-  action: string;
+  action: PurchasableX402Action;
   rateLimitScope: string;
   rateLimitPerMinute: number;
   context: RequestContext;
 }): Promise<PreparedRequest> {
   const { context, action } = params;
 
-  const rateLimitResult = await checkRateLimit(
-    params.rateLimitScope,
-    null,
-    params.rateLimitPerMinute,
-    60,
-  );
+  const [rateLimitResult, priceResult] = await Promise.all([
+    checkRateLimit({
+      operation: params.rateLimitScope,
+      identifier: null,
+      rule: { limit: params.rateLimitPerMinute, windowSeconds: RATE_LIMIT_WINDOW_SECONDS },
+    }),
+    readActionPrice(action),
+  ]);
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     return {
@@ -252,11 +249,8 @@ async function prepareRequest(params: {
     };
   }
 
-  const priceResult = await readActionPrice(action);
   if (!priceResult.ok) {
     console.error(`[prepareRequest] Pricing lookup failed for "${action}": ${priceResult.message}`);
-    // action: null because x402_access_log.action carries an FK to
-    // pricing_actions and the row may not exist at all.
     return {
       ok: false,
       response: context.fail({
@@ -279,15 +273,12 @@ async function prepareRequest(params: {
   };
 }
 
-/** The 402 challenge for an unpaid request. */
 async function buildChallengeResponse(params: {
   action: string;
   prepared: Extract<PreparedRequest, { ok: true }>;
   context: RequestContext;
 }): Promise<Response> {
   const { action, prepared, context } = params;
-  // A Solana 402 without extra.feePayer is unpayable by spec-compliant
-  // clients, so a fee-payer outage returns 502 instead of an empty 402.
   const paymentRequiredResult = await buildPaymentRequired({
     resourceUrl: `${getBaseUrl()}${context.endpointPath}`,
     network: prepared.network,
@@ -296,13 +287,14 @@ async function buildChallengeResponse(params: {
     error: "PAYMENT-SIGNATURE header is required",
   });
   if (!paymentRequiredResult.ok) {
+    const isPricingInvalid = paymentRequiredResult.reason === "invalid_amount";
     return context.fail({
       principal: null,
       action,
       chargeId: null,
       resultStatus: "error",
-      httpStatus: 502,
-      errorKind: "facilitator_error",
+      httpStatus: isPricingInvalid ? 500 : 502,
+      errorKind: isPricingInvalid ? "pricing_not_configured" : "facilitator_error",
       message: paymentRequiredResult.message,
     });
   }
@@ -310,37 +302,6 @@ async function buildChallengeResponse(params: {
   return buildPaymentRequiredResponse(paymentRequiredResult.paymentRequired);
 }
 
-// ---------------------------------------------------------------------------
-// HOF: x402PaidEndpoint
-// ---------------------------------------------------------------------------
-
-/**
- * Higher-order function wrapping the x402 verify/settle/refund flow shared
- * by every paid endpoint except connect (which keeps its own response
- * contract but runs the same charge lifecycle, charges/chargeLifecycle.ts).
- *
- * Steps:
- *  1. Read the payment header (payment-first: unpaid requests are answered
- *     with a 402 challenge even when their body is invalid; see
- *     options.defaultAction).
- *  2. Parse body and resolve the action key. Invalid body or action with a
- *     payment header present: 400 before any verify/settle.
- *  3. Rate limit per IP; resolve the network and payout address; read the
- *     price.
- *  4. No payment header: 402 with the v2 PaymentRequired header + body.
- *  5. Verify the payment (off-chain).
- *  6. Resolve or onboard the wallet principal from the facilitator-recovered
- *     payer. Sanctioned wallets are rejected before any charge row.
- *  7. Precheck the business rules; a rejection costs nothing.
- *  8. Settle through the charge lifecycle: pending row first (a replay of
- *     the same payment gets the stored result back), then settle, then
- *     pending -> settled.
- *  9. Run the handler. A refundable failure refunds on-chain and records
- *     "refunded" only once the chain confirms it; a non-refundable failure
- *     marks the charge failed.
- * 10. Success: the result is stored on the charge for replay (write
- *     actions), and the response carries PAYMENT-RESPONSE.
- */
 export function x402PaidEndpoint<TBody, TResult extends Json>(
   options: X402PaidEndpointOptions<TBody, TResult>,
 ): (req: NextRequest) => Promise<Response> {
@@ -348,45 +309,35 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     const requestId = randomUUID();
     const context = await createRequestContext(options.endpointPath);
 
-    // Step 1: read the payment header before validating the body; x402 is
-    // payment-first and marketplace validators probe with empty bodies.
     const paymentHeader = readPaymentHeader(req);
+    const parsedRequest = await parsePaidRequest(req, options);
 
-    // Step 2: parse body and resolve action. Unpaid requests fall back to
-    // defaultAction for challenge pricing; the null parsedBody never
-    // survives past the 402 return.
-    let parsedBody: { data: TBody } | null = null;
-    let actionKey: string = options.defaultAction;
-    const bodyResult = await options.parseBody(req);
-    if (bodyResult.success) {
-      const actionResult = options.resolveAction(bodyResult.data);
-      if (actionResult.success) {
-        parsedBody = { data: bodyResult.data };
-        actionKey = actionResult.action;
-      } else if (paymentHeader) {
-        return context.fail({
-          principal: null,
-          action: null,
-          chargeId: null,
-          resultStatus: "error",
-          httpStatus: actionResult.httpStatus,
-          errorKind: actionResult.errorKind,
-          message: actionResult.message,
-        });
-      }
-    } else if (paymentHeader) {
+    if (!paymentHeader) {
+      const challengeAction = parsedRequest.success ? parsedRequest.action : options.defaultAction;
+      const challengePrepared = await prepareRequest({
+        req,
+        action: challengeAction,
+        rateLimitScope: options.rateLimitScope,
+        rateLimitPerMinute: options.rateLimitPerMinute,
+        context,
+      });
+      if (!challengePrepared.ok) return challengePrepared.response;
+      return buildChallengeResponse({ action: challengeAction, prepared: challengePrepared, context });
+    }
+
+    if (!parsedRequest.success) {
       return context.fail({
         principal: null,
         action: null,
         chargeId: null,
         resultStatus: "error",
-        httpStatus: bodyResult.httpStatus,
-        errorKind: bodyResult.errorKind,
-        message: bodyResult.message,
+        httpStatus: parsedRequest.httpStatus,
+        errorKind: parsedRequest.errorKind,
+        message: parsedRequest.message,
       });
     }
+    const { body, action: actionKey, requestDigest } = parsedRequest;
 
-    // Step 3: rate limit, network, price.
     const prepared = await prepareRequest({
       req,
       action: actionKey,
@@ -397,28 +348,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     if (!prepared.ok) return prepared.response;
     const { network, recipientAddress, usdcPrice } = prepared;
 
-    // Step 4: no payment header, answer with the challenge.
-    if (!paymentHeader) {
-      return buildChallengeResponse({ action: actionKey, prepared, context });
-    }
-
-    // A null parsedBody only exists on the unpaid path, which returned above;
-    // this guard is a fail-closed invariant check, not control flow.
-    if (parsedBody === null) {
-      console.error("[x402PaidEndpoint] Invariant violation: paid path reached without a parsed body.");
-      return context.fail({
-        principal: null,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: 500,
-        errorKind: "internal_error",
-        message: "Internal request-state error. No payment was taken.",
-      });
-    }
-    const body = parsedBody.data;
-
-    // Step 5: verify (off-chain).
     const verifyResult = await verifyPayment({
       paymentHeader,
       amountUsdc: usdcPrice,
@@ -427,6 +356,20 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     });
     if (!verifyResult.ok) {
       const verifyError = verifyResult.error;
+      const presentedPayment = readPossiblySpentPayment(verifyError);
+      if (presentedPayment && options.recoverReplayResult) {
+        const landedReplayResponse = await answerLandedPaymentReplay({
+          payment: presentedPayment,
+          options,
+          body,
+          requestDigest,
+          actionKey,
+          network,
+          usdcPrice,
+          context,
+        });
+        if (landedReplayResponse) return landedReplayResponse;
+      }
       return context.fail({
         principal: null,
         action: actionKey,
@@ -438,7 +381,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       });
     }
 
-    // Step 6: resolve or onboard the wallet principal.
     const walletResult = await resolveOrOnboardWalletPrincipal({
       payerAddress: verifyResult.payerAddress,
       network,
@@ -467,11 +409,99 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     }
     const principal = walletResult.principal;
 
-    // Step 7: business rules, before any money moves.
-    if (options.precheck) {
-      const precheckResult = await options.precheck({ body, principal, network });
-      if (!precheckResult.ok) {
-        return context.fail({
+    const reservation = await reserveIdempotencyKey({
+      endpointPath: options.endpointPath,
+      principalId: principal.principalId,
+      idempotencyKey: options.idempotencyKey?.(body),
+      requestId,
+    });
+    if (reservation.kind === "held") {
+      return context.fail({
+        principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 409,
+        errorKind: "idempotency_key_in_progress",
+        message: `Another paid call with this idempotency_key is running, or ended less than ${KEY_RESERVATION_TTL_MS / 1000} seconds ago without a known payment outcome. No payment was taken.`,
+        retryAfterSeconds: KEY_IN_PROGRESS_RETRY_AFTER_SECONDS,
+      });
+    }
+    if (reservation.kind === "unavailable") {
+      console.error(`[x402PaidEndpoint] Idempotency key reservation failed: ${reservation.message}`);
+      return context.fail({
+        principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 503,
+        errorKind: "idempotency_check_unavailable",
+        message: "The idempotency_key could not be checked. No payment was taken. Retry shortly.",
+        retryAfterSeconds: KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS,
+      });
+    }
+
+    const paidCall = await chargeAndRunAction({
+      req,
+      options,
+      body,
+      requestDigest,
+      actionKey,
+      principal,
+      paymentHeader,
+      verified: verifyResult,
+      prepared,
+      requestId,
+      context,
+    });
+    if (reservation.kind === "reserved" && !paidCall.mayHoldUnusedPayment) {
+      await reservation.release();
+    }
+    return paidCall.response;
+  };
+}
+
+type PaidCallOutcome = { response: Response; mayHoldUnusedPayment: boolean };
+
+async function chargeAndRunAction<TBody, TResult extends Json>(params: {
+  req: NextRequest;
+  options: X402PaidEndpointOptions<TBody, TResult>;
+  body: TBody;
+  requestDigest: string | undefined;
+  actionKey: PurchasableX402Action;
+  principal: WalletPrincipal;
+  paymentHeader: string;
+  verified: VerifiedPayment;
+  prepared: Extract<PreparedRequest, { ok: true }>;
+  requestId: string;
+  context: RequestContext;
+}): Promise<PaidCallOutcome> {
+  const { req, options, body, requestDigest, actionKey, principal, paymentHeader, verified, requestId, context } =
+    params;
+  const { network, recipientAddress, usdcPrice } = params.prepared;
+
+  if (options.precheck) {
+    const precheckResult = await options.precheck({ body, principal, network });
+    if (!precheckResult.ok) {
+      if (precheckResult.errorKind === DUPLICATE_KEY_ERROR_KIND && options.findKeyedReplayBatch) {
+        const keyedReplayResponse = await answerKeyedDispatchReplay({
+          findKeyedReplayBatch: options.findKeyedReplayBatch,
+          options,
+          body,
+          requestDigest,
+          actionKey,
+          principal,
+          payerAddress: verified.payerAddress,
+          network,
+          usdcPrice,
+          context,
+        });
+        if (keyedReplayResponse) {
+          return { response: keyedReplayResponse, mayHoldUnusedPayment: false };
+        }
+      }
+      return {
+        response: context.fail({
           principal,
           action: actionKey,
           chargeId: null,
@@ -479,39 +509,46 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
           httpStatus: precheckResult.httpStatus,
           errorKind: precheckResult.errorKind,
           message: `${precheckResult.message} No payment was taken.`,
-        });
-      }
+        }),
+        mayHoldUnusedPayment: false,
+      };
     }
+  }
 
-    // Step 8: record, settle, finalize.
-    const chargeResult = await settleCharge({
-      paymentHeader,
-      network,
-      verified: verifyResult,
-      principal,
-      action: actionKey,
-      amountUsdc: usdcPrice,
-      requestId,
-      recipientAddress,
-    });
-    if (!chargeResult.ok) {
-      switch (chargeResult.reason) {
-        case "replay":
-          return respondToReplay({
+  const chargeResult = await settleCharge({
+    paymentHeader,
+    network,
+    verified,
+    principal,
+    action: actionKey,
+    amountUsdc: usdcPrice,
+    requestId,
+    recipientAddress,
+    requestDigest,
+  });
+  if (!chargeResult.ok) {
+    switch (chargeResult.reason) {
+      case "replay":
+        return {
+          response: await respondToReplay({
             replay: chargeResult.replay,
             req,
             options,
             body,
+            requestDigest,
             principal,
             network,
-            usdcPrice,
-            payerAddress: verifyResult.payerAddress,
+            amountAtomic: verified.requirements.amount,
+            payerAddress: verified.payerAddress,
             actionKey,
             requestId,
             context,
-          });
-        case "charge_insert_failed":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: false,
+        };
+      case "charge_insert_failed":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: null,
@@ -519,9 +556,12 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: 500,
             errorKind: "charge_insert_failed",
             message: `${chargeResult.message} No payment was taken.`,
-          });
-        case "settle_failed":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: false,
+        };
+      case "settle_failed":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: chargeResult.chargeId,
@@ -529,9 +569,12 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: mapSettleErrorToHttpStatus(chargeResult.error.kind),
             errorKind: chargeResult.error.kind,
             message: chargeResult.error.message,
-          });
-        case "settled_unrecorded":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: mayHaveSettled(chargeResult.error.kind),
+        };
+      case "settled_unrecorded":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: chargeResult.chargeId,
@@ -540,11 +583,14 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             errorKind: "charge_update_failed",
             message:
               "Payment settled but could not be recorded. It is queued for reconciliation; do not retry this payment.",
-          });
-        default: {
-          const unhandledResult: never = chargeResult;
-          console.error(`[x402PaidEndpoint] Unhandled charge result: ${JSON.stringify(unhandledResult)}`);
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: true,
+        };
+      default: {
+        const unhandledResult: never = chargeResult;
+        console.error(`[chargeAndRunAction] Unhandled charge result: ${JSON.stringify(unhandledResult)}`);
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: null,
@@ -552,45 +598,28 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: 500,
             errorKind: "internal_error",
             message: "Internal payment-state error.",
-          });
-        }
+          }),
+          mayHoldUnusedPayment: true,
+        };
       }
     }
-    const { chargeId, txHash } = chargeResult;
+  }
+  const { chargeId, txHash } = chargeResult;
 
-    // Step 9: the paid action.
-    const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
+  const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
 
-    if (!handlerResult.success) {
-      if (handlerResult.refundable) {
-        const refundOutcome = await refundCharge({
-          chargeId,
-          settleTxHash: txHash,
-          payerAddress: verifyResult.payerAddress,
-          amountUsdc: usdcPrice,
-          network,
-          reason: handlerResult.message,
-          principalId: principal.principalId,
-        });
-        return context.fail({
-          principal,
-          action: actionKey,
-          chargeId,
-          resultStatus: "error",
-          httpStatus: 500,
-          errorKind: handlerResult.errorKind,
-          message: handlerResult.message,
-          refundInitiated: refundOutcome.refundInitiated,
-          refundTxHash: refundOutcome.refundTxHash,
-        });
-      }
-
-      await markChargeFailed({
-        chargeId,
-        fromStatus: "settled",
-        errorMessage: handlerResult.message,
-      });
-      return context.fail({
+  if (!handlerResult.success) {
+    const refundOutcome = await refundCharge({
+      chargeId,
+      settleTxHash: txHash,
+      payerAddress: verified.payerAddress,
+      amountUsdc: usdcPrice,
+      network,
+      reason: handlerResult.message,
+      principalId: principal.principalId,
+    });
+    return {
+      response: context.fail({
         principal,
         action: actionKey,
         chargeId,
@@ -598,61 +627,68 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
         httpStatus: 500,
         errorKind: handlerResult.errorKind,
         message: handlerResult.message,
-      });
-    }
-
-    // Step 10: success. Write actions keep a replay copy of the result so a
-    // client that lost this response can present the same payment again.
-    const storedMetadata = {
-      ...(handlerResult.chargeMetadata ?? {}),
-      ...(req.method === "GET" ? {} : { result: handlerResult.data }),
+        refundInitiated: refundOutcome.refundInitiated,
+        refundTxHash: refundOutcome.refundTxHash,
+      }),
+      mayHoldUnusedPayment: !refundOutcome.refundConfirmed,
     };
-    if (Object.keys(storedMetadata).length > 0) {
-      await updateChargeRecord(chargeId, { metadata: storedMetadata });
-    }
+  }
 
-    context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
-    return buildSettledResponse({
+  const chargeRecord = handlerResult.chargeRecord ?? {};
+  const storedMetadata = {
+    ...(chargeRecord.metadata ?? {}),
+    ...(req.method === "GET" ? {} : { result: handlerResult.data }),
+  };
+  const recordWrite = await updateChargeRecord(chargeId, {
+    ...chargeRecord,
+    metadata: Object.keys(storedMetadata).length > 0 ? storedMetadata : undefined,
+  });
+  if (!recordWrite.ok) {
+    console.error(
+      `[chargeAndRunAction] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers only what the endpoint rebuilds from its own rows (409 when it rebuilds nothing) and /proof shows no post for it.`,
+    );
+  }
+
+  context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
+  return {
+    response: buildSettledResponse({
       data: handlerResult.data,
       txHash,
       chargeId,
       network,
-      payerAddress: verifyResult.payerAddress,
-      usdcPrice,
-    });
+      payerAddress: verified.payerAddress,
+      amountAtomic: verified.requirements.amount,
+    }),
+    mayHoldUnusedPayment: false,
   };
 }
 
-// ---------------------------------------------------------------------------
-// HOF: x402ChallengeGet
-// ---------------------------------------------------------------------------
+function mayHaveSettled(kind: SettlePaymentError["kind"]): boolean {
+  switch (kind) {
+    case "not_verified":
+    case "insufficient_funds":
+      return false;
+    case "facilitator_error":
+    case "timeout":
+      return true;
+    default: {
+      const unhandledKind: never = kind;
+      console.error(`[mayHaveSettled] Unhandled kind: ${String(unhandledKind)}`);
+      return true;
+    }
+  }
+}
 
 export interface X402ChallengeGetOptions {
-  /** Endpoint path for logging and resource URL (e.g. "/api/x402/post-now"). */
   endpointPath: string;
 
-  /** pricing_actions key used to price the challenge (the endpoint's representative action). */
-  action: string;
+  action: PurchasableX402Action;
 
-  /** Rate limit scope identifier (shared with the POST handler is fine). */
   rateLimitScope: string;
 
-  /** Max requests per minute per IP. */
   rateLimitPerMinute: number;
 }
 
-/**
- * Challenge-only GET handler for paid POST endpoints.
- *
- * A2MCP marketplace validators (OKX) probe registered endpoints with a bare
- * GET (curl -i) and require the standard x402 402 challenge
- * (PAYMENT-REQUIRED header, x402Version body). This handler always answers
- * 402 priced at options.action and never executes the paid action, even if
- * a payment header is sent: execution semantics live on POST only.
- *
- * Next.js derives HEAD from GET automatically, so curl -I probes are
- * covered by the same handler.
- */
 export function x402ChallengeGet(
   options: X402ChallengeGetOptions,
 ): (req: NextRequest) => Promise<Response> {
@@ -670,15 +706,25 @@ export function x402ChallengeGet(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+async function parsePaidRequest<TBody, TResult>(
+  req: NextRequest,
+  options: X402PaidEndpointOptions<TBody, TResult>,
+): Promise<
+  | { success: true; body: TBody; action: PurchasableX402Action; requestDigest: string | undefined }
+  | { success: false; httpStatus: number; errorKind: string; message: string }
+> {
+  const bodyResult = await options.parseBody(req);
+  if (!bodyResult.success) return bodyResult;
+  const actionResult = options.resolveAction(bodyResult.data);
+  if (!actionResult.success) return actionResult;
+  return {
+    success: true,
+    body: bodyResult.data,
+    action: actionResult.action,
+    requestDigest: options.requestDigest?.(bodyResult.data),
+  };
+}
 
-/**
- * Runs the handler. Handlers return errors as values, but money has already
- * settled when this runs, so an unexpected throw must not escape: it is
- * converted into a refundable failure.
- */
 async function runHandler<TBody, TResult>(
   handler: X402Handler<TBody, TResult>,
   params: { body: TBody; principal: WalletPrincipal; chargeId: string; requestId: string },
@@ -694,26 +740,24 @@ async function runHandler<TBody, TResult>(
       success: false,
       errorKind: "internal_error",
       message: "Unexpected error while executing the paid action.",
-      refundable: true,
     };
   }
 }
 
-/** Success response with the PAYMENT-RESPONSE header (both generations). */
 function buildSettledResponse(params: {
   data: Json;
   txHash: string;
   chargeId: string;
   network: NetworkConfig;
   payerAddress: string;
-  usdcPrice: number;
+  amountAtomic: string;
 }): Response {
   const settleResponse: SettleResponse = {
     success: true,
     payer: params.payerAddress,
     transaction: params.txHash,
     network: params.network.caipNetwork,
-    amount: usdcToAtomic(params.usdcPrice, params.network.usdcDecimals),
+    amount: params.amountAtomic,
   };
   return buildGenericSuccessResponse({
     data: params.data,
@@ -725,50 +769,38 @@ function buildSettledResponse(params: {
   });
 }
 
-/**
- * Answers a payment that was already presented. A settled write action
- * returns its stored result; a settled read (GET) runs again, since reads
- * are safe to repeat and their results are not stored. Nothing here charges
- * or settles anything.
- */
 async function respondToReplay<TBody, TResult extends Json>(params: {
   replay: ChargeReplay;
   req: NextRequest;
   options: X402PaidEndpointOptions<TBody, TResult>;
   body: TBody;
+  requestDigest: string | undefined;
   principal: WalletPrincipal;
   network: NetworkConfig;
-  usdcPrice: number;
+  amountAtomic: string;
   payerAddress: string;
   actionKey: string;
   requestId: string;
   context: RequestContext;
 }): Promise<Response> {
-  const { replay, context, principal, actionKey } = params;
+  const { context, principal, actionKey } = params;
+  const replay = scopeReplayToCaller(params.replay, {
+    principalId: principal.principalId,
+    requestDigest: params.requestDigest,
+  });
 
   switch (replay.state) {
     case "in_progress":
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: replay.chargeId,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "payment_in_progress",
-        message: "This payment is still being processed. Retry the same request in a few seconds.",
-        retryAfterSeconds: 5,
-      });
+      return failPaymentInProgress({ context, principal, actionKey, chargeId: replay.chargeId });
 
     case "closed":
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: replay.chargeId,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "replay_detected",
-        message: "This payment has already been used.",
-      });
+      return failPaymentUsed({ context, principal, actionKey, chargeId: replay.chargeId });
+
+    case "not_found":
+      return failPaymentUsed({ context, principal, actionKey, chargeId: null });
+
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: replay.message });
 
     case "settled": {
       let replayData: Json | null = replay.storedResult;
@@ -792,6 +824,33 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
         }
         replayData = rerun.data;
       }
+      if (replayData === null && params.options.recoverReplayResult) {
+        const recovery = await params.options.recoverReplayResult({
+          principal,
+          chargeId: replay.chargeId,
+          storedMetadata: replay.storedMetadata,
+          body: params.body,
+        });
+        switch (recovery.kind) {
+          case "recovered":
+            replayData = recovery.data;
+            break;
+          case "not_found":
+            break;
+          case "lookup_failed":
+            return failReplayLookup({
+              context,
+              principal,
+              actionKey,
+              chargeId: replay.chargeId,
+              message: recovery.message,
+            });
+          default: {
+            const unhandledRecovery: never = recovery;
+            console.error(`[respondToReplay] Unhandled recovery: ${JSON.stringify(unhandledRecovery)}`);
+          }
+        }
+      }
       if (replayData === null) {
         return context.fail({
           principal,
@@ -810,27 +869,268 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
         chargeId: replay.chargeId,
         network: params.network,
         payerAddress: params.payerAddress,
-        usdcPrice: params.usdcPrice,
+        amountAtomic: params.amountAtomic,
       });
     }
 
     default: {
       const unhandledReplay: never = replay;
       console.error(`[respondToReplay] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "replay_detected",
-        message: "This payment has already been used.",
-      });
+      return failPaymentUsed({ context, principal, actionKey, chargeId: null });
     }
   }
 }
 
-/** Human-readable detail for a verify rejection. */
+type ReplayCaller = { principalId: string; requestDigest: string | undefined };
+
+function scopeReplayToCaller(replay: ChargeReplay, caller: ReplayCaller): ChargeReplay {
+  switch (replay.state) {
+    case "settled":
+    case "in_progress":
+    case "closed": {
+      const isCallersCharge = replay.principalId === caller.principalId;
+      const isOtherRequest = replay.requestDigest !== null && replay.requestDigest !== caller.requestDigest;
+      return isCallersCharge && !isOtherRequest ? replay : { state: "not_found" };
+    }
+    case "not_found":
+    case "lookup_failed":
+      return replay;
+    default: {
+      const unhandledReplay: never = replay;
+      console.error(`[scopeReplayToCaller] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
+      return { state: "not_found" };
+    }
+  }
+}
+
+type ReplayFailureParams = {
+  context: RequestContext;
+  principal: WalletPrincipal;
+  actionKey: string;
+  chargeId: string | null;
+};
+
+function failPaymentInProgress(params: ReplayFailureParams & { chargeId: string }): Response {
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 409,
+    errorKind: "payment_in_progress",
+    message: "This payment is still being processed. Retry the same request in a few seconds.",
+    retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+  });
+}
+
+function failPaymentUsed(params: ReplayFailureParams): Response {
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 409,
+    errorKind: "replay_detected",
+    message: "This payment has already been used.",
+  });
+}
+
+function failReplayLookup(
+  params: Omit<ReplayFailureParams, "principal"> & { principal: WalletPrincipal | null; message: string },
+): Response {
+  console.error(
+    `[failReplayLookup] Outcome lookup failed for a replayed payment (charge ${params.chargeId ?? "unknown"}): ${params.message}`,
+  );
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 503,
+    errorKind: "replay_lookup_failed",
+    message:
+      "This payment was already used and its outcome could not be read right now. Retry the same request shortly; it is not charged again.",
+    retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+  });
+}
+
+function readPossiblySpentPayment(error: VerifyPaymentError): PresentedPayment | null {
+  switch (error.kind) {
+    case "replay_detected":
+    case "authorization_expired":
+    case "invalid_payment":
+    case "insufficient_funds":
+      return error.payment;
+    case "malformed_header":
+    case "invalid_signature":
+    case "amount_mismatch":
+    case "network_mismatch":
+    case "recipient_mismatch":
+    case "facilitator_error":
+    case "invalid_amount":
+    case "kyt_sanctioned":
+      return null;
+    default: {
+      const unhandledError: never = error;
+      console.error(`[readPossiblySpentPayment] Unhandled verify error: ${JSON.stringify(unhandledError)}`);
+      return null;
+    }
+  }
+}
+
+type DurableReplayParams<TBody, TResult> = {
+  options: X402PaidEndpointOptions<TBody, TResult>;
+  body: TBody;
+  requestDigest: string | undefined;
+  actionKey: string;
+  network: NetworkConfig;
+  usdcPrice: number;
+  context: RequestContext;
+};
+
+async function answerLandedPaymentReplay<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & { payment: PresentedPayment },
+): Promise<Response | null> {
+  const { payment, network, context, actionKey } = params;
+  const replay = await loadChargeReplay({
+    target: { kind: "payment", nonce: payment.nonce, payerAddress: payment.payerAddress, network },
+    action: actionKey,
+  });
+  if (replay.state === "not_found") return null;
+  if (replay.state === "lookup_failed") {
+    return failReplayLookup({ context, principal: null, actionKey, chargeId: null, message: replay.message });
+  }
+
+  const walletResult = await resolveOrOnboardWalletPrincipal({ payerAddress: payment.payerAddress, network });
+  if (!walletResult.ok) {
+    if (walletResult.reason === "sanctioned") {
+      return context.fail({
+        principal: walletResult.principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "sanctioned",
+        httpStatus: 403,
+        errorKind: "sanctioned",
+        message: walletResult.message,
+      });
+    }
+    return failReplayLookup({ context, principal: null, actionKey, chargeId: null, message: walletResult.message });
+  }
+  const principal = walletResult.principal;
+  const ownReplay = scopeReplayToCaller(replay, {
+    principalId: principal.principalId,
+    requestDigest: params.requestDigest,
+  });
+
+  switch (ownReplay.state) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: ownReplay.message });
+    case "in_progress":
+      return failPaymentInProgress({ context, principal, actionKey, chargeId: ownReplay.chargeId });
+    case "closed":
+      return failPaymentUsed({ context, principal, actionKey, chargeId: ownReplay.chargeId });
+    case "settled":
+      return answerSettledReplayFromDurableState({
+        ...params,
+        replay: ownReplay,
+        principal,
+        payerAddress: payment.payerAddress,
+      });
+    default: {
+      const unhandledReplay: never = ownReplay;
+      console.error(`[answerLandedPaymentReplay] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
+      return null;
+    }
+  }
+}
+
+async function answerKeyedDispatchReplay<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & {
+    findKeyedReplayBatch: KeyedReplayBatchLookup<TBody>;
+    principal: WalletPrincipal;
+    payerAddress: string;
+  },
+): Promise<Response | null> {
+  const { context, principal, actionKey } = params;
+  const keyedBatch = await params.findKeyedReplayBatch({ principal, body: params.body });
+  switch (keyedBatch.kind) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: keyedBatch.message });
+    case "found":
+      break;
+    default: {
+      const unhandledBatch: never = keyedBatch;
+      console.error(`[answerKeyedDispatchReplay] Unhandled batch lookup: ${JSON.stringify(unhandledBatch)}`);
+      return null;
+    }
+  }
+
+  const replay = scopeReplayToCaller(
+    await loadChargeReplay({
+      target: { kind: "batch", batchId: keyedBatch.batchId, principalId: principal.principalId },
+      action: actionKey,
+    }),
+    { principalId: principal.principalId, requestDigest: params.requestDigest },
+  );
+  if (replay.state === "lookup_failed") {
+    return failReplayLookup({ context, principal, actionKey, chargeId: null, message: replay.message });
+  }
+  if (replay.state !== "settled") return null;
+  return answerSettledReplayFromDurableState({ ...params, replay });
+}
+
+async function answerSettledReplayFromDurableState<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & {
+    replay: Extract<ChargeReplay, { state: "settled" }>;
+    principal: WalletPrincipal;
+    payerAddress: string;
+  },
+): Promise<Response | null> {
+  const { replay, principal, context, actionKey, network } = params;
+  if (!params.options.recoverReplayResult) return null;
+  const recovery = await params.options.recoverReplayResult({
+    principal,
+    chargeId: replay.chargeId,
+    storedMetadata: replay.storedMetadata,
+    body: params.body,
+  });
+  switch (recovery.kind) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: replay.chargeId, message: recovery.message });
+    case "recovered":
+      break;
+    default: {
+      const unhandledRecovery: never = recovery;
+      console.error(`[answerSettledReplayFromDurableState] Unhandled recovery: ${JSON.stringify(unhandledRecovery)}`);
+      return null;
+    }
+  }
+
+  context.audit({ principal, action: actionKey, chargeId: replay.chargeId, resultStatus: "ok" });
+  return buildSettledResponse({
+    data: replay.storedResult ?? recovery.data,
+    txHash: replay.txHash,
+    chargeId: replay.chargeId,
+    network,
+    payerAddress: params.payerAddress,
+    amountAtomic: readFirstAtomicAmount([replay.amountUsdc, params.usdcPrice], network),
+  });
+}
+
+function readFirstAtomicAmount(candidateAmountsUsdc: number[], network: NetworkConfig): string {
+  for (const amountUsdc of candidateAmountsUsdc) {
+    const atomicAmount = usdcToAtomic(amountUsdc, network.usdcDecimals);
+    if (atomicAmount.ok) return atomicAmount.atomicAmount.toString();
+  }
+  return "0";
+}
+
 function describeVerifyError(error: VerifyPaymentError): string {
   switch (error.kind) {
     case "malformed_header":
@@ -839,6 +1139,7 @@ function describeVerifyError(error: VerifyPaymentError): string {
     case "insufficient_funds":
     case "authorization_expired":
     case "facilitator_error":
+    case "invalid_amount":
       return error.message;
     case "amount_mismatch":
       return `Expected ${error.expected} USDC, the payment authorizes ${error.received} USDC.`;
@@ -875,6 +1176,8 @@ function mapVerifyErrorToHttpStatus(kind: VerifyPaymentError["kind"]): number {
       return 403;
     case "facilitator_error":
       return 502;
+    case "invalid_amount":
+      return 500;
     default: {
       const unhandledKind: never = kind;
       console.error(`[mapVerifyErrorToHttpStatus] Unhandled kind: ${String(unhandledKind)}`);

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
 import { SITE_ORIGIN } from "./markdownPrimitives";
 
 /**
@@ -9,7 +9,7 @@ import { SITE_ORIGIN } from "./markdownPrimitives";
  * surface to pick, and where the markdown docs live.
  */
 export function buildLlmsTxt(): string {
-  const platformList = POSTING_PLATFORMS.join(", ");
+  const platformList = ADAPTER_PLATFORMS.join(", ");
   const lines = [
     "# Sharetopus",
     "",

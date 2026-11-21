@@ -1,19 +1,34 @@
+import type { MediaType } from "@/db/schema";
+import {
+  PLATFORM_LABELS,
+  platformSupportsMediaType,
+  type AdapterPlatform,
+} from "@/lib/platforms/capabilities";
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 
-/** One error per account with no content, no Pinterest board, or no LinkedIn identifier. */
 export function validateAccountContent(
   accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
-  platform: string,
-  boards?: BoardInfo[],
-  postType?: string,
+  platform: AdapterPlatform,
+  boards: BoardInfo[] | undefined,
+  postType: MediaType,
 ): AccountError[] {
   const errors: AccountError[] = [];
 
   accounts.forEach((account) => {
     const content = accountContent.find((contentEntry) => contentEntry.accountId === account.id);
     const displayName = account.display_name ?? account.username ?? account.id;
+
+    if (!platformSupportsMediaType(platform, postType)) {
+      errors.push({
+        accountId: account.id,
+        platform,
+        displayName,
+        error: `${PLATFORM_LABELS[platform]} does not support ${postType} posts`,
+      });
+      return;
+    }
 
     if (!content) {
       errors.push({
@@ -25,7 +40,6 @@ export function validateAccountContent(
       return;
     }
 
-    // Platform-specific validations
     if (platform === "pinterest" && postType !== "text") {
       const hasSelectedBoard = boards?.some(
         (board) => board.accountId === account.id && board.isSelected,

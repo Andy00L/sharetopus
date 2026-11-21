@@ -1,21 +1,23 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
-import type { PostChangeFailure } from "@/lib/types/postBatch";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
+import {
+  POST_CHANGE_ELIGIBLE_STATUSES,
+  type PostChangeFailure,
+} from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { RESCHEDULE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { checkPostChangeRules } from "../preflightScheduledPostChange";
+import { checkAccessToRevivePosts } from "../resume/_shared/checkAccessToRevivePosts";
 
-const RATE_LIMIT = 30;
-const RATE_WINDOW_SECONDS = 60;
-
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type UpdateScheduledTimeBatchResult = {
   message: string;
   resetIn?: number;
@@ -32,23 +34,6 @@ export type UpdateScheduledTimeBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Reschedules N posts to a new time. Shared core for web/MCP/x402.
- *
- * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
- * **Rate limiting:** 30 calls per 60s per source.
- * **Tables:** scheduled_posts (read + update).
- *
- * Cancelled posts get auto-resumed (status -> scheduled) along with the
- * time update, and lose their cancelled_by_sub_at tag like a manual resume
- * (see resumeScheduledPostBatch). Posts in terminal states (posted,
- * failed) are skipped.
- *
- * @param postIds - Post IDs to reschedule
- * @param newScheduledTime - New datetime (must be in the future)
- * @param principalId - Owner (caller-validated)
- * @param source - Drives rate-limit scope
- */
 export async function updateScheduledTimeBatch(
   postIds: string[],
   newScheduledTime: string | Date,
@@ -85,14 +70,12 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    // Rate limit (anti-spam)
     const rateLimitScope = `${source}_update_scheduled_time_batch`;
-    const rateCheck = await checkRateLimit(
-      rateLimitScope,
-      principalId,
-      RATE_LIMIT,
-      RATE_WINDOW_SECONDS,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: RESCHEDULE_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -102,13 +85,13 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    // Fetch + ownership check (single query)
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
           status: scheduled_posts.status,
+          created_via: scheduled_posts.created_via,
         })
         .from(scheduled_posts)
         .where(inArray(scheduled_posts.id, postIds)),
@@ -125,25 +108,86 @@ export async function updateScheduledTimeBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return { success: false, failure: "not_found", message: "No posts found." };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.reschedule,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, failure: "not_found", message: "No posts found." };
+        case "not_owned":
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return {
+            success: false,
+            failure: "not_eligible",
+            message: "Only scheduled or cancelled posts can be rescheduled.",
+          };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
+    const reschedulable = rules.eligiblePosts;
+    const cancelledPosts = reschedulable.filter((post) => post.status === "cancelled");
 
-    const unauthorized = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorized.length > 0) {
+    const reviveAccess = await checkAccessToRevivePosts({
+      principalId,
+      revivedPosts: cancelledPosts,
+    });
+    if (!reviveAccess.ok) {
+      console.warn(
+        `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Refused for ${principalId}: ${reviveAccess.failure}`,
+      );
       return {
         success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorized.map((post) => post.id).join(", ")}.`,
+        failure: reviveAccess.failure === "unavailable" ? "unavailable" : "access_required",
+        message: reviveAccess.message,
       };
     }
 
-    const reschedulable = posts.filter(
-      (post) => post.status === "scheduled" || post.status === "cancelled",
+    const cancelledIds = new Set(cancelledPosts.map((post) => post.id));
+
+    const { data: movedRows, error: updateError } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          scheduled_at: scheduledTime.toISOString(),
+          status: "scheduled",
+          cancelled_by_sub_at: null,
+        })
+        .where(
+          and(
+            inArray(
+              scheduled_posts.id,
+              reschedulable.map((post) => post.id),
+            ),
+            eq(scheduled_posts.principal_id, principalId),
+            inArray(scheduled_posts.status, ["scheduled", "cancelled"]),
+          ),
+        )
+        .returning(POST_DUE_TARGET_COLUMNS),
     );
-    if (reschedulable.length === 0) {
+
+    if (updateError) {
+      console.error(
+        `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update error:`,
+        updateError.message,
+      );
+      return {
+        success: false,
+        failure: "internal",
+        message: "Database error rescheduling posts.",
+      };
+    }
+    if (movedRows.length === 0) {
       return {
         success: false,
         failure: "not_eligible",
@@ -151,58 +195,11 @@ export async function updateScheduledTimeBatch(
       };
     }
 
-    const scheduledIds = reschedulable
-      .filter((post) => post.status === "scheduled")
-      .map((post) => post.id);
-    const cancelledIds = reschedulable
-      .filter((post) => post.status === "cancelled")
-      .map((post) => post.id);
+    await sendPostDueEvents(movedRows);
 
-    let ok = true;
-
-    if (scheduledIds.length > 0) {
-      const { error } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({ scheduled_at: scheduledTime.toISOString() })
-          .where(inArray(scheduled_posts.id, scheduledIds)),
-      );
-      if (error) {
-        console.error(
-          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update scheduled error:`,
-          error.message,
-        );
-        ok = false;
-      }
-    }
-
-    if (cancelledIds.length > 0) {
-      const { error } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({
-            scheduled_at: scheduledTime.toISOString(),
-            status: "scheduled",
-            cancelled_by_sub_at: null,
-          })
-          .where(inArray(scheduled_posts.id, cancelledIds)),
-      );
-      if (error) {
-        console.error(
-          `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Update cancelled error:`,
-          error.message,
-        );
-        ok = false;
-      }
-    }
-
-    if (!ok) {
-      return {
-        success: false,
-        failure: "internal",
-        message: "Database error rescheduling posts.",
-      };
-    }
+    const resumedCount = movedRows.filter((movedRow) =>
+      cancelledIds.has(movedRow.id),
+    ).length;
 
     const formattedDate = scheduledTime.toLocaleString("en-US", {
       month: "short",
@@ -215,12 +212,12 @@ export async function updateScheduledTimeBatch(
 
     return {
       success: true,
-      message: `Rescheduled ${reschedulable.length} post(s) to ${formattedDate}.`,
+      message: `Rescheduled ${movedRows.length} post(s) to ${formattedDate}.`,
       details: {
         total: postIds.length,
-        succeeded: reschedulable.length,
-        failed: postIds.length - reschedulable.length,
-        resumedCount: cancelledIds.length,
+        succeeded: movedRows.length,
+        failed: postIds.length - movedRows.length,
+        resumedCount,
       },
     };
   } catch (err) {

@@ -1,12 +1,7 @@
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import { initiateWebOAuth } from "@/lib/api/oauth/web/initiateWebOAuth";
 import type { NextResponse } from "next/server";
 
-/**
- * POST /api/social/facebook/initiate
- *
- * Starts the Facebook Login popup flow for Page publishing.
- * sourceRef: https://developers.facebook.com/docs/pages-api/getting-started/
- */
 export async function POST(): Promise<NextResponse> {
   return initiateWebOAuth({
     platform: "facebook",
@@ -24,17 +19,16 @@ export async function POST(): Promise<NextResponse> {
         };
       }
 
-      // pages_show_list exposes /me/accounts; pages_manage_posts publishes;
-      // pages_read_engagement is required alongside manage_posts.
+      // pages_manage_posts depends on pages_read_engagement and pages_show_list:
+      // https://developers.facebook.com/docs/permissions
       const scopes = [
         "pages_show_list",
         "pages_manage_posts",
         "pages_read_engagement",
       ].join(",");
 
-      // Graph dialog version matches GRAPH_API_VERSION in exchangeFacebookCode.ts.
       const url =
-        `https://www.facebook.com/v23.0/dialog/oauth` +
+        `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth` +
         `?client_id=${clientId}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&response_type=code` +

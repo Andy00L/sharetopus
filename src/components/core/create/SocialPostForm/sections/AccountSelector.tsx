@@ -24,8 +24,6 @@ export default function AccountSelector({
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredAccounts = accounts.filter((account) => {
-    // Hide accounts whose platform cannot publish this post type (e.g.
-    // Pinterest for text posts, YouTube for image posts).
     if (!platformSupportsMediaType(account.platform, postType)) {
       return false;
     }
@@ -49,7 +47,6 @@ export default function AccountSelector({
   return (
     <div>
       <div className="flex-grow space-y-4">
-        {/* Search bar */}
         <div className="relative">
           {!isSearchExpanded ? (
             <div className="inline-block ">
@@ -88,7 +85,6 @@ export default function AccountSelector({
           )}
         </div>
 
-        {/* Account grid */}
         <div className="flex flex-row flex-wrap gap-4">
           {filteredAccounts.map((account) => (
             <div
@@ -115,7 +111,6 @@ export default function AccountSelector({
                   isSelected={!!selectedAccounts[account.id]}
                 />
               </div>
-              {/* Tooltip with account name on hover */}
               <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-foreground text-background text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
                 {account.display_name ?? account.username}
               </div>

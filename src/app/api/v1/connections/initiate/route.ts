@@ -13,20 +13,10 @@ import { social_connections } from "@/db/schema";
 
 const OAUTH_EXPIRY_MINUTES = 15;
 
-/**
- * POST /v1/connections/initiate -- start an OAuth flow.
- *
- * Creates a social_connections row with initiated_via='api' and
- * returns the OAuth authorization URL. The user must visit the URL
- * in their browser to authorize. On success the provider redirects
- * to /api/oauth/callback/[platform] which completes the flow via
- * handleOAuthCallback (state-based lookup, no cookies needed).
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.initiate",
   handler: async (ctx, request) => {
-    // Step 1: parse and validate request body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -49,13 +39,10 @@ export const POST = withRestEndpoint({
     }
     const platform = bodyParseResult.data.platform;
 
-    // Step 2: build the OAuth redirect URI for the shared callback. Fixed
-    // per platform; never taken from client input (open-redirect defense).
     const baseUrl =
       process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
     const redirectUri = `${baseUrl}/api/oauth/callback/${platform}`;
 
-    // Step 3: generate OAuth state and build the authorization URL.
     const oauthState = generateOAuthState();
     const oauthResult = buildOAuthUrl({
       platform,
@@ -75,7 +62,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: create social_connections row for state-based callback lookup.
     const expiresAt = new Date(
       Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000,
     ).toISOString();
@@ -91,7 +77,6 @@ export const POST = withRestEndpoint({
           initiated_via: "api",
           platform,
           oauth_state: oauthState,
-          // Non-null only for PKCE platforms (X); the shared callback reads it.
           oauth_code_verifier: oauthResult.codeVerifier,
           redirect_uri: redirectUri,
           status: "pending",

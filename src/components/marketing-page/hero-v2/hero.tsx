@@ -1,15 +1,8 @@
-"use client";
-
-import { Button } from "@/components/ui/button";
-import { useAuth } from "@clerk/nextjs";
-import Link from "next/link";
 import { AnimatedTestimonial } from "../AnimatedTestimonial";
+import { HeroCta } from "./sections/HeroCta";
 import { PlatformTilesBg } from "./sections/PlatformTilesBg";
 
-/** Landing hero: headline, CTA and social proof over the floating platform tiles. */
 export default function HeroV2() {
-  const { userId } = useAuth();
-
   return (
     <section className="relative max-w-6xl mx-auto px-4 md:px-8 pt-12 md:pt-16 pb-8 text-center">
       <PlatformTilesBg />
@@ -32,14 +25,7 @@ export default function HeroV2() {
         </p>
 
         <div className="flex flex-wrap gap-3 justify-center mb-7">
-          <Button
-            asChild
-            className="rounded-full bg-primary text-primary-foreground t-button-lg px-7 py-4 hover:bg-[var(--orange-2)] gap-1.5"
-          >
-            <Link href="/create">
-              {userId ? "Get back" : "Get Started"} <span>→</span>
-            </Link>
-          </Button>
+          <HeroCta />
         </div>
 
         <div className="mt-2 flex justify-center">

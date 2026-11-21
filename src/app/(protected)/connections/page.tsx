@@ -19,7 +19,7 @@ import { AccountsLoadError } from "@/components/AccountsLoadError";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
-import { PLATFORM_LABELS, type PostingPlatform } from "@/lib/platforms/capabilities";
+import { PLATFORM_LABELS, type AdapterPlatform } from "@/lib/platforms/capabilities";
 import { tierMeets } from "@/lib/types/plans";
 import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
 import { auth } from "@clerk/nextjs/server";
@@ -27,7 +27,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense, type ComponentType } from "react";
 
-const CONNECT_SECTIONS: readonly { platform: PostingPlatform; Icon: ComponentType }[] = [
+const CONNECT_SECTIONS: readonly { platform: AdapterPlatform; Icon: ComponentType }[] = [
   { platform: "tiktok", Icon: TiktokSVGIcon },
   { platform: "instagram", Icon: InstagramSVGIcon },
   { platform: "pinterest", Icon: PinterestSVGIcon },
@@ -42,23 +42,23 @@ const AccountsPageWithData = async () => {
   if (!userId) {
     redirect("/sign-in");
   }
-  const subscriptionCheck = await checkActiveSubscription(userId);
+  const [subscriptionCheck, fetchResult] = await Promise.all([
+    checkActiveSubscription(userId),
+    fetchSocialAccounts(userId, "web", false),
+  ]);
   if (!subscriptionCheck.isActive) {
     return <InactiveSubscriptionNotice status={subscriptionCheck.status} />;
   }
+  if (!fetchResult.success) {
+    return <AccountsLoadError failure={fetchResult} />;
+  }
+
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
   const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
 
-  const fetchResult = await fetchSocialAccounts(userId, "web", false);
-  if (!fetchResult.success) {
-    return <AccountsLoadError resetIn={fetchResult.resetIn} />;
-  }
+  const accounts = fetchResult.data.map(toClientSocialAccount);
 
-  // Client-safe projection: full rows would serialize token columns into the RSC payload.
-  const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);
-
-  // Share links are a Creator feature; null tells the list the read failed.
   const shareLinksResult = isCreatorOrHigher ? await listShareLinks() : null;
   const shareLinks = shareLinksResult?.success ? shareLinksResult.data : null;
 

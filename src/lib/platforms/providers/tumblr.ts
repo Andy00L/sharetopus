@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -17,19 +17,17 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
-
-/**
- * Tumblr provider. OAuth2 with refresh tokens; posts use the Neue Post
- * Format (content blocks). The user's primary blog is stored at connect
- * and a listBlogs tool lets an agent target another one.
- *
- * sourceRef: tumblr.com/docs/en/api/v2 (oauth2, user/info, blog posts NPF).
- */
 
 const TUMBLR_API = "https://api.tumblr.com/v2";
 const TUMBLR_TIMEOUT_MS = 20_000;
@@ -78,12 +76,8 @@ async function fetchUserInfo(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Tumblr connects through OAuth." };
-  }
-
   const tokens = await exchangeOAuth2Code(TUMBLR_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -107,45 +101,23 @@ async function connect(
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(TUMBLR_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const blogIdentifier =
-    typeof input.options.blog === "string" && input.options.blog.trim()
-      ? input.options.blog.trim()
-      : typeof input.config.blogIdentifier === "string"
-        ? input.config.blogIdentifier
-        : null;
+  const storedBlogIdentifier =
+    typeof input.config.blogIdentifier === "string" ? input.config.blogIdentifier : null;
+  const blogIdentifier = input.options.blog?.trim() || storedBlogIdentifier;
   if (!blogIdentifier) {
-    return { ok: false, message: "Stored Tumblr account has no blog." };
+    return refusePublish("Stored Tumblr account has no blog.");
   }
 
-  // NPF content blocks: optional media block, then the text.
   const contentBlocks: Record<string, unknown>[] = [];
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     contentBlocks.push({
       type: "image",
       media: [{ type: input.mediaMimeType, url: input.mediaUrl }],
     });
-  } else if (input.mediaType === "video" && input.mediaUrl) {
+  } else if (input.postType === "video" && input.mediaUrl) {
     contentBlocks.push({ type: "video", url: input.mediaUrl });
   }
   if (input.title.trim()) {
@@ -159,7 +131,7 @@ async function publish(
     contentBlocks.push({ type: "text", text: input.body.trim() });
   }
   if (contentBlocks.length === 0) {
-    return { ok: false, message: "Tumblr post has no content." };
+    return refusePublish("Tumblr post has no content.");
   }
 
   const result = await providerFetch(
@@ -175,12 +147,17 @@ async function publish(
     },
   );
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "tumblr", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 201 && result.status !== 200) {
-    return {
-      ok: false,
-      message: `Tumblr post failed (${result.status}): ${result.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "tumblr",
+      stage: "publish",
+      action: "Tumblr post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const response = toJsonObject(parseJsonObject(result.bodyText)?.response);
@@ -188,7 +165,9 @@ async function publish(
     response && (typeof response.id === "string" || typeof response.id === "number")
       ? String(response.id)
       : readStringField(response, "id_string");
-  if (!postId) return { ok: false, message: "Tumblr returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Tumblr returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -206,10 +185,14 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   return { ok: true, data: { blogs: userInfo.blogs } };
 }
 
-export const tumblrBehavior: ProviderBehavior = {
+export const tumblrBehavior = {
+  authKind: "oauth2",
   connect,
   publish,
-  refresh,
+  refresh: (input) => refreshOAuth2Credential(TUMBLR_OAUTH, input),
+  // A refresh returns a new access token and a new refresh token:
+  // https://github.com/tumblr/docs/blob/master/api.md (Refresh Token Grant Request)
+  refreshTokenRotation: "rotating",
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TUMBLR_OAUTH, input),
-};
+} satisfies ProviderBehavior;

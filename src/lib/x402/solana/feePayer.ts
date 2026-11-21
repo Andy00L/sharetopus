@@ -1,34 +1,16 @@
 import "server-only";
 
-/**
- * Facilitator fee payer for SVM (Solana) exact-scheme payments.
- *
- * The official @x402/svm client refuses to build a payment unless the 402's
- * accepts entry carries extra.feePayer (the facilitator's fee-payer pubkey),
- * and the facilitator's verify rejects requirements whose feePayer is not in
- * its signer set. The value comes from the facilitator /supported endpoint:
- * the kinds[] entry for scheme "exact" on the Solana CAIP-2 network, field
- * extra.feePayer. The signers["solana:*"] set is cached alongside it because
- * the advertised feePayer rotates randomly within that set between
- * /supported calls (observed live against CDP, June 2026), so payer
- * extraction removes set members, not just the one cached value.
- *
- * Called by: http/paymentHttp.ts (requirements builder),
- *            payment/paymentPayload.ts (payer extraction, sync cache read)
- * Tables touched: none
- */
-
 import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
 import { getNetworkConfig } from "@/lib/x402/networks";
 
-/** Cache TTL in milliseconds (10 minutes; June 2026 checkpoint decision). */
 const FEE_PAYER_TTL_MS = 10 * 60 * 1000;
 
-/** Signers map key for Solana. sourceRef: live CDP /supported response. */
+// @x402/core keys /supported signers by the scheme's CAIP family (node_modules/@x402/core/dist/esm/facilitator/index.mjs getSupported).
 const SOLANA_SIGNERS_KEY = "solana:*";
 
 interface FeePayerCacheEntry {
   feePayer: string;
+  // CDP rotates the advertised feePayer within this signer set between /supported calls (observed live, June 2026).
   signers: readonly string[];
   fetchedAt: number;
 }
@@ -39,12 +21,6 @@ export type FeePayerResult =
   | { ok: true; feePayer: string }
   | { ok: false; message: string };
 
-/**
- * Facilitator fee payer for Solana, cached in module memory. Serves the
- * cached value inside the TTL; on refetch failure it serves the stale value
- * with a warning; with nothing cached at all it returns the failure variant.
- * Never throws.
- */
 export async function getSolanaFeePayer(): Promise<FeePayerResult> {
   const nowMs = Date.now();
   if (feePayerCache && nowMs - feePayerCache.fetchedAt < FEE_PAYER_TTL_MS) {
@@ -67,12 +43,6 @@ export async function getSolanaFeePayer(): Promise<FeePayerResult> {
   return { ok: false, message: fetchResult.message };
 }
 
-/**
- * Facilitator Solana signer set from the same cache, for synchronous use in
- * payment-payload extraction (which must never trigger a network fetch).
- * Empty when nothing has been cached yet; extraction then falls back to the
- * positional rule (fee payer at static account index 0).
- */
 export function readCachedSolanaSigners(): readonly string[] {
   return feePayerCache?.signers ?? [];
 }
@@ -86,10 +56,11 @@ async function fetchSolanaFeePayerFromFacilitator(): Promise<
     return { ok: false, message: "Solana is not in the network registry." };
   }
 
+  const facilitatorResult = getFacilitatorClient(solanaNetwork);
+  if (!facilitatorResult.ok) return { ok: false, message: facilitatorResult.message };
+  const facilitator = facilitatorResult.client;
+
   try {
-    // Solana resolves through the CDP-configured facilitator; passing the
-    // solana network config keeps this pinned there (celo has its own).
-    const facilitator = getFacilitatorClient(solanaNetwork);
     if (!facilitator.getSupported) {
       return {
         ok: false,
@@ -112,7 +83,6 @@ async function fetchSolanaFeePayerFromFacilitator(): Promise<
       };
     }
 
-    // Runtime hardening: signers comes off the wire; keep only real strings.
     const advertisedSigners = (supported.signers[SOLANA_SIGNERS_KEY] ?? []).filter(
       (signerAddress) => typeof signerAddress === "string" && signerAddress.length > 0
     );

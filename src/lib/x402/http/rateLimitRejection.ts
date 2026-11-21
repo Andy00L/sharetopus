@@ -1,20 +1,10 @@
 import "server-only";
 
-/**
- * Turns a failed checkRateLimit result into the response every x402 route
- * sends. A limiter outage is ours, not the caller's, so it answers 503
- * instead of telling an agent to slow down with a 429.
- *
- * Called by: every x402 route that rate limits, and the MCP route
- *            (src/app/api/mcp/mcp/route.ts)
- * Tables touched: none
- */
-
 import { NextResponse } from "next/server";
 
 import type { RateLimitRefusal } from "@/actions/server/rateLimit/checkRateLimit";
+import type { X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 
-/** Retry hint when the limiter reports no reset time, in seconds. */
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
 
 export interface RateLimitRejection {
@@ -22,8 +12,7 @@ export interface RateLimitRejection {
   errorKind: "rate_limited" | "rate_limiter_unavailable";
   message: string;
   retryAfterSeconds: number;
-  /** x402_access_log.result_status value for this rejection. */
-  auditStatus: "rate_limited" | "error";
+  auditStatus: Extract<X402AuditEntry["resultStatus"], "rate_limited" | "error">;
 }
 
 export function describeRateLimitRejection(
@@ -47,10 +36,6 @@ export function describeRateLimitRejection(
   };
 }
 
-/**
- * The { error, retryAfter } JSON body the standalone x402 routes (status
- * polling, the public Arc facilitator) and the MCP route answer with.
- */
 export function buildRateLimitJsonResponse(rejection: RateLimitRejection): NextResponse {
   return NextResponse.json(
     { error: rejection.errorKind, message: rejection.message, retryAfter: rejection.retryAfterSeconds },

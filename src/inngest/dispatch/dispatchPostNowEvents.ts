@@ -1,187 +1,153 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
 
 import { inngest } from "@/inngest/client";
-import { db, runQuery } from "@/db/client";
-import { pending_direct_posts } from "@/db/schema";
-import { insertPendingDirectPosts } from "@/actions/server/data/pendingDirectPosts";
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
+import {
+  lockPendingDirectPosts,
+  releasePendingDirectPosts,
+  type PendingDirectPostLock,
+} from "@/actions/server/data/pendingDirectPosts";
+import {
+  buildPostNowEvent,
+  PostNowEventDataSchema,
+  type PostNowEventData,
+} from "@/inngest/events/postNow";
+
+export type RefusedPostNowEvent = {
+  dispatchId: string;
+  socialAccountId: string;
+  message: string;
+};
+
+export type PostNowDispatch = { eventId: string; batchId: string };
 
 export type DispatchPostNowEventsResult =
-  | { success: true; eventIds: string[]; freshCount: number }
+  | {
+      success: true;
+      dispatches: PostNowDispatch[];
+      freshCount: number;
+      refused: RefusedPostNowEvent[];
+    }
   | { success: false; message: string; phase: "lock_insert" | "inngest_send" };
 
-type PostNowEvent = { name: "post.now"; data: PostNowEventData };
-
-/** True when the event carries the non-empty dispatch_id its lock row needs. */
-function hasDispatchId(
-  postEvent: PostNowEvent,
-): postEvent is PostNowEvent & { data: { dispatch_id: string } } {
-  return (
-    typeof postEvent.data.dispatch_id === "string" &&
-    postEvent.data.dispatch_id.length > 0
-  );
+function toDispatchLock(postData: PostNowEventData): PendingDirectPostLock {
+  return {
+    event_id: postData.dispatch_id,
+    batch_id: postData.batch_id,
+    principal_id: postData.principal_id,
+    social_account_id: postData.social_account_id,
+    platform: postData.platform,
+    media_storage_path: postData.media_path,
+    idempotency_key: postData.idempotency_key ?? null,
+  };
 }
 
-/**
- * Inserts pending_direct_posts lock rows for every event and dispatches the
- * events to Inngest in a single send call.
- *
- * Idempotency: if any event carries an idempotency_key, the helper pre-checks
- * the (principal_id, idempotency_key) unique constraint
- * (pending_direct_posts_principal_idem_uq). Events whose keys
- * already exist are NOT re-dispatched. The returned eventIds array preserves
- * input order, mixing fresh dispatch_ids with existing event_ids.
- *
- * Caller is responsible for building the PostNowEventData[] array. Each event
- * MUST have a dispatch_id (UUID) set; the lock row uses it as event_id so
- * processDirectPost can finalize it after the worker run.
- *
- * Failure semantics (matches prior in-line behavior):
- *   - Lock insert fails: returns { success: false, phase: "lock_insert" }.
- *     No events dispatched. Caller should surface to user.
- *   - Inngest send fails AFTER locks inserted: returns
- *     { success: false, phase: "inngest_send" }. Locks stay in 'processing';
- *     sweepStuckDirectPosts cron finalizes them as 'failed' after 10 minutes,
- *     which then frees storage cleanup. This is intentional, do not roll back
- *     the locks.
- *
- * Callers: web direct-post path (handleSocialMediaPost.dispatchDirectPostEvents),
- *          directPostBatch (MCP publish_posts, REST, x402).
- *
- * Tables touched: pending_direct_posts (select + insert)
- * Inngest events sent: post.now (one per new element)
- */
+function partitionBySchema(posts: PostNowEventData[]): {
+  validPosts: PostNowEventData[];
+  refused: RefusedPostNowEvent[];
+} {
+  const validPosts: PostNowEventData[] = [];
+  const refused: RefusedPostNowEvent[] = [];
+  for (const postData of posts) {
+    const parsed = PostNowEventDataSchema.safeParse(postData);
+    if (parsed.success) {
+      validPosts.push(postData);
+      continue;
+    }
+    refused.push({
+      dispatchId: postData.dispatch_id,
+      socialAccountId: postData.social_account_id,
+      message: `Invalid post.now event: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "event"}: ${issue.message}`)
+        .join("; ")}`,
+    });
+  }
+  return { validPosts, refused };
+}
+
 export async function dispatchPostNowEvents(
-  events: PostNowEvent[]
+  posts: PostNowEventData[]
 ): Promise<DispatchPostNowEventsResult> {
-  const requestId = events[0]?.data.request_id ?? null;
+  const requestId = posts[0]?.request_id ?? null;
 
-  if (events.length === 0) {
+  if (posts.length === 0) {
+    return { success: false, message: "No events provided", phase: "lock_insert" };
+  }
+
+  const keyedPrincipalIds = new Set(
+    posts
+      .filter((postData) => postData.idempotency_key)
+      .map((postData) => postData.principal_id),
+  );
+  if (keyedPrincipalIds.size > 1) {
     return {
       success: false,
-      message: "No events provided",
+      message: "All keyed events must share the same principal_id",
       phase: "lock_insert",
     };
   }
 
-  if (!events.every(hasDispatchId)) {
+  const { validPosts, refused } = partitionBySchema(posts);
+  for (const refusedEvent of refused) {
+    console.error(
+      `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Refused account ${refusedEvent.socialAccountId}: ${refusedEvent.message}`,
+    );
+  }
+  if (validPosts.length === 0) {
+    return { success: true, dispatches: [], freshCount: 0, refused };
+  }
+
+  const lockResult = await lockPendingDirectPosts(validPosts, toDispatchLock);
+  if (!lockResult.success) {
+    console.error(
+      `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Lock insert failed:`,
+      lockResult.message,
+    );
     return {
       success: false,
-      message: "Event missing dispatch_id (caller must set per event)",
+      message: `Could not acquire dispatch locks: ${lockResult.message}`,
       phase: "lock_insert",
     };
   }
 
-  // Step 1: pre-check existing idempotency keys (only when any event carries one).
-  const keyedEvents = events.filter((postEvent) => postEvent.data.idempotency_key);
-  const existingMap = new Map<string, string>(); // idempotency_key -> event_id
+  const postsToSend = lockResult.entries.flatMap((entry) =>
+    entry.kind === "locked" ? [entry.item] : [],
+  );
 
-  if (keyedEvents.length > 0) {
-    const keys = keyedEvents.flatMap(
-      (keyedEvent) => keyedEvent.data.idempotency_key ?? [],
-    );
-    const principalIds = [
-      ...new Set(keyedEvents.map((keyedEvent) => keyedEvent.data.principal_id)),
-    ];
-    if (principalIds.length !== 1) {
-      return {
-        success: false,
-        message: "All keyed events must share the same principal_id",
-        phase: "lock_insert",
-      };
-    }
-
-    const { data: existing, error: lookupErr } = await runQuery(
-      db
-        .select({
-          event_id: pending_direct_posts.event_id,
-          idempotency_key: pending_direct_posts.idempotency_key,
-        })
-        .from(pending_direct_posts)
-        .where(
-          and(
-            eq(pending_direct_posts.principal_id, principalIds[0]),
-            inArray(pending_direct_posts.idempotency_key, keys),
-          ),
-        ),
-    );
-
-    if (lookupErr) {
-      return {
-        success: false,
-        message: `Idempotency lookup failed: ${lookupErr.message}`,
-        phase: "lock_insert",
-      };
-    }
-
-    for (const row of existing) {
-      if (row.idempotency_key) {
-        existingMap.set(row.idempotency_key, row.event_id);
-      }
-    }
-  }
-
-  // Step 2: split events into already-dispatched vs new.
-  const newEvents = events.filter((postEvent) => {
-    const key = postEvent.data.idempotency_key;
-    return !key || !existingMap.has(key);
-  });
-
-  // Step 3: insert lock rows + send only the new ones.
-  if (newEvents.length > 0) {
-    const lockRows = newEvents.map((evt) => ({
-      event_id: evt.data.dispatch_id,
-      batch_id: evt.data.batch_id,
-      principal_id: evt.data.principal_id,
-      social_account_id: evt.data.social_account_id,
-      platform: evt.data.platform,
-      media_storage_path: evt.data.media_path ?? "",
-      idempotency_key: evt.data.idempotency_key ?? null,
-    }));
-
-    const lockResult = await insertPendingDirectPosts(lockRows);
-    if (!lockResult.success) {
-      console.error(
-        `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Lock insert failed:`,
-        lockResult.message
-      );
-      return {
-        success: false,
-        message: `Could not acquire dispatch locks: ${lockResult.message}`,
-        phase: "lock_insert",
-      };
-    }
-
+  if (postsToSend.length > 0) {
     try {
-      await inngest.send(newEvents);
-      console.log(
-        `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${newEvents.length} post.now event(s)` +
-          (existingMap.size > 0
-            ? ` (${existingMap.size} skipped as idempotent)`
-            : "")
+      await inngest.send(postsToSend.map(buildPostNowEvent));
+    } catch (sendError) {
+      const message = sendError instanceof Error ? sendError.message : String(sendError);
+      const released = await releasePendingDirectPosts(
+        postsToSend.map((postData) => postData.dispatch_id),
       );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[dispatchPostNowEvents] [req=${requestId ?? "?"}] Inngest send failed:`, message);
+      console.error(
+        `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Inngest send failed:`,
+        message,
+        released.success ? "(locks released)" : `(${released.message})`,
+      );
       return {
         success: false,
         message: `Failed to dispatch events: ${message}`,
         phase: "inngest_send",
       };
     }
-  } else {
-    console.log(
-      `[dispatchPostNowEvents] [req=${requestId ?? "?"}] All ${events.length} event(s) already dispatched (idempotent)`
-    );
   }
 
-  // Step 4: assemble eventIds in input order, mixing fresh + existing.
-  const eventIds = events.map((postEvent) => {
-    const key = postEvent.data.idempotency_key;
-    const existingEventId = key ? existingMap.get(key) : undefined;
-    return existingEventId ?? postEvent.data.dispatch_id;
-  });
+  const skippedCount = validPosts.length - postsToSend.length;
+  console.log(
+    `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${postsToSend.length} post.now event(s)` +
+      (skippedCount > 0 ? ` (${skippedCount} already dispatched)` : ""),
+  );
 
-  return { success: true, eventIds, freshCount: newEvents.length };
+  return {
+    success: true,
+    dispatches: lockResult.entries.map((entry): PostNowDispatch =>
+      entry.kind === "locked"
+        ? { eventId: entry.item.dispatch_id, batchId: entry.item.batch_id }
+        : { eventId: entry.existingLock.event_id, batchId: entry.existingLock.batch_id },
+    ),
+    freshCount: postsToSend.length,
+    refused,
+  };
 }

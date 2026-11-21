@@ -13,17 +13,10 @@ import { ConnectionListQuerySchema } from "@/lib/api/rest/validation/connectionS
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 
-/**
- * GET /v1/connections -- list connected social accounts.
- *
- * Principal-scoped. Tokens stripped via toConnectionDTO.
- * Keyset pagination on (created_at, id).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.list",
   handler: async (ctx, request) => {
-    // Step 1: parse query string.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -38,8 +31,6 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: query scoped to calling principal. and() skips the optional
-    // filters left undefined; unavailable accounts are hidden by default.
     const { data: fetchedRows, error: queryError } = await runQuery(
       db
         .select()
@@ -72,7 +63,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 3: compute pagination cursor.
     const { pageRows, nextCursor } = toListPage(
       fetchedRows,
       query.limit,

@@ -23,18 +23,10 @@ const ALLOWED_CONTENT_TYPES = [
 
 const ALLOWED_CONTENT_TYPE_PREFIXES = ["image/", "video/"];
 
-/**
- * POST /v1/media/attach-from-url -- download from URL and upload to storage.
- *
- * Orchestrates the same pure helpers as the MCP attach_media_from_url tool:
- * safeUserFetch (SSRF guard + download), getUploadLimitsForPrincipal (size caps),
- * enforceStorageQuota (quota check), adminSupabase.storage.upload (persist).
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.attach_from_url",
   handler: async (ctx, request) => {
-    // Step 1: parse JSON body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -46,7 +38,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 2: Zod validate.
     const validationResult = AttachFromUrlInputSchema.safeParse(rawBody);
     if (!validationResult.success) {
       return restErrorResponse(
@@ -58,12 +49,10 @@ export const POST = withRestEndpoint({
     }
     const validatedInput = validationResult.data;
 
-    // Step 3: resolve per-tier upload size caps (MB -> bytes).
     const uploadLimits = getUploadLimitsForPrincipal(ctx.principal.plan);
     const maxFetchBytes =
       Math.max(uploadLimits.image, uploadLimits.video) * 1024 * 1024;
 
-    // Step 4: fetch with SSRF guard + streaming size limit.
     const fetchResult = await safeUserFetch(validatedInput.url, {
       maxBytes: maxFetchBytes,
       allowedContentTypePrefixes: ALLOWED_CONTENT_TYPE_PREFIXES,
@@ -80,7 +69,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 5: type-specific size cap (image vs video).
     const isVideo = fetchResult.contentType.startsWith("video/");
     const specificCapMb = isVideo ? uploadLimits.video : uploadLimits.image;
     const specificCapBytes = specificCapMb * 1024 * 1024;
@@ -93,7 +81,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 6: aggregate storage quota check (after download, before upload).
     const quotaResult = await enforceStorageQuota(
       ctx.principal.principalId,
       ctx.principal.plan,
@@ -111,14 +98,11 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 7: upload path. The key never includes the filename or the URL
-    // basename: interpolating them let "../other-user/x.jpg" shape the key.
     const storagePath = buildAttachedMediaPath(
       ctx.principal.principalId,
       fetchResult.contentType,
     );
 
-    // Step 8: upload to Supabase storage.
     const { error: uploadError } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
       .upload(storagePath, fetchResult.bytes, {

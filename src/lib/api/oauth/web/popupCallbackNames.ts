@@ -1,4 +1,4 @@
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
 const POPUP_CALLBACK_PREFIXES = {
   tiktok: "TikTok",
@@ -8,10 +8,9 @@ const POPUP_CALLBACK_PREFIXES = {
   youtube: "YouTube",
   x: "X",
   facebook: "Facebook",
-} as const satisfies Record<PostingPlatform, string>;
+} as const satisfies Record<AdapterPlatform, string>;
 
-/** window.opener callbacks the connect popup calls; client-safe so the connect button registers the same names. */
-export function popupCallbackNames(platform: PostingPlatform) {
+export function popupCallbackNames(platform: AdapterPlatform) {
   const prefix = POPUP_CALLBACK_PREFIXES[platform];
   return {
     success: `on${prefix}ConnectSuccess`,

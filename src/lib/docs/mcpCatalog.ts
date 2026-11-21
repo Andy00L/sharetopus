@@ -61,7 +61,8 @@ export const MCP_TOOL_DOCS: Record<McpToolName, McpToolDocEntry> = {
   },
   delete_scheduled_posts: {
     group: "Posting tools",
-    summary: "Permanently deletes up to 50 scheduled posts.",
+    summary:
+      "Permanently deletes up to 50 scheduled posts. A post that is publishing now cannot be deleted; the tool answers an error and the call can be retried in a minute.",
   },
 };
 

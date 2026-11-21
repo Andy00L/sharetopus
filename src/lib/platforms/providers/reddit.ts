@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -10,6 +10,7 @@ import type {
   ProviderToolResult,
 } from "./types";
 import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
+import { normalizeSubredditName } from "@/lib/platforms/subredditName";
 
 import {
   parseJsonBody,
@@ -18,9 +19,16 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
 
@@ -66,12 +74,8 @@ async function redditApiGet(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Reddit connects through OAuth." };
-  }
-
   const tokens = await exchangeOAuth2Code(REDDIT_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -98,45 +102,19 @@ async function connect(
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(REDDIT_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-
-  const me = await redditApiGet(tokens.accessToken, "/api/v1/me");
-  const username = me.ok ? readStringField(me.body, "name") : null;
-
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    // Reddit keeps the same refresh token unless it returns a new one.
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: username ?? "unknown",
-      displayName: username,
-      username,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const subreddit =
-    typeof input.options.subreddit === "string"
-      ? input.options.subreddit.trim().replace(/^r\//, "")
-      : "";
+  const subreddit = normalizeSubredditName(input.options.subreddit ?? "");
   if (!subreddit) {
-    return { ok: false, message: "A subreddit is required (options.subreddit)." };
+    return refusePublish("A valid subreddit name is required (options.subreddit).");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Reddit posts require a title." };
+  if (!title) return refusePublish("Reddit posts require a title.");
 
   // Self post for text; link post pointing at the media URL otherwise
   // (Reddit's media upload API is not public, so link is the honest form).
-  const isTextPost = input.mediaType === "text" || !input.mediaUrl;
+  const isTextPost = input.postType === "text" || !input.mediaUrl;
   const form = new URLSearchParams({
     api_type: "json",
     sr: subreddit,
@@ -144,9 +122,7 @@ async function publish(
     kind: isTextPost ? "self" : "link",
     ...(isTextPost ? { text: input.body } : { url: input.mediaUrl ?? "" }),
   });
-  const flairId =
-    typeof input.options.flairId === "string" ? input.options.flairId : null;
-  if (flairId) form.set("flair_id", flairId);
+  if (input.options.flairId) form.set("flair_id", input.options.flairId);
 
   const result = await providerFetch("https://oauth.reddit.com/api/submit", {
     method: "POST",
@@ -159,32 +135,36 @@ async function publish(
     timeoutMs: REDDIT_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
-  if (result.status === 429) {
-    return { ok: false, message: "Reddit rate limit reached (429)." };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "reddit", stage: "publish", fetchFailure: result });
   }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Reddit submit failed (${result.status}): ${result.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "reddit",
+      stage: "publish",
+      action: "Reddit submit",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
-  // Response shape: { json: { errors: [...], data: { id, url, name } } }
   const jsonEnvelope = toJsonObject(parseJsonObject(result.bodyText)?.json);
   const submitErrors: unknown[] = Array.isArray(jsonEnvelope?.errors)
     ? jsonEnvelope.errors
     : [];
-  if (submitErrors.length > 0) {
-    return {
-      ok: false,
-      message: `Reddit rejected the post: ${JSON.stringify(submitErrors[0]).slice(0, 200)}`,
-    };
+  const firstSubmitError = submitErrors[0];
+  if (firstSubmitError !== undefined) {
+    const firstErrorCode = Array.isArray(firstSubmitError) ? firstSubmitError[0] : null;
+    return failPublish({
+      message: `Reddit rejected the post: ${JSON.stringify(firstSubmitError).slice(0, 200)}`,
+      reason: firstErrorCode === "RATELIMIT" ? "rate_limited" : "invalid_input",
+      mayHavePublished: false,
+    });
   }
   const submitData = toJsonObject(jsonEnvelope?.data);
   const postName = submitData && typeof submitData.name === "string" ? submitData.name : null;
   if (!postName) {
-    return { ok: false, message: "Reddit returned no post id." };
+    return failUnreadableAnswer({ message: "Reddit returned no post id.", stage: "publish" });
   }
 
   return {
@@ -201,14 +181,9 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   }
   const subreddit =
     typeof input.parameters.subreddit === "string"
-      ? input.parameters.subreddit.trim().replace(/^r\//, "")
-      : "";
-  if (!subreddit) return { ok: false, message: "subreddit is required." };
-  // The subreddit lands in a URL path; restrict to Reddit's own name rules
-  // so it cannot smuggle path segments.
-  if (!/^[A-Za-z0-9_]{2,21}$/.test(subreddit)) {
-    return { ok: false, message: "That is not a valid subreddit name." };
-  }
+      ? normalizeSubredditName(input.parameters.subreddit)
+      : null;
+  if (!subreddit) return { ok: false, message: "A valid subreddit name is required." };
 
   const flairs = await redditApiGet(
     input.accessToken,
@@ -224,10 +199,14 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   return { ok: true, data: { flairs: list } };
 }
 
-export const redditBehavior: ProviderBehavior = {
+export const redditBehavior = {
+  authKind: "oauth2",
   connect,
   publish,
-  refresh,
+  refresh: (input) => refreshOAuth2Credential(REDDIT_OAUTH, input),
+  // The refresh token from the first grant keeps working:
+  // https://github.com/reddit-archive/reddit/wiki/OAuth2 (Refreshing the token)
+  refreshTokenRotation: "stable",
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(REDDIT_OAUTH, input),
-};
+} satisfies ProviderBehavior;

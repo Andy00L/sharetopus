@@ -1,4 +1,5 @@
-/** Parses a token endpoint body; anything that is not JSON reads as null. */
+export const ERROR_BODY_LOG_LIMIT_CHARS = 300;
+
 export function parseJsonBody(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -7,7 +8,6 @@ export function parseJsonBody(text: string): unknown {
   }
 }
 
-/** The RFC 6749 "error" code, when the body carries one as a string. */
 export function readOAuthError(body: unknown): string | null {
   if (
     typeof body === "object" &&

@@ -3,14 +3,6 @@ import { z } from "zod";
 import { TIER_RANK } from "@/lib/types/plans";
 import { POST_REJECTION_CODES } from "@/lib/types/postBatch";
 
-/**
- * The REST API's success bodies, one schema each. They are not used for
- * runtime validation. They feed the OpenAPI spec (buildOpenApiDocument)
- * and the types at the bottom of this file: the DTO factories in
- * src/lib/api/rest/dto/ return those types, and every route that builds
- * its body inline checks it with `satisfies`. A response that drifts from
- * its schema fails the type check instead of shipping a wrong spec.
- */
 
 export const PostDTOSchema = z.object({
   id: z.string(),
@@ -27,7 +19,14 @@ export const PostDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "PostDTO" });
 
-/** DELETE /v1/posts/{id}: the action taken and the batch counts. */
+export const PostDispatchSchema = z.object({
+  dispatch_id: z.string(),
+  batch_id: z.string(),
+  status: z.literal("processing"),
+  platform: z.string(),
+  social_account_id: z.string(),
+}).meta({ id: "PostDispatch" });
+
 export const PostDeleteResultSchema = z.object({
   id: z.string(),
   action: z.enum(["cancelled", "deleted"]),
@@ -35,19 +34,16 @@ export const PostDeleteResultSchema = z.object({
     total: z.number(),
     succeeded: z.number(),
     failed: z.number(),
-    // Only on hard=true: stored media files removed with the post.
     mediaDeleted: z.number().optional(),
   }),
 }).meta({ id: "PostDeleteResult" });
 
-/** One refused post (src/lib/types/postBatch.ts, PostRejection). */
 export const PostRejectionSchema = z.object({
   socialAccountId: z.string(),
   code: z.enum(POST_REJECTION_CODES),
   reason: z.string(),
 }).meta({ id: "PostRejection" });
 
-/** POST /v1/posts/bulk. */
 export const PostBulkResultSchema = z.object({
   success: z.literal(true),
   batch_id: z.string(),
@@ -72,7 +68,6 @@ export const ConnectionDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "ConnectionDTO" });
 
-/** POST /v1/connections/initiate. */
 export const ConnectionInitiateResultSchema = z.object({
   connect_url: z.string(),
   state: z.string(),
@@ -80,7 +75,6 @@ export const ConnectionInitiateResultSchema = z.object({
   connection_id: z.string(),
 }).meta({ id: "ConnectionInitiateResult" });
 
-/** POST /v1/connections/{id}/reauth. */
 export const ConnectionReauthResultSchema = z.object({
   reauth_url: z.string(),
   account: ConnectionDTOSchema,
@@ -114,7 +108,6 @@ export const AnalyticsDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "AnalyticsDTO" });
 
-/** GET /v1/posts/{id}/analytics. */
 export const PostAnalyticsResultSchema = z.object({
   post_id: z.string(),
   content_id: z.string(),
@@ -129,7 +122,6 @@ export const PinterestBoardDTOSchema = z.object({
   pin_count: z.number().nullable(),
 }).meta({ id: "PinterestBoardDTO" });
 
-/** GET /v1/connections/credentials: each provider and the form fields it needs. */
 export const CredentialProviderListSchema = z.object({
   providers: z.array(z.object({
     provider: z.string(),
@@ -146,7 +138,6 @@ export const CredentialProviderListSchema = z.object({
   })),
 }).meta({ id: "CredentialProviderList" });
 
-/** POST /v1/connections/credentials: identity fields only, never the credentials. */
 export const CredentialConnectResultSchema = z.object({
   id: z.string(),
   provider: z.string(),
@@ -155,7 +146,6 @@ export const CredentialConnectResultSchema = z.object({
   username: z.string().nullable(),
 }).meta({ id: "CredentialConnectResult" });
 
-/** GET /v1/connections/{id}/tools. */
 export const ConnectionToolListSchema = z.object({
   provider: z.string(),
   provider_label: z.string(),
@@ -171,19 +161,16 @@ export const ConnectionToolListSchema = z.object({
   })),
 }).meta({ id: "ConnectionToolList" });
 
-/** POST /v1/connections/{id}/tools: result is whatever the provider tool returns. */
 export const ConnectionToolResultSchema = z.object({
   method_name: z.string(),
   result: z.unknown(),
 }).meta({ id: "ConnectionToolResult" });
 
-/** GET /v1/connections/{id}/boards: one page; bookmark fetches the next. */
 export const PinterestBoardPageSchema = z.object({
   data: z.array(PinterestBoardDTOSchema),
   bookmark: z.string().nullable(),
 }).meta({ id: "PinterestBoardPage" });
 
-/** POST /v1/media/upload-url. */
 export const MediaUploadUrlSchema = z.object({
   upload_url: z.string(),
   storage_path: z.string(),
@@ -191,7 +178,6 @@ export const MediaUploadUrlSchema = z.object({
   expires_in_seconds: z.number(),
 }).meta({ id: "MediaUploadUrl" });
 
-/** POST /v1/media/attach-from-url. */
 export const MediaAttachResultSchema = z.object({
   success: z.literal(true),
   storage_path: z.string(),
@@ -199,13 +185,11 @@ export const MediaAttachResultSchema = z.object({
   size_bytes: z.number(),
 }).meta({ id: "MediaAttachResult" });
 
-/** GET /v1/media/{path}. */
 export const MediaViewUrlSchema = z.object({
   view_url: z.string(),
   expires_in_seconds: z.number(),
 }).meta({ id: "MediaViewUrl" });
 
-/** DELETE /v1/media/{path}: deleted is false when another post still uses the file. */
 export const MediaDeleteResultSchema = z.object({
   storage_path: z.string(),
   deleted: z.boolean(),
@@ -250,23 +234,19 @@ export const WebhookDeliveryDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "WebhookDeliveryDTO" });
 
-/** POST /v1/webhooks: the only response that carries the signing secret. */
 export const WebhookSubscriptionCreatedSchema = WebhookSubscriptionDTOSchema.extend({
   secret: z.string(),
 }).meta({ id: "WebhookSubscriptionCreated" });
 
-/** GET /v1/webhooks: every subscription, not paginated. */
 export const WebhookSubscriptionListSchema = z.object({
   data: z.array(WebhookSubscriptionDTOSchema),
 }).meta({ id: "WebhookSubscriptionList" });
 
-/** DELETE /v1/webhooks/{id}. */
 export const WebhookDeleteResultSchema = z.object({
   id: z.string(),
   deleted: z.literal(true),
 }).meta({ id: "WebhookDeleteResult" });
 
-/** POST /v1/webhooks/{id}/test: the synchronous delivery's outcome. */
 export const WebhookTestResultSchema = z.object({
   delivery_id: z.string(),
   subscription_id: z.string(),
@@ -276,7 +256,6 @@ export const WebhookTestResultSchema = z.object({
   error_message: z.string().nullable(),
 }).meta({ id: "WebhookTestResult" });
 
-/** POST /v1/webhooks/{id}/deliveries/{delivery_id}/replay. */
 export const WebhookReplayResultSchema = z.object({
   subscription_id: z.string(),
   original_delivery_id: z.string(),
@@ -318,8 +297,8 @@ export const PaginatedDeliveriesSchema = z.object({
   next_cursor: z.string().nullable(),
 }).meta({ id: "PaginatedDeliveries" });
 
-// The body types the DTO factories return and the routes check against.
 export type PostDTO = z.infer<typeof PostDTOSchema>;
+export type PostDispatch = z.infer<typeof PostDispatchSchema>;
 export type PostDeleteResult = z.infer<typeof PostDeleteResultSchema>;
 export type PostBulkResult = z.infer<typeof PostBulkResultSchema>;
 export type PostAnalyticsResult = z.infer<typeof PostAnalyticsResultSchema>;

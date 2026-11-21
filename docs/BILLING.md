@@ -22,6 +22,8 @@ Stripe handles subscriptions and payments. Three tiers with monthly and yearly p
   - [Cancel](#cancel-period_end-customersubscriptiondeleted)
   - [Resubscribe](#resubscribe-customersubscriptioncreated)
   - [Grace period](#grace-period-7-days)
+  - [Publish-time access gate](#publish-time-access-gate)
+- [Referral weeks](#referral-weeks)
 - [x402 Pay-Per-Call](#x402-pay-per-call)
 - [Source files referenced](#source-files-referenced)
 
@@ -61,7 +63,7 @@ sequenceDiagram
     Webhook->>DB: User has access: resume cancelled posts, promote OAuth clients
     Webhook->>Webhook: Invalidate caches
     Webhook->>DB: Log the event as processed
-    Stripe->>Webhook: invoice.payment_succeeded
+    Stripe->>Webhook: invoice.payment_succeeded or invoice.paid
     Webhook->>DB: Record the payment in stripe_invoices
 ```
 
@@ -71,18 +73,17 @@ Stripe does not deliver events in order. A subscription event therefore stores t
 
 ## Webhook events
 
-`src/app/api/webhooks/stripe/route.ts` processes five event types:
+`src/app/api/webhooks/stripe/route.ts` processes seven event types:
 
 | Event | Action |
 |-------|--------|
-| `customer.subscription.created`, `customer.subscription.updated` | Upsert `stripe_subscriptions` from the retrieved subscription, invalidate caches. If the user has access afterwards, resume system-cancelled posts and promote OAuth clients. |
-| `customer.subscription.deleted` | Same upsert (the retrieved status is `canceled`). If the user has no access left, demote OAuth clients and cancel future scheduled posts. |
-| `invoice.payment_succeeded` | Record the payment in `stripe_invoices` with `amount_paid_cents`. It replaces an earlier `failed` row for the same invoice. |
-| `invoice.payment_failed` | Record `failed` in `stripe_invoices`, unless the invoice already has a row: a failure never replaces a success. |
+| `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` | Upsert `stripe_subscriptions` from the retrieved subscription, invalidate caches, then act on the user's access. With access: resume system-cancelled posts and promote OAuth clients. Without access: demote OAuth clients and pause future scheduled posts. |
+| `invoice.payment_succeeded`, `invoice.paid` | Record `succeeded` in `stripe_invoices` with `amount_paid_cents`. It replaces an earlier `failed` row for the same invoice. `invoice.paid` also covers an invoice paid out of band. |
+| `invoice.payment_failed`, `invoice.marked_uncollectible` | Record `failed` in `stripe_invoices`, unless the invoice already has a row: a failure never replaces a success. |
 
-What happens to posts and OAuth clients follows the user's access after the write (`checkActiveSubscription`), not the event type. A late `deleted` for a subscription the user already replaced leaves the new plan's posts alone, and a `created` for a subscription still waiting on its first payment (`incomplete`) grants nothing until the `updated` event that makes it active. A failed access check answers 500.
+What happens to posts and OAuth clients follows the user's access after the write (`checkActiveSubscription`), not the event type. Any subscription event that leaves the user without access (`past_due`, `unpaid`, `paused`, `canceled`, `incomplete`, `incomplete_expired`) pauses their posts, not only `deleted`. A late `deleted` for a subscription the user already replaced leaves the new plan's posts alone, and a `created` for a subscription still waiting on its first payment (`incomplete`) grants nothing until the `updated` event that makes it active. A failed access check answers 500.
 
-`recordInvoicePayment` (`src/actions/server/stripe/recordInvoicePayment.ts`) writes invoices for both the webhook and the `ensureUserExists` sync. The sync records paid invoices and invoices whose payment was tried and failed (`uncollectible`, or `open` after an attempt); drafts, voided invoices and open ones not charged yet are skipped.
+`recordInvoicePayment` (`src/actions/server/stripe/recordInvoicePayment.ts`) writes invoices for the webhook. The webhook is the only writer of `stripe_subscriptions` and `stripe_invoices`.
 
 ## Subscription status
 
@@ -101,7 +102,9 @@ A failed database read returns `isActive=false` with status `unavailable`. The t
 - MCP and REST answer 503 (see [AUTH.md](./AUTH.md#fail-closed-design)), `list_billing_summary` returns a tool error, `GET /v1/usage` answers 500, and the MCP subscription gate does not cache the failure.
 - A share link checks its owner through `checkShareLinkOwnerCapacity`: a lapsed plan reads as `owner_subscription_inactive`, and a failed read as a retry. Both used to read as "the owner reached their account limit".
 
-It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code asks through `createCustomerPortal`, which reads the id from the Clerk session.
+It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code reaches it only through actions that read the id from the Clerk session: the pricing section calls `checkOutSession`, which refuses `active` and `trialing` subscribers with `reason: "already_subscribed"`, and only then opens `createCustomerPortal`; the sidebar Billing item opens the portal directly.
+
+`findPrincipalsWithAccess(principalIds, now)` in the same file applies the same rule to many principals in two reads (the grace cron uses it), and returns `success: false` on any failed read, never a partial set.
 
 ## Plan gating
 
@@ -126,7 +129,7 @@ All 10 MCP tools are gated by `ACTION_PLAN_GATE`, which requires Creator minimum
 | Creator | All 10 tools | Subject to monthly quotas (see below). |
 | Pro | All 10 tools | Unlimited usage (no quotas). |
 
-REST API endpoints share the same quota system and plan gates. The `withRestEndpoint` middleware resolves the principal's plan and enforces the same tier and quota checks that MCP uses.
+REST API keys need an active subscription or referral weeks, at any tier: `resolveRestApiKey` runs the same subscription gate as MCP (`applySubscriptionGate`). REST calls have no tier gate and no monthly quota; `withRestEndpoint` rate limits them per principal and per endpoint (`REST_ENDPOINT_RATE_LIMIT`, 20 per 60 s).
 
 ### Storage quotas
 
@@ -163,7 +166,7 @@ All plans share the same per-file size caps:
 
 `createCustomerPortal` creates a Stripe Billing Portal session. Rate limited at 20 requests per 60 seconds. Requires an active subscription. Return URL: `/create`.
 
-A failure carries a `reason`: `no_subscription` when the user has nothing to manage, `failed` otherwise (a subscription it could not check included). The pricing buttons open checkout, and the sidebar billing entry opens the pricing section, only on `no_subscription`, so a paying user is never sent to a second checkout.
+A failure carries a `reason`: `no_subscription` when the user has no access, `failed` otherwise (a subscription it could not check included). The sidebar billing entry opens the pricing section only on `no_subscription`. The pricing buttons try checkout first and open the portal only when `checkOutSession` answers `already_subscribed`, so a paying user is never sent to a second checkout.
 
 ## Usage tracking
 
@@ -182,13 +185,12 @@ Incremented atomically by `atomic_increment_quota` on every quota-gated MCP tool
 
 ### Cancel (period_end, customer.subscription.deleted)
 
-When a user's Stripe subscription reaches period_end, the webhook handler:
+When a user's Stripe subscription reaches period_end, or any subscription event leaves the user without access, the webhook handler:
 
-1. Stores the subscription with Stripe's status, `canceled`
-2. Checks the user's access. With another active subscription or banked referral weeks, it stops here.
-3. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`)
-4. Cancels all future scheduled posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
-5. Invalidates subscription and entitlement caches
+1. Stores the subscription with Stripe's status (`canceled`, `past_due`, ...)
+2. Invalidates the subscription cache and checks the user's access. With another active subscription or banked referral weeks, it resumes and promotes instead (see below).
+3. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`) and invalidates the OAuth client cache
+4. Pauses all future `scheduled` posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
 
 The user retains access to the dashboard and can resubscribe. Manual cancellations of posts made before the sub cancel are left untouched (they have `cancelled_by_sub_at IS NULL`). A manual cancel, resume or reschedule clears the tag, so a post the user handled after the lapse is never removed by the grace cleanup.
 
@@ -202,27 +204,56 @@ When a subscription event leaves the user with access (a new subscription, or on
 
 ### Grace period (7 days)
 
-If the user does not resubscribe within 7 days, the daily cron `cleanup-cancelled-posts-after-grace` (05:00 UTC) deletes their system-cancelled posts. Orphan media in storage is picked up by `sweep-orphan-storage-files` (03:00 UTC) the following day.
+The daily cron `cleanup-cancelled-posts-after-grace` (05:00 UTC) reads the principals that own paused posts (`cancelled_by_sub_at` set) and checks their access in one batch:
 
-The cron re-checks subscription status before deletion as a guard against webhook delivery failures. When that check fails, it keeps the posts and the next daily run checks again. The delete itself repeats the selection criteria, so a post resumed during the run is not removed.
+- With access again, at any age of the pause: it runs the same resume as a resubscribe. This is how posts come back when referral weeks are granted again, since that fires no Stripe event.
+- Without access: it deletes their posts paused more than 7 days ago. Orphan media in storage is picked up by `sweep-orphan-storage-files` (03:00 UTC) the following day.
+
+A failed access read or delete fails the run, and Inngest retries it; the posts stay paused meanwhile. The delete repeats the selection criteria, so a post resumed during the run is not removed.
 
 ```mermaid
 flowchart TD
-    A[Subscription cancelled] --> B[Webhook fires]
-    B --> C[Mark status cancelled]
+    A[Subscription event without access] --> B[Webhook fires]
+    A2[Referral weeks run out] --> P[Post comes due: access gate pauses it]
+    B --> C[Store subscription status]
     B --> D[Demote OAuth clients]
-    B --> E[Cancel future posts<br>cancelled_by_sub_at = now]
-    E --> F{User resubscribes<br>within 7 days?}
-    F -- Yes --> G[Resume cancelled posts]
-    G --> H[Bump past dates to now + 1hr]
-    F -- Yes --> I[Re-promote OAuth clients<br>up to cap of 5]
-    F -- No --> J[cleanup-cancelled-posts-after-grace<br>deletes posts at 05:00 UTC]
+    B --> E[Pause future posts<br>cancelled_by_sub_at = now]
+    E --> F{Access back?}
+    P --> F
+    F -- Stripe event with access --> G[Resume paused posts]
+    G --> H[Bump past dates to now + 1hr<br>send post.due]
+    F -- Stripe event with access --> I[Re-promote OAuth clients<br>up to cap of 5]
+    F -- Referral weeks granted --> G2[Grace cron resumes them at 05:00 UTC]
+    G2 --> H
+    F -- No, after 7 days --> J[cleanup-cancelled-posts-after-grace<br>deletes posts at 05:00 UTC]
     J --> K[sweep-orphan-storage-files<br>cleans media at 03:00 UTC next day]
 ```
 
+### Publish-time access gate
+
+Every scheduled post is checked again when it comes due: `process-single-post` reads `checkActiveSubscription` for the owner and pauses the post (same two columns as the webhook) when the owner has no access. This covers referral weeks that ran out and posts already due when access ended. Posts created through x402 (`created_via = 'x402'`) are exempt: a wallet principal has no plan and pays per post. An unreadable access state retries the step; a post never publishes on an unknown. Details in [SCHEDULING.md](./SCHEDULING.md#publish-time-access-gate).
+
+Bringing a paused or cancelled post back needs access too: Resume, and a reschedule that includes a cancelled post, refuse without it ("Bringing back a cancelled post needs an active plan or referral weeks. Renew your subscription, then try again."), unless every post is an x402 post. The web post-now action checks access before it dispatches; MCP and REST check it at authentication.
+
+## Referral weeks
+
+A user who signs up through a referral link (`/?ref=CODE`) earns their referrer free Creator weeks.
+
+1. The proxy (`src/proxy.ts`) stores a valid `?ref=` code (`REFERRAL_CODE_PATTERN`) in the `stx_ref` cookie for 30 days, on a request the proxy runs for and only when no cookie is set yet. Routes the proxy skips (`/api/v1`, webhooks, media, static files) do not set it.
+2. `ensureUserExists` sends `referral.signup` (id `referral-signup-{userId}`) in `after()` when a new user has the cookie.
+3. The Inngest function `record-referral-signup` records the referral as `verified` (`recordReferralOnSignup`; unknown codes and self-referrals by id or email are not attributed), then runs `triggerReferralGrant`, which calls the `grant_referral_rewards` Postgres function: every 3 verified referrals become 1 free week (`REFERRALS_PER_FREE_WEEK`), extending `users.creator_access_until`. Each step retries 3 times.
+
+The sidebar only reads referral progress; it no longer retries the grant. Banked weeks count as Creator access in `checkActiveSubscription` (status `referral_grant`).
+
 ## x402 Pay-Per-Call
 
-AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`). No Stripe subscription required. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`). Auth is via X-PAYMENT header (signed wallet payment).
+AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`). No Stripe subscription required. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`), and TikTok and Pinterest take image and video posts only (`PLATFORM_MEDIA_SUPPORT` in `src/lib/platforms/capabilities.ts`). Auth is the signed wallet payment in the `PAYMENT-SIGNATURE` header, or the older `X-PAYMENT` (`readPaymentHeader` in `src/lib/x402/http/paymentHttp.ts`); the paying wallet becomes the principal ([AUTH.md](./AUTH.md#x402-wallet-authentication)).
+
+### Facilitators
+
+Each network names its settlement lane (`settlement` in `networks.ts`): Coinbase's CDP facilitator settles Base, Polygon, Arbitrum and Solana, Celo's facilitator settles Celo, and Sharetopus settles Arc itself with the `X402_ARC_KEY` wallet. The Arc facilitator is public too (`src/lib/x402/arc/facilitatorApi.ts`): `GET /api/x402/facilitator/supported` lists the signer under the `eip155:*` key, the key `@x402/core`'s own facilitator uses for EVM schemes; `POST /api/x402/facilitator/verify` is open; `POST /api/x402/facilitator/settle` answers 403 while `X402_FACILITATOR_SETTLE_KEY` is unset and 401 without that key in the `x-api-key` header.
+
+On Arc and Celo, Sharetopus signs its own transactions (Arc settlements, Arc and Celo refunds) through `broadcastCall` (`src/lib/x402/chain/broadcastCall.ts`). A send that fails in transport is resent with the same signed bytes. When the node then reports the nonce as taken, the first bytes may have landed, so the result is `delivery_unknown` with the signed hash and nothing is signed again under a new nonce. A refund in that state gets a `refund_failed` reconciliation row with that hash.
 
 ### Pricing
 
@@ -244,14 +275,57 @@ Prices are stored in the `pricing_actions` table (this table matches it on 2026-
 
 ### Refund Policy
 
-- **Checked before settlement, nothing charged:** account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
-- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund.
+- **Checked before settlement, nothing charged:** the post type (`withPostTypeRules` in `src/lib/x402/middleware/postBodySchema.ts`: a `text` post to TikTok or Pinterest answers 400 `validation_error`), account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
+- **One payment per `idempotency_key` while a call runs:** `POST /api/x402/post-now` and `POST /api/x402/schedule` reserve the key before the key-row check and before settlement: `SET NX` on `x402_idempotency_reservation:{endpoint}:{principal}:{sha256(key)}` with a 120 s TTL (`KEY_RESERVATION_TTL_MS` in `src/lib/x402/middleware/idempotencyKeyReservation.ts`, twice the routes' `maxDuration` of 60 s). A second call with the same key answers 409 `idempotency_key_in_progress` before it pays. The reservation is deleted when the call ends with a known payment outcome (nothing paid, the action ran and its key row now answers 409 `duplicate_idempotency_key`, or the action failed and its refund confirmed on-chain, `refundConfirmed` from `refundCharge`). It is kept until the TTL when the call may hold a payment its action did not use (settle timeout or facilitator error, a settle that could not be recorded, a failed action whose refund was not sent or not confirmed), so a quick retry cannot pay while a refund or a late settle is still open. When Redis cannot be reached, the call answers 503 `idempotency_check_unavailable` before payment, as the x402 rate limit does. A retry that starts after the TTL runs as a new call: after an unknown outcome it can pay again, and the first payment stays flagged for the reconciliation sweep.
+- **Price that cannot be charged:** `usdcToAtomic` (`src/lib/x402/usdcAmount.ts`) refuses a price that is not positive or that rounds to zero atomic units (for example 0.0000001 USDC at 6 decimals). The 402 challenge then answers 500 `pricing_not_configured`, and a paid request answers 500 `invalid_amount` (500 `internal` on `/api/x402/connect`) before the facilitator is called.
+- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund. Before the send, the charge gets `error_message = 'action_failed: <reason>'`, so a function stopped mid-refund still leaves the money owed visible to the reconciliation sweep. A Solana refund recreates the payer's USDC token account when the payer closed it (`buildUsdcTransferInstructions` in `src/lib/x402/solana/splToken.ts`); the refund sender pays the rent, about 0.002 SOL, only when the account is missing.
 - **Non-refundable:** Publish failures at Inngest execute time (post.text, post.image, post.video). Pay-per-attempt model.
-- Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response.
+- Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response. A refund whose send outcome is unknown (a timed-out send) is not sent again by the code: it gets a `refund_failed` reconciliation row, and when no refund tx hash is known, the sender wallet's outgoing transfers decide whether it went out.
 
 ### Charge Lifecycle
 
-Status flow: `pending` (inserted before settlement; the UNIQUE nonce blocks a replay) -> `settled` (facilitator confirmed) -> `refunded` (refund confirmed on-chain) or `failed` (definitive settle rejection, non-refundable handler error, or a refund that could not be sent). An indeterminate settle stays `pending` and an unconfirmed refund stays `settled`; both get an `x402_reconciliation` row that the hourly `sweep-x402-reconciliation` Inngest function resolves or reports as a failed run.
+Status flow: `pending` (inserted before settlement; the UNIQUE nonce blocks a replay) -> `settled` (facilitator confirmed) -> `refunded` (refund confirmed on-chain), or `pending` -> `failed` (definitive settle rejection only). A paid action that fails after settlement keeps the charge `settled` with `error_message = 'action_failed: <reason>'` until the refund confirms (`refunded`); an unconfirmed or unsent refund also gets an `x402_reconciliation` row. An indeterminate settle stays `pending` and gets a row too. The DB trigger `x402_status_guard` refuses any other transition.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : insert before settlement (UNIQUE nonce)
+    pending --> settled : facilitator confirmed
+    pending --> failed : definitive settle rejection
+    pending --> pending : indeterminate settle (reconciliation row)
+    settled --> settled : action failed (error_message action_failed), refund unconfirmed or unsent (reconciliation row)
+    settled --> refunded : refund confirmed on-chain (x402_refunds row)
+    failed --> [*]
+    refunded --> [*]
+```
+
+The hourly `sweep-x402-reconciliation` Inngest function (`:20`) reads the reconciliation rows, charges still `pending` 15 minutes after creation, `settled` charges marked `action_failed` with neither a refund nor a reconciliation row (a function stopped between the marker and the row), and `settled` post charges with no stored result, no batch or post link and no failure marker, over the last 30 days. For that last group it reads `pending_direct_posts` rows whose `batch_id` is the charge id (post-now uses the charge id as its batch): a row of the same principal means only the charge record write was lost, and the charge goes to the run's `lostRecordsWithDispatch` list as `record_lost_post_dispatched` with the dispatch status, without opening it. A charge with no such row is a request that died between settlement and its action, reported as `action_outcome_unknown`. It resolves what the chain confirms and ends the run with `NonRetriableError` listing every item still open, so open money items show as a failed run.
+
+The `settle_indeterminate` and `settle_unrecorded` rows, and the settle response header, carry the atomic amount the facilitator verified (`verified.requirements.amount`), not a second conversion of the price. A `refund_failed` row has a null `amount_atomic` when the price does not convert; the refund sender then refuses, and the row still records the owed refund.
+
+After a paid action succeeds, `updateChargeRecord` stores its result (served on a replay of the same payment) and its post or connection link, and runs the write a second time when the first attempt errors (`src/lib/x402/db/runWriteWithOneRetry.ts`). When both attempts fail, the request keeps its success answer, the server logs `CHARGE RECORD INCOMPLETE`, and no reconciliation row is written for it. `/proof` still shows a post-now charge in that state once its post published or failed: a post charge with no `batch_id` and no scheduled post looks up its own id as the batch (`proofLedger.ts`).
+
+A replay of a settled charge with no stored result asks the endpoint's `recoverReplayResult` (`x402PaidEndpoint.ts`). Post-now has one: the dispatch it starts uses the charge id as its batch id, so the `pending_direct_posts` row links back to the charge in the same insert that dispatches the post, before any charge write can fail. The replay reads the rows of `metadata.batch_id` (charges from before 2026-09-22 stored only that key) or else of the charge id, for the paying principal, and answers 200 with the first call's fields (`batchId`, `eventIds`, `dispatched`) plus `posts`, one entry per dispatch: `processing`, `published` with the `content_history.content_id`, or `failed` with its `failure_reason` (`readDirectPostBatchOutcomes` in `directPostBatch.ts`). The recovery reads only the rows for the account and platform the request names, so a request for another post reads nothing. With no row it answers 409 ("its result is not stored for replay"), and when the read fails it answers 503 `replay_lookup_failed` with `Retry-After: 5`. It never runs the action or settles again. Other endpoints answer 409 when no result is stored. Every replay answer also requires the charge to belong to the caller's principal, and on post-now a charge that stores a request digest answers only the same body.
+
+Post-now stores `request_digest` on its charge in the INSERT that claims the nonce, so no replay can find the charge without it: the SHA-256 (hex) of the parsed request body serialized as JSON with object keys sorted at every depth, no whitespace, keys with no value dropped and `null` kept (`digestRequestBody` in `src/lib/x402/charges/requestDigest.ts`, chosen by the route's `requestDigest` option). It covers every field the route acts on: `social_account_id`, `platform`, `post_type`, `description`, `media_storage_path`, `title`, `cover_timestamp`, `pinterest_board_id`, `pinterest_board_name`, `pinterest_link` and `idempotency_key`. Keys the schema does not name are dropped by the parse and do not count, and neither do key order or number formatting. `scopeReplayToCaller` in `x402PaidEndpoint.ts` treats a charge whose stored digest differs from the request's as no charge at all, on each replay path: a replay the facilitator still accepts (the nonce conflict at the insert) answers 409 `replay_detected` without the stored result, a landed payment keeps the facilitator's refusal, and a keyed retry keeps 409 `duplicate_idempotency_key`. Charges created before migration 0010 have no digest; for them the recovery's account and platform match above stays the binding (3 production post charges on 2026-11-21). Other routes store no digest and keep their rules.
+
+Once a payment has landed, the facilitator refuses it at verify, before the charge insert can find it. The refusal codes that can mean "already used or expired" carry the payment's nonce and payer (`PresentedPayment` in `facilitator.ts`):
+
+| Lane | Used payment | Expired authorization | Source |
+| --- | --- | --- | --- |
+| Arc (`@x402/evm`, in process) | `invalid_exact_evm_nonce_already_used` | `invalid_exact_evm_payload_authorization_valid_before` | `node_modules/@x402/evm/dist/cjs/exact/facilitator/index.js` |
+| Base, Polygon, Arbitrum (CDP) | `invalid_payload` (CDP's catch-all, which covers a reused nonce) | `invalid_exact_evm_payload_authorization_valid_before` | docs.cdp.coinbase.com/x402/support/troubleshooting.md |
+| Solana (CDP) | `duplicate_settlement`, `invalid_payload` or `invalid_exact_svm_payload_transaction_simulation_failed` | the same simulation failure (expired blockhash) | the same page and `X402VerifyInvalidReason` in `@coinbase/cdp-sdk` |
+| Celo (x402-rs) | `transaction_simulation` | `invalid_payment_expired` | docs.celo.org/build-on-celo/build-with-ai/x402, x402-rs `ErrorReason` |
+
+`insufficient_funds` carries the payment too, because x402-rs checks the balance before it simulates. When such a refusal arrives on a route with `recoverReplayResult` (post-now), `answerLandedPaymentReplay` looks up the charge with that exact nonce and payer. No charge: the facilitator's refusal stands, and no wallet is resolved. A charge of the caller's principal and action whose digest matches the request: pending answers 409 `payment_in_progress`, closed answers 409 `replay_detected`, settled answers the stored result or the rebuilt outcome (a charge without a digest also needs the request to name the first call's account and platform). Otherwise the refusal stands. The binding matters because a landed payment is public: its signed authorization is in the transfer calldata (EVM) or the transaction (Solana), so anyone can present it again. With the digest, holding the payment and the account id is not enough: only a body identical to the first call's gets the answer. Routes without a recovery keep the refusal, so a landed payment never reruns a GET handler or returns a stored upload URL or OAuth link.
+
+A post-now retry with a new payment and an `idempotency_key` that was already dispatched hits the precheck's `duplicate_idempotency_key`. `answerKeyedDispatchReplay` reads that dispatch's `batch_id` (`readKeyedDirectPost`), loads the charge whose id or `metadata.batch_id` is that batch for the caller's principal and action, and, when it is settled and the request has the charge's digest (or, without one, names the first call's account and platform), answers the first call's answer with 200. The new payment never settles. Anything else keeps the 409, including a key reused with a changed body.
+
+### Solana Blink
+
+The Blink (`src/lib/solanaActions/postNowBlink.ts`, routes under `/api/actions/post-now`) is a paid text post-now from a Solana wallet, priced as `post.text`. It checks the text against the platform's own rules before payment (`checkBlinkTextFitsPlatform`): the platform must take text posts, and the text must fit `resolvePlatformTextLimit` (LinkedIn 3,000 characters). TikTok and Pinterest take no text-only post, so their Blink cards are disabled and preparing a payment for them answers 400; LinkedIn is the one platform the Blink can post to.
+
+The payment transaction holds the same two instructions as a Solana refund (create the recipient's USDC account if missing, then the transfer), and its blockhash read times out after 5 s. Confirm refuses with 503 before verifying when the price does not convert to a positive atomic amount, so no transfer can pay for a post at a zero minimum. After the payment settles, confirm checks account ownership and the text rules again and refunds through `refundAndFail` when either fails, so a confirm URL built by hand, or prepared before a rule changed, gets its money back instead of a post that cannot publish.
 
 ### Storage
 
@@ -264,14 +338,23 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
 | `src/actions/server/stripe/stripeEventLog.ts` | `isStripeEventProcessed`, `markStripeEventProcessed`: the processed-event log |
-| `src/actions/server/stripe/recordInvoicePayment.ts` | Writes an invoice's payment outcome, for the webhook and the `ensureUserExists` sync |
-| `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by both the webhook and the `ensureUserExists` sync |
-| `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, the server-only subscription reader |
+| `src/actions/server/stripe/recordInvoicePayment.ts` | Writes an invoice's payment outcome for the webhook |
+| `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by the webhook |
+| `src/actions/server/stripe/checkOutSession.ts` | Stripe Checkout session; refuses `active` and `trialing` subscribers |
+| `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, `findPrincipalsWithAccess`, `needsOwnerAccessToPublish` |
+| `src/actions/server/data/cleanupCancelledPostsAfterGrace.ts` | Grace cron logic: resume with access, delete after 7 days without |
+| `src/inngest/functions/recordReferralSignup.ts` | Records a referral and grants the referrer's weeks |
+| `src/lib/referral/` | `referralRules`, `recordReferralOnSignup`, `triggerReferralGrant` |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
 | `src/lib/mcp/entitlement.ts` | `MONTHLY_CAPS`, `ACTION_PLAN_GATE`, MCP tier gating |
 | `src/lib/mcp/_shared/currentQuotaPeriod.ts` | `currentQuotaPeriod()`, period format for usage tracking |
-| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware (enforces same plan gates) |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API middleware: the subscription gate through `resolveRestApiKey`, then the per-endpoint rate limit (no tier gate, no monthly quota) |
+| `src/lib/x402/middleware/x402PaidEndpoint.ts` | x402 paid route flow: parse the body, rate limit and price, verify, resolve the wallet, reserve the idempotency key, precheck, settle, run the handler, refund on failure, release the key; a replay answers the stored result, else the endpoint's `recoverReplayResult`; post-now also answers a landed payment the facilitator refuses and a reused dispatched key from durable state |
+| `src/lib/x402/middleware/idempotencyKeyReservation.ts` | `reserveIdempotencyKey`, `KEY_RESERVATION_TTL_MS` |
+| `src/lib/x402/charges/chargeLifecycle.ts` | `settleCharge`, `refundCharge`, `updateChargeRecord` |
+| `src/lib/x402/charges/requestDigest.ts` | `digestRequestBody`: the post-now request digest stored on the charge and compared on every replay |
+| `src/lib/solanaActions/postNowBlink.ts` | Solana Blink: card, payment prepare, confirm |
 
 ---
 

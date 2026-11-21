@@ -1,35 +1,17 @@
 "use client";
 
 import { toast } from "sonner";
-import { z } from "zod";
-import type {
-  PostStatusJob,
-  PostStatusResponse,
+import {
+  isJobTerminal,
+  PostStatusResponseSchema,
+  type PostStatusJob,
 } from "@/lib/types/postStatus";
-import { isJobTerminal } from "@/lib/types/postStatus";
 
-// 60 polls at 1 s, then 60 at 2 s for slow video processing: 180 s worst case.
 const FAST_PHASE_ATTEMPTS = 60;
 const FAST_PHASE_INTERVAL_MS = 1000;
 const SLOW_PHASE_ATTEMPTS = 60;
 const SLOW_PHASE_INTERVAL_MS = 2000;
-
-/** Runtime mirror of PostStatusResponse; the annotation keeps it in step with the shared type. */
-const PostStatusResponseSchema: z.ZodType<PostStatusResponse> = z.discriminatedUnion("success", [
-  z.object({
-    success: z.literal(true),
-    jobs: z.array(
-      z.object({
-        event_id: z.string(),
-        status: z.enum(["pending", "success", "failed"]),
-        platform: z.string(),
-        error_message: z.string().nullable(),
-      }),
-    ),
-    allTerminal: z.boolean(),
-  }),
-  z.object({ success: z.literal(false), message: z.string() }),
-]);
+const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,15 +28,14 @@ function platformDisplay(platform: string): string {
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
-/** Toasts a job once, when it first reaches a terminal state. */
 function emitToastForJob(job: PostStatusJob, toasted: Set<string>): void {
   if (toasted.has(job.event_id)) return;
   if (!isJobTerminal(job.status)) return;
 
   const name = platformDisplay(job.platform);
   if (job.status === "success" && job.platform === "tiktok") {
-    // Success here means TikTok accepted the post; it then processes it.
-    // The Content Sharing Guidelines require telling the user so.
+    // TikTok Content Sharing Guidelines, Required UX Implementation 5d: tell the
+    // user the post may take a few minutes to process and show on the profile.
     toast.success(
       "Sent to TikTok. It may take a few minutes for your post to process and be visible on your profile.",
     );
@@ -67,7 +48,6 @@ function emitToastForJob(job: PostStatusJob, toasted: Set<string>): void {
   toasted.add(job.event_id);
 }
 
-/** Summary toast once every job is terminal; skipped for single-job runs. */
 function emitSummaryToast(jobs: PostStatusJob[]): void {
   if (jobs.length <= 1) return;
   const succeeded = jobs.filter((job) => job.status === "success").length;
@@ -82,7 +62,6 @@ function emitSummaryToast(jobs: PostStatusJob[]): void {
   }
 }
 
-/** Polls /api/posts/status until every event is terminal or 180 s pass, toasting each result. */
 export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
   if (eventIds.length === 0) return;
 
@@ -92,13 +71,13 @@ export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
 
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     try {
-      const res = await fetch(
+      const response = await fetch(
         `/api/posts/status?event_ids=${encodeURIComponent(query)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: AbortSignal.timeout(STATUS_REQUEST_TIMEOUT_MS) },
       );
 
-      if (res.ok) {
-        const responseBody: unknown = await res.json();
+      if (response.ok) {
+        const responseBody: unknown = await response.json();
         const parsedResponse = PostStatusResponseSchema.safeParse(responseBody);
         const body = parsedResponse.success ? parsedResponse.data : null;
         if (body?.success) {
@@ -111,10 +90,10 @@ export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
           }
         }
       }
-    } catch (err) {
+    } catch (fetchError) {
       console.warn(
         "[pollDirectPostStatus] Transient fetch error, continuing:",
-        err instanceof Error ? err.message : err,
+        fetchError instanceof Error ? fetchError.message : fetchError,
       );
     }
 

@@ -5,12 +5,6 @@ import { EndpointBlock } from "./EndpointBlock";
 import { SectionTableView } from "./SectionTableView";
 import { StatusFlow } from "./StatusFlow";
 
-/**
- * One page section, fully driven by the DocsSection config. Optional blocks
- * render in a fixed order: flow narrative + cards, status pills, section
- * table, injected children (the live pricing table), endpoint operations,
- * section-level code cards, callouts.
- */
 export function SectionBlock({
   section,
   children,
@@ -95,17 +89,11 @@ export function SectionBlock({
         </div>
       )}
 
-      {section.callouts?.map((callout) =>
-        callout.tone === "amber" ? (
-          <div key={callout.text} className="mt-4">
-            <Callout tone="amber">{callout.text}</Callout>
-          </div>
-        ) : (
-          <Callout key={callout.text} tone="blue">
-            {callout.text}
-          </Callout>
-        )
-      )}
+      {section.callouts?.map((callout) => (
+        <Callout key={callout.text} tone={callout.tone} className="mt-4">
+          {callout.text}
+        </Callout>
+      ))}
     </section>
   );
 }

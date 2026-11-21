@@ -1,33 +1,10 @@
 import "server-only";
 
-/**
- * Shared logic behind the public Arc facilitator
- * (/api/x402/facilitator/{supported,verify,settle}).
- *
- * Sharetopus settles Arc in process (arc/arcFacilitator.ts). This module
- * exposes that facilitator to other Arc builders over the standard x402
- * facilitator wire protocol, so a resource server can point at it the way it
- * would point at any other facilitator, with no seller proof or Circle API
- * key.
- *
- * Who pays for what: /supported and /verify are open, because they only
- * read the chain. /settle broadcasts, and on Arc the broadcaster pays the
- * gas out of its own USDC, so it is gated on a key issued by hand.
- *
- * Called by: src/app/api/x402/facilitator/*
- * Tables touched: none
- * Env: X402_FACILITATOR_SETTLE_KEY (settle access), plus the Arc operations
- *      key and RPC read through arc/arcChain.ts
- */
-
-// The v2 schemas specifically: the generic ones also accept v1 shapes, and
-// this facilitator speaks v2 only, so a v1 payload should fail the parse
-// rather than reach a scheme that cannot read it.
 import {
   PaymentPayloadV2Schema,
   PaymentRequirementsV2Schema,
 } from "@x402/core/schemas";
-import type { PaymentPayload, PaymentRequirements } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements, SupportedResponse } from "@x402/core/types";
 
 import { getArcSigner } from "@/lib/x402/arc/arcChain";
 import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
@@ -36,36 +13,25 @@ import { NETWORKS } from "@/lib/x402/networks";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
-/** The only network this facilitator serves. sourceRef: networks.ts */
 const FACILITATED_NETWORK = NETWORKS.arc;
 
-/** Protocol version this facilitator speaks. */
 const X402_VERSION = 2;
 
-/** Header carrying the settle key, matching the Celo facilitator's convention. */
 export const SETTLE_KEY_HEADER = "x-api-key";
 
-// ---------------------------------------------------------------------------
-// Network and scheme
-// ---------------------------------------------------------------------------
+// @x402/core keys /supported signers by the scheme's CAIP family, "eip155:*" for @x402/evm
+// (node_modules/@x402/core/dist/esm/facilitator/index.mjs getSupported, @x402/evm ExactEvmScheme.caipFamily).
+const EVM_SIGNERS_KEY = "eip155:*";
 
 export type FacilitatedNetworkResult =
   | {
       ok: true;
       network: NetworkConfig;
       facilitator: X402FacilitatorClient;
-      /** Address that broadcasts settlements, advertised on /supported. */
       signerAddress: string;
     }
   | { ok: false; httpStatus: number; message: string };
 
-/**
- * The Arc network config plus its in-process facilitator.
- *
- * Fails closed with a 503 when the operations key is missing rather than
- * letting the throw escape: a caller deserves to know the facilitator is
- * unconfigured, not to read a stack trace.
- */
 export function resolveFacilitatedNetwork(): FacilitatedNetworkResult {
   const signerResult = getArcSigner();
   if (!signerResult.ok) {
@@ -76,16 +42,24 @@ export function resolveFacilitatedNetwork(): FacilitatedNetworkResult {
       message: "This facilitator is not configured to sign on Arc right now.",
     };
   }
+  const facilitatorResult = getFacilitatorClient(FACILITATED_NETWORK);
+  if (!facilitatorResult.ok) {
+    console.error(`[resolveFacilitatedNetwork] ${facilitatorResult.message}`);
+    return {
+      ok: false,
+      httpStatus: 503,
+      message: "This facilitator is not configured to sign on Arc right now.",
+    };
+  }
   return {
     ok: true,
     network: FACILITATED_NETWORK,
-    facilitator: getFacilitatorClient(FACILITATED_NETWORK),
+    facilitator: facilitatorResult.client,
     signerAddress: signerResult.signer.account.address,
   };
 }
 
-/** The kinds advertised on /supported, with the signer that broadcasts them. */
-export function buildSupportedResponse(network: NetworkConfig, signerAddress: string) {
+export function buildSupportedResponse(network: NetworkConfig, signerAddress: string): SupportedResponse {
   return {
     kinds: [
       {
@@ -95,14 +69,9 @@ export function buildSupportedResponse(network: NetworkConfig, signerAddress: st
       },
     ],
     extensions: [],
-    // Keyed by CAIP namespace, the shape the x402 client parses.
-    signers: { eip155: [signerAddress] },
+    signers: { [EVM_SIGNERS_KEY]: [signerAddress] },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Request body
-// ---------------------------------------------------------------------------
 
 export type FacilitatorRequestResult =
   | {
@@ -112,13 +81,6 @@ export type FacilitatorRequestResult =
     }
   | { ok: false; httpStatus: number; message: string };
 
-/**
- * Parses and validates a verify or settle body.
- *
- * The one parse boundary for this API: the protocol's own zod schemas do
- * the shape checking, and the network is pinned to Arc here so a caller
- * cannot ask this facilitator to settle on a chain it holds no key for.
- */
 export async function readFacilitatorRequest(
   request: Request,
   network: NetworkConfig,
@@ -170,10 +132,6 @@ export async function readFacilitatorRequest(
     };
   }
 
-  // The exact scheme signs an EIP-712 authorization over the USDC contract's
-  // domain, which travels in extra as name and version. Requirements without
-  // it could not have produced a signature this facilitator can check, so
-  // they are refused here rather than deeper in the scheme.
   const requirementsExtra = requirements.extra;
   if (!requirementsExtra) {
     return {
@@ -184,10 +142,6 @@ export async function readFacilitatorRequest(
     };
   }
 
-  // The zod schemas type network as a plain string while the protocol types
-  // it as a CAIP pair. Both were just proven equal to the registry's own
-  // value, so substituting it narrows the type without a cast and without
-  // changing what was validated.
   const payload = payloadResult.data;
   if (payload.accepted.network !== network.caipNetwork) {
     return {
@@ -210,8 +164,6 @@ export async function readFacilitatorRequest(
     ok: true,
     paymentPayload: {
       ...payload,
-      // The schema admits an explicit null where the protocol type says
-      // "absent"; they mean the same thing here.
       extensions: payload.extensions ?? undefined,
       accepted: {
         ...payload.accepted,
@@ -227,22 +179,10 @@ export async function readFacilitatorRequest(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Settle access
-// ---------------------------------------------------------------------------
-
 export type SettleAccessResult =
   | { ok: true }
   | { ok: false; httpStatus: number; message: string };
 
-/**
- * Gate on /settle.
- *
- * Settling broadcasts a transaction whose gas comes out of this operator's
- * USDC, so the door is closed by default: no configured key means nobody
- * but this deployment's own routes may settle here. Keys are compared in
- * constant time, because a plain equality leaks the prefix through timing.
- */
 export function checkSettleAccess(request: Request): SettleAccessResult {
   const expectedKey = process.env.X402_FACILITATOR_SETTLE_KEY;
   if (!expectedKey) {

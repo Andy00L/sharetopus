@@ -53,7 +53,6 @@ export default function Footer() {
             </div>
           </div>
 
-          {/* Features section */}
           <div>
             <h3 className="t-footer-h mb-4">Features</h3>
             <ul className="space-y-2">

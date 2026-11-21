@@ -8,31 +8,25 @@ import {
   setSeconds,
   startOfMonth,
   startOfWeek,
+  type Day,
 } from "date-fns";
 
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
+import { isEligibleForPostChange } from "@/lib/types/postBatch";
 import { summarizeBatchStatus, type BatchStatus } from "../statusStyles";
 
-/**
- * Pure date and grouping helpers behind the schedule calendar. No React,
- * no DOM: everything here is unit-testable math so the components stay
- * declarative.
- *
- * All day math runs in the viewer's local timezone on purpose: the rest of
- * the scheduling UI (SchedulingPanel, BatchedPostCard) already formats
- * scheduled_at with local-time date-fns calls, and the calendar must agree
- * with those labels cell for cell.
- */
-
-/** Monday, matching scheduling-tool convention. date-fns weekStartsOn. */
-export const WEEK_STARTS_ON = 1;
+const MONDAY: Day = 1;
+export const WEEK_STARTS_ON = MONDAY;
 
 export type CalendarView = "month" | "week";
 
-/** Cells in a month grid: 6 weeks x 7 days covers every month layout. */
-const MONTH_GRID_DAY_COUNT = 42;
+const WEEKS_IN_MONTH_GRID = 6;
+const DAYS_PER_WEEK = 7;
+const MONTH_GRID_DAY_COUNT = WEEKS_IN_MONTH_GRID * DAYS_PER_WEEK;
 
-/** yyyy-MM-dd in local time; the droppable/grouping key for one day. */
+export const ALL_PLATFORMS = null;
+export type PlatformFilter = ReadonlySet<string> | typeof ALL_PLATFORMS;
+
 export function formatDayKey(date: Date): string {
   return format(date, "yyyy-MM-dd");
 }
@@ -41,14 +35,8 @@ export function parseDayKey(dayKey: string): Date {
   return parse(dayKey, "yyyy-MM-dd", new Date());
 }
 
-/**
- * One draggable unit on the calendar: every post sharing a batch_id (the
- * unit updateScheduledTimeBatchAction reschedules together). Posts without
- * a batch_id become single-post batches keyed by the post id.
- */
 export type CalendarBatch = {
   batchId: string;
-  /** The batch's scheduled moment (first post's scheduled_at). */
   scheduledAtIso: string;
   status: BatchStatus;
   posts: ScheduledPostListItem[];
@@ -86,10 +74,6 @@ export function groupPostsIntoBatches(
   return batches;
 }
 
-/**
- * Overlays in-flight drag moves onto server data so a dropped chip stays
- * where the user put it while the reschedule action round-trips.
- */
 export function applyOptimisticMoves(
   batches: readonly CalendarBatch[],
   movesByBatchId: Readonly<Record<string, string>>,
@@ -116,7 +100,6 @@ export function groupBatchesByDay(
   return batchesByDay;
 }
 
-/** 42 consecutive days starting at the Monday on or before the 1st. */
 export function buildMonthGridDays(anchor: Date): Date[] {
   const gridStart = startOfWeek(startOfMonth(anchor), {
     weekStartsOn: WEEK_STARTS_ON,
@@ -127,25 +110,18 @@ export function buildMonthGridDays(anchor: Date): Date[] {
   });
 }
 
-/** The 7 days of the week containing the anchor, Monday first. */
 export function buildWeekDays(anchor: Date): Date[] {
   const weekStart = startOfWeek(anchor, { weekStartsOn: WEEK_STARTS_ON });
-  return eachDayOfInterval({ start: weekStart, end: addDays(weekStart, 6) });
+  return eachDayOfInterval({
+    start: weekStart,
+    end: addDays(weekStart, DAYS_PER_WEEK - 1),
+  });
 }
 
-/**
- * Only these statuses can move: updateScheduledTimeBatch reschedules
- * scheduled rows and auto-resumes cancelled ones; every other status is
- * terminal or in flight. sourceRef:
- * src/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch.ts
- */
 export function isBatchDraggable(batch: CalendarBatch): boolean {
-  return batch.posts.some(
-    (post) => post.status === "scheduled" || post.status === "cancelled",
-  );
+  return batch.posts.some((post) => isEligibleForPostChange("reschedule", post.status));
 }
 
-/** The dropped day at the batch's original local wall-clock time. */
 export function combineDayWithTimeOf(dayKey: string, timeSource: Date): Date {
   const targetDay = parseDayKey(dayKey);
   return setSeconds(
@@ -157,7 +133,6 @@ export function combineDayWithTimeOf(dayKey: string, timeSource: Date): Date {
   );
 }
 
-/** The dropped day at the given hour, keeping the batch's minutes. */
 export function combineDayWithHour(
   dayKey: string,
   hour: number,
@@ -170,7 +145,6 @@ export function combineDayWithHour(
   );
 }
 
-/** Droppable id helpers shared by the grids and the drop handler. */
 export const DAY_DROPPABLE_PREFIX = "day-";
 export const HOUR_DROPPABLE_PREFIX = "hour-";
 
@@ -200,7 +174,6 @@ export function parseDroppableId(droppableId: string): DropTarget | null {
   return null;
 }
 
-/** The prefilled create link a calendar slot points at. */
 export function buildCreateLinkForSlot(dayKey: string, hour?: number): string {
   const time =
     hour === undefined ? "12:00" : `${String(hour).padStart(2, "0")}:00`;

@@ -15,9 +15,6 @@ import { NETWORKS } from "@/lib/x402/networks";
 import { buildExplorerAddressUrl } from "@/lib/x402/proof/explorer";
 import { loadProofLedger } from "@/lib/x402/proof/proofLedger";
 
-// A settlement lands on-chain in seconds and its post publishes shortly
-// after; thirty seconds keeps the page honest for someone refreshing while
-// bounding the read load on a public, unauthenticated route.
 export const revalidate = 30;
 
 export const metadata: Metadata = {
@@ -26,8 +23,6 @@ export const metadata: Metadata = {
     "Live ledger of x402 settlements on Solana mainnet: every USDC payment an agent made, the action it bought, and whether the post went live.",
 };
 
-// The calls a judge can run themselves. Mirrors demo/x402-demo.mjs; the
-// last line is the Blink, for a wallet with no code at all.
 const WAY_IN_COMMANDS = `cd demo && bun install
 export SOLANA_PRIVATE_KEY=<base58 secret key of a wallet holding USDC>
 
@@ -38,16 +33,6 @@ node x402-demo.mjs post <social_account_id> linkedin "Posted by an agent, paid i
 # Or from a wallet, no code: open this Blink with your connected account id
 https://dial.to/?action=solana-action:https://sharetopus.com/api/actions/post-now?account_id=<social_account_id>&platform=linkedin`;
 
-/**
- * Public proof of the Solana lane. Server component: reads the ledger
- * through the service-role client (only on-chain-public columns leave the
- * loader) and composes the page from the marketing shell and the reference
- * family's cards. Layout and tokens: docs/UI_DESIGN_SYSTEM.md, "The proof
- * ledger".
- *
- * Superseded by /proof, which carries every network. This page stays while
- * the link already handed to the Solana grant reviewers is still in use.
- */
 export default async function SolanaLanePage() {
   const solanaNetwork = NETWORKS.solana;
   const ledgerResult = await loadProofLedger({
@@ -147,7 +132,7 @@ export default async function SolanaLanePage() {
               Ledger
             </h2>
             {!ledgerResult.ok ? (
-              <Callout tone="amber">
+              <Callout tone="warning">
                 The ledger could not be read right now. Settlements still
                 verify on-chain; try again in a minute.
               </Callout>

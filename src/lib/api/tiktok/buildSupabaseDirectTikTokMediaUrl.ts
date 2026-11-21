@@ -2,18 +2,9 @@ import "server-only";
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
-/**
- * Builds a direct Supabase signed URL for TikTok using the operator's
- * custom storage domain. TikTok pulls directly from Supabase, bypassing
- * the /api/media proxy. Requires SUPABASE_CUSTOM_STORAGE_DOMAIN to be
- * set to a valid hostname (e.g., api.sharetopus.com).
- *
- * The signed URL has a default expiry of 3600 seconds (1 hour) to
- * outlive TikTok's async pull window.
- *
- * Returns: { success, url } or { success: false, message }.
- * Persists: nothing (the signed URL is ephemeral).
- */
+// TikTok's pull "times out one hour after the download task is initiated", and
+// the URL must stay reachable until then:
+// https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide
 export async function buildSupabaseDirectTikTokMediaUrl(input: {
   mediaPath: string;
   expiresInSeconds?: number;
@@ -32,7 +23,6 @@ export async function buildSupabaseDirectTikTokMediaUrl(input: {
     };
   }
 
-  // Defensive: strip protocol if operator accidentally includes it
   const cleanDomain = customDomain
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "");
@@ -66,8 +56,6 @@ export async function buildSupabaseDirectTikTokMediaUrl(input: {
     };
   }
 
-  // Rewrite the host portion to the custom domain while preserving
-  // path and query (the signed token lives in the query string).
   try {
     const url = new URL(data.signedUrl);
     url.host = cleanDomain;

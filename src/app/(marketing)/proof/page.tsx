@@ -17,9 +17,6 @@ import {
 } from "@/lib/x402/proof/explorer";
 import { loadProofLedger } from "@/lib/x402/proof/proofLedger";
 
-// A settlement lands on-chain in seconds and its post publishes shortly
-// after; thirty seconds keeps the page honest for someone refreshing while
-// bounding the read load on a public, unauthenticated route.
 export const revalidate = 30;
 
 export const metadata: Metadata = {
@@ -28,7 +25,6 @@ export const metadata: Metadata = {
     "Live ledger of x402 settlements across every network Sharetopus accepts: the USDC an agent paid, the action it bought, and whether the post went live.",
 };
 
-// The calls a judge can run themselves. Mirrors demo/x402-demo.mjs.
 const WAY_IN_COMMANDS = `cd demo && bun install
 
 # Solana: the wallet signs, the CDP facilitator pays the network fee
@@ -43,13 +39,6 @@ node x402-demo.mjs challenge
 node x402-demo.mjs connect linkedin
 node x402-demo.mjs post <social_account_id> linkedin "Posted by an agent, paid in USDC"`;
 
-/**
- * Public proof across every network. Server component: reads the ledger
- * through the service-role client (only on-chain-public columns leave the
- * loader) and composes the page from the marketing shell and the reference
- * family's cards. Layout and tokens: docs/UI_DESIGN_SYSTEM.md, "The proof
- * ledger".
- */
 export default async function ProofPage() {
   const ledgerResult = await loadProofLedger();
 
@@ -59,8 +48,6 @@ export default async function ProofPage() {
       ? { kind: "empty" }
       : { kind: "entry", entry: ledgerResult.entries[0] };
 
-  // Only lanes that actually took a payment are advertised here, so the page
-  // never claims a network no agent has ever settled on.
   const provenNetworkNames = ledgerResult.ok
     ? [...new Set(ledgerResult.entries.map((entry) => entry.network))]
     : [];
@@ -135,7 +122,7 @@ export default async function ProofPage() {
               Ledger
             </h2>
             {!ledgerResult.ok ? (
-              <Callout tone="amber">
+              <Callout tone="warning">
                 The ledger could not be read right now. Settlements still
                 verify on-chain; try again in a minute.
               </Callout>

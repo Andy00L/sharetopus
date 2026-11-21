@@ -3,18 +3,6 @@ import "server-only";
 import { getUserStorageBytes } from "@/lib/storage/getUserStorageBytes";
 import { WALLET_STORAGE_LIMIT } from "@/lib/types/plans";
 
-/**
- * Enforces the aggregate storage cap for x402 wallet users.
- *
- * Steps:
- * 1. Read current storage usage via getUserStorageBytes RPC.
- * 2. Project usage after additionalBytes.
- * 3. Compare against WALLET_STORAGE_LIMIT (5 GB, independent constant).
- * 4. Return allowed/denied with byte-level details for the caller.
- *
- * Wallet routes call this function (not the MCP enforceStorageQuota).
- * Returns errors as values. Never throws.
- */
 export async function enforceWalletStorageQuota(
   walletPrincipalId: string,
   additionalBytes: number,
@@ -25,7 +13,6 @@ export async function enforceWalletStorageQuota(
   const storageResult = await getUserStorageBytes(walletPrincipalId);
 
   if (!storageResult.success) {
-    // Fail closed: deny upload if we cannot read current usage.
     return {
       allowed: false,
       currentBytes: 0,

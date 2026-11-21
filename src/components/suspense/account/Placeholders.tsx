@@ -10,7 +10,6 @@ function AccountBadgeSkeleton() {
   );
 }
 
-/** Loading skeleton for the connections page. */
 export default function AccountsPageSkeleton() {
   return (
     <SidebarContent className=" px-4 py-6 ">

@@ -1,11 +1,5 @@
+import { encodeListCursor } from "@/lib/api/rest/pagination";
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
-
-/**
- * Cross-cutting sections of the /docs/rest reference: authentication,
- * pagination, the error envelope, and rate limiting. Every literal was
- * extracted from the REST source, never from memory; each section
- * carries a sourceRef naming the files it was verified against.
- */
 
 const QUICKSTART_CURL = `# Every request carries the API key as a Bearer token
 curl "https://sharetopus.com/api/v1/posts" \\
@@ -19,9 +13,10 @@ const UNAUTHORIZED_401 = `{
   "request_id": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa"
 }`;
 
-/** A real next_cursor (src/lib/api/rest/pagination.ts, toListPage): base64url of ["<created_at>", "<id>"]. */
-const EXAMPLE_CURSOR =
-  "WyIyMDI2LTA3LTAxVDA5OjMwOjAwLjEyMzQ1NiswMDowMCIsIjViMGYyYTNlLThjNGQtNGUxZi05YTdiLTNjMmQxZTBmOWE4YiJd";
+const EXAMPLE_CURSOR = encodeListCursor({
+  sortKey: "2026-07-01T09:30:00.123456+00:00",
+  id: "5b0f2a3e-8c4d-4e1f-9a7b-3c2d1e0f9a8b",
+});
 
 const PAGINATED_PAGE_2 = `# First page
 curl "https://sharetopus.com/api/v1/posts?limit=20" \\
@@ -69,14 +64,12 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
       },
     ],
     flowCodeSamples: [
-      // featured: this page's single signature stamp card
-      // (placement rule in docs/UI_DESIGN_SYSTEM.md).
       { label: "Quickstart · cURL", code: QUICKSTART_CURL, featured: true },
       { label: "Response · 401", code: UNAUTHORIZED_401 },
     ],
     callouts: [
       {
-        tone: "blue",
+        tone: "note",
         text: "Every response carries an x-request-id header (echoed as request_id in error bodies). Include it when contacting support.",
       },
     ],

@@ -8,7 +8,6 @@ export const metadata: Metadata = {
   description: "Manage webhook subscriptions",
 };
 
-/** /settings/webhooks: requires a signed-in user. */
 export default async function WebhooksSettingsPage() {
   const { userId } = await auth();
   if (!userId) {

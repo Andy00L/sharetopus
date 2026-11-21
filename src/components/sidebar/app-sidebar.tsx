@@ -1,5 +1,3 @@
-"use client";
-
 import avatar from "../../../public/trans_logo (1).webp";
 import {
   Sidebar,
@@ -22,7 +20,6 @@ import Image from "next/image";
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar collapsible="offcanvas" {...props}>
-      {/**Side bar header*/}
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -45,20 +42,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
 
-      {/* Section Create */}
       <NavCreate />
 
-      {/* Section Posts */}
       <NavPost />
 
       <SidebarSeparator />
 
-      {/* Section Accounts */}
       <NavAccounts />
 
       <SidebarSeparator />
 
-      {/* Section Referral */}
       <NavReferral />
 
       <SidebarFooter className="mt-auto">

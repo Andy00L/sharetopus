@@ -8,21 +8,20 @@ import {
 import {
   TIER_UPLOAD_LIMITS,
   DEFAULT_UPLOAD_LIMITS,
-} from "@/components/core/create/constants/uploadLimits";
+} from "@/lib/storage/uploadLimits";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import type { PlanTier } from "@/lib/types/plans";
 import { randomUUID } from "crypto";
 
-/**
- * Content types accepted for upload. Built from the shared constants
- * plus "video/quicktime" (alias for .mov that some agents send).
- */
 const ALLOWED_UPLOAD_TYPES: ReadonlyArray<string> = [
   ...ALLOWED_IMAGE_TYPES,
   ...ALLOWED_VIDEO_TYPES,
-  "video/quicktime",
 ];
+
+const LEGACY_CONTENT_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  "video/mov": "video/quicktime",
+};
 
 export interface GenerateUploadUrlInput {
   principalId: string;
@@ -40,7 +39,6 @@ export type GenerateUploadUrlReason =
   | "storage_quota_exceeded"
   | "supabase_error";
 
-/** A minted URL always carries all three fields; a refusal carries its reason. */
 export type GenerateUploadUrlResult =
   | { success: true; message: string; uploadUrl: string; path: string; token: string }
   | { success: false; message: string; reason: GenerateUploadUrlReason };
@@ -49,17 +47,13 @@ export type UploadRequestCheck =
   | { ok: true }
   | { ok: false; reason: "content_type_not_allowed" | "file_too_large"; message: string };
 
-/**
- * Content-type allow-list and per-file size cap (image vs video, per tier),
- * without minting anything. Exported so a paid caller (x402 upload-url) can
- * reject a request before settlement.
- */
 export function checkUploadRequest(input: {
   contentType: string;
   fileSize: number;
   tier: PlanTier | null;
 }): UploadRequestCheck {
-  if (!ALLOWED_UPLOAD_TYPES.includes(input.contentType)) {
+  const contentType = LEGACY_CONTENT_TYPE_ALIASES[input.contentType] ?? input.contentType;
+  if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
     return {
       ok: false,
       reason: "content_type_not_allowed",
@@ -67,7 +61,7 @@ export function checkUploadRequest(input: {
     };
   }
 
-  const mediaKind: "image" | "video" = input.contentType.startsWith("image/")
+  const mediaKind: "image" | "video" = contentType.startsWith("image/")
     ? "image"
     : "video";
   const limits = input.tier !== null
@@ -87,28 +81,9 @@ export function checkUploadRequest(input: {
   return { ok: true };
 }
 
-/**
- * Server-side helper that validates an upload request and mints a
- * Supabase signed upload URL.
- *
- * Transport-agnostic: the caller provides principalId + priceId.
- * Does NOT perform auth or subscription checks.
- *
- * Used by:
- *   - src/app/api/storage/generate-upload-url/route.ts (web uploads)
- *   - src/lib/mcp/tools/requestUploadUrl.ts (MCP tool)
- *
- * Validation order:
- *   1. Input fields present and valid
- *   2. Content type in allow-list
- *   3. Per-file size cap (from TIER_UPLOAD_LIMITS)
- *   4. Storage quota (via enforceStorageQuota RPC, when countTowardStorage)
- *   5. Mint signed upload URL in MEDIA_BUCKET via adminSupabase
- */
 export async function generateServerSignedUploadUrl(
   input: GenerateUploadUrlInput
 ): Promise<GenerateUploadUrlResult> {
-  // 1. Validate inputs
   if (
     !input.principalId ||
     !input.filename ||
@@ -123,13 +98,11 @@ export async function generateServerSignedUploadUrl(
     };
   }
 
-  // 2-3. Content type allow-list and per-file size cap
   const requestCheck = checkUploadRequest(input);
   if (!requestCheck.ok) {
     return { success: false, message: requestCheck.message, reason: requestCheck.reason };
   }
 
-  // 4. Aggregate storage quota (RPC-based, accurate for any file count)
   if (input.countTowardStorage) {
     const check = await enforceStorageQuota(
       input.principalId,
@@ -145,7 +118,6 @@ export async function generateServerSignedUploadUrl(
     }
   }
 
-  // 5. Build path (principalId/uuid.ext) and create the signed upload URL
   const ext = (input.filename.split(".").pop() ?? "bin").toLowerCase();
   const filePath = `${input.principalId}/${randomUUID()}.${ext}`;
 

@@ -1,34 +1,22 @@
-/**
- * Static content model for the public /docs/x402 reference page.
- *
- * Every literal in this file (header names, field names, enum values, status
- * codes, limits, addresses) was extracted from the x402 source, not from
- * docs/. Each section and operation carries a sourceRef naming the files it
- * was verified against; sourceRef is for maintainers only and is never
- * rendered. Amounts inside code samples are illustrative; the live 402
- * response always carries the current price from pricing_actions.
- */
 
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
-
-// ---------------------------------------------------------------------------
-// Overview
-// ---------------------------------------------------------------------------
+import type { SupportedNetworkName } from "@/lib/x402/networks";
 
 export const OVERVIEW = {
   title: "x402 API Reference",
   subtitle:
     "Pay per action in USDC. No account and no API key: a wallet signature authorizes each request and settlement happens on-chain through the network's x402 facilitator.",
   baseUrl: "https://sharetopus.com/api/x402",
-  // sourceRef: src/lib/x402/networks.ts (mainnet-only registry)
-  networks: ["base", "polygon", "arbitrum", "celo", "solana"],
+  networks: [
+    "base",
+    "polygon",
+    "arbitrum",
+    "celo",
+    "solana",
+  ] satisfies readonly SupportedNetworkName[],
   callout:
     "All five networks are mainnet. Every paid call settles real USDC. There is no test mode on this surface; start with the cheapest actions (see Pricing) while integrating.",
 } as const;
-
-// ---------------------------------------------------------------------------
-// Shared code samples
-// ---------------------------------------------------------------------------
 
 const POST_NOW_402 = `{
   "x402Version": 2,
@@ -80,12 +68,7 @@ X-PAYMENT-RESPONSE: <base64>
   "amount": "750000"
 }`;
 
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
 export const DOCS_SECTIONS: DocsSection[] = [
-  // ── Payment flow ────────────────────────────────────────────────────────
   {
     id: "payment-flow",
     navLabel: "Payment flow",
@@ -109,7 +92,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "The server verifies, settles, then executes.",
-        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP, which also screens for sanctions; x402.celo.org for celo; Sharetopus itself for arc, with no third-party screening). A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. Business-rule checks (account ownership, eligibility, quotas, a reused idempotency_key) run before settlement, so a request that cannot succeed is rejected with nothing charged. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, a refund is sent on-chain, the error body carries refundInitiated and refundTxHash, and the charge is recorded as refunded once the chain confirms it. Presenting the same payment again returns the stored result of a settled write action instead of charging twice. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
+        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP, which also screens for sanctions; x402.celo.org for celo; Sharetopus itself for arc, with no third-party screening). A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. Business-rule checks (account ownership, eligibility, quotas, a reused idempotency_key) run before settlement, so a request that cannot succeed is rejected with nothing charged. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, a refund is sent on-chain, the error body carries refundInitiated and refundTxHash, and the charge is recorded as refunded once the chain confirms it. Presenting the same payment again returns the stored result of a settled write action instead of charging twice; post-now answers it too when the facilitator refuses the payment as already used or expired, provided the request body is identical to the first call's. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
       },
       {
         title: "For social accounts: finish OAuth.",
@@ -117,8 +100,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
     ],
     flowCodeSamples: [
-      // featured: this page's single signature stamp card
-      // (placement rule in docs/UI_DESIGN_SYSTEM.md).
       { label: "Response · 402", code: POST_NOW_402, featured: true },
       { label: "Quickstart · cURL", code: QUICKSTART_CURL },
       { label: "Response · 200 · Envelope", code: ENVELOPE_200 },
@@ -126,17 +107,16 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
     callouts: [
       {
-        tone: "blue",
-        text: "Each signed payment is single use. Presenting the same payment twice returns 409 replay. Sign a fresh payment for every call.",
+        tone: "note",
+        text: "Each signed payment is single use and is never charged twice. Presenting it again returns the original result of a settled write action, or 409 replay when there is none. Sign a fresh payment for every new call.",
       },
       {
-        tone: "amber",
+        tone: "warning",
         text: "Keep your wallet key offline. The API never needs the key, only one payment signature per paid call.",
       },
     ],
   },
 
-  // ── Connect a social account ────────────────────────────────────────────
   {
     id: "connect",
     navLabel: "Connect account",
@@ -257,7 +237,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         ],
         callouts: [
           {
-            tone: "blue",
+            tone: "note",
             text: "Reconnecting an already-connected account returns oauthUrl null, does not start a new OAuth flow, and charges nothing.",
           },
         ],
@@ -283,7 +263,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Poll connection status ──────────────────────────────────────────────
   {
     id: "status",
     navLabel: "Connection status",
@@ -409,7 +388,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Reauthorize a connection ────────────────────────────────────────────
   {
     id: "reauth",
     navLabel: "Reauthorize",
@@ -503,7 +481,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Post now ────────────────────────────────────────────────────────────
   {
     id: "post-now",
     navLabel: "Post now",
@@ -592,7 +569,8 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 name: "idempotency_key",
                 type: "string",
                 required: false,
-                description: "Client-supplied key to dedupe retries.",
+                description:
+                  "Client-supplied key to dedupe retries. A retry with a new payment and a key that was already dispatched returns the first call's answer with 200 and never settles the new payment.",
               },
             ],
           },
@@ -603,7 +581,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 name: "batchId",
                 type: "string",
                 required: true,
-                description: "Batch identifier for this dispatch.",
+                description: "Batch identifier for this dispatch; equal to chargeId.",
               },
               {
                 name: "eventIds",
@@ -616,6 +594,13 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "number",
                 required: true,
                 description: "Count of jobs dispatched.",
+              },
+              {
+                name: "posts",
+                type: "object[]",
+                required: false,
+                description:
+                  "Only on a replay answered from the dispatch rows: each post's status, processing, published with contentId, or failed with failureReason.",
               },
             ],
           },
@@ -639,7 +624,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
             code: `{
   "success": true,
   "data": {
-    "batchId": "f7e6d5c4-b3a2-4190-8f7e-6d5c4b3a2918",
+    "batchId": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa",
     "eventIds": ["a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"],
     "dispatched": 1
   },
@@ -654,7 +639,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Schedule a post ─────────────────────────────────────────────────────
   {
     id: "schedule",
     navLabel: "Schedule post",
@@ -752,7 +736,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Upload media ────────────────────────────────────────────────────────
   {
     id: "upload",
     navLabel: "Upload media",
@@ -839,7 +822,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Manage scheduled posts ──────────────────────────────────────────────
   {
     id: "manage-posts",
     navLabel: "Manage posts",
@@ -984,6 +966,12 @@ export const DOCS_SECTIONS: DocsSection[] = [
         description:
           "Charges delete. Hard deletes 1 to 50 scheduled or completed posts and their stored media. Not reversible.",
         sourceRef: "src/app/api/x402/delete/route.ts",
+        callouts: [
+          {
+            tone: "note",
+            text: "A post that is publishing now cannot be deleted: the call answers 409 post_publishing before payment, and nothing is deleted or charged. Try again in a minute.",
+          },
+        ],
         paramTables: [
           {
             heading: "Request Body",
@@ -1044,7 +1032,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Read endpoints ──────────────────────────────────────────────────────
   {
     id: "reads",
     navLabel: "Read endpoints",
@@ -1426,7 +1413,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Networks and assets ─────────────────────────────────────────────────
   {
     id: "networks",
     navLabel: "Networks",
@@ -1473,7 +1459,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       "Settlement runs through the Coinbase CDP facilitator on base, polygon, arbitrum, and solana, and through the Celo facilitator (x402.celo.org) on celo. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base. Solana also has a public ledger of settlements at /solana and a post-now Blink (Solana Action) at /api/actions/post-now?account_id=&platform=, which pays from the wallet directly and records the charge with facilitator solana_direct.",
   },
 
-  // ── Pricing ─────────────────────────────────────────────────────────────
   {
     id: "pricing",
     navLabel: "Pricing",
@@ -1484,7 +1469,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       "pricing_actions table via data/pricing.ts; runtime rule in src/lib/x402/pricing/readActionPrice.ts",
   },
 
-  // ── Error codes ─────────────────────────────────────────────────────────
   {
     id: "errors",
     navLabel: "Errors",
@@ -1574,7 +1558,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "409",
           "replay, replay_detected",
-          "This payment was already used and has no stored result to return. A settled write action presented again returns its original result with 200 instead.",
+          "This payment was already used and its result cannot be returned. A settled write action presented again returns its original result with 200 instead; post-now rebuilds it from its dispatch rows and adds posts, each post's status (processing, published with contentId, failed with failureReason), also when the facilitator refuses the payment as already used or expired, provided the request body is identical to the first call's.",
         ],
         [
           "409",
@@ -1584,7 +1568,17 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "409",
           "duplicate_idempotency_key, reauth_not_needed, no_eligible_posts",
-          "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged.",
+          "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged. On post-now, a reused key whose first call settled returns that call's answer with 200 instead, when the request body is identical to the first call's.",
+        ],
+        [
+          "409",
+          "idempotency_key_in_progress",
+          "post-now and schedule: another paid call with this idempotency_key is running, or ended less than 120 seconds ago without a known payment outcome. A call whose action failed and whose refund confirmed frees the key at once. Checked before settlement; nothing charged. Retry after Retry-After.",
+        ],
+        [
+          "409",
+          "post_publishing",
+          "A post named in a delete call is publishing now. Checked before settlement; nothing charged. Try again in a minute.",
         ],
         [
           "413",
@@ -1622,6 +1616,16 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "The server's rate limiter is down. Not a client limit; retry after Retry-After.",
         ],
         [
+          "503",
+          "idempotency_check_unavailable",
+          "post-now and schedule: the idempotency_key could not be checked. Checked before settlement; nothing charged. Retry after Retry-After.",
+        ],
+        [
+          "503",
+          "replay_lookup_failed",
+          "post-now: a replayed payment or a reused idempotency_key whose first outcome could not be read right now. Nothing charged again; retry the same request after Retry-After.",
+        ],
+        [
           "504",
           "timeout, settlement_timeout",
           "Settlement timed out and the outcome may be indeterminate. Do not re-present the same payment; contact support if the charge settled. connect uses the settlement_timeout name.",
@@ -1650,7 +1654,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Rate limits ─────────────────────────────────────────────────────────
   {
     id: "rate-limits",
     navLabel: "Rate limits",
@@ -1701,10 +1704,6 @@ Retry-After: 42
     ],
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Sidebar
-// ---------------------------------------------------------------------------
 
 export const SIDEBAR_ITEMS = [
   { id: "overview", label: "Overview" },

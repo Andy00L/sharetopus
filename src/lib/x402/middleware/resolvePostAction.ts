@@ -1,26 +1,20 @@
 import "server-only";
 
 import type { MediaType } from "@/db/schema";
+import type { PurchasableX402Action } from "@/lib/x402/pricing/readActionPrice";
 
-/**
- * Maps a post_type field from the request body to the corresponding
- * pricing_actions key. Used by the post-now and schedule routes. Prices
- * live in pricing_actions (read via readActionPrice), never here.
- *
- * "text"  -> "post.text"
- * "image" -> "post.image"
- * "video" -> "post.video"
- */
+export const POST_ACTION_PREFIX = "post.";
+
 export function resolvePostAction(postType: string):
-  | { success: true; action: string; mediaType: MediaType }
+  | { success: true; action: PurchasableX402Action; mediaType: MediaType }
   | { success: false; httpStatus: number; errorKind: string; message: string } {
   switch (postType) {
     case "text":
-      return { success: true, action: "post.text", mediaType: "text" };
+      return { success: true, action: `${POST_ACTION_PREFIX}text`, mediaType: "text" };
     case "image":
-      return { success: true, action: "post.image", mediaType: "image" };
+      return { success: true, action: `${POST_ACTION_PREFIX}image`, mediaType: "image" };
     case "video":
-      return { success: true, action: "post.video", mediaType: "video" };
+      return { success: true, action: `${POST_ACTION_PREFIX}video`, mediaType: "video" };
     default:
       return {
         success: false,

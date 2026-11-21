@@ -1,17 +1,18 @@
-// src/actions/server/handleSocialMediaPost/handleSocialMediaPost.ts
 "use server";
 
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { HANDLE_SOCIAL_MEDIA_POST_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import {
-  isPostingPlatform,
-  platformSupportsMediaType,
-  type PostingPlatform,
+  isAdapterPlatform,
+  type AdapterPlatform,
 } from "@/lib/platforms/capabilities";
 import type { MediaType } from "@/db/schema";
+import { encodeFormPostOptions } from "@/inngest/events/postOptions";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
@@ -22,10 +23,6 @@ import {
 } from "../directPostActions/directPostBatch";
 import { generateSuccessMessage } from "./successMessage";
 import { validateAccountContent } from "./validateContent";
-
-// ────────────────────────────────────────────────────────────
-// Shared types
-// ────────────────────────────────────────────────────────────
 
 export type BoardInfo = {
   boardID: string;
@@ -42,7 +39,7 @@ export type ContentInfo = {
   isCustomized: boolean;
 };
 
-export type PlatformCounts = Record<PostingPlatform, number> & {
+export type PlatformCounts = Record<AdapterPlatform, number> & {
   total: number;
 };
 
@@ -63,7 +60,6 @@ type PostResult = {
   event_ids?: string[];
 };
 
-/** A zero count per posting platform; the return type makes a new platform a compile error here. */
 function buildZeroCounts(): PlatformCounts {
   return {
     total: 0,
@@ -77,110 +73,17 @@ function buildZeroCounts(): PlatformCounts {
   };
 }
 
-// ────────────────────────────────────────────────────────────
-// Per-platform form adapters
-// ────────────────────────────────────────────────────────────
-
-type ScheduleOptionsBuilderArgs = {
-  account: ClientSocialAccount;
-  content: ContentInfo;
-  platformOptions: PlatformOptions;
-  selectedBoard: BoardInfo | undefined;
+const PLATFORM_KEEPS_TITLE: Record<AdapterPlatform, boolean> = {
+  pinterest: true,
+  linkedin: false,
+  tiktok: false,
+  instagram: false,
+  youtube: true,
+  x: false,
+  facebook: false,
 };
 
-type PlatformFormAdapter = {
-  /** Whether scheduled_posts.post_title should carry the form title. */
-  keepsTitle: boolean;
-  /** post_options payload the worker reads back (flat, per platform). */
-  buildScheduleOptions: (
-    args: ScheduleOptionsBuilderArgs,
-  ) => SchedulePostData["postOptions"];
-};
-
-/**
- * The only per-platform knowledge the web form path needs. Everything
- * else (validation, quota, dispatch) is platform-agnostic in the batch
- * cores and the Inngest workers.
- */
-const PLATFORM_FORM_ADAPTERS: Record<PostingPlatform, PlatformFormAdapter> = {
-  pinterest: {
-    keepsTitle: true,
-    buildScheduleOptions: ({ content, platformOptions, selectedBoard }) => ({
-      privacyLevel: platformOptions.pinterest?.privacyLevel ?? "PUBLIC",
-      board: selectedBoard?.boardID ?? "",
-      boardName: selectedBoard?.boardName ?? "",
-      link: content.link,
-    }),
-  },
-  linkedin: {
-    keepsTitle: false,
-    buildScheduleOptions: ({ account, content, platformOptions }) => ({
-      memberUrn: `urn:li:person:${account.account_identifier}`,
-      link: content.link || undefined,
-      visibility: platformOptions.linkedin?.visibility ?? "PUBLIC",
-    }),
-  },
-  tiktok: {
-    keepsTitle: false,
-    buildScheduleOptions: ({ platformOptions }) =>
-      platformOptions.tiktok ?? null,
-  },
-  instagram: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
-  youtube: {
-    keepsTitle: true,
-    buildScheduleOptions: ({ platformOptions }) => ({
-      privacyStatus: platformOptions.youtube?.privacyStatus ?? "public",
-    }),
-  },
-  x: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
-  facebook: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
-};
-
-// ────────────────────────────────────────────────────────────
-// Entry point
-// ────────────────────────────────────────────────────────────
-
-/**
- * Orchestrates direct and scheduled posting across all platforms.
- *
- * Direct path (isScheduled=false): dispatches Inngest `post.now` events,
- * one per account x platform pair. processDirectPost worker handles
- * each, then writes content_history and cleans up media.
- *
- * Scheduled path (isScheduled=true): builds a SchedulePostData[] array
- * and calls schedulePostBatch (shared core for web/MCP/x402). One bulk
- * upsert into scheduled_posts. The processSinglePost worker fires later
- * when scheduled_at is reached.
- *
- * Accounts arrive as one mixed array (the caller no longer pre-groups by
- * platform); grouping and per-platform behavior live in
- * PLATFORM_FORM_ADAPTERS above.
- *
- * Tables touched:
- *   - scheduled_posts (insert, scheduled path)
- *   - pending_direct_posts (insert, direct path)
- *   - social_accounts (read, ownership checked in core)
- *   - platform_quotas (read, daily cap in core)
- *
- * Rate limits:
- *   - Outer (this fn): 30 calls per 60s per user, covers both paths.
- *   - Inner (schedulePostBatch): 10 calls per 60s per user, scheduled only.
- */
 export async function handleSocialMediaPost(config: {
-  /**
-   * Client-safe account projections. Full rows also satisfy this; the
-   * batch cores re-verify ownership by id, so nothing here is trusted
-   * beyond routing.
-   */
   accounts: ClientSocialAccount[];
   mediaPath: string;
   coverTimestamp: number;
@@ -212,7 +115,6 @@ export async function handleSocialMediaPost(config: {
 
   const requestId = generateRequestId();
 
-  // Step 1: account count guard
   if (accounts.length === 0) {
     console.error("[handleSocialMediaPost] No accounts provided");
     return {
@@ -228,9 +130,8 @@ export async function handleSocialMediaPost(config: {
     `[handleSocialMediaPost] Starting ${isScheduled ? "scheduled" : "direct"} post for ${accounts.length} accounts`,
   );
 
-  // Step 2: auth
   const authResult = cronSecret
-    ? await authCheckCronJob(userId, cronSecret)
+    ? await authCheckCronJob(cronSecret)
     : await authCheck(userId);
 
   if (!authResult) {
@@ -246,14 +147,30 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 3: outer rate limit (covers both direct + scheduled flows)
-  const rateCheck = await checkRateLimit(
-    "handleSocialMediaPost",
-    userId,
-    30,
-    60,
-    cronSecret,
-  );
+  if (!cronSecret) {
+    const access = await checkActiveSubscription(userId);
+    if (!access.isActive) {
+      console.warn(
+        `[handleSocialMediaPost] Refused for ${userId}: access ${access.status}`,
+      );
+      return {
+        success: false,
+        counts: buildZeroCounts(),
+        message:
+          access.status === "unavailable"
+            ? "Could not check your plan. Please try again."
+            : "Posting needs an active plan or referral weeks.",
+        errors: [],
+      };
+    }
+  }
+
+  const rateCheck = await checkRateLimit({
+    operation: "handleSocialMediaPost",
+    identifier: userId,
+    rule: HANDLE_SOCIAL_MEDIA_POST_RATE_LIMIT,
+    bypassSecret: cronSecret,
+  });
   if (!rateCheck.success) {
     console.warn(`[handleSocialMediaPost] Rate limit exceeded for ${userId}`);
     return {
@@ -265,12 +182,10 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 4: group accounts by platform; unknown platforms are reported,
-  // never silently dropped.
-  const accountsByPlatform = new Map<PostingPlatform, ClientSocialAccount[]>();
+  const accountsByPlatform = new Map<AdapterPlatform, ClientSocialAccount[]>();
   const unsupportedErrors: AccountError[] = [];
   for (const account of accounts) {
-    if (!isPostingPlatform(account.platform)) {
+    if (!isAdapterPlatform(account.platform)) {
       unsupportedErrors.push({
         accountId: account.id,
         platform: account.platform,
@@ -296,8 +211,6 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 5: media presence validation. Every platform that accepts the
-  // media post type needs the file; the batch cores enforce it again.
   if ((postType === "image" || postType === "video") && !mediaPath) {
     console.error(
       `[handleSocialMediaPost] Media required for ${postType} posts`,
@@ -310,8 +223,6 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 6: reject a file whose type cannot be derived from its name, and
-  // clean up its upload.
   if (mediaPath && fileName) {
     const mimeResult = getMimeTypeFromFileName(fileName);
     if (!mimeResult.success) {
@@ -337,7 +248,6 @@ export async function handleSocialMediaPost(config: {
     }
   }
 
-  // Step 7: content validation (Pinterest board, LinkedIn identifier, etc.)
   const missingContentAccounts: AccountError[] = [];
   for (const [platform, platformAccounts] of accountsByPlatform) {
     missingContentAccounts.push(
@@ -364,7 +274,6 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  // Step 8: branch on direct vs scheduled
   if (!isScheduled) {
     return directPostFromForm({
       accountsByPlatform,
@@ -396,10 +305,6 @@ export async function handleSocialMediaPost(config: {
   });
 }
 
-// ────────────────────────────────────────────────────────────
-// Shared helpers for both paths
-// ────────────────────────────────────────────────────────────
-
 function findContentForAccount(
   accountContent: ContentInfo[],
   accountId: string,
@@ -417,7 +322,7 @@ function findSelectedBoard(
 }
 
 function buildAccountsLookup(
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>,
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>,
 ): Map<string, ClientSocialAccount> {
   const lookup = new Map<string, ClientSocialAccount>();
   for (const platformAccounts of accountsByPlatform.values()) {
@@ -429,7 +334,7 @@ function buildAccountsLookup(
 }
 
 function countAcceptedByPlatform(
-  posts: { socialAccountId: string; platform: PostingPlatform }[],
+  posts: { socialAccountId: string; platform: AdapterPlatform }[],
   rejectedAccountIds: Set<string>,
 ): PlatformCounts {
   const counts = buildZeroCounts();
@@ -460,19 +365,8 @@ function mapRejectionsToAccountErrors(
   });
 }
 
-// ────────────────────────────────────────────────────────────
-// Scheduled-post bulk dispatch
-// ────────────────────────────────────────────────────────────
-
-/**
- * Builds a SchedulePostData[] from the platform groups and delegates to
- * schedulePostBatch for a single bulk upsert into scheduled_posts.
- * Platform/post-type combos the platform cannot publish (e.g. text on
- * Pinterest, image on YouTube) are skipped at build time; the account
- * selector already prevents selecting them.
- */
 async function scheduleAllPosts(args: {
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -490,12 +384,9 @@ async function scheduleAllPosts(args: {
   ).toISOString();
 
   const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
-  const posts: (SchedulePostData & { platform: PostingPlatform })[] = [];
+  const posts: (SchedulePostData & { platform: AdapterPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
-    if (!platformSupportsMediaType(platform, args.postType)) continue;
-    const adapter = PLATFORM_FORM_ADAPTERS[platform];
-
     for (const account of platformAccounts) {
       const content = findContentForAccount(args.accountContent, account.id);
       if (!content) continue;
@@ -505,17 +396,19 @@ async function scheduleAllPosts(args: {
         socialAccountId: account.id,
         platform,
         scheduledAt: scheduledAtIso,
-        title: adapter.keepsTitle ? content.title : "",
+        title: PLATFORM_KEEPS_TITLE[platform] ? content.title : "",
         description: content.description,
         postType: args.postType,
         mediaStoragePath: args.mediaPath,
         coverTimestamp: args.coverTimestamp,
         batch_id: args.batchId,
-        postOptions: adapter.buildScheduleOptions({
-          account,
-          content,
+        postOptions: encodeFormPostOptions({
+          platform,
+          link: content.link,
           platformOptions: args.platformOptions,
-          selectedBoard,
+          pinterestBoard: selectedBoard
+            ? { boardId: selectedBoard.boardID, boardName: selectedBoard.boardName }
+            : null,
         }),
       });
     }
@@ -526,7 +419,7 @@ async function scheduleAllPosts(args: {
       success: false,
       counts: buildZeroCounts(),
       message:
-        "No posts to schedule after filtering. Check post type vs platform compatibility.",
+        "No posts to schedule.",
       errors: [],
     };
   }
@@ -568,12 +461,8 @@ async function scheduleAllPosts(args: {
   };
 }
 
-// ────────────────────────────────────────────────────────────
-// Direct-post Inngest event dispatch
-// ────────────────────────────────────────────────────────────
-
 async function directPostFromForm(args: {
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -585,11 +474,9 @@ async function directPostFromForm(args: {
   requestId: string;
 }): Promise<PostResult> {
   const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
-  const posts: (DirectPostData & { platform: PostingPlatform })[] = [];
+  const posts: (DirectPostData & { platform: AdapterPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
-    if (!platformSupportsMediaType(platform, args.postType)) continue;
-
     for (const account of platformAccounts) {
       const content = findContentForAccount(args.accountContent, account.id);
       if (!content) continue;
@@ -604,11 +491,11 @@ async function directPostFromForm(args: {
         mediaStoragePath: args.mediaPath,
         coverTimestamp: args.coverTimestamp,
         platformOptions: args.platformOptions,
+        link: content.link || undefined,
         ...(platform === "pinterest"
           ? {
               pinterestBoardId: selectedBoard?.boardID,
               pinterestBoardName: selectedBoard?.boardName,
-              pinterestLink: content.link || undefined,
             }
           : {}),
       });

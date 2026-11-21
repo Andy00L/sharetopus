@@ -1,5 +1,3 @@
-// src/components/core/accounts/social/ConnectedAccounts.tsx
-
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 
 import SocialAccountBadge from "./SocialAccountBadge";
@@ -16,19 +14,14 @@ export default function ConnectedAccountsBadge({
   if (!userId) {
     return null;
   }
-  if (!accounts || accounts.length === 0) {
-    return null; // No message needed as we're showing badges inline
+  if (accounts.length === 0) {
+    return null;
   }
 
-  /* ---------- list of cards ---------- */
   return (
     <div className="flex flex-wrap gap-2 items-center">
       {accounts.map((account) => (
-        <SocialAccountBadge
-          key={account.id}
-          account={account}
-          userId={userId}
-        />
+        <SocialAccountBadge key={account.id} account={account} />
       ))}
     </div>
   );

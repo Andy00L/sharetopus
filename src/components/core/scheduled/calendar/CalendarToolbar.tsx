@@ -17,9 +17,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getPlatformDisplayLabel } from "@/lib/platforms/capabilities";
 import { POST_STATUS_STYLES } from "../statusStyles";
-import { WEEK_STARTS_ON, type CalendarView } from "./calendarMath";
+import {
+  ALL_PLATFORMS,
+  WEEK_STARTS_ON,
+  type CalendarView,
+  type PlatformFilter,
+} from "./calendarMath";
 
-/** Legend statuses, in lifecycle order. "queued"/"mixed" stay dialog-only. */
 const LEGEND_STATUSES = [
   "scheduled",
   "processing",
@@ -31,10 +35,8 @@ const LEGEND_STATUSES = [
 interface CalendarToolbarProps {
   readonly view: CalendarView;
   readonly anchor: Date;
-  /** Every platform present in the loaded posts, in first-seen order. */
   readonly availablePlatforms: readonly string[];
-  /** Null means no filter (all platforms shown). */
-  readonly selectedPlatforms: ReadonlySet<string> | null;
+  readonly selectedPlatforms: PlatformFilter;
   readonly onViewChange: (view: CalendarView) => void;
   readonly onNavigate: (direction: "previous" | "today" | "next") => void;
   readonly onTogglePlatform: (platform: string) => void;
@@ -50,10 +52,6 @@ function formatRangeLabel(view: CalendarView, anchor: Date): string {
   return `${format(weekStart, "MMM d")} - ${format(weekEnd, "MMM d, yyyy")}`;
 }
 
-/**
- * The calendar's control row: range navigation, month/week toggle, the
- * link back to the list view, a platform filter, and the status legend.
- */
 export default function CalendarToolbar({
   view,
   anchor,
@@ -126,7 +124,7 @@ export default function CalendarToolbar({
                 <DropdownMenuCheckboxItem
                   key={platform}
                   checked={
-                    selectedPlatforms === null ||
+                    selectedPlatforms === ALL_PLATFORMS ||
                     selectedPlatforms.has(platform)
                   }
                   onCheckedChange={() => onTogglePlatform(platform)}
@@ -137,7 +135,7 @@ export default function CalendarToolbar({
                   {getPlatformDisplayLabel(platform)}
                 </DropdownMenuCheckboxItem>
               ))}
-              {selectedPlatforms !== null && (
+              {selectedPlatforms !== ALL_PLATFORMS && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={onClearPlatformFilter}>

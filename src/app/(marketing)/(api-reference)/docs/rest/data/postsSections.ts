@@ -3,15 +3,8 @@ import type {
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Posts resource of the /docs/rest reference. Field lists mirror the zod
- * schemas verbatim (src/lib/api/rest/validation/schemas.ts and
- * postPatchSchemas.ts, read in full); response shapes mirror the DTO
- * factories. Amounts and ids in samples are illustrative.
- */
-
 const POST_DTO_FIELDS: ParamTableData = {
-  heading: "Response Fields (PostDTO)",
+  heading: "Response Fields, 200 with scheduled_at (PostDTO)",
   rows: [
     { name: "id", type: "string (uuid)", required: true, description: "Post id." },
     {
@@ -78,6 +71,45 @@ const POST_DTO_FIELDS: ParamTableData = {
   ],
 };
 
+const POST_DISPATCH_FIELDS: ParamTableData = {
+  heading: "Response Fields, 202 without scheduled_at (PostDispatch)",
+  rows: [
+    {
+      name: "dispatch_id",
+      type: "string (uuid)",
+      required: true,
+      description:
+        "Id of the publish job. A retry with an idempotency_key that was already dispatched returns the first call's dispatch_id.",
+    },
+    {
+      name: "batch_id",
+      type: "string",
+      required: true,
+      description:
+        "The batch_id you sent, or a generated one. A retry with an idempotency_key that was already dispatched returns the first call's batch_id.",
+    },
+    {
+      name: "status",
+      type: "string",
+      required: true,
+      description:
+        "Always processing: the post was handed to the publisher. Once published, it appears in GET /api/v1/content-history. post.published or post.failed fires with the same dispatch_id once the dispatch is recorded.",
+    },
+    {
+      name: "platform",
+      type: "string",
+      required: true,
+      description: "Platform the post targets.",
+    },
+    {
+      name: "social_account_id",
+      type: "string (uuid)",
+      required: true,
+      description: "Account the post targets.",
+    },
+  ],
+};
+
 const CREATE_BODY_FIELDS: ParamTableData = {
   heading: "Request Body",
   rows: [
@@ -127,7 +159,7 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       type: "string",
       required: false,
       description:
-        "Future ISO 8601 timestamp with offset. Omit to publish immediately.",
+        "Future ISO 8601 timestamp with offset. Omit to publish now; the call then answers 202 with the dispatch.",
     },
     {
       name: "idempotency_key",
@@ -139,7 +171,8 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       name: "batch_id",
       type: "string",
       required: false,
-      description: "Request-level grouping id.",
+      description:
+        "Grouping label stored on the post, scheduled or published now, and answered back; generated when omitted. It dedupes nothing: use idempotency_key for retries.",
     },
     {
       name: "pinterest_board_id",
@@ -231,10 +264,10 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts",
       title: "Create a post",
       description:
-        "Schedules a post (scheduled_at in the future) or publishes immediately (scheduled_at omitted). Validation is platform-aware: unsupported media types, a missing title where the platform requires one, and a missing required target (Pinterest board, subreddit, Lemmy community, Google Business location) are rejected with 400 validation_error, as is a post whose account is on another platform; an account that is not yours answers 404. details.rejected carries each refusal's code and reason.",
+        "Schedules a post (scheduled_at in the future, 200 with the PostDTO) or publishes it now (scheduled_at omitted, 202 with the dispatch; the published post then appears in content history). Validation is platform-aware: unsupported media types, a missing title where the platform requires one, and a missing required target (Pinterest board, subreddit, Lemmy community, Google Business location) are rejected with 400 validation_error, as is a post whose account is on another platform; an account that is not yours answers 404. details.rejected carries each refusal's code and reason.",
       sourceRef:
         "src/app/api/v1/posts/route.ts (POST), src/lib/api/rest/validation/schemas.ts (PostCreateInputSchema)",
-      paramTables: [CREATE_BODY_FIELDS, POST_DTO_FIELDS],
+      paramTables: [CREATE_BODY_FIELDS, POST_DTO_FIELDS, POST_DISPATCH_FIELDS],
       codeSamples: [
         {
           label: "Example Request",
@@ -265,6 +298,16 @@ export const REST_POSTS_SECTION: DocsSection = {
   "media_storage_path": "user_2f6a1c0e.../launch.mp4",
   "batch_id": null,
   "created_at": "2026-07-04T18:00:00.000Z"
+}`,
+        },
+        {
+          label: "Response · 202 (scheduled_at omitted)",
+          code: `{
+  "dispatch_id": "0f9e8d7c-6b5a-4c3d-9e1f-2a3b4c5d6e7f",
+  "batch_id": "V1StGXR8_Z5jdHi6B-myTq2LpX0aN4eR",
+  "status": "processing",
+  "platform": "tiktok",
+  "social_account_id": "5b1f0c4e-3d2a-4f6b-8c9d-0e1f2a3b4c5d"
 }`,
         },
       ],
@@ -329,7 +372,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/bulk",
       title: "Bulk schedule posts",
       description:
-        "Schedules 1 to 30 posts in one request; every item takes the same fields as Create a post. All posts share one server-generated batch_id, and each gets the idempotency key batch_id:index unless one is provided. Partial success is possible: rejected items are listed, inserted ones are returned.",
+        "Schedules 1 to 30 posts in one request; every item takes the same fields as Create a post. All posts share one server-generated batch_id: a batch_id sent on an item is ignored. Each item gets the idempotency key batch_id:index unless one is provided. Partial success is possible: rejected items are listed, inserted ones are returned.",
       sourceRef:
         "src/app/api/v1/posts/bulk/route.ts, src/lib/api/rest/validation/postPatchSchemas.ts (PostBulkInputSchema)",
       paramTables: [
@@ -356,9 +399,9 @@ export const REST_POSTS_SECTION: DocsSection = {
             },
             {
               name: "batch_id",
-              type: "string (uuid)",
+              type: "string",
               required: true,
-              description: "Shared batch id for every post in the call.",
+              description: "Shared batch id for every post in the call, a 32-character generated id.",
             },
             {
               name: "total",
@@ -476,7 +519,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/{id}",
       title: "Cancel or delete a post",
       description:
-        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. Only a scheduled post can be cancelled; any other status answers 409 conflict. hard=true permanently deletes the post and cleans up its media. A 200 always means the change happened.",
+        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. Only a scheduled post can be cancelled; any other status answers 409 conflict. hard=true permanently deletes the post and cleans up its media. hard=true answers 409 conflict while the post is publishing; try again in a minute. A 200 always means the change happened.",
       sourceRef:
         "src/app/api/v1/posts/[id]/route.ts (DELETE), src/lib/api/rest/validation/postPatchSchemas.ts (PostDeleteQuerySchema)",
       paramTables: [
@@ -519,7 +562,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       ],
       callouts: [
         {
-          tone: "amber",
+          tone: "warning",
           text: "hard=true is not reversible and removes stored media that no other post references.",
         },
       ],

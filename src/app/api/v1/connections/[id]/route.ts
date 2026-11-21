@@ -10,16 +10,10 @@ import { social_accounts } from "@/db/schema";
 
 const ConnectionIdSchema = z.guid();
 
-/**
- * GET /v1/connections/[id] -- fetch a single connected social account.
- *
- * Principal-scoped. 404 if not owned or deleted.
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.get",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate connection ID from URL path.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 1] ?? "";
 
@@ -33,7 +27,6 @@ export const GET = withRestEndpoint({
     }
     const connectionId = idParseResult.data;
 
-    // Step 2: fetch row scoped to calling principal.
     const { data: accountRows, error: lookupError } = await runQuery(
       db
         .select()

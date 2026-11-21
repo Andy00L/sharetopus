@@ -34,8 +34,10 @@ export interface CodeSample {
   featured?: boolean;
 }
 
+export type CalloutTone = "warning" | "note";
+
 export interface CalloutData {
-  tone: "amber" | "blue";
+  tone: CalloutTone;
   text: string;
 }
 

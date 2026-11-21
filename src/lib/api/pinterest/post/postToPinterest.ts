@@ -1,27 +1,23 @@
-// =============================================================================
-// lib/api/pinterest/post/createVideoPin.ts
-// =============================================================================
-
 import "server-only";
+
+import type { MediaType } from "@/db/schema";
+import {
+  buildInputFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
 import { createVideoPin } from "./createVideoPin";
 import { createImagePin } from "./postImage";
-import type { MediaType } from "@/db/schema";
 
-// Define return type for Pinterest posts
-export interface PinterestPostResult {
-  success: boolean;
-  postId?: string;
-  postUrl?: string;
-  data?: Record<string, unknown>;
-  error?: string;
-  message?: string;
-}
+export type PinterestPostResult =
+  | {
+      success: true;
+      postId: string;
+      postUrl: string;
+      data: Record<string, unknown>;
+      message: string;
+    }
+  | PlatformPostFailure;
 
-/**
- * Posts content directly to Pinterest
- * - Images: Uses direct URL upload (no download needed)
- * - Videos: Uses the 3-step process (register → upload → create pin)
- */
 export async function postToPinterest({
   accessToken,
   boardId,
@@ -45,50 +41,37 @@ export async function postToPinterest({
   fileName: string;
   coverTimestamp: number;
   postType: MediaType;
-  mediaUrl: string;
+  mediaUrl: string | null;
 }): Promise<PinterestPostResult> {
-  try {
-    // Verify required parameters
-    if (!accessToken || !boardId) {
-      console.log(
-        "[Pinterest Post Function] Missing required parameters (accessToken, boardId, mediaPath)",
-      );
-      return {
-        success: false,
-        error: "Missing required parameters",
-      };
-    }
+  if (!accessToken || !boardId) {
+    console.error("[postToPinterest] Missing access token or board id");
+    return buildInputFailure("Missing required parameters (accessToken and boardId)");
+  }
 
-    // Handle image posts (simple URL upload)
-    if (postType === "image") {
-      return await createImagePin({
-        accessToken,
-        boardId,
-        title,
-        description,
-        link,
-        mediaUrl,
-      });
+  if (postType === "image") {
+    if (!mediaUrl) {
+      console.error("[postToPinterest] Image pin without media URL");
+      return buildInputFailure("Media URL is required for Pinterest image pins");
     }
-
-    // Handle video posts (complex 3-step process)
-    return await createVideoPin({
+    return createImagePin({
       accessToken,
       boardId,
       title,
       description,
       link,
-      mediaPath,
-      mediaType,
-      fileName,
-      coverTimestamp,
+      mediaUrl,
     });
-  } catch (error) {
-    console.error("[Pinterest Post] Unexpected error:", error);
-    return {
-      success: false,
-      error: "Failed to post to Pinterest",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
   }
+
+  return createVideoPin({
+    accessToken,
+    boardId,
+    title,
+    description,
+    link,
+    mediaPath,
+    mediaType,
+    fileName,
+    coverTimestamp,
+  });
 }

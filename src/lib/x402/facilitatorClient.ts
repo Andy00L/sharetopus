@@ -1,19 +1,5 @@
 import "server-only";
 
-/**
- * One facilitator client per settlement lane (networks.ts). Extracted from
- * facilitator.ts in June 2026 so solana/feePayer.ts can reuse the same
- * client without an import cycle; keyed by lane since Celo joined in July
- * 2026, because auth wiring follows the lane, not the URL.
- *
- * Called by: facilitator.ts (verify/settle), solana/feePayer.ts
- *            (getSupported), arc/facilitatorApi.ts
- * Tables touched: none
- * Env: CDP_API_KEY_ID, CDP_API_KEY_SECRET (CDP JWT signing);
- *      X402_CELO_FACILITATOR_API_KEY (Celo facilitator settle auth);
- *      facilitator URLs via config.ts
- */
-
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import type {
@@ -29,16 +15,12 @@ import {
   DEFAULT_FACILITATOR_URL,
   getHostedFacilitatorUrl,
 } from "@/lib/x402/config";
+import { withTimeout } from "@/lib/x402/http/withTimeout";
 
-/**
- * The two operations facilitator.ts asks of a facilitator, whether it is
- * reached over HTTP or runs in this process.
- *
- * Structural on purpose: HTTPFacilitatorClient satisfies it, and so does the
- * in-process ExactEvmScheme the Arc lane runs (its verify and settle take
- * two extra optional parameters, which a two-argument call ignores). That
- * keeps verifyPayment and settlePayment identical for every network.
- */
+const FACILITATOR_VERIFY_TIMEOUT_MS = 15_000;
+const FACILITATOR_SETTLE_TIMEOUT_MS = 30_000;
+const FACILITATOR_SUPPORTED_TIMEOUT_MS = 10_000;
+
 export interface X402FacilitatorClient {
   verify(
     paymentPayload: PaymentPayload,
@@ -48,90 +30,158 @@ export interface X402FacilitatorClient {
     paymentPayload: PaymentPayload,
     paymentRequirements: PaymentRequirements,
   ): Promise<SettleResponse>;
-  /**
-   * Optional: only a hosted facilitator advertises what it supports. The
-   * in-process Arc scheme has nothing to advertise to itself, and the one
-   * caller (solana/feePayer.ts) asks a hosted facilitator by construction.
-   */
   getSupported?(): Promise<SupportedResponse>;
 }
 
 const facilitatorClientsByLane = new Map<SettlementLane, X402FacilitatorClient>();
 
-/**
- * Facilitator client for the given network, built once per lane.
- *
- * Throws on missing credentials for any lane; every caller catches and maps
- * the throw to facilitator_error before anything settles, so a
- * misconfigured lane fails closed.
- */
-export function getFacilitatorClient(
-  network: NetworkConfig,
-): X402FacilitatorClient {
-  const cachedClient = facilitatorClientsByLane.get(network.settlement);
-  if (cachedClient) return cachedClient;
+export type FacilitatorClientResult =
+  | { ok: true; client: X402FacilitatorClient }
+  | { ok: false; message: string };
 
-  const client = createFacilitatorClient(network);
-  facilitatorClientsByLane.set(network.settlement, client);
-  return client;
+export function getFacilitatorClient(network: NetworkConfig): FacilitatorClientResult {
+  const cachedClient = facilitatorClientsByLane.get(network.settlement);
+  if (cachedClient) return { ok: true, client: cachedClient };
+
+  const clientResult = createFacilitatorClient(network);
+  if (clientResult.ok) facilitatorClientsByLane.set(network.settlement, clientResult.client);
+  return clientResult;
 }
 
-/**
- * Celo: plain HTTP client. Its /settle needs an X-API-Key (prepaid credits)
- * while /verify and /supported are open (probed live 2026-07-16), so the key
- * is attached to settle only, and a missing key throws here, before any
- * verify, instead of failing after the payer already signed.
- *
- * CDP: the hosted facilitator 401s without CDP API-key JWTs, so the default
- * URL always gets createFacilitatorConfig. A custom X402_FACILITATOR_URL gets
- * a plain client because those JWTs are signed for the CDP host.
- *
- * arc_local: no HTTP at all; the exact scheme runs in process over the Arc
- * operations key (arc/arcFacilitator.ts).
- */
-function createFacilitatorClient(network: NetworkConfig): X402FacilitatorClient {
+function createFacilitatorClient(network: NetworkConfig): FacilitatorClientResult {
   switch (network.settlement) {
-    case "arc_local":
-      return getArcFacilitator();
+    case "arc_local": {
+      const arcResult = getArcFacilitator();
+      return arcResult.ok ? { ok: true, client: arcResult.facilitator } : arcResult;
+    }
 
     case "celo": {
       const celoApiKey = process.env.X402_CELO_FACILITATOR_API_KEY;
       if (!celoApiKey) {
-        throw new Error(
-          "[getFacilitatorClient] X402_CELO_FACILITATOR_API_KEY is required to " +
-            "settle on the Celo facilitator (create one at https://x402.celo.org " +
-            "with the payTo wallet). Set it, or remove celo from the request.",
-        );
+        return {
+          ok: false,
+          message:
+            "X402_CELO_FACILITATOR_API_KEY is required to settle on the Celo facilitator " +
+            "(create one at https://x402.celo.org with the payTo wallet). Set it, or remove celo from the request.",
+        };
       }
-      return new HTTPFacilitatorClient({
-        url: getHostedFacilitatorUrl("celo"),
-        createAuthHeaders: async () => ({
-          verify: {},
-          settle: { "X-API-Key": celoApiKey },
-          supported: {},
-        }),
-      });
+      return {
+        ok: true,
+        client: withHostedFacilitatorLimits(
+          new HTTPFacilitatorClient({
+            url: getHostedFacilitatorUrl("celo"),
+            // Celo's facilitator gates /settle on X-API-Key (docs.celo.org/build-on-celo/build-with-ai/x402).
+            createAuthHeaders: async () => ({
+              verify: {},
+              settle: { "X-API-Key": celoApiKey },
+              supported: {},
+            }),
+          }),
+        ),
+      };
     }
 
     case "coinbase_cdp": {
       const facilitatorUrl = getHostedFacilitatorUrl("coinbase_cdp");
+      // @coinbase/x402 createFacilitatorConfig signs its JWTs for the api.cdp.coinbase.com host only.
       if (facilitatorUrl !== DEFAULT_FACILITATOR_URL) {
-        return new HTTPFacilitatorClient({ url: facilitatorUrl });
+        return { ok: true, client: withHostedFacilitatorLimits(new HTTPFacilitatorClient({ url: facilitatorUrl })) };
       }
       if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
-        throw new Error(
-          "[getFacilitatorClient] CDP_API_KEY_ID / CDP_API_KEY_SECRET are required " +
-            "to call the CDP hosted facilitator. Set them, or point " +
-            "X402_FACILITATOR_URL at a facilitator that needs no auth.",
-        );
+        return {
+          ok: false,
+          message:
+            "CDP_API_KEY_ID / CDP_API_KEY_SECRET are required to call the CDP hosted facilitator. " +
+            "Set them, or point X402_FACILITATOR_URL at a facilitator that needs no auth.",
+        };
       }
-      // createFacilitatorConfig returns { url: <CDP url>, createAuthHeaders }.
-      return new HTTPFacilitatorClient(createFacilitatorConfig());
+      return { ok: true, client: withHostedFacilitatorLimits(new HTTPFacilitatorClient(createFacilitatorConfig())) };
     }
 
     default: {
       const unhandledLane: never = network.settlement;
-      throw new Error(`[getFacilitatorClient] Unhandled settlement lane: ${String(unhandledLane)}`);
+      return { ok: false, message: `Unhandled settlement lane: ${String(unhandledLane)}` };
     }
   }
+}
+
+/**
+ * HTTPFacilitatorClient fetches with no timeout, and on a non-2xx reply whose
+ * body is a VerifyResponse or SettleResponse it throws VerifyError or
+ * SettleError instead of returning the body.
+ * sourceRef: @x402/core 2.14.0 dist/esm/chunk-W4OPBTK7.mjs (HTTPFacilitatorClient verify and settle).
+ */
+function withHostedFacilitatorLimits(client: HTTPFacilitatorClient): X402FacilitatorClient {
+  return {
+    async verify(paymentPayload, paymentRequirements) {
+      try {
+        return await withTimeout(
+          client.verify(paymentPayload, paymentRequirements),
+          FACILITATOR_VERIFY_TIMEOUT_MS,
+          `Facilitator verify at ${client.url}`,
+        );
+      } catch (error) {
+        const rejection = readVerifyRejection(error);
+        if (rejection) return rejection;
+        throw error;
+      }
+    },
+
+    async settle(paymentPayload, paymentRequirements) {
+      try {
+        return await withTimeout(
+          client.settle(paymentPayload, paymentRequirements),
+          FACILITATOR_SETTLE_TIMEOUT_MS,
+          `Facilitator settle at ${client.url}`,
+        );
+      } catch (error) {
+        const rejection = readSettleRejection(error, paymentRequirements);
+        if (rejection) return rejection;
+        throw error;
+      }
+    },
+
+    getSupported() {
+      return withTimeout(
+        client.getSupported(),
+        FACILITATOR_SUPPORTED_TIMEOUT_MS,
+        `Facilitator /supported at ${client.url}`,
+      );
+    },
+  };
+}
+
+/**
+ * The VerifyResponse carried by a VerifyError. Matched by name and fields, not
+ * instanceof: the CJS build of @x402/core defines the class once per entry
+ * point, so the class this module could import is not always the one thrown.
+ */
+function readVerifyRejection(error: unknown): VerifyResponse | null {
+  if (!(error instanceof Error) || error.name !== "VerifyError") return null;
+  return {
+    isValid: false,
+    invalidReason:
+      "invalidReason" in error && typeof error.invalidReason === "string" ? error.invalidReason : undefined,
+    invalidMessage:
+      "invalidMessage" in error && typeof error.invalidMessage === "string" ? error.invalidMessage : undefined,
+    payer: "payer" in error && typeof error.payer === "string" ? error.payer : undefined,
+  };
+}
+
+function readSettleRejection(
+  error: unknown,
+  paymentRequirements: PaymentRequirements,
+): SettleResponse | null {
+  if (!(error instanceof Error) || error.name !== "SettleError") return null;
+  return {
+    success: false,
+    errorReason:
+      "errorReason" in error && typeof error.errorReason === "string" ? error.errorReason : undefined,
+    errorMessage:
+      "errorMessage" in error && typeof error.errorMessage === "string" ? error.errorMessage : undefined,
+    payer: "payer" in error && typeof error.payer === "string" ? error.payer : undefined,
+    transaction:
+      "transaction" in error && typeof error.transaction === "string" ? error.transaction : "",
+    network: paymentRequirements.network,
+  };
 }

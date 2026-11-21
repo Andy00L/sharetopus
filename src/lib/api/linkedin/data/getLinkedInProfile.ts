@@ -4,16 +4,10 @@ import { z } from "zod";
 
 import type { LinkedInProfile } from "@/lib/types/socialProfiles";
 
-/** Outbound LinkedIn API calls are bounded to 15s. */
 const PROFILE_TIMEOUT_MS = 15_000;
 
-/**
- * OpenID Connect userinfo answer. sub is the member's identity and the
- * account row is keyed on it. email and email_verified are optional (they
- * need the "email" scope). locale is documented as text; it only lands in
- * extra, so any other shape is tolerated instead of failing the connect.
- * sourceRef: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
- */
+// OpenID Connect userinfo answer:
+// https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2
 const LinkedInUserInfoSchema = z.object({
   sub: z.string().min(1),
   name: z.string().optional(),
@@ -29,13 +23,6 @@ export type LinkedInProfileResult =
   | { success: true; data: LinkedInProfile }
   | { success: false; message: string };
 
-/**
- * Reads the member's OpenID Connect profile. A failed read is an error
- * value: the placeholder profile with an empty id that this used to return
- * stored an account with an empty identifier.
- *
- * Called by: connectPlatformAccounts
- */
 export async function getLinkedInProfile(
   accessToken: string,
 ): Promise<LinkedInProfileResult> {
@@ -52,7 +39,6 @@ export async function getLinkedInProfile(
       };
     }
 
-    // Never log the body: it holds the member's name, email and photo.
     const parsed = LinkedInUserInfoSchema.safeParse(await response.json());
     if (!parsed.success) {
       console.error("[getLinkedInProfile] Profile answer failed validation.");

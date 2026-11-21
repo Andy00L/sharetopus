@@ -13,29 +13,12 @@ import {
   type RestErrorCode,
 } from "./restErrorResponse";
 
-/**
- * The REST error code for each reason a post is refused. Another
- * principal's account answers 404, as every REST route does for resources
- * the caller cannot see.
- */
 const REJECTION_ERROR_CODES = {
   invalid_input: "validation_error",
   platform_mismatch: "validation_error",
   not_owned: "not_found",
 } as const satisfies Record<PostRejectionCode, RestErrorCode>;
 
-/**
- * The REST answer for a failed post batch: one that creates posts
- * (directPostBatch, schedulePostBatch) or changes existing ones
- * (cancelScheduledPostBatch, deleteScheduledPostBatch,
- * updateScheduledTimeBatch). A client mistake gets the 4xx it can act on
- * instead of a 500, and a check that could not run gets a 503 with a retry
- * hint. Batch messages never carry database errors, so each is safe to
- * return.
- *
- * Called by: POST /v1/posts, POST /v1/posts/bulk, PATCH and DELETE
- * /v1/posts/{id}
- */
 export function restPostBatchFailureResponse(
   batchResult: {
     failure: PostBatchFailure | PostChangeFailure;
@@ -73,10 +56,10 @@ export function restPostBatchFailureResponse(
     case "internal":
       return restErrorResponse("internal_error", batchResult.message, requestId);
     case "not_found":
-      // One answer for a missing post and another principal's post, so the
-      // response never confirms that someone else's post exists.
       return restErrorResponse("not_found", "Post not found", requestId);
     case "not_eligible":
       return restErrorResponse("conflict", batchResult.message, requestId);
+    case "access_required":
+      return restErrorResponse("forbidden", batchResult.message, requestId);
   }
 }

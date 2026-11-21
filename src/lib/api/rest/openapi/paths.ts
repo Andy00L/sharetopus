@@ -30,6 +30,7 @@ import {
 } from "../validation/webhookSchemas";
 import {
   PostDTOSchema,
+  PostDispatchSchema,
   PostDeleteResultSchema,
   PostBulkResultSchema,
   PostAnalyticsResultSchema,
@@ -60,9 +61,6 @@ import {
   PaginatedDeliveriesSchema,
 } from "./responseSchemas";
 
-/**
- * Helper to build a standard JSON request body spec.
- */
 function jsonBody(schema: ZodType) {
   return {
     content: { "application/json": { schema } },
@@ -70,9 +68,6 @@ function jsonBody(schema: ZodType) {
   };
 }
 
-/**
- * Helper to build a standard JSON response spec.
- */
 function jsonResponse(description: string, schema: ZodType) {
   return {
     description,
@@ -90,27 +85,22 @@ const errorResponses = {
   "503": jsonResponse("Service unavailable", ErrorResponseSchema),
 };
 
-/** PATCH and DELETE /v1/posts/{id}: the post's status does not allow the change. */
 const postConflictResponse = {
   "409": jsonResponse("Conflict", ErrorResponseSchema),
 };
 
-/**
- * OpenAPI path definitions for all v1 endpoints. Request bodies and query
- * parameters are the same Zod schemas the routes validate with;
- * buildOpenApiDocument renders them, and the response mirrors in
- * responseSchemas.ts, to JSON Schema through zod-openapi.
- */
 export const restPaths = {
   "/api/v1/posts": {
     post: {
       tags: ["Posts"],
       summary: "Create a post",
-      description: "Schedule a post for later or publish immediately (omit scheduled_at).",
+      description:
+        "Schedule a post for later (200 with the PostDTO) or publish it now by omitting scheduled_at (202 with the dispatch: the post was handed to the publisher, and once published it appears in content history). batch_id, when sent, is stored on the post in both cases and answered back; it labels posts and dedupes nothing (idempotency_key dedupes). A retry with an idempotency_key that was already dispatched answers 202 with the first call's dispatch_id and batch_id.",
       operationId: "createPost",
       requestBody: jsonBody(PostCreateInputSchema),
       responses: {
-        "200": jsonResponse("Created post", PostDTOSchema),
+        "200": jsonResponse("Scheduled post", PostDTOSchema),
+        "202": jsonResponse("Publish started", PostDispatchSchema),
         ...errorResponses,
       },
     },
@@ -160,7 +150,7 @@ export const restPaths = {
       tags: ["Posts"],
       summary: "Cancel or delete a post",
       description:
-        "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion.",
+        "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion. A post that is publishing now cannot be deleted (409 conflict); try again in a minute.",
       operationId: "deletePost",
       parameters: [pathParam("id", "Post UUID")],
       requestParams: { query: PostDeleteQuerySchema },
@@ -396,7 +386,6 @@ export const restPaths = {
   },
 } satisfies ZodOpenApiPathsObject;
 
-// -- Helpers --
 
 function pathParam(name: string, description: string) {
   return { name, in: "path" as const, required: true, schema: { type: "string" as const }, description };

@@ -1,615 +1,278 @@
-import { ContentHistory } from "@/lib/types/dbTypes";
 import "server-only";
 
-// Define proper types for Instagram API parameters
-interface InstagramMediaParams {
-  image_url?: string;
-  video_url?: string;
-  thumb_offset?: number;
-  caption?: string;
-  alt_text?: string;
-  media_type?: "REELS" | "STORIES" | "VIDEO" | "CAROUSEL";
-  is_carousel_item?: boolean;
-  share_to_feed?: boolean;
-  children?: string; // For carousel containers
-}
+import { z } from "zod";
 
-// Define return type to make it easier to work with in the server action
-export interface InstagramPostResult {
-  success: boolean;
-  postId?: string;
-  containerId?: string;
-  data?: ContentHistory[];
-  publicUrl?: string;
-  error?: string;
-  details?: Record<string, unknown>;
-  message?: string;
-}
+import {
+  buildHttpFailure,
+  buildInputFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
+import {
+  PLATFORM_API_TIMEOUT_MS,
+  PLATFORM_IMAGE_PULL_TIMEOUT_MS,
+  PLATFORM_PUBLISH_TIMEOUT_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-export async function postToInstagram({
-  accessToken,
-  userId,
-  caption,
+const INSTAGRAM_GRAPH_BASE_URL = `https://graph.instagram.com/${META_GRAPH_API_VERSION}`;
 
-  coverTimestamp,
-  mediaUrl,
-  postType,
-  isCarousel = false,
-  carouselItems = [],
-  altText, // Add this
-  shareToFeed,
-}: {
-  accessToken: string;
-  userId: string; // Instagram User ID (user_id from profile)
-  caption?: string;
-  postType: "image" | "reel" | "carousel";
+const CONTAINER_POLL_INITIAL_INTERVAL_MS = 3_000;
+const CONTAINER_POLL_MAX_INTERVAL_MS = 15_000;
+const CONTAINER_READY_DEADLINE_MS = 150_000;
 
-  mediaUrl?: string; // PUBLIC URL - Instagram will cURL this
-  isCarousel?: boolean;
-  mediaType: string;
-  fileName: string;
-  coverTimestamp?: number;
-  altText: string; // Add this
-  shareToFeed?: boolean; // Add this
-  carouselItems?: Array<{
-    mediaUrl: string;
-    mediaType: "image" | "video";
-    altText?: string;
-  }>;
-}): Promise<InstagramPostResult> {
-  try {
-    // Vérification des paramètres requis selon la doc
-    if (!accessToken || !userId) {
-      console.log("[Instagram Post] Missing required parameters");
-      return {
-        success: false,
-        error:
-          "Missing required parameters (accessToken and userId are required)",
-      };
+const CreatedObjectSchema = z.object({ id: z.string().min(1) });
+
+// Container status_code values: EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED.
+// https://developers.facebook.com/docs/instagram-platform/content-publishing
+const ContainerStatusSchema = z.object({ status_code: z.string() });
+
+const MediaPermalinkSchema = z.object({ permalink: z.string().optional() });
+
+export type InstagramPostResult =
+  | {
+      success: true;
+      postId: string;
+      postUrl?: string;
+      containerId: string;
+      message: string;
     }
+  | PlatformPostFailure;
 
-    const baseUrl = "https://graph.instagram.com/v23.0";
+type ContainerOutcome = { success: true; containerId: string } | PlatformPostFailure;
 
-    // Gestion des différents types de posts selon la doc
-    if (isCarousel && carouselItems.length > 0) {
-      return await createCarouselPost({
-        accessToken,
-        userId,
-        caption,
-        carouselItems,
-        baseUrl,
-      });
-    } else if (mediaUrl) {
-      return await createSingleMediaPost({
-        accessToken,
-        userId,
-        caption,
-        mediaUrl,
-        postType,
-        coverTimestamp,
-        baseUrl,
-        shareToFeed,
-        altText,
-      });
-    } else {
-      return {
-        success: false,
-        error:
-          "Instagram requires media content. Please provide a public mediaUrl.",
-      };
-    }
-  } catch (error) {
-    console.error("[Instagram Post] Unexpected error:", error);
-    return {
-      success: false,
-      error: "Failed to post to Instagram",
-      message: "Unexpected error",
-    };
-  }
+function buildAuthHeaders(accessToken: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${accessToken}`,
+  };
 }
 
-// Fonction pour créer un post avec un seul média - SELON LA DOC
-async function createSingleMediaPost({
-  accessToken,
-  userId,
-  caption,
-  mediaUrl,
-  postType,
-  baseUrl,
-  altText,
-  shareToFeed,
-  coverTimestamp,
-}: {
+async function createMediaContainer(input: {
   accessToken: string;
-  userId: string;
-  caption?: string;
+  igUserId: string;
+  caption: string;
   mediaUrl: string;
-  postType: string;
-  baseUrl: string;
-  altText: string;
-  coverTimestamp?: number;
-
+  postType: "image" | "reel";
+  altText?: string;
   shareToFeed?: boolean;
-}): Promise<InstagramPostResult> {
-  try {
-    console.log(`[Instagram Post] Creating ${postType} post`);
-
-    // Étape 1: Créer un container média selon la doc
-    const containerResult = await createMediaContainer({
-      accessToken,
-      userId,
-      caption,
-      mediaUrl,
-      postType,
-      baseUrl,
-      altText,
-      shareToFeed,
-      coverTimestamp,
-    });
-
-    if (!containerResult.success || !containerResult.containerId) {
-      return containerResult;
-    }
-
-    // Vérifier le statut du container avant publication (recommandé par la doc)
-    const statusCheck = await checkContainerStatus({
-      accessToken,
-      containerId: containerResult.containerId,
-    });
-
-    if (statusCheck.success && statusCheck.status !== "FINISHED") {
-      console.log(
-        `[Instagram Post] Container status: ${statusCheck.status}, waiting...`
-      );
-
-      // Attendre que le container soit prêt ( max  8 seconde, 1 fois par minute)
-      let attempts = 0;
-      const maxAttempts = 3;
-
-      while (attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 15000)); // 15 seconde
-        attempts++;
-
-        const newStatus = await checkContainerStatus({
-          accessToken,
-          containerId: containerResult.containerId,
-        });
-
-        if (newStatus.success && newStatus.status === "FINISHED") {
-          break;
-        }
-
-        if (
-          newStatus.success &&
-          (newStatus.status === "ERROR" || newStatus.status === "EXPIRED")
-        ) {
-          return {
-            success: false,
-            error: `Container failed with status: ${newStatus.status}`,
-          };
-        }
-      }
-    }
-
-    // Étape 2: Publier le container
-    return await publishContainer({
-      accessToken,
-      userId,
-      containerId: containerResult.containerId,
-      baseUrl,
-      postType,
-    });
-  } catch (error) {
-    console.error("[Instagram Post] Error in single media post:", error);
-    return {
-      success: false,
-      error: `Error creating ${postType} post`,
-    };
-  }
-}
-
-// Fonction pour créer un container média - STRICTEMENT SELON LA DOC
-async function createMediaContainer({
-  accessToken,
-  userId,
-  caption,
-  mediaUrl,
-  postType,
-  baseUrl,
-  isCarouselItem = false,
-  altText,
-  shareToFeed,
-  coverTimestamp,
-}: {
-  accessToken: string;
-  userId: string;
-  caption?: string;
-  mediaUrl: string;
-  postType: string;
-  baseUrl: string;
-  altText: string;
   coverTimestamp?: number;
-  shareToFeed?: boolean;
-
-  isCarouselItem?: boolean;
-}): Promise<InstagramPostResult> {
-  try {
-    // Déterminer les paramètres selon la doc Instagram
-    const isVideo = postType === "reel";
-
-    // Construction des paramètres EXACTEMENT comme dans la doc
-    const containerParams: InstagramMediaParams = {};
-
-    // Paramètre média selon la doc
-    if (isVideo) {
-      containerParams.video_url = mediaUrl;
-    } else {
-      containerParams.image_url = mediaUrl;
-    }
-
-    // Caption seulement si ce n'est pas un item de carousel
-    if (!isCarouselItem && caption) {
-      containerParams.caption = caption;
-    }
-
-    // Alt text for images only (new feature as of March 24, 2025)
-    if (!isVideo && altText && !isCarouselItem) {
-      containerParams.alt_text = altText;
-    }
-
-    // Media type selon la doc
-    if (postType === "reel") {
-      containerParams.media_type = "REELS";
-    }
-    // Pour les images, pas de media_type selon la doc
-
-    // Carousel item flag selon la doc
-    if (isCarouselItem) {
-      containerParams.is_carousel_item = true;
-    }
-
-    console.log(
-      "[Instagram Post] Creating media container with params:",
-      containerParams
-    );
-
-    // Reels-specific parameters
-    if (postType === "reel") {
-      if (shareToFeed !== undefined) {
-        containerParams.share_to_feed = shareToFeed;
+}): Promise<ContainerOutcome> {
+  const isReel = input.postType === "reel";
+  const containerParams = isReel
+    ? {
+        video_url: input.mediaUrl,
+        media_type: "REELS",
+        caption: input.caption || undefined,
+        share_to_feed: input.shareToFeed,
+        thumb_offset: input.coverTimestamp,
       }
-    }
+    : {
+        image_url: input.mediaUrl,
+        caption: input.caption || undefined,
+        alt_text: input.altText || undefined,
+      };
 
-    // Video/Reel thumbnail offset
-    if (isVideo && coverTimestamp !== undefined) {
-      containerParams.thumb_offset = coverTimestamp;
-    }
-    // Appel API EXACTEMENT comme dans la doc
-    const containerResponse = await fetch(`${baseUrl}/${userId}/media`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
+  const action = `Instagram ${input.postType} container creation`;
+  try {
+    const containerResponse = await fetch(
+      `${INSTAGRAM_GRAPH_BASE_URL}/${input.igUserId}/media`,
+      {
+        method: "POST",
+        headers: buildAuthHeaders(input.accessToken),
+        body: JSON.stringify(containerParams),
+        signal: AbortSignal.timeout(
+          isReel ? PLATFORM_API_TIMEOUT_MS : PLATFORM_IMAGE_PULL_TIMEOUT_MS,
+        ),
       },
-      body: JSON.stringify(containerParams),
-    });
-
+    );
+    const containerText = await containerResponse.text();
     if (!containerResponse.ok) {
-      const errorText = await containerResponse.text();
-      let errorDetails;
-      try {
-        errorDetails = JSON.parse(errorText);
-      } catch {
-        errorDetails = { rawError: errorText };
-      }
-
       console.error(
-        "[Instagram Post] Failed to create media container:",
-        errorDetails
+        `[createMediaContainer] Failed (${containerResponse.status}): ${containerText}`,
       );
-      return {
-        success: false,
-        error: `Failed to create media container`,
-        details: errorDetails,
-      };
-    }
-
-    const containerData = await containerResponse.json();
-    console.log("[Instagram Post] Media container created:", containerData);
-
-    return {
-      success: true,
-      containerId: containerData.id,
-      message: "Media container created successfully",
-    };
-  } catch (error) {
-    console.error("[Instagram Post] Error creating media container:", error);
-    return {
-      success: false,
-      error: "Error creating media container",
-    };
-  }
-}
-
-// Fonction pour créer un post carousel - SELON LA DOC
-async function createCarouselPost({
-  accessToken,
-  userId,
-  caption,
-  carouselItems,
-  baseUrl,
-}: {
-  accessToken: string;
-  userId: string;
-  caption?: string;
-  carouselItems: Array<{
-    mediaUrl: string;
-    mediaType: "image" | "video";
-  }>;
-  baseUrl: string;
-}): Promise<InstagramPostResult> {
-  try {
-    console.log(
-      `[Instagram Post] Creating carousel with ${carouselItems.length} items`
-    );
-
-    // Validation selon la doc
-    if (carouselItems.length > 10) {
-      return {
-        success: false,
-        error: "Carousel is limited to 10 items maximum",
-      };
-    }
-
-    if (carouselItems.length === 0) {
-      return {
-        success: false,
-        error: "Carousel requires at least one item",
-      };
-    }
-
-    // Step 1: one container per carousel item.
-    const containerIds: string[] = [];
-
-    for (const [itemIndex, item] of carouselItems.entries()) {
-      console.log(
-        `[Instagram Post] Creating container for carousel item ${itemIndex + 1}`
-      );
-
-      const containerResult = await createMediaContainer({
-        accessToken,
-        userId,
-        mediaUrl: item.mediaUrl,
-        postType: item.mediaType === "video" ? "video" : "image",
-        baseUrl,
-        altText: "",
-        isCarouselItem: true,
+      return buildHttpFailure({
+        platform: "instagram",
+        action,
+        httpStatus: containerResponse.status,
+        responseText: containerText,
+        isPublishRequest: false,
       });
-
-      if (!containerResult.success || !containerResult.containerId) {
-        return {
-          success: false,
-          error: `Failed to create container for carousel item ${itemIndex + 1}`,
-          details: containerResult.details,
-        };
-      }
-
-      containerIds.push(containerResult.containerId);
     }
-
-    // Étape 2: Créer le container carousel EXACTEMENT selon la doc
-    console.log("[Instagram Post] Creating carousel container");
-
-    const carouselParams = {
-      media_type: "CAROUSEL",
-      children: containerIds.join(","),
-      ...(caption && { caption }), // Comma separated list selon la doc
-    };
-
-    const carouselResponse = await fetch(`${baseUrl}/${userId}/media`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(carouselParams),
-    });
-
-    if (!carouselResponse.ok) {
-      const errorText = await carouselResponse.text();
-      let errorDetails;
-      try {
-        errorDetails = JSON.parse(errorText);
-      } catch {
-        errorDetails = { rawError: errorText };
-      }
-
-      console.error(
-        "[Instagram Post] Failed to create carousel container:",
-        errorDetails
-      );
-      return {
-        success: false,
-        error: "Failed to create carousel container",
-        details: errorDetails,
-      };
-    }
-
-    const carouselData = await carouselResponse.json();
-    console.log("[Instagram Post] Carousel container created:", carouselData);
-
-    // Étape 3: Publier le carousel
-    return await publishContainer({
-      accessToken,
-      userId,
-      containerId: carouselData.id,
-      baseUrl,
-      postType: "carousel",
-    });
-  } catch (error) {
-    console.error("[Instagram Post] Error creating carousel post:", error);
-    return {
-      success: false,
-      error: "Error creating carousel post",
-    };
-  }
-}
-
-// Fonction pour publier un container - EXACTEMENT selon la doc
-async function publishContainer({
-  accessToken,
-  userId,
-  containerId,
-  baseUrl,
-  postType,
-}: {
-  accessToken: string;
-  userId: string;
-  containerId: string;
-  baseUrl: string;
-  postType: string;
-}): Promise<InstagramPostResult> {
-  try {
-    console.log(
-      `[Instagram Post] Publishing ${postType} container:`,
-      containerId
+    const createdContainer = CreatedObjectSchema.safeParse(
+      parseJsonObject(containerText),
     );
-
-    // Appel EXACTEMENT comme dans la doc
-    const publishResponse = await fetch(`${baseUrl}/${userId}/media_publish`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        creation_id: containerId, // Selon la doc
-      }),
-    });
-
-    if (!publishResponse.ok) {
-      const errorText = await publishResponse.text();
-      let errorDetails;
-      try {
-        errorDetails = JSON.parse(errorText);
-      } catch {
-        errorDetails = { rawError: errorText };
-      }
-
-      console.error(
-        "[Instagram Post] Failed to publish container:",
-        errorDetails
-      );
-      return {
-        success: false,
-        error: "Failed to publish content to Instagram",
-        details: errorDetails,
-      };
+    if (!createdContainer.success) {
+      return buildUnreadableAnswerFailure({ action, isPublishRequest: false });
     }
-
-    const publishData = await publishResponse.json();
-    const mediaId = publishData.id;
-    console.log("[Instagram Post] Successfully published:", mediaId);
-
-    const shortcode = await getInstagramShortcode(accessToken, mediaId);
-    let publicUrl;
-    if (shortcode) {
-      // Générer l'URL correcte avec le shortcode
-      publicUrl =
-        postType === "reel"
-          ? `https://www.instagram.com/reel/${shortcode}/`
-          : `https://www.instagram.com/p/${shortcode}/`;
-
-      console.log(`[Instagram Post] Public URL: ${publicUrl}`);
-    } else {
-      console.warn(
-        `[Instagram Post] Could not retrieve shortcode for media ${mediaId}`
-      );
-    }
-    return {
-      success: true,
-      postId: mediaId, // Instagram Media ID selon la doc
-      containerId: containerId,
-      data: publishData,
-      publicUrl: publicUrl,
-      message: `Successfully created ${postType} post on Instagram`,
-    };
-  } catch (error) {
-    console.error("[Instagram Post] Error publishing container:", error);
-    return {
-      success: false,
-      error: "Error publishing content to Instagram",
-    };
+    return { success: true, containerId: createdContainer.data.id };
+  } catch (requestError) {
+    return buildNetworkFailure({ action, requestError, isPublishRequest: false });
   }
 }
 
-// Fonction utilitaire pour vérifier le statut d'un container - SELON LA DOC
-export async function checkContainerStatus({
-  accessToken,
-  containerId,
-}: {
-  accessToken: string;
-  containerId: string;
-}): Promise<{
-  success: boolean;
-  status?: string;
-  error?: string;
-}> {
-  try {
-    const response = await fetch(
-      `https://graph.instagram.com/v23.0/${containerId}?fields=status_code&access_token=${accessToken}`
-    );
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: "Failed to check container status",
-      };
-    }
-
-    const data = await response.json();
-
-    // Status codes: EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED.
-    return {
-      success: true,
-      status: data.status_code,
-    };
-  } catch (error) {
-    console.error("[checkContainerStatus] Status request failed:", error);
-    return {
-      success: false,
-      error: "Error checking container status",
-    };
-  }
-}
-
-// ============================================
-// SOLUTION 1: Récupérer le shortcode via l'API Instagram
-// ============================================
-
-// Dans postToInstagram.ts, ajoutez cette fonction :
-async function getInstagramShortcode(
+async function readContainerStatus(
   accessToken: string,
-  mediaId: string
+  containerId: string,
 ): Promise<string | null> {
   try {
-    console.log(`[Instagram] Getting shortcode for media ID: ${mediaId}`);
-
-    const response = await fetch(
-      `https://graph.instagram.com/v23.0/${mediaId}?fields=shortcode&access_token=${accessToken}`
+    const statusResponse = await fetch(
+      `${INSTAGRAM_GRAPH_BASE_URL}/${containerId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`,
+      { signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS) },
     );
-
-    if (!response.ok) {
-      console.error(`[Instagram] Failed to get shortcode: ${response.status}`);
+    const statusText = await statusResponse.text();
+    if (!statusResponse.ok) {
+      console.warn(
+        `[readContainerStatus] Status check failed (${statusResponse.status}): ${statusText}`,
+      );
       return null;
     }
-
-    const data = await response.json();
-    console.log(`[Instagram] Shortcode retrieved: ${data.shortcode}`);
-
-    return data.shortcode || null;
-  } catch (error) {
-    console.error("[Instagram] Error getting shortcode:", error);
+    const containerStatus = ContainerStatusSchema.safeParse(
+      parseJsonObject(statusText),
+    );
+    return containerStatus.success ? containerStatus.data.status_code : null;
+  } catch (requestError) {
+    console.warn(
+      "[readContainerStatus] Status request failed:",
+      requestError instanceof Error ? requestError.message : requestError,
+    );
     return null;
   }
+}
+
+function waitFor(durationMs: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, durationMs));
+}
+
+async function waitForContainerReady(
+  accessToken: string,
+  containerId: string,
+): Promise<{ success: true } | PlatformPostFailure> {
+  const deadlineMs = Date.now() + CONTAINER_READY_DEADLINE_MS;
+  let pollIndex = 0;
+  let lastStatus: string | null = null;
+
+  for (;;) {
+    lastStatus = await readContainerStatus(accessToken, containerId);
+    if (lastStatus === "FINISHED") return { success: true };
+    if (lastStatus === "ERROR" || lastStatus === "EXPIRED") {
+      return buildInputFailure(`Instagram could not process the media (container ${lastStatus})`);
+    }
+
+    const pollIntervalMs = Math.min(
+      CONTAINER_POLL_MAX_INTERVAL_MS,
+      CONTAINER_POLL_INITIAL_INTERVAL_MS * 2 ** pollIndex,
+    );
+    if (Date.now() + pollIntervalMs > deadlineMs) break;
+    await waitFor(pollIntervalMs);
+    pollIndex++;
+  }
+
+  return {
+    success: false,
+    error: `Instagram media processing timeout: not ready after ${CONTAINER_READY_DEADLINE_MS / 1000} s (last status: ${lastStatus ?? "unreadable"})`,
+    failure: { reason: "transient", mayHavePublished: false },
+  };
+}
+
+async function readMediaPermalink(
+  accessToken: string,
+  mediaId: string,
+): Promise<string | undefined> {
+  try {
+    const permalinkResponse = await fetch(
+      `${INSTAGRAM_GRAPH_BASE_URL}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(accessToken)}`,
+      { signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS) },
+    );
+    if (!permalinkResponse.ok) {
+      console.warn(
+        `[readMediaPermalink] Permalink lookup failed (${permalinkResponse.status}) for media ${mediaId}`,
+      );
+      return undefined;
+    }
+    const media = MediaPermalinkSchema.safeParse(
+      parseJsonObject(await permalinkResponse.text()),
+    );
+    return media.success ? media.data.permalink : undefined;
+  } catch (requestError) {
+    console.warn(
+      `[readMediaPermalink] Permalink request failed for media ${mediaId}:`,
+      requestError instanceof Error ? requestError.message : requestError,
+    );
+    return undefined;
+  }
+}
+
+export async function postToInstagram(input: {
+  accessToken: string;
+  igUserId: string;
+  caption: string;
+  mediaUrl: string | null;
+  postType: "image" | "reel";
+  altText?: string;
+  shareToFeed?: boolean;
+  coverTimestamp?: number;
+}): Promise<InstagramPostResult> {
+  if (!input.accessToken || !input.igUserId) {
+    return buildInputFailure("Missing required parameters (accessToken and igUserId)");
+  }
+  const { mediaUrl } = input;
+  if (!mediaUrl) {
+    return buildInputFailure("Instagram requires media content. Please provide a public mediaUrl.");
+  }
+
+  const container = await createMediaContainer({ ...input, mediaUrl });
+  if (!container.success) return container;
+
+  const readiness = await waitForContainerReady(input.accessToken, container.containerId);
+  if (!readiness.success) return readiness;
+
+  const publishAction = `Instagram ${input.postType} publish`;
+  let mediaId: string;
+  try {
+    const publishResponse = await fetch(
+      `${INSTAGRAM_GRAPH_BASE_URL}/${input.igUserId}/media_publish`,
+      {
+        method: "POST",
+        headers: buildAuthHeaders(input.accessToken),
+        body: JSON.stringify({ creation_id: container.containerId }),
+        signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
+      },
+    );
+    const publishText = await publishResponse.text();
+    if (!publishResponse.ok) {
+      console.error(
+        `[postToInstagram] Publish failed (${publishResponse.status}): ${publishText}`,
+      );
+      return buildHttpFailure({
+        platform: "instagram",
+        action: publishAction,
+        httpStatus: publishResponse.status,
+        responseText: publishText,
+        isPublishRequest: true,
+      });
+    }
+    const publishedMedia = CreatedObjectSchema.safeParse(parseJsonObject(publishText));
+    if (!publishedMedia.success) {
+      return buildUnreadableAnswerFailure({ action: publishAction, isPublishRequest: true });
+    }
+    mediaId = publishedMedia.data.id;
+  } catch (requestError) {
+    return buildNetworkFailure({
+      action: publishAction,
+      requestError,
+      isPublishRequest: true,
+    });
+  }
+
+  console.log(`[postToInstagram] Published ${input.postType} media ${mediaId}`);
+  return {
+    success: true,
+    postId: mediaId,
+    postUrl: await readMediaPermalink(input.accessToken, mediaId),
+    containerId: container.containerId,
+    message: `Successfully created ${input.postType} post on Instagram`,
+  };
 }

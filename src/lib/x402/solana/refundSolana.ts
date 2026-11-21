@@ -1,19 +1,5 @@
 import "server-only";
 
-/**
- * Sends a USDC SPL token refund on Solana.
- *
- * Builds an SPL Token TransferChecked instruction (solana/splToken.ts) from
- * the Server Wallet's associated token account (ATA) to the payer's ATA,
- * compiles it with @solana/kit, and hands the base64 wire transaction to
- * CDP for signing and sending (the CDP Server Wallet holds the key). The
- * owner is the only signer and CDP supplies that signature.
- *
- * Called by: facilitator.refundPayment (coinbase_cdp lane, Solana)
- * Env: X402_RECIPIENT_SOLANA (refund sender = original payment recipient),
- *      X402_SOLANA_RPC_URL (blockhash reads, resolved by config.getRpcUrl)
- */
-
 import {
   address,
   appendTransactionMessageInstructions,
@@ -25,61 +11,76 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from "@solana/kit";
 
-import { getCdpClient } from "@/lib/x402/cdp/cdpClient";
+import { getCdpClient, sendThroughCdp } from "@/lib/x402/cdp/cdpClient";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getRecipientAddress, getRpcUrl } from "@/lib/x402/config";
-import {
-  buildTransferCheckedInstruction,
-  findAssociatedTokenAddress,
-} from "@/lib/x402/solana/splToken";
+import { buildUsdcTransferInstructions } from "@/lib/x402/solana/splToken";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
+/** The Solana HTTP transport sets no timeout of its own. */
+const BLOCKHASH_REQUEST_TIMEOUT_MS = 5_000;
+
 export async function refundSolana(input: RefundSendInput): Promise<RefundSendResult> {
-  // The Server Wallet that received the payment is the refund sender.
   const senderAddress = getRecipientAddress(input.network);
   if (!senderAddress) {
     return {
-      ok: false,
+      status: "not_sent",
       message: `${input.network.recipientEnvVar} env var not set. Cannot issue the Solana refund.`,
     };
   }
 
   const cdpResult = getCdpClient();
-  if (!cdpResult.ok) return { ok: false, message: cdpResult.message };
+  if (!cdpResult.ok) return { status: "not_sent", message: cdpResult.message };
+  const cdpClient = cdpResult.client;
 
+  const builtTransaction = await buildRefundTransaction(input, senderAddress);
+  if (!builtTransaction.ok) {
+    console.error(`[refundSolana] Could not build the refund: ${builtTransaction.message}`);
+    return { status: "not_sent", message: builtTransaction.message };
+  }
+
+  const sendResult = await sendThroughCdp({
+    send: async () => {
+      const sentTransaction = await cdpClient.solana.sendTransaction({
+        network: "solana",
+        transaction: builtTransaction.base64Transaction,
+        idempotencyKey: input.idempotencyKey,
+      });
+      return sentTransaction.signature;
+    },
+    operationName: "CDP refund send on Solana",
+  });
+  if (sendResult.status === "sent") {
+    console.log(
+      `[refundSolana] Refund sent: ${sendResult.txHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
+    );
+  }
+  return sendResult;
+}
+
+async function buildRefundTransaction(
+  input: RefundSendInput,
+  senderAddress: string,
+): Promise<{ ok: true; base64Transaction: string } | { ok: false; message: string }> {
   try {
-    const rpc = createSolanaRpc(getRpcUrl(input.network));
-
-    // Get a recent blockhash for the transaction lifetime.
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    const atomicAmount = usdcToAtomic(input.amountUsdc, input.network.usdcDecimals);
+    if (!atomicAmount.ok) return { ok: false, message: atomicAmount.message };
 
     const senderAddr = address(senderAddress);
-    const recipientAddr = address(input.payerAddress);
-    const usdcMint = address(input.network.usdcAddress);
-
-    const sourceAta = await findAssociatedTokenAddress(senderAddr, usdcMint);
-    // The payer's ATA exists: the payment being refunded was sent FROM it,
-    // and SPL token accounts are not closed by outgoing transfers here.
-    const destinationAta = await findAssociatedTokenAddress(recipientAddr, usdcMint);
-
-    const atomicAmount = BigInt(
-      usdcToAtomic(input.amountUsdc, input.network.usdcDecimals),
-    );
-    if (atomicAmount <= BigInt(0)) {
-      return { ok: false, message: "Refund amount rounds to zero USDC." };
-    }
-
-    const transferInstruction = buildTransferCheckedInstruction({
-      sourceAta,
-      mint: usdcMint,
-      destinationAta,
-      authority: senderAddr,
-      atomicAmount,
+    const refundInstructions = await buildUsdcTransferInstructions({
+      sender: senderAddr,
+      recipient: address(input.payerAddress),
+      mint: address(input.network.usdcAddress),
+      atomicAmount: atomicAmount.atomicAmount,
       decimals: input.network.usdcDecimals,
     });
 
+    const { value: latestBlockhash } = await createSolanaRpc(getRpcUrl(input.network))
+      .getLatestBlockhash()
+      .send({ abortSignal: AbortSignal.timeout(BLOCKHASH_REQUEST_TIMEOUT_MS) });
+
     const txMessage = appendTransactionMessageInstructions(
-      [transferInstruction],
+      refundInstructions,
       setTransactionMessageLifetimeUsingBlockhash(
         latestBlockhash,
         setTransactionMessageFeePayer(
@@ -90,22 +91,11 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
     );
 
     const compiledTx = compileTransaction(txMessage);
-    const base64Tx = getBase64EncodedWireTransaction(compiledTx);
-
-    // Sign and send via CDP. The CDP SDK's Solana network name matches the
-    // WalletChain short name "solana"; the registry has no Solana testnet.
-    const result = await cdpResult.client.solana.sendTransaction({
-      network: "solana",
-      transaction: base64Tx,
-    });
-
-    console.log(
-      `[refundSolana] Refund sent: ${result.signature}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
-    );
-    return { ok: true, txHash: result.signature };
+    return { ok: true, base64Transaction: getBase64EncodedWireTransaction(compiledTx) };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error during the Solana refund.";
-    console.error(`[refundSolana] Failed: ${message}`);
-    return { ok: false, message };
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unexpected error while building the Solana refund.",
+    };
   }
 }

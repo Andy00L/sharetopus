@@ -1,10 +1,8 @@
+import type { Platform } from "@/db/schema";
 import { getProviderMetadata } from "@/lib/platforms/providers/catalog";
 
 /**
- * Max caption/description length per platform, in characters. Keys are the
- * DB platform values (Platform in src/db/schema.ts): lookups everywhere
- * use `CAPTION_LIMITS[post.platform]`, so a key that is not a DB platform
- * value is unreachable. sourceRefs:
+ * Max caption/description length per platform, in characters. sourceRefs:
  *   - x: 280 (standard tweet length, docs.x.com POST /2/tweets)
  *   - facebook: 63206 (Graph API page post message limit)
  *   - instagram: 2200 (Instagram caption limit)
@@ -22,25 +20,16 @@ export const CAPTION_LIMITS = {
   pinterest: 500,
   tiktok: 2200,
   youtube: 5000,
-} as const;
+} as const satisfies { default: number } & Partial<Record<Platform, number>>;
 
 export type CaptionPlatform = keyof typeof CAPTION_LIMITS;
 
-/** True when the map above has its own limit for this platform (hasOwn, so "toString" is not one). */
 export function isCaptionPlatform(
   platform: string,
 ): platform is Exclude<CaptionPlatform, "default"> {
   return platform !== "default" && Object.hasOwn(CAPTION_LIMITS, platform);
 }
 
-/**
- * Text limit for any platform value: legacy platforms answer from the map
- * above, registry providers from their catalog rules (maxTextLength), and
- * everything else falls back to the default. Character counts here are
- * plain string lengths; platform-weighted counting (X counts every URL as
- * 23) is deliberately not modeled, so treat near-limit values as a warning
- * rather than a guarantee.
- */
 export function resolvePlatformTextLimit(platform: string): number {
   if (isCaptionPlatform(platform)) {
     return CAPTION_LIMITS[platform];

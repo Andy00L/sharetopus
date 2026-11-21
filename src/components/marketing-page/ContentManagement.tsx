@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-/** Content management section: copy on the left, the looping manage.webm/mp4 demo on the right. */
 export default function ContentManagement() {
   return (
     <section
@@ -12,9 +11,7 @@ export default function ContentManagement() {
     >
       <div className="container px-5 lg:px-4 mx-auto max-w-[1180px]">
         <div className="grid grid-cols-1 lg:grid-cols-[0.92fr_1.08fr] gap-10 lg:gap-20 items-center">
-          {/* ── Copy + CTAs (left on desktop) ────────────────────────── */}
           <div className="max-w-xl">
-            {/* Eyebrow */}
             <div className="inline-flex items-center gap-2 mb-5">
               <span className="inline-block w-[7px] h-[7px] rounded-full bg-[#FF5A36]" />
               <span className="text-[12px] font-semibold tracking-[0.18em] uppercase text-[#FF5A36]">
@@ -52,7 +49,6 @@ export default function ContentManagement() {
             </div>
           </div>
 
-          {/* ── Media (right on desktop) ─────────────────────────────── */}
           <div className="w-full flex items-center justify-center">
             <div
               className="relative w-full max-w-[560px] rounded-[24px] lg:rounded-[28px] border-[1.5px] border-[#1C1B18] bg-[#F3F4EF] p-3 sm:p-5 lg:p-6"

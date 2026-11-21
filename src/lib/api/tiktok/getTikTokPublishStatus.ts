@@ -1,18 +1,17 @@
-import fetch from "node-fetch";
 import "server-only";
 import { z } from "zod";
 
-/**
- * /v2/post/publish/status/fetch/ answer. Every field may be absent: a
- * missing status reads as in progress, a missing error message as the
- * HTTP status.
- */
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
+
+// https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status
 const PublishStatusResponseSchema = z.object({
   data: z
     .object({
       status: z.string().nullish(),
       fail_reason: z.string().nullish(),
-      // list<int64> in the docs, so an id can arrive as a number.
+      // publicaly_available_post_id is documented as list<int64>.
       publicaly_available_post_id: z
         .array(z.union([z.string(), z.number()]))
         .nullish(),
@@ -21,8 +20,6 @@ const PublishStatusResponseSchema = z.object({
   error: z.object({ message: z.string().nullish() }).nullish(),
 });
 
-// Terminal failure status values from TikTok Content Posting API.
-// Reference: https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 const TERMINAL_FAILURE_STATUSES = new Set([
   "FAILED",
   "PROCESSING_DOWNLOAD_FAILED",
@@ -43,20 +40,6 @@ export type TikTokPublishStatusResult =
     }
   | { success: false; message: string };
 
-/**
- * Fetches the publish status of a TikTok post from the Content Posting
- * API's /v2/post/publish/status/fetch/ endpoint.
- *
- * After init returns a publish_id, TikTok pulls the media asynchronously.
- * This function checks whether that pull has completed, failed, or is
- * still in progress.
- *
- * Returns terminal: true when TikTok has reached a final state (success
- * or failure). Returns terminal: false when still processing.
- *
- * Does not throw. Returns { success: false, message } on network or
- * HTTP errors.
- */
 export async function getTikTokPublishStatus(input: {
   publish_id: string;
   access_token: string;
@@ -73,12 +56,12 @@ export async function getTikTokPublishStatus(input: {
           "Content-Type": "application/json; charset=UTF-8",
         },
         body: JSON.stringify({ publish_id }),
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       }
     );
 
-    // Read the body exactly once (FIX 17 convention).
     const parsedBody = PublishStatusResponseSchema.safeParse(
-      await response.json(),
+      parseJsonObject(await response.text()),
     );
     if (!parsedBody.success) {
       console.error(
@@ -129,8 +112,6 @@ export async function getTikTokPublishStatus(input: {
       };
     }
 
-    // Non-terminal: PROCESSING_DOWNLOAD, PROCESSING_UPLOAD,
-    // SEND_TO_USER_INBOX, or any other in-progress status.
     console.log(`[getTikTokPublishStatus] In progress: ${status}`);
     return {
       success: true,
@@ -138,8 +119,8 @@ export async function getTikTokPublishStatus(input: {
       kind: "in_progress",
       raw_status: status,
     };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch (requestError) {
+    const message = describeNetworkError(requestError);
     console.error("[getTikTokPublishStatus] Network error:", message);
     return { success: false, message: `Network error: ${message}` };
   }

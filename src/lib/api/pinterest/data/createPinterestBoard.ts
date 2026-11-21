@@ -1,17 +1,8 @@
-// Server-only library function, NOT a server action (same rationale as
-// getPinterestBoards.ts: raw-token input must never be client-callable).
 import "server-only";
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 
 import { PinterestBoard } from "./getPinterestBoards";
 
-/**
- * Creates a new Pinterest board
- *
- * @param accessToken Pinterest API access token
- * @param name Name of the board to create
- * @param description Optional description for the board
- * @returns The created board data or null if failed
- */
 export async function createPinterestBoard(
   accessToken: string | null,
   name: string,
@@ -42,6 +33,7 @@ export async function createPinterestBoard(
         name,
         description: description ?? "",
       }),
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
     console.log(

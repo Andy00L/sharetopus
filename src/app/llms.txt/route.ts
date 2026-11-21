@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { buildLlmsTxt } from "@/lib/docs/buildLlmsTxt";
 
-/**
- * GET /llms.txt -- machine-readable site index for AI agents
- * (llmstxt.org format). Points agents at the markdown docs
- * (/docs/*.md) and the OpenAPI spec.
- */
+export const dynamic = "force-static";
+
 export function GET() {
   return new NextResponse(buildLlmsTxt(), {
     headers: {

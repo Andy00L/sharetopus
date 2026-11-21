@@ -5,11 +5,6 @@ import { useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 
-/**
- * Re-renders the current page's server components (router.refresh). The URL
- * and its query stay as they are, so a schedule prefill survives the retry.
- * Disabled while the refresh runs.
- */
 export function RefreshPageButton() {
   const router = useRouter();
   const [isRefreshing, startRefresh] = useTransition();

@@ -1,7 +1,21 @@
 import "server-only";
 
-import { FULL_PROVIDER_CATALOG, getProviderMetadata } from "./catalog";
-import type { ProviderBehavior, ProviderDefinition, ProviderMetadata } from "./types";
+import {
+  getProviderMetadata,
+  listProviderMetadata,
+  REGISTRY_PLATFORM_IDS,
+  type RegistryCatalogEntry,
+  type RegistryPlatformId,
+} from "./catalog";
+import { findCredentialValueIssue } from "./credentialFields";
+import type {
+  ProviderBehavior,
+  ProviderConnectResult,
+  ProviderDefinition,
+  ProviderMetadata,
+  ProviderOperations,
+  ProviderRefreshOperations,
+} from "./types";
 
 import { blueskyBehavior } from "./bluesky";
 import { devtoBehavior } from "./devto";
@@ -27,18 +41,14 @@ import {
   linkedinPageBehavior,
 } from "./oauthVariants";
 
-/**
- * Server-side provider registry: metadata from the catalog joined with the
- * behavior each provider module supplies.
- *
- * Server-only because every behavior here reads or transmits credentials.
- * The connect UI and the REST/MCP schemas import catalog.ts instead.
- *
- * Adding a provider: one catalog entry, one module, one line in
- * PROVIDER_BEHAVIORS below.
- */
+type ProviderBehaviorCatalog = {
+  readonly [PlatformId in RegistryPlatformId]: Extract<
+    ProviderBehavior,
+    { authKind: RegistryCatalogEntry<PlatformId>["authKind"] }
+  >;
+};
 
-const PROVIDER_BEHAVIORS: Readonly<Record<string, ProviderBehavior>> = {
+const PROVIDER_BEHAVIORS: ProviderBehaviorCatalog = {
   bluesky: blueskyBehavior,
   mastodon: mastodonBehavior,
   telegram: telegramBehavior,
@@ -62,48 +72,132 @@ const PROVIDER_BEHAVIORS: Readonly<Record<string, ProviderBehavior>> = {
   gmb: gmbBehavior,
 };
 
-/**
- * Whether every env var this provider needs is present.
- *
- * This is the "it just works once the keys are set" switch. A provider
- * whose env is incomplete is hidden from the connect UI and refused by the
- * connect endpoints, so a user never gets half way through a redirect
- * before discovering a client secret was missing.
- *
- * Credentials providers declare no requiredEnv and are therefore always
- * available: the user brings their own key.
- */
-export function isProviderConfigured(metadata: ProviderMetadata): boolean {
+export function isProviderConfigured(metadata: Pick<ProviderMetadata, "requiredEnv">): boolean {
   return metadata.requiredEnv.every((envVarName) => {
     const value = process.env[envVarName];
     return typeof value === "string" && value.trim().length > 0;
   });
 }
 
-/**
- * Full definition for a provider id, or null when the id is unknown or the
- * provider has no behavior wired yet. Callers fail closed on null.
- */
 export function getProvider(providerId: string): ProviderDefinition | null {
   const metadata = getProviderMetadata(providerId);
   if (!metadata) return null;
-
-  const behavior = PROVIDER_BEHAVIORS[providerId];
-  if (!behavior) {
-    console.error(
-      `[getProvider] Provider "${providerId}" is in the catalog but has no behavior registered.`,
-    );
-    return null;
-  }
-
-  return { ...metadata, ...behavior };
+  return {
+    ...metadata,
+    ...guardProviderBehavior(metadata, PROVIDER_BEHAVIORS[metadata.id]),
+  };
 }
 
-/**
- * Same as getProvider, but also requires the provider's env to be set.
- * Use at every request entry point (connect, publish, tool trigger) so an
- * unconfigured provider is rejected with a clear reason.
- */
+async function settleThrown<Settled>(input: {
+  operationLabel: string;
+  runOperation: () => Promise<Settled>;
+  buildFailure: (message: string) => Settled;
+}): Promise<Settled> {
+  try {
+    return await input.runOperation();
+  } catch (thrownError) {
+    const message = thrownError instanceof Error ? thrownError.message : String(thrownError);
+    console.error(`[settleThrown] ${input.operationLabel} threw: ${message}`);
+    return input.buildFailure(message);
+  }
+}
+
+function guardProviderBehavior(
+  metadata: ProviderMetadata,
+  behavior: ProviderBehavior,
+): ProviderBehavior {
+  const providerLabel = metadata.label;
+  const guardedOperations = guardProviderOperations(providerLabel, behavior);
+  const guardConnect = (runConnect: () => Promise<ProviderConnectResult>) =>
+    settleThrown<ProviderConnectResult>({
+      operationLabel: `${providerLabel} connect`,
+      runOperation: runConnect,
+      buildFailure: () => ({
+        ok: false,
+        message: `${providerLabel} could not be connected because of an unexpected error.`,
+      }),
+    });
+
+  switch (behavior.authKind) {
+    case "credentials": {
+      const credentialFields =
+        metadata.authKind === "credentials" ? metadata.credentialFields : [];
+      const connect: typeof behavior.connect = async (input) => {
+        const credentialIssue = findCredentialValueIssue({
+          providerLabel,
+          fields: credentialFields,
+          values: input.values,
+        });
+        if (credentialIssue) return { ok: false, message: credentialIssue };
+        return guardConnect(() => behavior.connect(input));
+      };
+      return { ...behavior, ...guardedOperations, connect };
+    }
+    case "oauth2": {
+      const connect: typeof behavior.connect = (input) =>
+        guardConnect(() => behavior.connect(input));
+      return { ...behavior, ...guardedOperations, connect };
+    }
+    case "oauth2_pkce": {
+      const connect: typeof behavior.connect = (input) =>
+        guardConnect(() => behavior.connect(input));
+      return { ...behavior, ...guardedOperations, connect };
+    }
+  }
+}
+
+function guardProviderOperations(
+  providerLabel: string,
+  operations: ProviderOperations,
+): ProviderOperations {
+  const { runTool } = operations;
+  return {
+    publish: (input) =>
+      settleThrown({
+        operationLabel: `${providerLabel} publish`,
+        runOperation: () => operations.publish(input),
+        buildFailure: (message) => ({
+          ok: false,
+          message: `${providerLabel} publish failed unexpectedly: ${message}`,
+          failure: { reason: "unknown", mayHavePublished: true },
+        }),
+      }),
+    ...guardRefreshOperations(providerLabel, operations),
+    ...(runTool && {
+      runTool: (input) =>
+        settleThrown({
+          operationLabel: `${providerLabel} ${input.methodName}`,
+          runOperation: () => runTool(input),
+          buildFailure: () => ({
+            ok: false,
+            message: "The provider tool failed unexpectedly.",
+          }),
+        }),
+    }),
+  };
+}
+
+function guardRefreshOperations(
+  providerLabel: string,
+  operations: ProviderRefreshOperations,
+): ProviderRefreshOperations {
+  if (!operations.refresh) return {};
+  const { refresh } = operations;
+  return {
+    refreshTokenRotation: operations.refreshTokenRotation,
+    refresh: (input) =>
+      settleThrown({
+        operationLabel: `${providerLabel} refresh`,
+        runOperation: () => refresh(input),
+        buildFailure: (message) => ({
+          ok: false,
+          message: `${providerLabel} token refresh failed unexpectedly: ${message}`,
+          reason: "transient",
+        }),
+      }),
+  };
+}
+
 export type ResolveProviderResult =
   | { ok: true; provider: ProviderDefinition }
   | { ok: false; reason: "unknown_provider" | "not_configured"; message: string };
@@ -137,13 +231,12 @@ export function resolveConfiguredProvider(
   return { ok: true, provider };
 }
 
-/**
- * Every provider that is both wired and configured, for the connect UI and
- * for the REST/MCP "what can I post to" surfaces. Metadata only: no
- * behavior functions cross this boundary.
- */
+export function listRefreshablePlatformIds(): RegistryPlatformId[] {
+  return REGISTRY_PLATFORM_IDS.filter(
+    (platformId) => PROVIDER_BEHAVIORS[platformId].refresh !== undefined,
+  );
+}
+
 export function listAvailableProviders(): ProviderMetadata[] {
-  return Object.values(FULL_PROVIDER_CATALOG)
-    .filter((metadata) => PROVIDER_BEHAVIORS[metadata.id] !== undefined)
-    .filter((metadata) => isProviderConfigured(metadata));
+  return listProviderMetadata().filter((metadata) => isProviderConfigured(metadata));
 }

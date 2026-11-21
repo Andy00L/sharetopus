@@ -4,67 +4,57 @@ import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { auth } from "@clerk/nextjs/server";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, type SQL } from "drizzle-orm";
+import { z } from "zod";
 
-/**
- * Revokes a share link by setting revoked_at to now().
- *
- * Ownership-checked: only the creator who owns the link can revoke it.
- * Idempotent: revoking an already-revoked link returns success.
- * Does NOT disconnect existing social accounts linked via this share link.
- *
- * Called by: RevokeShareLinkButton client component
- * Tables touched: share_links (update)
- */
+const RevokeShareLinkInputSchema = z.object({ shareLinkId: z.guid() });
 
-interface RevokeShareLinkInput {
-  shareLinkId: string;
-}
+type RevokeShareLinkInput = z.input<typeof RevokeShareLinkInputSchema>;
 
 type RevokeShareLinkResult =
-  | { success: true }
-  | { success: false; message: string };
+  | { success: true; outcome: "revoked" | "already_revoked" }
+  | { success: false; reason: "not_found" | "failed"; message: string };
 
 export async function revokeShareLink(
   input: RevokeShareLinkInput,
 ): Promise<RevokeShareLinkResult> {
   const startMs = performance.now();
 
-  // 1. Auth
   const { userId } = await auth();
   if (!userId) {
-    return { success: false, message: "Authentication required." };
+    return { success: false, reason: "failed", message: "Authentication required." };
   }
 
-  if (!input.shareLinkId) {
-    return { success: false, message: "Share link ID is required." };
+  const parsedInput = RevokeShareLinkInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return { success: false, reason: "not_found", message: "Share link not found." };
   }
+  const { shareLinkId } = parsedInput.data;
 
-  // 2. Ownership check + revoke in one query
-  //    WHERE owner_principal_id = userId ensures ownership.
-  //    WHERE revoked_at IS NULL avoids re-revoking (idempotent: we still return success).
-  const { error: updateError } = await runQuery(
+  const isOwnedLink = and(
+    eq(share_links.id, shareLinkId),
+    eq(share_links.owner_principal_id, userId),
+  );
+  const { data: revokedRows, error: updateError } = await runQuery(
     db
       .update(share_links)
       .set({ revoked_at: new Date().toISOString() })
-      .where(
-        and(
-          eq(share_links.id, input.shareLinkId),
-          eq(share_links.owner_principal_id, userId),
-          isNull(share_links.revoked_at),
-        ),
-      ),
+      .where(and(isOwnedLink, isNull(share_links.revoked_at)))
+      .returning({ id: share_links.id }),
   );
 
   if (updateError) {
     console.error(
-      `[revokeShareLink] Update failed for link ${input.shareLinkId}:`,
+      `[revokeShareLink] Update failed for link ${shareLinkId}:`,
       updateError.message,
     );
-    return { success: false, message: "Failed to revoke share link." };
+    return { success: false, reason: "failed", message: "Failed to revoke share link." };
   }
 
-  // 3. Audit log (even if already revoked, for idempotent UI behavior)
+  if (revokedRows.length === 0) {
+    return findUnrevokableOutcome(isOwnedLink, shareLinkId);
+  }
+
   logX402Call({
     principal: null,
     action: "share_link.revoke",
@@ -74,6 +64,29 @@ export async function revokeShareLink(
     latencyMs: Math.round(performance.now() - startMs),
   });
 
-  // Idempotent: return success whether the row was updated or was already revoked
-  return { success: true };
+  return { success: true, outcome: "revoked" };
+}
+
+async function findUnrevokableOutcome(
+  isOwnedLink: SQL | undefined,
+  shareLinkId: string,
+): Promise<RevokeShareLinkResult> {
+  const { data: ownedRows, error } = await runQuery(
+    db
+      .select({ id: share_links.id })
+      .from(share_links)
+      .where(isOwnedLink)
+      .limit(1),
+  );
+  if (error) {
+    console.error(
+      `[findUnrevokableOutcome] Lookup failed for link ${shareLinkId}:`,
+      error.message,
+    );
+    return { success: false, reason: "failed", message: "Failed to revoke share link." };
+  }
+  if (ownedRows.length === 0) {
+    return { success: false, reason: "not_found", message: "Share link not found." };
+  }
+  return { success: true, outcome: "already_revoked" };
 }

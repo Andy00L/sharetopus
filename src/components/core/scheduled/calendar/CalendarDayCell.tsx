@@ -13,7 +13,6 @@ import {
 } from "./calendarMath";
 import CalendarBatchChip from "./CalendarBatchChip";
 
-/** Chips shown per month cell before collapsing into "+N more". */
 const MAX_VISIBLE_BATCHES_PER_DAY = 3;
 
 interface CalendarDayCellProps {
@@ -21,7 +20,6 @@ interface CalendarDayCellProps {
   readonly dayKey: string;
   readonly isInAnchorMonth: boolean;
   readonly isToday: boolean;
-  /** Past days reject drops and hide the quick-create link. */
   readonly isPast: boolean;
   readonly batches: CalendarBatch[];
   readonly pendingBatchIds: ReadonlySet<string>;
@@ -29,11 +27,6 @@ interface CalendarDayCellProps {
   readonly onShowMore: (dayKey: string) => void;
 }
 
-/**
- * One day of the month grid: a drop target for chip drags, a quick-create
- * entry ("+" on hover, prefills the composer with this date), and up to
- * three chips with a "+N more" overflow that jumps to the week view.
- */
 export default function CalendarDayCell({
   day,
   dayKey,
@@ -95,7 +88,7 @@ export default function CalendarDayCell({
           key={batch.batchId}
           batch={batch}
           draggable={isBatchDraggable(batch)}
-          pending={pendingBatchIds.has(batch.batchId)}
+          isReschedulePending={pendingBatchIds.has(batch.batchId)}
           onOpen={onOpenBatch}
         />
       ))}

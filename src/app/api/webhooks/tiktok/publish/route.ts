@@ -30,7 +30,8 @@ function getClientSecret(): string | null {
 
 type SignatureParts = { timestamp: number; signature: string };
 
-/** Reads "t=<unix seconds>,s=<hex hmac>" from the TikTok-Signature header. */
+// TikTok-Signature is "t=<unix seconds>,s=<hex hmac>", and the HMAC covers
+// "<timestamp>.<raw body>": https://developers.tiktok.com/doc/webhooks-verification
 function parseTikTokSignatureHeader(header: string): SignatureParts | null {
   let timestamp: number | null = null;
   let signature: string | null = null;
@@ -81,7 +82,6 @@ function verifyTikTokSignature(input: {
   return { valid: true };
 }
 
-/** Fields read from a TikTok webhook body; user_openid and content pass through to the worker. */
 const TikTokWebhookPayloadSchema = z.object({
   client_key: z.string().min(1),
   event: z.string().min(1),
@@ -148,7 +148,6 @@ export async function POST(req: NextRequest) {
 
   const eventId = computeEventId(payload);
 
-  // An event is logged only once it reached Inngest; see tiktokEventLog.ts.
   const processedCheck = await isTikTokEventProcessed(eventId);
   if (!processedCheck.ok) {
     return respondError("Could not read the event log", 500);
@@ -160,9 +159,11 @@ export async function POST(req: NextRequest) {
     return respondReceived({ duplicate: true, event_id: eventId });
   }
 
-  // A failed dispatch answers 500 so TikTok redelivers. The event id makes
-  // Inngest drop a second send of the same event, so a redelivery that
-  // arrives before the log below is written starts no second run.
+  // TikTok retries a non-200 delivery for up to 72 hours
+  // (https://developers.tiktok.com/doc/webhooks-overview), and Inngest drops a
+  // repeated event id for 24 hours
+  // (https://www.inngest.com/docs/guides/handling-idempotency), so a redelivery
+  // that arrives before the log below is written starts no second run.
   try {
     await inngest.send({
       id: eventId,

@@ -1,19 +1,5 @@
 import "server-only";
 
-/**
- * On-chain confirmation for a transaction Sharetopus sent (refunds) or a
- * facilitator reported (settlements under reconciliation).
- *
- * "wait" blocks up to the timeout for the transaction to land; "check" reads
- * its current state once, for the reconciliation sweep. Every failure to
- * learn the outcome (timeout, RPC outage, unknown hash) reports "pending",
- * never "reverted": only the chain saying the transaction failed is a
- * definitive failure.
- *
- * Called by: facilitator.refundPayment, inngest/functions/sweepX402ReconciliationCron
- * Tables touched: none
- */
-
 import { createSolanaRpc, isSignature } from "@solana/kit";
 import {
   TransactionReceiptNotFoundError,
@@ -23,14 +9,16 @@ import {
   isHash,
 } from "viem";
 
+import { pollUntilDeadline } from "@/lib/x402/chain/pollUntilDeadline";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/** Ceiling for "wait" mode; every supported chain confirms well inside it. */
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 20_000;
 
-/** Solana signature-status polling cadence in "wait" mode. */
 const SVM_POLL_INTERVAL_MS = 1_000;
+
+/** One getSignatureStatuses call; the Solana HTTP transport sets no timeout of its own. */
+const SVM_STATUS_REQUEST_TIMEOUT_MS = 5_000;
 
 export type TransactionConfirmation =
   | { status: "confirmed" }
@@ -94,32 +82,32 @@ async function confirmSvmTransaction(
   }
 
   const rpc = createSolanaRpc(getRpcUrl(network));
-  const deadlineMs = Date.now() + timeoutMs;
-
-  for (;;) {
-    try {
+  const outcome = await pollUntilDeadline<TransactionConfirmation>({
+    timeoutMs: mode === "wait" ? timeoutMs : 0,
+    intervalMs: SVM_POLL_INTERVAL_MS,
+    requestTimeoutMs: SVM_STATUS_REQUEST_TIMEOUT_MS,
+    readOnce: async (abortSignal) => {
       const { value: statuses } = await rpc
         .getSignatureStatuses([txSignature], { searchTransactionHistory: true })
-        .send();
+        .send({ abortSignal });
       const signatureStatus = statuses[0];
-      if (signatureStatus) {
-        if (signatureStatus.err !== null) return { status: "reverted" };
-        if (
-          signatureStatus.confirmationStatus === "confirmed" ||
-          signatureStatus.confirmationStatus === "finalized"
-        ) {
-          return { status: "confirmed" };
-        }
+      if (!signatureStatus) return null;
+      if (signatureStatus.err !== null) return { status: "reverted" };
+      if (
+        signatureStatus.confirmationStatus === "confirmed" ||
+        signatureStatus.confirmationStatus === "finalized"
+      ) {
+        return { status: "confirmed" };
       }
-    } catch (error) {
-      console.error(
-        `[confirmSvmTransaction] Status lookup failed for ${txSignature}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+      return null;
+    },
+  });
 
-    if (mode === "check" || Date.now() + SVM_POLL_INTERVAL_MS > deadlineMs) {
-      return { status: "pending" };
-    }
-    await new Promise((resolve) => setTimeout(resolve, SVM_POLL_INTERVAL_MS));
+  if (outcome.status === "found") return outcome.value;
+  if (outcome.lastError !== null) {
+    console.error(
+      `[confirmSvmTransaction] Status lookup failed for ${txSignature}: ${outcome.lastError instanceof Error ? outcome.lastError.message : String(outcome.lastError)}`,
+    );
   }
+  return { status: "pending" };
 }

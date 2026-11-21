@@ -6,12 +6,6 @@ import { cn } from "@/lib/utils";
 
 type CopyState = "idle" | "copied" | "error";
 
-/**
- * Icon-only copy-to-clipboard button. No toast, no storage: the state lives
- * in the component and resets after 1.5s so repeated copies keep giving
- * feedback. Errors are values here too; a denied clipboard (permissions,
- * insecure context) swaps to a brief error icon instead of throwing.
- */
 export function CopyButton({
   text,
   className,

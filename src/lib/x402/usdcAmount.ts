@@ -1,27 +1,17 @@
-import "server-only";
+export const USDC_DECIMALS = 6;
 
-/**
- * Integer-safe conversion from human USDC amounts to atomic base units.
- *
- * pricing_actions.usdc_price arrives as a JS number (src/db/schema.ts reads
- * numeric columns in number mode). Settlement math must never multiply floats, so
- * the conversion goes through a fixed-decimal string: format to exactly
- * `decimals` fraction digits, then shift the decimal point textually and
- * validate via BigInt.
- *
- * Called by: facilitator.ts, http/paymentHttp.ts, solana/refundSolana.ts
- * Tables touched: none
- */
+export type UsdcToAtomicResult = { ok: true; atomicAmount: bigint } | { ok: false; message: string };
 
-export function usdcToAtomic(amountUsdc: number, decimals: number): string {
-  // toFixed switches to exponential notation at 1e21, which would make the
-  // BigInt below throw; any such "price" is corrupted upstream anyway.
-  if (!Number.isFinite(amountUsdc) || amountUsdc < 0 || amountUsdc >= 1e21) {
-    // Returning "0" makes the facilitator reject instead of charging garbage.
-    console.error(`[usdcToAtomic] Rejecting out-of-range amount: ${amountUsdc}`);
-    return "0";
+export function usdcToAtomic(amountUsdc: number, decimals: number): UsdcToAtomicResult {
+  // Number.prototype.toFixed returns exponential notation from 1e21 (ECMA-262), which BigInt cannot parse.
+  if (!Number.isFinite(amountUsdc) || amountUsdc <= 0 || amountUsdc >= 1e21) {
+    return { ok: false, message: `${amountUsdc} is not a positive USDC amount.` };
   }
   const fixed = amountUsdc.toFixed(decimals);
   const [wholePart, fractionPart = ""] = fixed.split(".");
-  return BigInt(`${wholePart}${fractionPart.padEnd(decimals, "0")}`).toString();
+  const atomicAmount = BigInt(`${wholePart}${fractionPart.padEnd(decimals, "0")}`);
+  if (atomicAmount <= BigInt(0)) {
+    return { ok: false, message: `${amountUsdc} USDC rounds to zero at ${decimals} decimals.` };
+  }
+  return { ok: true, atomicAmount };
 }

@@ -17,14 +17,6 @@ const GoogleTokenSchema = z.object({
   token_type: z.string().optional(),
 });
 
-/**
- * Exchanges a Google OAuth code for YouTube tokens. The refresh_token is
- * only present when the authorize URL carried access_type=offline and
- * prompt=consent; both authorize URL builders set them. `redirectUri` must
- * be the exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeYouTubeCode(
   code: string,
   redirectUri: string,

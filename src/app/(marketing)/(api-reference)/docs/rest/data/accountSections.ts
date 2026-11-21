@@ -1,12 +1,5 @@
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Account-level read endpoints of the /docs/rest reference: analytics,
- * content history, and usage. Field lists mirror
- * src/lib/api/rest/validation/analyticsSchemas.ts (read in full) and the
- * DTO factories.
- */
-
 export const REST_ACCOUNT_SECTION: DocsSection = {
   id: "account",
   navLabel: "Analytics and usage",

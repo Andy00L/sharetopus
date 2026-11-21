@@ -1,49 +1,52 @@
-import { z } from "zod";
+import type { FailureEventPayload } from "inngest";
 
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { inngest } from "@/inngest/client";
+import { postDueEvent, PostDueEventDataSchema } from "@/inngest/events/postDue";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
-import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
-import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
-import { toJsonObject } from "@/lib/utils/jsonObject";
-import { isSafeToRetryPost, type PlatformPostOutcome } from "./platformErrors";
 import {
-  buildPlatformSignedUrls,
-  callPlatformDirectPost,
+  buildInputRefusal,
+  buildMissingMediaRefusal,
+  isSafeToRetryPost,
+  type PlatformPostOutcome,
+} from "./platformErrors";
+import {
+  buildScheduledPublishRequest,
   checkPlatformCompatibility,
   claimPostForProcessing,
+  claimPublishAttempt,
   cleanupMediaIfUnreferenced,
-  fetchPostAndAccount,
+  finalizeProcessingPost,
+  findPublishedContentHistory,
+  gatePostOnOwnerAccess,
+  loadPostForProcessing,
   recordPostStatus,
+  releasePublishAttempt,
 } from "./processSinglePostHelpers";
+import {
+  mintPublishMediaUrls,
+  publishToPlatform,
+  shouldDeleteMediaAfterPublish,
+} from "./publishToPlatform";
 
-/**
- * The post.due fields this worker reads. scheduledPostsTick also sends
- * principal_id, social_account_id (the throttle key) and scheduled_at.
- */
-const PostDueEventDataSchema = z.object({
-  scheduled_post_id: z.string(),
-  // scheduled_posts.platform is plain text; checkPlatformCompatibility
-  // fails an unknown value.
-  platform: z.string(),
-});
+const EARLY_START_TOLERANCE_MS = 10_000;
 
-/**
- * Processes ONE scheduled_posts row for ONE social_account on ONE
- * platform. Calls directPostFor{Platform}Accounts directly
- * in-process; no HTTP hop through /api/social/{platform}/process or
- * /post (those routes still serve the direct "Post Now" path).
- *
- * Retry contract: a step that wants to be retried throws INSIDE itself.
- * Inngest checkpoints completed step results, so a throw placed after a
- * step never re-executes it; the retried invocation replays the memoized
- * value and re-throws, burning every attempt without changing anything.
- * Only failures that are safe to repeat throw at all (see
- * isSafeToRetryPost); everything else returns a value and is recorded as
- * terminal. When retries do run out, onFailure finalizes the row so a
- * claimed post cannot be stranded in 'processing' (nothing sweeps that
- * status).
- */
+type RowClaim =
+  | { claimed: true }
+  | { claimed: false; skipReason: "claimed-by-another-worker" | "paused-without-access" };
+
+type PublishSkip = { skipped: true; reason: "post-deleted" | "post-no-longer-processing" };
+
+const EARLIER_ATTEMPT_UNFINISHED: PlatformPostOutcome = {
+  ok: false,
+  reason: "unknown",
+  message: "An earlier publish attempt stopped before it reported a result; the post may have published",
+  mayHavePublished: true,
+};
+
+// A step that wants to be retried throws inside itself: Inngest stores
+// completed step results, so a throw placed after a step never re-runs it.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const processSinglePost = inngest.createFunction(
   {
     id: "process-single-post",
@@ -55,140 +58,171 @@ export const processSinglePost = inngest.createFunction(
       period: "1m",
       key: "event.data.social_account_id",
     },
-    triggers: [{ event: "post.due" }],
+    triggers: [postDueEvent],
     onFailure: async ({ event, error }) => finalizeExhaustedPost(event, error),
   },
   async ({ event, step }) => {
-    const parsedEvent = PostDueEventDataSchema.safeParse(event.data);
-    if (!parsedEvent.success) {
-      console.error("[processSinglePost] Event data is malformed; post not claimed");
-      return { skipped: true, reason: "invalid_event_data" };
-    }
-    const data = parsedEvent.data;
+    const data = event.data;
 
-    const fetched = await step.run("fetch-post-and-account", () =>
-      fetchPostAndAccount(data.scheduled_post_id),
-    );
-    if (!fetched.success) {
-      // Permanent: account row gone, FK broken, etc. Do not retry.
-      return { skipped: true, reason: fetched.message };
+    const loaded = await step.run("load-post-for-processing", async () => {
+      const loadResult = await loadPostForProcessing(data.scheduled_post_id);
+      if (loadResult.kind === "lookup_failed") {
+        throw new Error(`post-lookup-failure: ${loadResult.message}`);
+      }
+      return { ...loadResult, loadedAtMs: Date.now() };
+    });
+    if (loaded.kind === "terminal") {
+      return { skipped: true, reason: loaded.message };
     }
-    if (fetched.skip) {
-      return { skipped: true, reason: "already-handled" };
+    if (loaded.loadedAtMs < Date.parse(data.scheduled_at) - EARLY_START_TOLERANCE_MS) {
+      await step.sleepUntil("wait-until-scheduled-time", data.scheduled_at);
     }
+    const post = loaded.post;
 
-    const compat = checkPlatformCompatibility(
-      data.platform,
-      fetched.post.media_type,
-    );
-    if (!compat.compatible) {
-      const result: PlatformPostOutcome = {
-        ok: false,
-        reason: "invalid_input",
-        message: compat.reason,
-      };
-      await step.run("claim-and-fail-incompatible", async () => {
-        const claim = await claimPostForProcessing(data.scheduled_post_id);
-        if (!claim.claimed) return { handled: false };
-        await recordPostStatus({
-          post: fetched.post,
-          account: fetched.account,
-          result,
+    const claimRow = (stepId: string): Promise<RowClaim> =>
+      step.run(stepId, async (): Promise<RowClaim> => {
+        const gate = await gatePostOnOwnerAccess({
+          post,
+          dispatchedScheduledAt: data.scheduled_at,
         });
-        return { handled: true };
+        if (!gate.success) throw new Error(`access-check-failure: ${gate.message}`);
+        if (!gate.isOpen) {
+          return {
+            claimed: false,
+            skipReason: gate.isPaused ? "paused-without-access" : "claimed-by-another-worker",
+          };
+        }
+        const claimResult = await claimPostForProcessing({
+          scheduledPostId: data.scheduled_post_id,
+          dispatchedScheduledAt: data.scheduled_at,
+        });
+        if (!claimResult.success) throw new Error(claimResult.message);
+        return claimResult.claimed
+          ? { claimed: true }
+          : { claimed: false, skipReason: "claimed-by-another-worker" };
       });
+
+    const recordOutcome = async (
+      stepId: string,
+      result: PlatformPostOutcome,
+    ): Promise<void> => {
+      await step.run(stepId, async () => {
+        const recorded = await recordPostStatus({ post, result });
+        if (!recorded.success) throw new Error(recorded.message);
+        return recorded;
+      });
+    };
+
+    if (loaded.kind === "account_missing") {
+      const accountMissingClaim = await claimRow("claim-account-missing");
+      if (!accountMissingClaim.claimed) {
+        return { skipped: true, reason: accountMissingClaim.skipReason };
+      }
+      await recordOutcome(
+        "record-account-missing",
+        buildInputRefusal("Social account not found or deleted"),
+      );
       return { ok: false, reason: "invalid_input" };
     }
 
-    const claim = await step.run("claim-post", () =>
-      claimPostForProcessing(data.scheduled_post_id),
-    );
-    if (!claim.claimed) {
-      return { skipped: true, reason: "claimed-by-another-worker" };
+    const compat = checkPlatformCompatibility(data.platform, post.media_type);
+    if (!compat.compatible) {
+      const incompatibleClaim = await claimRow("claim-incompatible");
+      if (!incompatibleClaim.claimed) {
+        return { skipped: true, reason: incompatibleClaim.skipReason };
+      }
+      await recordOutcome("record-incompatible", buildInputRefusal(compat.reason));
+      return { ok: false, reason: "invalid_input" };
     }
 
-    // Minting a signed URL is side-effect free, so throwing inside the step
-    // is safe and is the only placement that actually re-mints on retry.
-    const urls = await step.run("build-signed-urls", async () => {
-      const minted = await buildPlatformSignedUrls(fetched.post, data.platform);
-      if (!minted.success) {
-        throw new Error(`signed-url-failure: ${minted.message}`);
-      }
-      return minted;
-    });
-
-    const fileName = fetched.post.media_storage_path
-      ? (fetched.post.media_storage_path.split("/").pop() ?? "")
-      : "";
-
-    const mediaType = deriveMediaMimeType(fileName, fetched.post.media_type);
+    const postClaim = await claimRow("claim-post");
+    if (!postClaim.claimed) {
+      return { skipped: true, reason: postClaim.skipReason };
+    }
 
     const result = await step.run("call-platform-direct-post", async () => {
-      // Loaded here, not in fetch-post-and-account: Inngest stores every
-      // step result, and the row carries the OAuth tokens. Reading it here
-      // also picks up a token another run refreshed since that step.
-      const accountForPublish = await fetchAccountForPublish(fetched.account.id);
+      const published = await findPublishedContentHistory(post);
+      if (!published.success) {
+        throw new Error(`publish-guard-failure: ${published.message}`);
+      }
+      if (published.isPublished) {
+        const alreadyPublished: PlatformPostOutcome = { ok: true, contentId: post.id };
+        return alreadyPublished;
+      }
+
+      // Loaded here, not in an earlier step: Inngest stores every step
+      // result, and the row carries the OAuth tokens.
+      const accountForPublish = await fetchAccountForPublish(post.social_account_id);
       if (!accountForPublish.success) {
-        // Nothing was published yet, so a failed read is safe to retry.
         if (accountForPublish.reason === "lookup_failed") {
           throw new Error(`account-reload-failure: ${accountForPublish.message}`);
         }
-        const accountGone: PlatformPostOutcome = {
-          ok: false,
-          reason: "invalid_input",
-          message: accountForPublish.message,
-        };
-        return accountGone;
+        return buildInputRefusal(accountForPublish.message);
       }
 
-      const outcome = await callPlatformDirectPost({
-        post: fetched.post,
-        account: accountForPublish.account,
-        mediaUrl: urls.mediaUrl,
-        tiktokMediaUrl: urls.tiktokMediaUrl,
-        fileName,
-        mediaType,
+      const minted = await mintPublishMediaUrls({
+        platform: post.platform,
+        storagePath: post.media_storage_path,
+        principalId: post.principal_id,
       });
-
-      // Throwing here, inside the step, is what makes the retry re-run the
-      // platform call. Only rate limits reach this branch: the platform
-      // refused the request, so nothing was published and a backoff retry
-      // cannot duplicate the post.
-      if (!outcome.ok && isSafeToRetryPost(outcome.reason)) {
-        throw new Error(`retryable: ${outcome.reason}: ${outcome.message}`);
+      if (!minted.success) {
+        if (minted.reason === "not_found") return buildMissingMediaRefusal(minted.message);
+        throw new Error(`signed-url-failure: ${minted.message}`);
       }
+
+      const built = buildScheduledPublishRequest({
+        post,
+        account: accountForPublish.account,
+        urls: minted,
+      });
+      if (!built.ok) return built;
+
+      const attempt = await claimPublishAttempt(post.id);
+      if (!attempt.success) throw new Error(attempt.message);
+      switch (attempt.kind) {
+        case "post-deleted":
+        case "post-no-longer-processing": {
+          const skip: PublishSkip = { skipped: true, reason: attempt.kind };
+          return skip;
+        }
+        case "attempt-already-started":
+          return EARLIER_ATTEMPT_UNFINISHED;
+        case "claimed":
+          break;
+        default: {
+          const unhandledAttempt: never = attempt.kind;
+          return unhandledAttempt;
+        }
+      }
+
+      const publishResult = await publishToPlatform(built.request);
+      if (!publishResult.ok && isSafeToRetryPost(publishResult)) {
+        const released = await releasePublishAttempt(post.id);
+        const releaseNote = released.success ? "" : ` (${released.message})`;
+        throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}${releaseNote}`);
+      }
+      const outcome: PlatformPostOutcome = publishResult.ok
+        ? { ok: true, contentId: post.id }
+        : publishResult;
       return outcome;
     });
 
-    await step.run("record-status", () =>
-      recordPostStatus({
-        post: fetched.post,
-        account: fetched.account,
-        result,
-      }),
-    );
+    if ("skipped" in result) return result;
 
-    // Hotlinking registry providers embed the media URL in the published
-    // content (markdown image, link post), so the file must outlive the
-    // post: deleting it here would kill the live embed. deleteSupabaseFile
-    // only preserves files referenced by scheduled/processing rows, and by
-    // this point the row is posted, so the skip has to happen here.
+    await recordOutcome("record-status", result);
+
     if (
-      fetched.post.media_storage_path &&
-      !platformHotlinksMedia(data.platform)
+      post.media_storage_path &&
+      shouldDeleteMediaAfterPublish({
+        platform: post.platform,
+        mightBeLive: result.ok || result.mayHavePublished,
+      })
     ) {
       await step.run("cleanup-storage", () =>
-        cleanupMediaIfUnreferenced(
-          fetched.post.media_storage_path,
-          fetched.post.principal_id,
-        ),
+        cleanupMediaIfUnreferenced(post.media_storage_path, post.principal_id),
       );
     }
 
-    // No throw here. Anything reaching this point is terminal, and
-    // record-status has already written scheduled_posts.status='failed'
-    // plus a failed_posts row via storeFailedPost. Retryable failures
-    // threw inside their own step above and never got this far.
     return {
       ok: result.ok,
       reason: result.ok ? undefined : result.reason,
@@ -197,66 +231,56 @@ export const processSinglePost = inngest.createFunction(
   },
 );
 
-/**
- * Finalizes a post whose run exhausted every retry.
- *
- * Why this is required: the claim step flips the row to 'processing'
- * before any platform work, and record-status is what moves it out of that
- * state. When a step throws its way through all retries, record-status
- * never runs, and nothing sweeps scheduled_posts stuck in 'processing'
- * (sweepStuckDirectPosts covers pending_direct_posts only). Without this
- * handler the row would sit in 'processing' forever: invisible to the
- * dispatcher, never retried, never reported to its owner.
- *
- * recordPostStatus is CAS-guarded on status='processing', so a row that
- * already reached a terminal state is left untouched and no duplicate
- * failed_posts row or webhook is produced.
- */
+// Inngest runs the failure handler as its own function with one retry, and
+// retries it only when it throws:
+// node_modules/inngest/components/InngestFunction.js:114-133
 async function finalizeExhaustedPost(
-  // Structural shape of Inngest's FailureEventPayload: the original event
-  // is nested at data.event, and its own `data` is optional on EventPayload.
-  // sourceRef: node_modules/inngest/types.d.ts, FailureEventPayload.
-  failureEvent: { data: { event: { data?: unknown } } },
+  failureEvent: FailureEventPayload,
   error: Error,
 ): Promise<{ finalized: boolean; reason?: string }> {
-  const scheduledPostId = toJsonObject(failureEvent.data.event.data)
-    ?.scheduled_post_id;
-
-  if (typeof scheduledPostId !== "string" || scheduledPostId.length === 0) {
+  const parsedEvent = PostDueEventDataSchema.safeParse(failureEvent.data.event.data);
+  if (!parsedEvent.success) {
     console.error(
-      "[processSinglePost.onFailure] Failure event carried no scheduled_post_id; cannot finalize.",
+      "[finalizeExhaustedPost] Failure event carried no scheduled_post_id; cannot finalize.",
     );
     return { finalized: false, reason: "missing_scheduled_post_id" };
   }
+  const scheduledPostId = parsedEvent.data.scheduled_post_id;
 
-  const fetched = await fetchPostAndAccount(scheduledPostId);
-  if (!fetched.success) {
-    console.error(
-      `[processSinglePost.onFailure] Could not load post ${scheduledPostId} to finalize it: ${fetched.message}`,
+  const loaded = await loadPostForProcessing(scheduledPostId);
+  if (loaded.kind === "lookup_failed") {
+    throw new Error(
+      `[finalizeExhaustedPost] Could not load post ${scheduledPostId} to finalize it: ${loaded.message}`,
     );
-    return { finalized: false, reason: fetched.message };
   }
-  if (fetched.skip) {
-    // Already posted, failed, or cancelled. Nothing to finalize.
+  if (loaded.kind === "terminal") {
     return { finalized: false, reason: "already-terminal" };
   }
 
-  const exhaustedOutcome: PlatformPostOutcome = {
-    ok: false,
-    reason: "transient",
-    message: `Retries exhausted: ${error.message}`,
-  };
+  if (loaded.post.status !== "processing") {
+    const claim = await claimPostForProcessing({
+      scheduledPostId,
+      dispatchedScheduledAt: parsedEvent.data.scheduled_at,
+    });
+    if (!claim.success) {
+      throw new Error(`[finalizeExhaustedPost] Post ${scheduledPostId}: ${claim.message}`);
+    }
+    if (!claim.claimed) return { finalized: false, reason: "not-claimable" };
+  }
 
-  const recorded = await recordPostStatus({
-    post: fetched.post,
-    account: fetched.account,
-    result: exhaustedOutcome,
+  const finalized = await finalizeProcessingPost({
+    post: loaded.post,
+    failureMessage: `Retries exhausted: ${error.message}`,
+    abandonedClaimBeforeIso: null,
   });
+  if (!finalized.success) {
+    throw new Error(`[finalizeExhaustedPost] Post ${scheduledPostId}: ${finalized.message}`);
+  }
 
   console.error(
-    `[processSinglePost.onFailure] Post ${scheduledPostId} exhausted retries ` +
-      `(recorded=${recorded.updated}). Last error: ${error.message}`,
+    `[finalizeExhaustedPost] Post ${scheduledPostId} exhausted retries ` +
+      `(recorded=${finalized.updated}, published=${finalized.outcome.ok}). Last error: ${error.message}`,
   );
 
-  return { finalized: recorded.updated };
+  return { finalized: finalized.updated };
 }

@@ -1,7 +1,11 @@
 import { and, eq, sql } from "drizzle-orm";
-import { z } from "zod";
+import { NonRetriableError } from "inngest";
 
 import { inngest } from "../client";
+import {
+  webhookDispatchEvent,
+  type WebhookDispatchEventData,
+} from "../events/webhookDispatch";
 import { db, runQuery } from "@/db/client";
 import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 import { deliverSignedWebhook } from "@/lib/api/rest/webhooks/deliverSignedWebhook";
@@ -10,226 +14,218 @@ import { signWebhookPayload } from "@/lib/api/rest/webhooks/signWebhookPayload";
 const DELIVERY_TIMEOUT_MS = 10_000;
 const AUTO_DISABLE_THRESHOLD = 10;
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+const RETRY_DELAYS_BEFORE_NEXT_ATTEMPT = ["30s", "2m", "10m"] as const;
+const DB_STEP_RETRIES = 3;
+const FOREIGN_KEY_VIOLATION_SQLSTATE = "23503";
 
-/**
- * Inngest retry budget for one dispatch. Declared here (rather than inline
- * on the function config) because the handler needs it to recognize its
- * final attempt: `attempt` is zero-indexed, so the last one is
- * MAX_DELIVERY_RETRIES.
- * sourceRef: node_modules/inngest/types.d.ts, BaseContext.attempt.
- */
-const MAX_DELIVERY_RETRIES = 3;
+type DeliveryAttempt =
+  | { kind: "subscription_gone" }
+  | {
+      kind: "sent";
+      deliveryId: string;
+      statusCode: number | null;
+      responseBody: string | null;
+      errorMessage: string | null;
+      latencyMs: number;
+      finishedAt: string;
+    };
 
-/** The data sendWebhookDispatchEvent (src/lib/api/rest/webhooks/dispatch.ts) sends. */
-const WebhookDispatchEventDataSchema = z.object({
-  subscription_id: z.string(),
-  event_type: z.string(),
-  event_id: z.string(),
-  payload: z.record(z.string(), z.json()),
-});
-
-/**
- * Inngest function that delivers a single webhook event to one subscriber.
- *
- * Flow:
- *   1. Load subscription (skip if the event data is malformed, or the
- *      subscription is disabled or deleted)
- *   2. Build JSON body and HMAC-SHA256 signature
- *   3. POST to subscriber URL with timeout
- *   4. Record delivery in webhook_deliveries
- *   5. On success: reset failure_count
- *   6. On failure: increment failure_count, auto-disable at threshold
- *   7. On retryable failure (5xx, 408, 429, network): throw to trigger Inngest retry
- *
- * Two throws drive Inngest retries (its retry contract): a failed
- * subscription lookup in step 1, before anything was sent, and a retryable
- * delivery failure in step 7. Terminal failures (4xx except 408/429)
- * return cleanly. Write failures after the POST are logged, never thrown:
- * a retry would send the subscriber the same event again.
- */
+// Each side effect is its own step: Inngest stores a completed step's result
+// and retries only the step that threw, so a failed log or counter write
+// never sends the POST again. A new POST attempt gets a new step id.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const deliverWebhook = inngest.createFunction(
   {
     id: "deliver-webhook",
     name: "Deliver Webhook",
-    retries: MAX_DELIVERY_RETRIES,
-    // Keyed per subscription, so one busy subscriber cannot use up the
-    // budget and delay every other subscriber's deliveries.
+    retries: DB_STEP_RETRIES,
     throttle: {
       limit: 100,
       period: "60s",
       key: "event.data.subscription_id",
     },
-    triggers: [{ event: "webhook.dispatch.v1" }],
+    triggers: [webhookDispatchEvent],
   },
-  async ({ event, attempt }) => {
-    const eventData = WebhookDispatchEventDataSchema.safeParse(event.data);
-    if (!eventData.success) {
-      console.error("[deliverWebhook] Event data is malformed; nothing sent");
-      return { skipped: true, reason: "invalid_event_data" };
-    }
-    const { subscription_id, event_type, event_id, payload } = eventData.data;
+  async ({ event, step }) => {
+    const delivery = event.data;
 
-    // Step 1: load subscription (skip if disabled or deleted).
-    const { data: subscriptionRows, error: loadError } = await runQuery(
-      db
-        .select({
-          url: webhook_subscriptions.url,
-          secret: webhook_subscriptions.secret,
-        })
-        .from(webhook_subscriptions)
-        .where(
-          and(
-            eq(webhook_subscriptions.id, subscription_id),
-            eq(webhook_subscriptions.active, true),
-          ),
-        )
-        .limit(1),
-    );
-
-    // A failed lookup is not a deleted subscription. Returning "skipped"
-    // here dropped the event for good; nothing was sent yet, so a retry
-    // is safe.
-    if (loadError) {
-      throw new Error(
-        `[deliverWebhook] Subscription lookup failed for ${subscription_id}: ${loadError.message}`,
+    for (let attemptNumber = 1; ; attemptNumber++) {
+      const attempt = await step.run(`send-${attemptNumber}`, () =>
+        sendSignedDelivery(delivery),
       );
-    }
-    const subscriptionRow = subscriptionRows[0];
-    if (!subscriptionRow) {
-      return { skipped: true, reason: "subscription_inactive_or_deleted" };
-    }
-
-    // Step 2: build payload + HMAC sign.
-    const deliveryId = crypto.randomUUID();
-    const bodyString = JSON.stringify({
-      event_type,
-      event_id,
-      delivery_id: deliveryId,
-      created_at: new Date().toISOString(),
-      data: payload,
-    });
-    const hmacSignatureHex = signWebhookPayload(
-      bodyString,
-      subscriptionRow.secret,
-    );
-
-    // Step 3: POST to subscriber URL (SSRF-guarded, IP-pinned at delivery).
-    const startedAt = Date.now();
-    const { statusCode, responseBody, errorMessage } =
-      await deliverSignedWebhook(subscriptionRow.url, {
-        headers: {
-          "Content-Type": "application/json",
-          "X-Sharetopus-Event": event_type,
-          "X-Sharetopus-Delivery": deliveryId,
-          "X-Sharetopus-Signature": `sha256=${hmacSignatureHex}`,
-          "User-Agent": "Sharetopus-Webhook/1.0",
-        },
-        body: bodyString,
-        timeoutMs: DELIVERY_TIMEOUT_MS,
-      });
-
-    const latencyMs = Date.now() - startedAt;
-    const wasSuccess =
-      statusCode !== null && statusCode >= 200 && statusCode < 300;
-
-    // Step 4: persist delivery record.
-    const { error: deliveryLogError } = await runQuery(
-      db.insert(webhook_deliveries).values({
-        id: deliveryId,
-        subscription_id,
-        event_type,
-        event_id,
-        payload,
-        status_code: statusCode,
-        response_body: responseBody,
-        // Real attempt number. `attempt` is zero-indexed, the column is
-        // 1-indexed. This used to be hardcoded to 1, so every retry row
-        // claimed to be the first try.
-        attempt: attempt + 1,
-        latency_ms: latencyMs,
-        delivered_at: wasSuccess ? new Date().toISOString() : null,
-        failed_at: wasSuccess ? null : new Date().toISOString(),
-        error_message: errorMessage,
-      }),
-    );
-    if (deliveryLogError) {
-      console.error(
-        `[deliverWebhook] delivery log insert failed (subscription=${subscription_id}, delivery=${deliveryId}):`,
-        deliveryLogError.message,
-      );
-    }
-
-    // Step 5: update subscription stats on success.
-    if (wasSuccess) {
-      const { error: resetError } = await runQuery(
-        db
-          .update(webhook_subscriptions)
-          .set({
-            failure_count: 0,
-            last_delivery_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .where(eq(webhook_subscriptions.id, subscription_id)),
-      );
-      if (resetError) {
-        console.error(
-          `[deliverWebhook] failure count reset failed (subscription=${subscription_id}):`,
-          resetError.message,
-        );
+      if (attempt.kind === "subscription_gone") {
+        return { skipped: true, reason: "subscription_inactive_or_deleted" };
       }
 
-      return { delivered: true, status_code: statusCode };
-    }
-
-    // Step 6: failure path. This handler uses no step.run, so a retry
-    // re-executes the whole body. Counting a failure on every attempt made
-    // one bad event cost MAX_DELIVERY_RETRIES + 1 increments, so a
-    // subscriber hit AUTO_DISABLE_THRESHOLD (10) after ~2 failing events
-    // instead of 10 and was silently deactivated. Count once per event: on
-    // the last attempt, or immediately when the status is terminal and no
-    // retry will follow.
-    const failureIsRetryable =
-      statusCode === null || RETRYABLE_STATUS_CODES.has(statusCode);
-    const isFinalAttempt = attempt >= MAX_DELIVERY_RETRIES;
-
-    if (!failureIsRetryable || isFinalAttempt) {
-      // Computed from the stored row in one statement. Writing a count read
-      // in step 1 lost increments from concurrent deliveries, and writing
-      // `active: true` below the threshold re-enabled a subscription the
-      // user disabled while this delivery was in flight.
-      const reachesAutoDisable = sql`${webhook_subscriptions.failure_count} + 1 >= ${AUTO_DISABLE_THRESHOLD}`;
-      const nowIso = new Date().toISOString();
-      const { error: failureCountError } = await runQuery(
-        db
-          .update(webhook_subscriptions)
-          .set({
-            failure_count: sql`${webhook_subscriptions.failure_count} + 1`,
-            active: sql`${webhook_subscriptions.active} and not (${reachesAutoDisable})`,
-            last_disabled_at: sql`case when ${webhook_subscriptions.active} and ${reachesAutoDisable} then ${nowIso}::timestamptz else ${webhook_subscriptions.last_disabled_at} end`,
-            updated_at: nowIso,
-          })
-          .where(eq(webhook_subscriptions.id, subscription_id)),
+      await step.run(`record-delivery-${attemptNumber}`, () =>
+        recordDeliveryAttempt({ delivery, attempt, attemptNumber }),
       );
-      if (failureCountError) {
-        console.error(
-          `[deliverWebhook] failure count update failed (subscription=${subscription_id}):`,
-          failureCountError.message,
+
+      if (isSuccessStatus(attempt.statusCode)) {
+        await step.run("reset-failure-count", () =>
+          resetSubscriptionFailures(delivery.subscription_id),
+        );
+        return { delivered: true, status_code: attempt.statusCode, attempts: attemptNumber };
+      }
+
+      const isRetryable =
+        attempt.statusCode === null || RETRYABLE_STATUS_CODES.has(attempt.statusCode);
+      const retryDelay = RETRY_DELAYS_BEFORE_NEXT_ATTEMPT.at(attemptNumber - 1);
+      if (isRetryable && retryDelay !== undefined) {
+        await step.sleep(`backoff-${attemptNumber}`, retryDelay);
+        continue;
+      }
+
+      await step.run("count-failure", () =>
+        countSubscriptionFailure(delivery.subscription_id),
+      );
+      if (isRetryable) {
+        // NonRetriableError stops the run without a retry
+        // (node_modules/inngest/components/NonRetriableError.d.ts).
+        throw new NonRetriableError(
+          `[deliverWebhook] Delivery failed after ${attemptNumber} attempts: status=${attempt.statusCode ?? "network"} err=${attempt.errorMessage ?? "5xx"}`,
         );
       }
+      return {
+        delivered: false,
+        status_code: attempt.statusCode,
+        terminal: true,
+        attempts: attemptNumber,
+      };
     }
-
-    // Step 7: retryable failures throw for Inngest backoff. Terminal
-    // failures (4xx that are not 408/429) return cleanly.
-    if (failureIsRetryable) {
-      throw new Error(
-        `Webhook delivery failed: status=${statusCode ?? "network"} err=${errorMessage ?? "5xx"}`,
-      );
-    }
-
-    return {
-      delivered: false,
-      status_code: statusCode,
-      terminal: true,
-    };
   },
 );
+
+function isSuccessStatus(statusCode: number | null): boolean {
+  return statusCode !== null && statusCode >= 200 && statusCode < 300;
+}
+
+async function sendSignedDelivery(
+  delivery: WebhookDispatchEventData,
+): Promise<DeliveryAttempt> {
+  const { data: subscriptionRows, error: loadError } = await runQuery(
+    db
+      .select({
+        url: webhook_subscriptions.url,
+        secret: webhook_subscriptions.secret,
+      })
+      .from(webhook_subscriptions)
+      .where(
+        and(
+          eq(webhook_subscriptions.id, delivery.subscription_id),
+          eq(webhook_subscriptions.active, true),
+        ),
+      )
+      .limit(1),
+  );
+  if (loadError) {
+    throw new Error(
+      `[sendSignedDelivery] Subscription lookup failed for ${delivery.subscription_id}: ${loadError.message}`,
+    );
+  }
+  const subscriptionRow = subscriptionRows[0];
+  if (!subscriptionRow) return { kind: "subscription_gone" };
+
+  const deliveryId = crypto.randomUUID();
+  const bodyString = JSON.stringify({
+    event_type: delivery.event_type,
+    event_id: delivery.event_id,
+    delivery_id: deliveryId,
+    created_at: new Date().toISOString(),
+    data: delivery.payload,
+  });
+  const hmacSignatureHex = signWebhookPayload(bodyString, subscriptionRow.secret);
+
+  const startedAt = Date.now();
+  const outcome = await deliverSignedWebhook(subscriptionRow.url, {
+    headers: {
+      "Content-Type": "application/json",
+      "X-Sharetopus-Event": delivery.event_type,
+      "X-Sharetopus-Delivery": deliveryId,
+      "X-Sharetopus-Signature": `sha256=${hmacSignatureHex}`,
+      "User-Agent": "Sharetopus-Webhook/1.0",
+    },
+    body: bodyString,
+    timeoutMs: DELIVERY_TIMEOUT_MS,
+  });
+
+  return {
+    kind: "sent",
+    deliveryId,
+    statusCode: outcome.statusCode,
+    responseBody: outcome.responseBody,
+    errorMessage: outcome.errorMessage,
+    latencyMs: Date.now() - startedAt,
+    finishedAt: new Date().toISOString(),
+  };
+}
+
+async function recordDeliveryAttempt(input: {
+  delivery: WebhookDispatchEventData;
+  attempt: Extract<DeliveryAttempt, { kind: "sent" }>;
+  attemptNumber: number;
+}): Promise<void> {
+  const { delivery, attempt } = input;
+  const wasSuccess = isSuccessStatus(attempt.statusCode);
+  const { error } = await runQuery(
+    db
+      .insert(webhook_deliveries)
+      .values({
+        id: attempt.deliveryId,
+        subscription_id: delivery.subscription_id,
+        event_type: delivery.event_type,
+        event_id: delivery.event_id,
+        payload: delivery.payload,
+        status_code: attempt.statusCode,
+        response_body: attempt.responseBody,
+        attempt: input.attemptNumber,
+        latency_ms: attempt.latencyMs,
+        delivered_at: wasSuccess ? attempt.finishedAt : null,
+        failed_at: wasSuccess ? null : attempt.finishedAt,
+        error_message: attempt.errorMessage,
+      })
+      .onConflictDoNothing({ target: webhook_deliveries.id }),
+  );
+  if (error?.code === FOREIGN_KEY_VIOLATION_SQLSTATE) return;
+  if (error) {
+    throw new Error(
+      `[recordDeliveryAttempt] delivery log insert failed (subscription=${delivery.subscription_id}, delivery=${attempt.deliveryId}): ${error.message}`,
+    );
+  }
+}
+
+async function resetSubscriptionFailures(subscriptionId: string): Promise<void> {
+  const nowIso = new Date().toISOString();
+  const { error } = await runQuery(
+    db
+      .update(webhook_subscriptions)
+      .set({ failure_count: 0, last_delivery_at: nowIso, updated_at: nowIso })
+      .where(eq(webhook_subscriptions.id, subscriptionId)),
+  );
+  if (error) {
+    throw new Error(
+      `[resetSubscriptionFailures] failure count reset failed (subscription=${subscriptionId}): ${error.message}`,
+    );
+  }
+}
+
+async function countSubscriptionFailure(subscriptionId: string): Promise<void> {
+  const reachesAutoDisable = sql`${webhook_subscriptions.failure_count} + 1 >= ${AUTO_DISABLE_THRESHOLD}`;
+  const nowIso = new Date().toISOString();
+  const { error } = await runQuery(
+    db
+      .update(webhook_subscriptions)
+      .set({
+        failure_count: sql`${webhook_subscriptions.failure_count} + 1`,
+        active: sql`${webhook_subscriptions.active} and not (${reachesAutoDisable})`,
+        last_disabled_at: sql`case when ${webhook_subscriptions.active} and ${reachesAutoDisable} then ${nowIso}::timestamptz else ${webhook_subscriptions.last_disabled_at} end`,
+        updated_at: nowIso,
+      })
+      .where(eq(webhook_subscriptions.id, subscriptionId)),
+  );
+  if (error) {
+    throw new Error(
+      `[countSubscriptionFailure] failure count update failed (subscription=${subscriptionId}): ${error.message}`,
+    );
+  }
+}

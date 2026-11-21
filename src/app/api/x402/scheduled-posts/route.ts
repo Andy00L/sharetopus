@@ -13,18 +13,6 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * GET /api/x402/scheduled-posts
- *
- * Pays the list_posts action (price per pricing_actions). Reads scheduled
- * posts for the wallet.
- * Steps:
- * 1. Parse query params (status, platform, limit).
- * 2. x402 middleware handles payment and the charge.
- * 3. Query scheduled_posts filtered by principal_id.
- */
-
-/** Page size bounds for ?limit. */
 const DEFAULT_POSTS_LIMIT = 20;
 const MAX_POSTS_LIMIT = 100;
 
@@ -123,11 +111,9 @@ export const GET = x402PaidEndpoint<ScheduledPostsParams, ScheduledPostsResult>(
         success: false,
         errorKind: "query_failed",
         message: result.message,
-        refundable: true,
       };
     }
 
-    // Safe projection: only the fields an agent needs.
     const posts = (result.data ?? []).map((post) => ({
       id: post.id,
       scheduled_at: post.scheduled_at,

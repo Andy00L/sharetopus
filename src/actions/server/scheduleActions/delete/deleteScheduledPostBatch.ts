@@ -1,20 +1,24 @@
-// src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, inArray, ne } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
-import type { PostChangeFailure } from "@/lib/types/postBatch";
-import { deleteSupabaseFile } from "../../data/storageFiles/deleteSupabaseFile";
+import {
+  POST_CHANGE_ELIGIBLE_STATUSES,
+  type PostChangeFailure,
+} from "@/lib/types/postBatch";
+import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { DELETE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import {
+  checkPostChangeRules,
+  describePublishingRefusal,
+  findPublishingPostIds,
+  PUBLISHING_POST_STATUS,
+} from "../preflightScheduledPostChange";
 
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type DeleteScheduledPostBatchResult = {
   message: string;
   resetIn?: number;
@@ -31,28 +35,6 @@ export type DeleteScheduledPostBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Deletes scheduled posts in batch and cleans up orphaned media from Storage.
- *
- * **Authentication:** Does not call Clerk. Caller must validate
- * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
- *
- * **Rate limiting:** 30 requests per 60s, scoped per source.
- *
- * **Tables:** `scheduled_posts` (read + delete), Supabase Storage (delete).
- *
- * Flow:
- *   1. Rate limit check
- *   2. Fetch posts including media_storage_path
- *   3. Verify ownership
- *   4. Delete rows from scheduled_posts
- *   5. Parallel cleanup of unique media paths via deleteSupabaseFile
- *      (which checks if any other table still references each file)
- *
- * @param postIds - Array of scheduled_posts.id to delete
- * @param principalId - Owner principal; ownership check enforced
- * @param source - Channel label; drives rate-limit scope
- */
 export async function deleteScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -72,9 +54,12 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_delete_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: DELETE_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -84,12 +69,12 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
+          status: scheduled_posts.status,
           media_storage_path: scheduled_posts.media_storage_path,
         })
         .from(scheduled_posts)
@@ -107,34 +92,55 @@ export async function deleteScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.delete,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+        case "not_eligible":
+          return { success: false, failure: "not_found", message: "No posts found with the provided IDs." };
+        case "not_owned":
+          console.warn(
+            `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to delete ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
+    }
+
+    const publishingPostIds = findPublishingPostIds(rules.eligiblePosts);
+    if (publishingPostIds.length > 0) {
       return {
         success: false,
-        failure: "not_found",
-        message: "No posts found with the provided IDs.",
+        failure: "not_eligible",
+        message: describePublishingRefusal(publishingPostIds),
       };
     }
 
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
-      console.warn(
-        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to delete ${unauthorizedPosts.length} post(s) they don't own`,
-      );
-      return {
-        success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    // Step 3: delete posts from DB
-    const postIdsToDelete = posts.map((post) => post.id);
-    const { error: deleteError } = await runQuery(
+    const postIdsToDelete = rules.eligiblePosts.map((post) => post.id);
+    const { data: deletedPosts, error: deleteError } = await runQuery(
       db
         .delete(scheduled_posts)
-        .where(inArray(scheduled_posts.id, postIdsToDelete)),
+        .where(
+          and(
+            inArray(scheduled_posts.id, postIdsToDelete),
+            ne(scheduled_posts.status, PUBLISHING_POST_STATUS),
+          ),
+        )
+        .returning({
+          id: scheduled_posts.id,
+          media_storage_path: scheduled_posts.media_storage_path,
+        }),
     );
 
     if (deleteError) {
@@ -149,48 +155,33 @@ export async function deleteScheduledPostBatch(
       };
     }
 
-    // Step 4: parallel media cleanup. deleteSupabaseFile re-checks all
-    // reference tables (failed_posts, pending pulls, etc.) and preserves
-    // files still referenced.
-    const uniqueMediaPaths = [
-      ...new Set(
-        posts
-          .map((post) => post.media_storage_path)
-          .filter(
-            (path): path is string =>
-              typeof path === "string" && path.length > 0,
-          ),
-      ),
-    ];
-
-    const cleanupResults = await Promise.allSettled(
-      uniqueMediaPaths.map((mediaPath) =>
-        deleteSupabaseFile(principalId, mediaPath, false),
-      ),
-    );
-
-    let mediaDeleted = 0;
-    for (const cleanupResult of cleanupResults) {
-      if (
-        cleanupResult.status === "fulfilled" &&
-        cleanupResult.value.success === true
-      ) {
-        mediaDeleted++;
-      } else if (cleanupResult.status === "rejected") {
-        console.error(
-          `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Media cleanup threw:`,
-          cleanupResult.reason,
-        );
-      }
+    if (deletedPosts.length === 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: describePublishingRefusal(postIdsToDelete),
+      };
     }
+
+    const mediaCleanup = await deleteUnreferencedMediaFiles(
+      principalId,
+      deletedPosts.map((post) => post.media_storage_path),
+    );
+    if (!mediaCleanup.success) {
+      console.error(
+        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Media cleanup failed:`,
+        mediaCleanup.message,
+      );
+    }
+    const mediaDeleted = mediaCleanup.success ? mediaCleanup.removedCount : 0;
 
     return {
       success: true,
-      message: `Deleted ${posts.length} post(s).`,
+      message: `Deleted ${deletedPosts.length} post(s).`,
       details: {
         total: postIds.length,
-        succeeded: posts.length,
-        failed: postIds.length - posts.length,
+        succeeded: deletedPosts.length,
+        failed: postIds.length - deletedPosts.length,
         mediaDeleted,
       },
     };

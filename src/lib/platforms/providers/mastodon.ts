@@ -1,9 +1,17 @@
 import "server-only";
 
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { Blob } from "node:buffer";
+
+import { FormData } from "undici";
+
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
@@ -12,17 +20,22 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import { joinTitleAndBody } from "./_shared/postText";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 /**
- * Mastodon provider. Covers mastodon.social and every other instance,
- * including self-hosted ones, because the instance URL is a connect field.
- *
- * The user creates an application in their own instance settings and pastes
- * the resulting access token, so nothing needs registering on our side. The
- * token does not expire, which is why this provider declares no refresh.
- *
- * The instance URL is untrusted input and every call goes through
- * providerFetch (DNS validated, IP pinned, redirects refused).
+ * The token does not expire, which is why this provider declares no refresh.
  *
  * sourceRef: docs.joinmastodon.org REST API (accounts/verify_credentials,
  * v2/media, statuses).
@@ -30,14 +43,17 @@ import {
 
 const MASTODON_TIMEOUT_MS = 20_000;
 
-/** Media upload can transcode video, so it gets a longer ceiling. */
 const MASTODON_MEDIA_TIMEOUT_MS = 60_000;
+
+const MEDIA_PROCESSING_POLL_INTERVAL_MS = 2_000;
+
+const MEDIA_PROCESSING_DEADLINE_MS = 90_000;
 
 function normalizeInstanceUrl(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
 }
 
-function readInstanceUrl(config: Record<string, unknown>): string | null {
+function readInstanceUrl(config: ProviderConfig): string | null {
   const instanceUrl = config.instanceUrl;
   if (typeof instanceUrl !== "string" || instanceUrl.trim().length === 0) {
     return null;
@@ -46,12 +62,8 @@ function readInstanceUrl(config: Record<string, unknown>): string | null {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Mastodon connects with an access token." };
-  }
-
   const instanceUrl = normalizeInstanceUrl(input.values.instanceUrl ?? "");
   const accessToken = (input.values.accessToken ?? "").trim();
 
@@ -62,8 +74,6 @@ async function connect(
     };
   }
 
-  // verify_credentials both proves the token works and gives us the
-  // account identity in one call.
   const verifyResult = await providerFetch(
     `${instanceUrl}/api/v1/accounts/verify_credentials`,
     {
@@ -100,8 +110,6 @@ async function connect(
     ok: true,
     accessToken,
     refreshToken: null,
-    // Mastodon application tokens do not expire; null keeps ensureValidToken
-    // from ever trying to refresh one.
     expiresIn: null,
     identity: {
       accountIdentifier: accountId,
@@ -118,16 +126,13 @@ async function publish(
 ): Promise<ProviderPublishResult> {
   const instanceUrl = readInstanceUrl(input.config);
   if (!instanceUrl) {
-    return {
-      ok: false,
-      message: "Stored Mastodon account is missing its instance URL.",
-    };
+    return refusePublish("Stored Mastodon account is missing its instance URL.");
   }
 
-  const statusText = buildStatusText(input);
+  const statusText = joinTitleAndBody(input);
 
   const mediaIds: string[] = [];
-  if (input.mediaUrl && input.mediaType !== "text") {
+  if (input.mediaUrl && input.postType !== "text") {
     const uploadResult = await uploadMedia(
       instanceUrl,
       input.accessToken,
@@ -135,7 +140,7 @@ async function publish(
       input.fileName,
       input.mediaMimeType,
     );
-    if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+    if (!uploadResult.ok) return uploadResult;
     mediaIds.push(uploadResult.mediaId);
   }
 
@@ -147,27 +152,38 @@ async function publish(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${input.accessToken}`,
-      // Mastodon dedupes identical requests carrying the same idempotency
-      // key for roughly an hour, which turns a worker retry into a no-op
-      // instead of a duplicate toot.
-      "Idempotency-Key": `${input.accountIdentifier}:${hashForIdempotency(statusText)}`,
+      // Mastodon stores idempotency keys for up to 1 hour:
+      // https://docs.joinmastodon.org/methods/statuses/
+      "Idempotency-Key": `${input.accountIdentifier}:post:${input.idempotencyKey}`,
     },
     body: JSON.stringify(statusPayload),
     timeoutMs: MASTODON_TIMEOUT_MS,
   });
 
-  if (!postResult.ok) return { ok: false, message: postResult.message };
+  if (!postResult.ok) {
+    return failProviderFetch({
+      platform: "mastodon",
+      stage: "publish",
+      fetchFailure: postResult,
+    });
+  }
   if (postResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Mastodon post failed (${postResult.status}): ${postResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "mastodon",
+      stage: "publish",
+      action: "Mastodon post",
+      httpStatus: postResult.status,
+      bodyText: postResult.bodyText,
+    });
   }
 
   const created = parseJsonBody(postResult.bodyText);
   const statusId = readStringField(created, "id");
   if (!statusId) {
-    return { ok: false, message: "Mastodon did not return a status id." };
+    return failUnreadableAnswer({
+      message: "Mastodon did not return a status id.",
+      stage: "publish",
+    });
   }
 
   return {
@@ -177,103 +193,112 @@ async function publish(
   };
 }
 
-/** Mastodon has no title field, so a title becomes the first line. */
-function buildStatusText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
-}
+type MediaUploadResult = { ok: true; mediaId: string } | ProviderPublishFailure;
 
-/**
- * Stable short key for the Idempotency-Key header. Not a security value:
- * it only needs to be identical across retries of the same post and
- * different across different posts.
- */
-function hashForIdempotency(statusText: string): string {
-  let accumulator = 0;
-  for (let index = 0; index < statusText.length; index++) {
-    accumulator = (accumulator * 31 + statusText.charCodeAt(index)) | 0;
-  }
-  return Math.abs(accumulator).toString(36);
-}
-
-type MediaUploadResult =
-  | { ok: true; mediaId: string }
-  | { ok: false; message: string };
-
-/**
- * Uploads media to the instance. Our own signed URL supplies the bytes, so
- * that read needs no SSRF guard; the instance call gets one.
- */
 async function uploadMedia(
   instanceUrl: string,
   accessToken: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
-  let mediaBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    mediaBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
+  const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedMedia.ok) return storedMedia;
 
-  const formBoundary = `----sharetopus${Math.abs(Date.now() | 0).toString(36)}`;
-  const preamble =
-    `--${formBoundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
-    `Content-Type: ${mimeType}\r\n\r\n`;
-  const epilogue = `\r\n--${formBoundary}--\r\n`;
-
-  const multipartBody = Buffer.concat([
-    Buffer.from(preamble, "utf-8"),
-    Buffer.from(mediaBytes),
-    Buffer.from(epilogue, "utf-8"),
-  ]);
+  const uploadForm = new FormData();
+  uploadForm.append(
+    "file",
+    new Blob([storedMedia.media], { type: mimeType }),
+    fileName,
+  );
 
   const uploadResult = await providerFetch(`${instanceUrl}/api/v2/media`, {
     method: "POST",
-    headers: {
-      "Content-Type": `multipart/form-data; boundary=${formBoundary}`,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: new Uint8Array(multipartBody),
+    headers: { Authorization: `Bearer ${accessToken}` },
+    body: uploadForm,
     timeoutMs: MASTODON_MEDIA_TIMEOUT_MS,
   });
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
-
-  // v2/media answers 202 while it is still processing; the id is usable in
-  // a status immediately, so both 200 and 202 are success here.
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "mastodon",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 200 && uploadResult.status !== 202) {
-    return {
-      ok: false,
-      message: `Mastodon media upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "mastodon",
+      stage: "prepare",
+      action: "Mastodon media upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
   const uploaded = parseJsonBody(uploadResult.bodyText);
   const mediaId = readStringField(uploaded, "id");
   if (!mediaId) {
-    return { ok: false, message: "Mastodon media upload returned no id." };
+    return failUnreadableAnswer({
+      message: "Mastodon media upload returned no id.",
+      stage: "prepare",
+    });
+  }
+
+  // 202 means the file is still processing, and a status that attaches
+  // unprocessed media is refused. sourceRef: docs.joinmastodon.org
+  // methods/media (POST v2/media 202, GET v1/media/:id 200 vs 206).
+  if (uploadResult.status === 202) {
+    const processed = await waitForProcessedMedia(instanceUrl, accessToken, mediaId);
+    if (!processed.ok) return processed;
   }
 
   return { ok: true, mediaId };
 }
 
-export const mastodonBehavior: ProviderBehavior = { connect, publish };
+async function waitForProcessedMedia(
+  instanceUrl: string,
+  accessToken: string,
+  mediaId: string,
+): Promise<{ ok: true } | ProviderPublishFailure> {
+  const deadlineMs = Date.now() + MEDIA_PROCESSING_DEADLINE_MS;
+  while (Date.now() < deadlineMs) {
+    await sleep(MEDIA_PROCESSING_POLL_INTERVAL_MS);
+    const mediaStatus = await providerFetch(
+      `${instanceUrl}/api/v1/media/${encodeURIComponent(mediaId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${accessToken}` },
+        timeoutMs: MASTODON_TIMEOUT_MS,
+      },
+    );
+    if (!mediaStatus.ok) {
+      return failProviderFetch({
+        platform: "mastodon",
+        stage: "prepare",
+        fetchFailure: mediaStatus,
+      });
+    }
+    if (mediaStatus.status === 200) return { ok: true };
+    if (mediaStatus.status !== 206) {
+      return failHttpAnswer({
+        platform: "mastodon",
+        stage: "prepare",
+        action: "Mastodon media processing",
+        httpStatus: mediaStatus.status,
+        bodyText: mediaStatus.bodyText,
+      });
+    }
+  }
+  return failPublish({
+    message: `Mastodon was still processing the media after ${MEDIA_PROCESSING_DEADLINE_MS / 1000} seconds.`,
+    reason: "transient",
+    mayHavePublished: false,
+  });
+}
+
+export const mastodonBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

@@ -1,300 +1,173 @@
 import "server-only";
 
-import { eventType, staticSchema } from "inngest";
+import { and, eq, gte, isNull, sql } from "drizzle-orm";
 
-import type { MediaType, Platform } from "@/db/schema";
-import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
-import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
-import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
-import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
-import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
-import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
-import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
-import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
-import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
-import {
-  HOTLINK_SIGNED_URL_TTL_S,
-} from "@/inngest/functions/processSinglePostHelpers";
-import { RUNTIME } from "@/lib/jobs/runtimeConfig";
-import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+import { db, runQuery } from "@/db/client";
+import { content_history, pending_direct_posts } from "@/db/schema";
+import type { PostNowEventData } from "@/inngest/events/postNow";
+import type { PublishedCheckResult } from "@/inngest/functions/processSinglePostHelpers";
+import type {
+  PublishMediaUrls,
+  PublishRequest,
+} from "@/inngest/functions/publishToPlatform";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 
-// ---------- event data type ----------
+export type DirectDispatch = Pick<
+  typeof pending_direct_posts.$inferSelect,
+  | "batch_id"
+  | "social_account_id"
+  | "platform"
+  | "status"
+  | "failure_reason"
+  | "created_at"
+  | "publish_started_at"
+>;
 
-export type PostNowEventData = {
-  batch_id: string;
-  principal_id: string;
-  social_account_id: string;
-  platform: Platform;
-  post_type: MediaType;
-  account_content: {
-    accountId: string;
-    title: string;
-    description: string;
-    link: string;
-    isCustomized: boolean;
-  };
-  platform_options: PlatformOptions;
-  board: {
-    boardID: string;
-    boardName: string;
-    accountId: string;
-    isSelected: boolean;
-  } | null;
-  cover_timestamp: number;
-  file_name: string;
-  media_type: string;
-  media_path: string;
-  media_url: string | null;
-  tiktok_media_url: string | null;
-  dispatch_id?: string;
-  created_via?: "web" | "mcp" | "x402" | "api";
-  idempotency_key?: string;
-  // Correlation ID propagated from the originating request. Optional because
-  // pre-existing scheduled posts may dispatch events without one.
-  request_id?: string | null;
-  /**
-   * Per-post provider options for registry platforms (subreddit,
-   * communityId, ...). Optional so legacy in-flight events without it stay
-   * valid; legacy platforms read platform_options instead.
-   */
-  post_options?: Record<string, unknown> | null;
-};
+type DirectDispatchRead =
+  | { success: true; dispatch: DirectDispatch | null }
+  | { success: false; message: string };
 
-/**
- * The post.now trigger, typed with PostNowEventData. The schema is
- * type-only (no runtime check): the one sender, dispatchPostNowEvents,
- * already takes PostNowEventData.
- */
-export const postNowEvent = eventType("post.now", {
-  schema: staticSchema<PostNowEventData>(),
-});
+export async function readDirectDispatch(dispatchId: string): Promise<DirectDispatchRead> {
+  const { data: dispatchRows, error } = await runQuery(
+    db
+      .select({
+        batch_id: pending_direct_posts.batch_id,
+        social_account_id: pending_direct_posts.social_account_id,
+        platform: pending_direct_posts.platform,
+        status: pending_direct_posts.status,
+        failure_reason: pending_direct_posts.failure_reason,
+        created_at: pending_direct_posts.created_at,
+        publish_started_at: pending_direct_posts.publish_started_at,
+      })
+      .from(pending_direct_posts)
+      .where(eq(pending_direct_posts.event_id, dispatchId))
+      .limit(1),
+  );
+  if (error) {
+    console.error(`[readDirectDispatch] Lookup of ${dispatchId} failed:`, error.message);
+    return { success: false, message: `dispatch lookup failed: ${error.message}` };
+  }
+  return { success: true, dispatch: dispatchRows[0] ?? null };
+}
 
-// ---------- call-platform-direct-post ----------
+export type DirectPublishBlock =
+  | "dispatch-gone"
+  | "already-published"
+  | "attempt-already-started"
+  | "already-failed";
 
-export type DirectPostResult = {
-  success: boolean;
-  message: string | null;
-  contentId: string | null;
-};
+type DirectPublishClaim =
+  | { success: true; kind: "claimed" | DirectPublishBlock }
+  | { success: false; message: string };
 
-/**
- * Adapts the event payload to the directPostFor* function signatures.
- * Each platform function takes slightly different args; this switch
- * normalizes them. Modeled on callPlatformDirectPost in
- * processSinglePostHelpers but reads from event data instead of a
- * ScheduledPost row.
- */
-export async function callDirectPostFromEvent(
-  data: PostNowEventData,
-  account: SocialAccount,
-): Promise<DirectPostResult> {
-  const {
-    platform,
-    post_type,
-    account_content,
-    platform_options,
-    board,
-    cover_timestamp,
-    file_name,
-    media_type,
-    media_path,
-    media_url,
-    tiktok_media_url,
-    batch_id,
-    created_via,
-  } = data;
+function findDirectPublishBlock(
+  dispatch: Pick<DirectDispatch, "status" | "publish_started_at"> | null,
+): DirectPublishBlock | null {
+  if (dispatch === null) return "dispatch-gone";
+  if (dispatch.status === "completed") return "already-published";
+  if (dispatch.publish_started_at !== null) return "attempt-already-started";
+  if (dispatch.status === "failed") return "already-failed";
+  return null;
+}
 
-  const createdVia = created_via ?? "web";
+export async function claimDirectPublishAttempt(dispatchId: string): Promise<DirectPublishClaim> {
+  const { data: claimedRows, error } = await runQuery(
+    db
+      .update(pending_direct_posts)
+      .set({ publish_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(pending_direct_posts.event_id, dispatchId),
+          eq(pending_direct_posts.status, "processing"),
+          isNull(pending_direct_posts.publish_started_at),
+        ),
+      )
+      .returning({ event_id: pending_direct_posts.event_id }),
+  );
+  if (error) {
+    console.error(`[claimDirectPublishAttempt] Claim of ${dispatchId} failed:`, error.message);
+    return { success: false, message: `publish claim failed: ${error.message}` };
+  }
+  if (claimedRows.length > 0) return { success: true, kind: "claimed" };
 
-  try {
-    let result: { success: boolean; count: number; message?: string };
-
-    switch (platform) {
-      case "pinterest": {
-        if (!board) {
-          return {
-            success: false,
-            message: "No board configured for Pinterest post",
-            contentId: null,
-          };
-        }
-        result = await directPostForPinterestAccounts({
-          account,
-          mediaPath: media_path,
-          coverTimestamp: cover_timestamp,
-          boards: board,
-          platformOptions: platform_options,
-          accountContent: account_content,
-          userId: data.principal_id,
-          fileName: file_name,
-          batchId: batch_id,
-          mediaType: media_type,
-          postType: post_type,
-          mediaUrl: media_url ?? "",
-          createdVia,
-        });
-        break;
-      }
-      case "linkedin": {
-        result = await directPostForLinkedInAccounts({
-          account,
-          mediaPath: media_path,
-          coverTimestamp: cover_timestamp,
-          mediaType: media_type,
-          platformOptions: platform_options,
-          accountContent: account_content,
-          userId: data.principal_id,
-          fileName: file_name,
-          batchId: batch_id,
-          postType: post_type,
-          isCronJob: true, // skip rate limiting in worker context
-          createdVia,
-        });
-        break;
-      }
-      case "tiktok": {
-        result = await directPostForTikTokAccounts({
-          account,
-          mediaPath: media_path,
-          coverTimestamp: cover_timestamp,
-          tiktokMediaUrl: tiktok_media_url ?? "",
-          mediaType: media_type,
-          platformOptions: platform_options,
-          accountContent: account_content,
-          userId: data.principal_id,
-          postType: post_type,
-          fileName: file_name,
-          batchId: batch_id,
-          createdVia,
-        });
-        break;
-      }
-      case "instagram": {
-        // Instagram takes media only; callers validate the media type, so
-        // this guards a malformed event rather than a normal path.
-        if (post_type === "text") {
-          return {
-            success: false,
-            message: "Instagram does not support text posts",
-            contentId: null,
-          };
-        }
-        result = await directPostForInstagramAccounts({
-          account,
-          mediaPath: media_path,
-          coverTimestamp: cover_timestamp,
-          mediaType: media_type,
-          accountContent: account_content,
-          userId: data.principal_id,
-          mediaUrl: media_url ?? "",
-          postType: post_type,
-          fileName: file_name,
-          batchId: batch_id,
-          createdVia,
-        });
-        break;
-      }
-      case "youtube": {
-        result = await directPostForYouTubeAccounts({
-          account,
-          mediaPath: media_path,
-          mediaType: media_type,
-          platformOptions: platform_options,
-          accountContent: account_content,
-          userId: data.principal_id,
-          batchId: batch_id,
-          postType: post_type,
-          createdVia,
-        });
-        break;
-      }
-      case "x": {
-        result = await directPostForXAccounts({
-          account,
-          mediaPath: media_path,
-          mediaType: media_type,
-          accountContent: account_content,
-          userId: data.principal_id,
-          batchId: batch_id,
-          postType: post_type,
-          createdVia,
-        });
-        break;
-      }
-      case "facebook": {
-        result = await directPostForFacebookAccounts({
-          account,
-          mediaPath: media_path,
-          accountContent: account_content,
-          userId: data.principal_id,
-          mediaUrl: media_url ?? "",
-          batchId: batch_id,
-          postType: post_type,
-          createdVia,
-        });
-        break;
-      }
-      default: {
-        // Registry platforms. The event's media_url is caller-minted with
-        // the default short TTL, so it is re-minted here with the
-        // hotlink-aware lifetime; hotlinking providers embed the URL in
-        // durable content and a 5-minute link would die published.
-        let registryMediaUrl: string | null = media_url ?? null;
-        if (media_path && media_path !== "") {
-          const signed = await getServerSignedViewUrl(
-            media_path,
-            platformHotlinksMedia(platform)
-              ? HOTLINK_SIGNED_URL_TTL_S
-              : RUNTIME.signedUrlTtlS,
-          );
-          if (!signed.success) {
-            return {
-              success: false,
-              message: signed.message ?? "Failed to mint signed URL",
-              contentId: null,
-            };
-          }
-          registryMediaUrl = signed.url ?? null;
-        }
-
-        const registryResult = await publishViaRegistry({
-          account,
-          principalId: data.principal_id,
-          title: account_content.title || null,
-          body: account_content.description || null,
-          mediaType: post_type,
-          mediaUrl: registryMediaUrl,
-          fileName: file_name,
-          mediaMimeType: media_type,
-          options: data.post_options ?? {},
-          batchId: batch_id,
-          scheduledPostId: null,
-          createdVia,
-        });
-        return {
-          success: registryResult.success,
-          message: registryResult.message ?? null,
-          contentId: registryResult.success ? batch_id : null,
-        };
-      }
-    }
-
-    if (result.success && result.count > 0) {
-      return {
-        success: true,
-        message: result.message ?? null,
-        contentId: batch_id,
-      };
-    }
-
+  const current = await readDirectDispatch(dispatchId);
+  if (!current.success) return current;
+  const block = findDirectPublishBlock(current.dispatch);
+  if (block === null) {
     return {
       success: false,
-      message: result.message ?? "Failed without message",
-      contentId: null,
+      message: `publish claim of ${dispatchId} matched no row, but the dispatch reads processing and unclaimed`,
     };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, message, contentId: null };
   }
+  return { success: true, kind: block };
+}
+
+type DirectPublishRelease = { success: true } | { success: false; message: string };
+
+export async function releaseDirectPublishAttempt(dispatchId: string): Promise<DirectPublishRelease> {
+  const { error } = await runQuery(
+    db
+      .update(pending_direct_posts)
+      .set({ publish_started_at: null })
+      .where(eq(pending_direct_posts.event_id, dispatchId)),
+  );
+  if (error) {
+    console.error(`[releaseDirectPublishAttempt] Release of ${dispatchId} failed:`, error.message);
+    return { success: false, message: `publish release failed: ${error.message}` };
+  }
+  return { success: true };
+}
+
+export async function findPublishedDirectPost(input: {
+  dispatch: Pick<DirectDispatch, "batch_id" | "social_account_id" | "platform" | "created_at">;
+  description: string;
+}): Promise<PublishedCheckResult> {
+  const { dispatch, description } = input;
+  const { data, error } = await runQuery(
+    db
+      .select({ id: content_history.id })
+      .from(content_history)
+      .where(
+        and(
+          eq(content_history.batch_id, dispatch.batch_id),
+          eq(content_history.social_account_id, dispatch.social_account_id),
+          eq(content_history.platform, dispatch.platform),
+          isNull(content_history.scheduled_post_id),
+          gte(content_history.created_at, dispatch.created_at),
+          eq(sql`coalesce(${content_history.description}, '')`, description),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `content history lookup failed: ${error.message}` };
+  }
+  return { success: true, isPublished: data.length > 0 };
+}
+
+export function buildDirectPublishRequest(input: {
+  data: PostNowEventData;
+  account: SocialAccount;
+  urls: PublishMediaUrls;
+}): PublishRequest {
+  const { data, account, urls } = input;
+  return {
+    account,
+    principalId: data.principal_id,
+    platform: data.platform,
+    postType: data.post_type,
+    title: data.account_content.title,
+    description: data.account_content.description,
+    link: data.account_content.link,
+    platformOptions: data.platform_options,
+    pinterestBoard: data.board
+      ? { boardId: data.board.boardID, boardName: data.board.boardName }
+      : null,
+    registryOptions: data.post_options ?? {},
+    coverTimestampMs: data.cover_timestamp,
+    media: { storagePath: data.media_path, urls },
+    batchId: data.batch_id,
+    origin: { kind: "post_now", dispatchId: data.dispatch_id },
+    createdVia: data.created_via,
+  };
 }

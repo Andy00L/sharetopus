@@ -2,14 +2,6 @@ import "server-only";
 
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 
-/**
- * Refreshes an expired YouTube (Google) access token. Google does not
- * rotate the refresh token and omits it from the answer, so the stored one
- * is kept.
- * sourceRef: https://developers.google.com/identity/protocols/oauth2/web-server#offline
- *
- * Called by: ensureValidToken (case "youtube")
- */
 export default async function refreshYouTubeToken(
   refreshToken: string,
 ): Promise<TokenRefreshResult> {

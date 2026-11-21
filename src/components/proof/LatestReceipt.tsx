@@ -16,30 +16,18 @@ export type ReceiptState =
   | { kind: "empty" }
   | { kind: "unavailable" };
 
-/** Tooth size of the torn edge, in px. Twelve reads as paper, not a saw. */
-const TOOTH_PX = 12;
+const TORN_EDGE_TOOTH_PX = 12;
 
-/**
- * A row of downward teeth in the fill color along the top of a strip: two
- * 45-degree gradients per tile paint the top-left and top-right corner
- * triangles, so adjacent tiles form one tooth each and the strip's own top
- * edge stays solid where it meets the card body.
- */
 function buildTornEdgeStyle(fill: string): CSSProperties {
-  const toothCut = `${TOOTH_PX / 2}px`;
+  const toothCut = `${TORN_EDGE_TOOTH_PX / 2}px`;
   return {
     backgroundImage: `linear-gradient(135deg, ${fill} ${toothCut}, transparent 0), linear-gradient(-135deg, ${fill} ${toothCut}, transparent 0)`,
-    backgroundSize: `${TOOTH_PX}px ${TOOTH_PX}px`,
+    backgroundSize: `${TORN_EDGE_TOOTH_PX}px ${TORN_EDGE_TOOTH_PX}px`,
     backgroundRepeat: "repeat-x",
     backgroundPosition: "left top",
   };
 }
 
-/**
- * The receipt silhouette: a body with a torn bottom edge, filled in one
- * color. Rendered twice: once in ink, offset by the stamp distance, as the
- * page's one hard shadow, and once in the card color on top with content.
- */
 function ReceiptShape({
   fill,
   className,
@@ -58,17 +46,11 @@ function ReceiptShape({
       <div className={cn("rounded-t-xl", bodyClassName)} style={{ background: fill }}>
         {children}
       </div>
-      <div style={{ height: TOOTH_PX, ...buildTornEdgeStyle(fill) }} />
+      <div style={{ height: TORN_EDGE_TOOTH_PX, ...buildTornEdgeStyle(fill) }} />
     </div>
   );
 }
 
-/**
- * The latest settlement as a printed receipt. It carries the page's single
- * ink stamp (docs/UI_DESIGN_SYSTEM.md, "The proof ledger"), cast by
- * the whole silhouette so the tear shows in the shadow too. Three states,
- * each designed: a settlement, none yet, or the ledger being unreadable.
- */
 export function LatestReceipt({ state }: { state: ReceiptState }) {
   return (
     <div className="relative">

@@ -1,8 +1,8 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
-import user1 from "../../../public/logo_256x256.ico";
+import { useCallback, useState } from "react";
+import sharetopusLogo from "../../../public/trans_logo (1).webp";
 import user4 from "../../../public/userdemo1 .webp";
 import user2 from "../../../public/userdemo2.webp";
 import user3 from "../../../public/userdemo3.webp";
@@ -16,34 +16,37 @@ const USER_TYPES = [
   "agencies",
 ];
 
-// First avatar on top; arbitrary z-index values because Tailwind ships only z-0 to z-50.
+const TAGLINE_ROTATION_MS = 3000;
+
 const AVATARS = [
-  { src: user1, zIndex: 50 },
+  { src: sharetopusLogo, zIndex: 50 },
   { src: user2, zIndex: 40 },
   { src: user3, zIndex: 30 },
   { src: user4, zIndex: 20 },
   { src: user5, zIndex: 10 },
 ];
 
-/** Stacked avatars, five stars, and a tagline that rotates every 3 s (paused on hover). */
 export function AnimatedTestimonial() {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
 
-  // Interval timer, cleared on hover and unmount.
-  useEffect(() => {
-    if (paused) return;
-    const interval = setInterval(() => {
-      setCurrentIndex((previousIndex) => (previousIndex + 1) % USER_TYPES.length);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [paused]);
+  const rotateTaglineWhileUnpaused = useCallback(
+    (testimonial: HTMLDivElement | null) => {
+      if (!testimonial || isPaused) return;
+      const rotationTimer = setInterval(() => {
+        setCurrentIndex((previousIndex) => (previousIndex + 1) % USER_TYPES.length);
+      }, TAGLINE_ROTATION_MS);
+      return () => clearInterval(rotationTimer);
+    },
+    [isPaused],
+  );
 
   return (
     <div
+      ref={rotateTaglineWhileUnpaused}
       className="flex flex-col items-center justify-center sm:flex-row"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
+      onMouseEnter={() => setIsPaused(true)}
+      onMouseLeave={() => setIsPaused(false)}
     >
       <div className="flex -space-x-2 mb-3 sm:mb-0 sm:mr-3">
         {AVATARS.map((avatar) => (
@@ -53,7 +56,7 @@ export function AnimatedTestimonial() {
             alt=""
             width={36}
             height={36}
-            className="rounded-full border-[3px] border-[var(--cream)]"
+            className="rounded-full border-[3px] border-[var(--cream)] bg-white"
             style={{ zIndex: avatar.zIndex }}
           />
         ))}

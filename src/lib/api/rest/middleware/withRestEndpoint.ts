@@ -1,12 +1,13 @@
 import "server-only";
 
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { resolveRestApiKey } from "../auth/resolveRestApiKey";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { REST_ENDPOINT_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   restErrorResponse,
   SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
@@ -14,76 +15,41 @@ import {
 import {
   writeRestAuditLog,
   type RestAuditOutcome,
+  type RestAuditWriteInput,
 } from "../audit/writeRestAuditLog";
 import type { RestApiKeyContext } from "../auth/types";
 
-/**
- * Union return type for REST handlers.
- *
- * Handlers may return a plain NextResponse (backward-compatible with
- * Phase 2) or an object pairing the response with an enriched audit
- * summary. The HOF dispatches on `instanceof NextResponse`.
- */
 export type RestHandlerResult =
   | NextResponse
   | { response: NextResponse; auditSummary: Record<string, unknown> };
 
 export type WithRestEndpointConfig = {
-  /** Required scopes. For Phase 2 MVP, all routes use ["api:full"]. */
   scopes: string[];
-  /** Action key used by checkRateLimit (e.g. "rest.posts.create"). */
   rateLimitAction: string;
-  /**
-   * Route handler. Receives resolved context and raw Next.js request.
-   * Does its own JSON body parsing and Zod validation. Returns a
-   * NextResponse (legacy) or { response, auditSummary } for enriched
-   * audit logging.
-   *
-   * Convention: never throw. Use restErrorResponse for any 4xx/5xx.
-   * HOF wraps in try/catch as defense; uncaught throws produce a 500
-   * with outcome="internal_error".
-   */
   handler: (
     ctx: RestApiKeyContext,
     request: NextRequest,
   ) => Promise<RestHandlerResult>;
 };
 
-/**
- * Wraps a Next.js route handler with shared REST boilerplate:
- *   1. Generate requestId, capture ipHash, userAgent, endpoint, method, startedAt
- *   2. Validate Authorization header is "Bearer ..."
- *   3. Resolve the bearer via resolveRestApiKey
- *   4. Check the principal has required scopes
- *   5. Apply per-principal rate limit via checkRateLimit
- *   6. Call the handler with full context and the raw request
- *   7. After handler returns (or throws), write to rest_audit_log
- *
- * Handler is responsible for body parsing, Zod validation, and
- * returning NextResponse for all outcomes (success, 404, conflict).
- * Keeps the HOF free of generics.
- */
 export function withRestEndpoint(
   config: WithRestEndpointConfig,
 ): (request: NextRequest) => Promise<NextResponse> {
   return async function routeHandler(
     request: NextRequest,
   ): Promise<NextResponse> {
-    // Step 1: build base envelope. Available even on auth failure.
     const requestStartedAt = Date.now();
     const requestId = generateRequestId();
     const clientIpHash = await extractIpHash();
     const userAgent = await extractUserAgent();
-    const endpoint = new URL(request.url).pathname;
+    const endpoint = request.nextUrl.pathname;
     const httpMethod = request.method;
 
-    // Step 2: validate Authorization header shape.
     const authorizationHeader = request.headers.get("authorization");
     if (
       !authorizationHeader ||
       !authorizationHeader.startsWith("Bearer ")
     ) {
-      // No audit row for anonymous probes (no principal to attribute).
       return restErrorResponse(
         "unauthorized",
         "Missing or malformed Authorization header",
@@ -92,9 +58,7 @@ export function withRestEndpoint(
     }
     const bearerToken = authorizationHeader.slice("Bearer ".length).trim();
 
-    // Step 3: resolve bearer to RestPrincipal. A database failure answers
-    // 503: a 401 would tell the caller a valid key is bad.
-    const resolution = await resolveRestApiKey(bearerToken);
+    const resolution = await resolveRestApiKey(bearerToken, clientIpHash);
     if (resolution.status === "unavailable") {
       return restErrorResponse(
         "service_unavailable",
@@ -122,14 +86,13 @@ export function withRestEndpoint(
       startedAt: requestStartedAt,
     };
 
-    // Step 4: scope check. "api:full" satisfies every scope for MVP.
     const hasRequiredScopes = config.scopes.every(
       (requiredScope) =>
         principal.scopes.includes(requiredScope) ||
         principal.scopes.includes("api:full"),
     );
     if (!hasRequiredScopes) {
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: 403,
         outcome: "auth_error",
@@ -144,18 +107,17 @@ export function withRestEndpoint(
       );
     }
 
-    // Step 5: per-principal rate limit. A limiter outage answers 503: the
-    // caller did nothing wrong, and a 429 would tell it to slow down.
-    const rateLimitResult = await checkRateLimit(
-      config.rateLimitAction,
-      principal.principalId,
-    );
+    const rateLimitResult = await checkRateLimit({
+      operation: config.rateLimitAction,
+      identifier: principal.principalId,
+      rule: REST_ENDPOINT_RATE_LIMIT,
+    });
     if (!rateLimitResult.success) {
       const isLimitHit = rateLimitResult.reason === "limited";
       const retryAfterSeconds = isLimitHit
         ? rateLimitResult.resetIn
         : SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS;
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: isLimitHit ? 429 : 503,
         outcome: isLimitHit ? "rate_limited" : "internal_error",
@@ -177,8 +139,6 @@ export function withRestEndpoint(
           );
     }
 
-    // Step 6: call handler. Handler returns RestHandlerResult. If it
-    // throws, we still write an audit row and convert to a 500.
     let handlerResult: RestHandlerResult;
     try {
       handlerResult = await config.handler(restRequestContext, request);
@@ -191,7 +151,7 @@ export function withRestEndpoint(
         `[withRestEndpoint] handler threw for ${endpoint} request_id=${requestId}:`,
         errorMessage,
       );
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: 500,
         outcome: "internal_error",
@@ -206,7 +166,6 @@ export function withRestEndpoint(
       );
     }
 
-    // Unwrap: plain NextResponse (Phase 2 compat) vs enriched result.
     const handlerResponse =
       handlerResult instanceof NextResponse
         ? handlerResult
@@ -216,8 +175,6 @@ export function withRestEndpoint(
         ? null
         : handlerResult.auditSummary;
 
-    // Step 7: audit the outcome derived from handler's status code. Any
-    // other 4xx (404, 409) is the caller's, not an internal error.
     const responseStatusCode = handlerResponse.status;
     const outcome: RestAuditOutcome =
       responseStatusCode >= 200 && responseStatusCode < 300
@@ -232,7 +189,7 @@ export function withRestEndpoint(
                 ? "client_error"
                 : "internal_error";
 
-    await writeRestAuditLog({
+    scheduleRestAuditLog({
       context: restRequestContext,
       statusCode: responseStatusCode,
       outcome,
@@ -243,4 +200,11 @@ export function withRestEndpoint(
 
     return handlerResponse;
   };
+}
+
+function scheduleRestAuditLog(
+  input: Omit<RestAuditWriteInput, "finishedAt">,
+): void {
+  const finishedAt = Date.now();
+  after(() => writeRestAuditLog({ ...input, finishedAt }));
 }

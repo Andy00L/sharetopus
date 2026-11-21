@@ -1,3 +1,5 @@
+import * as z from "zod/mini";
+
 /**
  * Shared response types for GET /api/posts/status.
  *
@@ -10,35 +12,27 @@
  * boundary; see mapDbStatusToPublic in route.ts.
  */
 
-/**
- * Public status values returned to the client.
- * "pending" = still in progress, "success" = done, "failed" = error.
- */
-export type PostStatusJobStatus = "pending" | "success" | "failed";
+const PostStatusJobSchema = z.object({
+  event_id: z.string(),
+  status: z.enum(["pending", "success", "failed"]),
+  platform: z.string(),
+  error_message: z.nullable(z.string()),
+});
 
-/**
- * Single job entry in the status response.
- */
-export type PostStatusJob = {
-  event_id: string;
-  status: PostStatusJobStatus;
-  platform: string;
-  error_message: string | null;
-};
+export const PostStatusResponseSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    jobs: z.array(PostStatusJobSchema),
+    allTerminal: z.boolean(),
+  }),
+  z.object({ success: z.literal(false), message: z.string() }),
+]);
 
-/**
- * Discriminated response shape returned by GET /api/posts/status.
- */
-export type PostStatusResponse =
-  | {
-      success: true;
-      jobs: PostStatusJob[];
-      allTerminal: boolean;
-    }
-  | {
-      success: false;
-      message: string;
-    };
+export type PostStatusJob = z.infer<typeof PostStatusJobSchema>;
+
+export type PostStatusJobStatus = PostStatusJob["status"];
+
+export type PostStatusResponse = z.infer<typeof PostStatusResponseSchema>;
 
 /**
  * True if the status has reached a terminal state.

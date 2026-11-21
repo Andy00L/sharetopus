@@ -1,36 +1,19 @@
-//rate-limit.ts
 import "server-only";
 
 import { redis } from "@/actions/api/upstash";
 import { Ratelimit } from "@upstash/ratelimit";
+import { waitUntil } from "@vercel/functions";
 import { headers } from "next/headers";
 
 import { resolveClientIp } from "@/lib/net/clientIp";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
-/**
- * Get the client IP address from request headers.
- * Returns null if the IP can't be determined.
- *
- * Delegates to the shared resolver so the rate-limit bucket key and the
- * audit-log IP hash can never disagree about who the caller is. The
- * resolver deliberately ignores the caller-supplied head of
- * x-forwarded-for; see lib/net/clientIp.ts.
- */
+import type { RateLimitRule } from "@/actions/server/rateLimit/rateLimitRules";
+
 async function getIpAddress(): Promise<string | null> {
   return resolveClientIp(await headers());
 }
 
-/**
- * A refused check says why, with a message fit to show a person:
- *   - "limited": the caller hit the limit. resetIn is the wait in seconds.
- *   - "unidentified": there was no user id or IP to key the limit on.
- *   - "unavailable": the limiter itself failed (Redis unreachable). The
- *     caller did nothing wrong, so no surface may answer it with 429 or
- *     "too many requests".
- * Callers pass message on instead of writing their own, which is how an
- * outage stays an outage all the way to the person or agent.
- */
 export type RateLimitRefusal =
   | { success: false; reason: "limited"; message: string; resetIn: number }
   | {
@@ -42,31 +25,48 @@ export type RateLimitRefusal =
 
 export type RateLimitCheck = { success: true } | RateLimitRefusal;
 
+export type RateLimitRequest = {
+  operation: string;
+  identifier: string | null | undefined;
+  rule: RateLimitRule;
+  bypassSecret?: string;
+};
+
 /**
- * Apply rate limiting to any operation
- *
- * @param operationName - Name of operation (e.g., 'fetchData', 'submitForm')
- * @param userId - Optional user ID for rate limiting (overrides IP-based limiting)
- * @param limit - Number of requests allowed (default: 20)
- * @param window - Time window in seconds (default: 60)
- * @param bypassSecret - Optional secret to bypass rate limiting (for internal/cron use)
- * @returns { success: true }, or a RateLimitRefusal naming the reason.
+ * One limiter per operation, limit and window, kept for the life of the
+ * instance. A limiter built per call cost an allocation per request and
+ * lost its ephemeral cache, the in-memory list of callers already over the
+ * limit that @upstash/ratelimit answers without a Redis round trip
+ * (sourceRef: RegionRatelimitConfig.ephemeralCache).
  */
-export async function checkRateLimit(
+const limitersByKey = new Map<string, Ratelimit>();
+
+function getLimiter(
   operationName: string,
-  userId?: string | null,
-  limit: number = 20,
-  window: number = 60,
-  bypassSecret?: string | undefined
-): Promise<RateLimitCheck> {
+  limit: number,
+  windowSeconds: number,
+): Ratelimit {
+  const limiterKey = `${operationName}:${limit}:${windowSeconds}`;
+  const cachedLimiter = limitersByKey.get(limiterKey);
+  if (cachedLimiter) return cachedLimiter;
+  const limiter = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(limit, `${windowSeconds} s`),
+    analytics: true,
+    prefix: `ratelimit_${operationName}`,
+  });
+  limitersByKey.set(limiterKey, limiter);
+  return limiter;
+}
+
+export async function checkRateLimit(request: RateLimitRequest): Promise<RateLimitCheck> {
+  const operationName = request.operation;
   try {
-    // Check for valid bypass secret. Compared in constant time: a plain
-    // === leaks the shared cron secret's prefix through response timing.
     const validBypassSecret = process.env.CRON_SECRET_KEY;
     if (
-      bypassSecret &&
+      request.bypassSecret &&
       validBypassSecret &&
-      timingSafeEqualSecret(bypassSecret, validBypassSecret)
+      timingSafeEqualSecret(request.bypassSecret, validBypassSecret)
     ) {
       console.log(
         `[checkRateLimit] Rate limiting bypassed for operation: ${operationName}`
@@ -74,16 +74,9 @@ export async function checkRateLimit(
       return { success: true };
     }
 
-    // Create a rate limiter for this operation
-    const limiter = new Ratelimit({
-      redis,
-      limiter: Ratelimit.slidingWindow(limit, `${window} s`),
-      analytics: true,
-      prefix: `ratelimit_${operationName}`,
-    });
+    const limiter = getLimiter(operationName, request.rule.limit, request.rule.windowSeconds);
 
-    // Get identifier (userId or IP)
-    const identifier = userId ?? (await getIpAddress());
+    const identifier = request.identifier ?? (await getIpAddress());
 
     if (!identifier) {
       console.error(
@@ -97,8 +90,10 @@ export async function checkRateLimit(
       };
     }
 
-    // Apply rate limiting
-    const { success, reset } = await limiter.limit(identifier);
+    const { success, reset, pending } = await limiter.limit(identifier);
+    // The analytics write finishes after the answer; waitUntil keeps the
+    // function alive for it (sourceRef: @upstash/ratelimit LimitResponse.pending).
+    waitUntil(pending);
 
     if (success) {
       return {

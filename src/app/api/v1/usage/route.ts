@@ -10,19 +10,10 @@ import { getUserStorageBytes } from "@/lib/storage/getUserStorageBytes";
 import { db, runQuery } from "@/db/client";
 import { usage_quotas } from "@/db/schema";
 
-/**
- * GET /v1/usage -- current month quotas + storage usage.
- *
- * Mirrors the MCP list_billing_summary output minus Stripe-internal
- * fields. Combines checkActiveSubscription, usage_quotas, and
- * getUserStorageBytes. Any of the three failing answers 500: a failed read
- * reported as "no plan" or "0 bytes" looks like real data.
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.usage.get",
   handler: async (ctx) => {
-    // Step 1: resolve subscription status.
     const subscription = await checkActiveSubscription(
       ctx.principal.principalId,
     );
@@ -34,7 +25,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 2: fetch current month usage quotas.
     const periodFilter = currentQuotaPeriod();
     const { data: usageRows, error: usageError } = await runQuery(
       db
@@ -60,13 +50,11 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Build action -> count map.
     const actionCounts: Record<string, number> = {};
     for (const row of usageRows) {
       actionCounts[row.action] = row.count;
     }
 
-    // Step 3: storage usage, read the way the MCP and x402 quota checks do.
     const storageUsage = await getUserStorageBytes(ctx.principal.principalId);
     if (!storageUsage.success) {
       console.error(
@@ -81,7 +69,6 @@ export const GET = withRestEndpoint({
     }
     const storageUsedBytes = storageUsage.currentBytes;
 
-    // Step 4: build DTO.
     const usageDto = buildUsageDTO({
       tier: subscription.tier,
       status: subscription.status,

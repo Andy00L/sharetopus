@@ -1,27 +1,29 @@
 import "server-only";
 
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, like, lt, notExists, sql } from "drizzle-orm";
 import { NonRetriableError } from "inngest";
 
 import { db, runQuery } from "@/db/client";
-import { x402_charges, x402_reconciliation, x402_refunds } from "@/db/schema";
+import { pending_direct_posts, x402_charges, x402_reconciliation, x402_refunds } from "@/db/schema";
 import { confirmTransaction } from "@/lib/x402/chain/confirmTransaction";
 import { markChargeRefunded } from "@/lib/x402/charges/chargeTransitions";
+import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 import { getNetworkConfig } from "@/lib/x402/networks";
 
 import { inngest } from "../client";
+import { decideReconciliationRow } from "./x402ReconciliationDecision";
 
-/** How far back the sweep looks, in days. Older rows are handled by hand. */
 const LOOKBACK_DAYS = 30;
 
-/** A pending charge older than this has outlived any request that could finish it, in minutes. */
 const STALE_PENDING_MINUTES = 15;
 
-/** Upper bound on rows read per table per run. */
 const MAX_ROWS_PER_RUN = 500;
 
-/** Reason recorded when the sweep, not a request, records a refund. */
 const SWEEP_REFUND_REASON = "refund confirmed on-chain by the reconciliation sweep";
+
+const ACTION_FAILED_MARKER_PATTERN = "action_failed:%";
+
+const POST_ACTION_PATTERN = `${POST_ACTION_PREFIX}%`;
 
 interface OpenItem {
   kind: string;
@@ -31,44 +33,42 @@ interface OpenItem {
   note: string;
 }
 
+type DispatchStatus = (typeof pending_direct_posts.$inferSelect)["status"];
+
+interface LostRecordItem {
+  kind: "record_lost_post_dispatched";
+  chargeId: string;
+  txHash: string | null;
+  network: string;
+  dispatchStatus: DispatchStatus;
+}
+
 interface SweepSummary {
   reconciliationRows: number;
   stalePendingCharges: number;
+  unrecordedActionFailures: number;
+  settledWithoutOutcome: number;
   resolved: number;
   recordedRefunds: number;
+  lostRecordsWithDispatch: LostRecordItem[];
   open: OpenItem[];
 }
 
-/**
- * Hourly reader for x402_reconciliation and stuck pending charges: the one
- * consumer of the trail the request path writes when it cannot close a
- * money window itself (charges/recordReconciliation.ts).
- *
- * It closes what the chain proves (a refund that landed after its request
- * stopped waiting is recorded as refunded) and fails the run while anything
- * is still open, so the Inngest dashboard and its failure alerts surface an
- * x402 money problem within the hour instead of leaving it in Vercel logs
- * that expire. Throwing is how Inngest marks a run failed, the documented
- * exception to errors-as-values for background jobs.
- *
- * Items close from the data, with no acknowledgement column: a settle item
- * closes once its charge leaves pending, a refund item once the charge has
- * an x402_refunds row. A refund sent by hand is closed by recording it
- * there. Rows with no charge to check can only age out of the
- * LOOKBACK_DAYS window.
- */
+// Throwing is how Inngest marks a run failed, the documented exception to
+// errors-as-values for background jobs:
+// https://www.inngest.com/docs/guides/error-handling
 export const sweepX402ReconciliationCron = inngest.createFunction(
   {
     id: "sweep-x402-reconciliation",
     name: "Sweep x402 reconciliation rows and stuck pending charges",
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "20 * * * *" }],
   },
   async ({ step }) => {
     const summary = await step.run("sweep-x402-reconciliation", () => sweepReconciliation());
 
     console.log(
-      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
+      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} unrecordedActionFailures=${summary.unrecordedActionFailures} settledWithoutOutcome=${summary.settledWithoutOutcome} lostRecordsWithDispatch=${summary.lostRecordsWithDispatch.length} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
     );
 
     if (summary.open.length > 0) {
@@ -118,6 +118,56 @@ async function sweepReconciliation(): Promise<SweepSummary> {
     throw new Error(`[sweepReconciliation] stale pending read failed: ${staleError.message}`);
   }
 
+  const { data: unrecordedActionFailures, error: actionFailedError } = await runQuery(
+    db
+      .select({ id: x402_charges.id, network: x402_charges.network, tx_hash: x402_charges.tx_hash })
+      .from(x402_charges)
+      .where(
+        and(
+          eq(x402_charges.status, "settled"),
+          like(x402_charges.error_message, ACTION_FAILED_MARKER_PATTERN),
+          gte(x402_charges.created_at, lookbackIso),
+          lt(x402_charges.created_at, staleCutoffIso),
+          hasNoRefundOrReconciliation(),
+        ),
+      )
+      .limit(MAX_ROWS_PER_RUN),
+  );
+  if (actionFailedError) {
+    throw new Error(`[sweepReconciliation] action_failed read failed: ${actionFailedError.message}`);
+  }
+
+  const { data: settledWithoutOutcome, error: settledWithoutOutcomeError } = await runQuery(
+    db
+      .select({
+        id: x402_charges.id,
+        network: x402_charges.network,
+        tx_hash: x402_charges.tx_hash,
+        principal_id: x402_charges.principal_id,
+      })
+      .from(x402_charges)
+      .where(
+        and(
+          eq(x402_charges.status, "settled"),
+          like(x402_charges.action, POST_ACTION_PATTERN),
+          isNull(x402_charges.error_message),
+          isNull(sql`${x402_charges.metadata} -> 'result'`),
+          isNull(sql`${x402_charges.metadata} -> 'batch_id'`),
+          isNull(x402_charges.scheduled_post_id),
+          gte(x402_charges.created_at, lookbackIso),
+          lt(x402_charges.created_at, staleCutoffIso),
+          hasNoRefundOrReconciliation(),
+        ),
+      )
+      .limit(MAX_ROWS_PER_RUN),
+  );
+  if (settledWithoutOutcomeError) {
+    throw new Error(
+      `[sweepReconciliation] settled-without-outcome read failed: ${settledWithoutOutcomeError.message}`,
+    );
+  }
+  const dispatchStatusByChargeId = await readDispatchStatusByCharge(settledWithoutOutcome);
+
   const chargeIds = [
     ...new Set(
       reconciliationRows
@@ -125,9 +175,34 @@ async function sweepReconciliation(): Promise<SweepSummary> {
         .filter((chargeId): chargeId is string => chargeId !== null),
     ),
   ];
+
+  const unchargedPaymentTxHashes = [
+    ...new Set(
+      reconciliationRows
+        .filter((row) => row.charge_id === null)
+        .map((row) => row.tx_hash)
+        .filter((txHash): txHash is string => txHash !== null),
+    ),
+  ];
+  const chargedPaymentTxHashes = new Set<string>();
+  if (unchargedPaymentTxHashes.length > 0) {
+    const { data: chargesHoldingPayments, error: chargesHoldingError } = await runQuery(
+      db
+        .select({ nonce: x402_charges.nonce })
+        .from(x402_charges)
+        .where(inArray(x402_charges.nonce, unchargedPaymentTxHashes)),
+    );
+    if (chargesHoldingError) {
+      throw new Error(`[sweepReconciliation] charge lookup by payment tx failed: ${chargesHoldingError.message}`);
+    }
+    for (const charge of chargesHoldingPayments) chargedPaymentTxHashes.add(charge.nonce);
+  }
   const chargesById = new Map<
     string,
-    { id: string; status: string; network: string; amount_usdc: number; principal_id: string }
+    Pick<
+      typeof x402_charges.$inferSelect,
+      "id" | "status" | "network" | "amount_usdc" | "principal_id"
+    >
   >();
   const refundedChargeIds = new Set<string>();
   if (chargeIds.length > 0) {
@@ -163,8 +238,11 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   const summary: SweepSummary = {
     reconciliationRows: reconciliationRows.length,
     stalePendingCharges: stalePendingCharges.length,
+    unrecordedActionFailures: unrecordedActionFailures.length,
+    settledWithoutOutcome: settledWithoutOutcome.length,
     resolved: 0,
     recordedRefunds: 0,
+    lostRecordsWithDispatch: [],
     open: [],
   };
   const chargesWithOpenItems = new Set<string>();
@@ -187,31 +265,25 @@ async function sweepReconciliation(): Promise<SweepSummary> {
     };
 
     if (!charge) {
+      if (row.charge_id === null && row.tx_hash !== null && chargedPaymentTxHashes.has(row.tx_hash)) {
+        summary.resolved += 1;
+        continue;
+      }
       markOpen({ ...openItem, note: "No charge row to reconcile against; review by hand." });
       continue;
     }
 
-    if (row.kind === "settle_indeterminate" || row.kind === "settle_unrecorded") {
-      if (charge.status === "pending") {
-        markOpen({ ...openItem, note: "Charge still pending: decide whether the money moved and refund if so." });
-      } else {
-        summary.resolved += 1;
-      }
-      continue;
-    }
-
-    // refund_failed: resolved once a refund is on record for the charge.
-    if (refundedChargeIds.has(charge.id)) {
+    const decision = decideReconciliationRow({
+      row,
+      chargeStatus: charge.status,
+      isRefundRecorded: refundedChargeIds.has(charge.id),
+    });
+    if (decision.kind === "resolved") {
       summary.resolved += 1;
       continue;
     }
-    if (!row.tx_hash) {
-      // A send whose reply was lost also lands here, so the refund may have
-      // gone out anyway; refunding again blind could pay the payer twice.
-      markOpen({
-        ...openItem,
-        note: "No refund transaction hash was recorded. Check the sender wallet's outgoing transfers to the payer before refunding by hand.",
-      });
+    if (decision.kind === "open") {
+      markOpen({ ...openItem, note: decision.note });
       continue;
     }
 
@@ -220,13 +292,13 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       markOpen({ ...openItem, note: `Unknown network "${charge.network}" on the charge.` });
       continue;
     }
-    const confirmation = await confirmTransaction({ network, txHash: row.tx_hash, mode: "check" });
+    const confirmation = await confirmTransaction({ network, txHash: decision.txHash, mode: "check" });
     if (confirmation.status !== "confirmed") {
       markOpen({ ...openItem, note: `Refund transaction is ${confirmation.status}.` });
       continue;
     }
 
-    const recorded = await recordConfirmedRefund(charge, row.tx_hash);
+    const recorded = await recordConfirmedRefund(charge, decision.txHash);
     if (recorded) {
       summary.recordedRefunds += 1;
       summary.resolved += 1;
@@ -250,15 +322,86 @@ async function sweepReconciliation(): Promise<SweepSummary> {
     });
   }
 
+  for (const failedCharge of unrecordedActionFailures) {
+    markOpen({
+      kind: "action_failed_unrecorded",
+      chargeId: failedCharge.id,
+      txHash: failedCharge.tx_hash,
+      network: failedCharge.network,
+      note: `Charge created over ${STALE_PENDING_MINUTES} minutes ago, its paid action failed, and it has no refund and no reconciliation row; the request likely died before the refund was recorded. Check the sender wallet's outgoing transfers to the payer before refunding by hand.`,
+    });
+  }
+
+  for (const unknownCharge of settledWithoutOutcome) {
+    const dispatchStatus = dispatchStatusByChargeId.get(unknownCharge.id);
+    if (dispatchStatus) {
+      summary.lostRecordsWithDispatch.push({
+        kind: "record_lost_post_dispatched",
+        chargeId: unknownCharge.id,
+        txHash: unknownCharge.tx_hash,
+        network: unknownCharge.network,
+        dispatchStatus,
+      });
+      continue;
+    }
+    markOpen({
+      kind: "action_outcome_unknown",
+      chargeId: unknownCharge.id,
+      txHash: unknownCharge.tx_hash,
+      network: unknownCharge.network,
+      note: `Post charge settled over ${STALE_PENDING_MINUTES} minutes ago with no stored result, no batch or post link, no failure marker, no refund and no reconciliation row; the request likely died between settlement and its action. Look for a post by this principal created right after the charge before refunding by hand.`,
+    });
+  }
+
   return summary;
 }
 
-/**
- * Records a refund the chain confirmed after its request stopped waiting.
- * A settled charge moves to refunded (which writes x402_refunds); a charge
- * already marked refunded only gets its missing x402_refunds row. Anything
- * else is left for a human.
- */
+async function readDispatchStatusByCharge(
+  charges: { id: string; principal_id: string }[],
+): Promise<Map<string, DispatchStatus>> {
+  const dispatchStatusByChargeId = new Map<string, DispatchStatus>();
+  if (charges.length === 0) return dispatchStatusByChargeId;
+
+  const principalIdByChargeId = new Map(charges.map((charge) => [charge.id, charge.principal_id]));
+  const { data: dispatchRows, error } = await runQuery(
+    db
+      .select({
+        batch_id: pending_direct_posts.batch_id,
+        principal_id: pending_direct_posts.principal_id,
+        status: pending_direct_posts.status,
+      })
+      .from(pending_direct_posts)
+      .where(inArray(pending_direct_posts.batch_id, [...principalIdByChargeId.keys()])),
+  );
+  if (error) {
+    throw new Error(`[readDispatchStatusByCharge] pending_direct_posts read failed: ${error.message}`);
+  }
+  for (const dispatchRow of dispatchRows) {
+    if (principalIdByChargeId.get(dispatchRow.batch_id) !== dispatchRow.principal_id) continue;
+    if (!dispatchStatusByChargeId.has(dispatchRow.batch_id)) {
+      dispatchStatusByChargeId.set(dispatchRow.batch_id, dispatchRow.status);
+    }
+  }
+  return dispatchStatusByChargeId;
+}
+
+function hasNoRefundOrReconciliation() {
+  return and(
+    notExists(
+      db
+        .select({ charge_id: x402_refunds.charge_id })
+        .from(x402_refunds)
+        .where(eq(x402_refunds.charge_id, x402_charges.id)),
+    ),
+    notExists(
+      db
+        .select({ charge_id: x402_reconciliation.charge_id })
+        .from(x402_reconciliation)
+        .where(eq(x402_reconciliation.charge_id, x402_charges.id)),
+    ),
+  );
+}
+
 async function recordConfirmedRefund(
   charge: { id: string; status: string; amount_usdc: number; principal_id: string },
   refundTxHash: string,

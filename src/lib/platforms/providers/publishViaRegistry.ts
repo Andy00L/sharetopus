@@ -1,73 +1,75 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { db, runQuery } from "@/db/client";
-import { social_accounts } from "@/db/schema";
 import type { CreatedVia, MediaType } from "@/db/schema";
+import type { PlatformFailure } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
   refreshWithAccountLock,
-  type StoredCredential,
+  settleRefusedRefresh,
+  type LockedCredential,
+  type RefreshWindowOptions,
 } from "@/lib/api/refreshWithAccountLock";
+import { RegistryPublishOptionsSchema } from "@/lib/platforms/postTargetOptions";
 import type { SocialAccount } from "@/lib/types/dbTypes";
-import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
+import { readAccountConfig } from "./_shared/accountConfig";
+import { refusePublish } from "./_shared/publishFailure";
+import { isSignedStorageUrl } from "./_shared/signedStorageUrl";
 import { resolveConfiguredProvider } from "./registry";
-import type { ProviderDefinition } from "./types";
+import type {
+  ProviderConfig,
+  ProviderDefinition,
+  TokenRefreshFailureReason,
+} from "./types";
 
-/**
- * Publishes one scheduled post through a registry provider. This is the
- * worker-side counterpart of directPostForAccountsGeneric for the 21
- * registry channels: resolve provider, ensure a fresh credential, publish,
- * record content history.
- *
- * Contracts carried over from the legacy flow, on purpose:
- *   - Refresh-token rotation: a rotated token that cannot be persisted is
- *     a RECONNECT REQUIRED log line, and the in-hand token is still used
- *     for this post (same rule ensureValidToken follows).
- *   - A published post whose content_history write fails is still a
- *     SUCCESS; the missing row is logged for reconciliation. Reporting it
- *     as failure made the worker mark live content as failed and invite a
- *     duplicate repost (audit finding 8).
- *   - Errors as values; the return shape matches DirectPostScheduleResult
- *     so classifyDirectPostFailure keeps working on the message.
- *
- * Called by: processSinglePostHelpers.callPlatformDirectPost (default arm).
- * Tables touched: social_accounts (token refresh persist), content_history
- * (via storeContentHistory).
- */
+export type RegistryPublishOutcome =
+  | { success: true; count: 1; reconnectWarning: string | null }
+  | { success: false; count: 0; message: string; failure: PlatformFailure };
 
-export type RegistryPublishResult = {
-  success: boolean;
-  count: number;
-  message?: string;
-};
+export type PostOrigin =
+  | { kind: "scheduled"; scheduledPostId: string }
+  | { kind: "post_now"; dispatchId: string };
 
 export type RegistryPublishArgs = {
   account: SocialAccount;
   principalId: string;
   title: string | null;
   body: string | null;
-  /** Post kind ("text" | "image" | "video"), not the MIME type. */
-  mediaType: MediaType;
   mediaUrl: string | null;
   fileName: string;
   mediaMimeType: string;
-  /** Per-post provider options (subreddit, communityId, ...). */
   options: unknown;
   batchId: string;
-  /** Null for direct (post-now) publishes with no scheduled_posts row. */
-  scheduledPostId: string | null;
   createdVia: CreatedVia;
+  postType: MediaType;
+  origin: PostOrigin;
 };
+
+type ResolvedPostOrigin = {
+  scheduledPostId: string | null;
+  idempotencyKey: string;
+};
+
+function resolvePostOrigin(origin: PostOrigin): ResolvedPostOrigin {
+  switch (origin.kind) {
+    case "scheduled":
+      return { scheduledPostId: origin.scheduledPostId, idempotencyKey: origin.scheduledPostId };
+    case "post_now":
+      return { scheduledPostId: null, idempotencyKey: origin.dispatchId };
+    default: {
+      const unhandledOrigin: never = origin;
+      return unhandledOrigin;
+    }
+  }
+}
 
 export async function publishViaRegistry(
   args: RegistryPublishArgs,
-): Promise<RegistryPublishResult> {
+): Promise<RegistryPublishOutcome> {
   const { account } = args;
   const logPrefix = `[publishViaRegistry ${account.platform}]`;
+  const postOrigin = resolvePostOrigin(args.origin);
 
   const providerResult = resolveConfiguredProvider(account.platform);
   if (!providerResult.ok) {
@@ -75,16 +77,32 @@ export async function publishViaRegistry(
       success: false,
       count: 0,
       message: `${account.platform} is not available: ${providerResult.message}`,
+      failure: { reason: "unknown", mayHavePublished: false },
     };
   }
   const provider = providerResult.provider;
 
-  const tokenResult = await ensureFreshRegistryToken(provider, account);
-  if (!tokenResult.success) {
-    return { success: false, count: 0, message: tokenResult.message };
+  const { mediaUrl } = args;
+  if (mediaUrl !== null && !isSignedStorageUrl(mediaUrl, process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")) {
+    return toRefusedOutcome("The post media URL is not a signed URL from our storage.");
+  }
+  const parsedOptions = RegistryPublishOptionsSchema.safeParse(args.options ?? {});
+  if (!parsedOptions.success) {
+    const invalidKeys = parsedOptions.error.issues.map((issue) => issue.path.join("."));
+    return toRefusedOutcome(`Malformed post_options: ${invalidKeys.join(", ")}`);
   }
 
-  const config = narrowAccountConfig(account.extra);
+  const tokenResult = await ensureFreshRegistryToken(provider, account);
+  if (!tokenResult.success) {
+    return {
+      success: false,
+      count: 0,
+      message: tokenResult.message,
+      failure: { reason: tokenResult.reason, mayHavePublished: false },
+    };
+  }
+
+  const config = readAccountConfig(account.extra);
 
   const publishResult = await provider.publish({
     accessToken: tokenResult.accessToken,
@@ -92,15 +110,21 @@ export async function publishViaRegistry(
     accountIdentifier: account.account_identifier,
     title: args.title ?? "",
     body: args.body ?? "",
-    mediaType: args.mediaType,
-    mediaUrl: args.mediaUrl,
+    postType: args.postType,
+    mediaUrl,
     fileName: args.fileName,
     mediaMimeType: args.mediaMimeType,
-    options: narrowAccountConfig(args.options),
+    options: parsedOptions.data,
+    idempotencyKey: postOrigin.idempotencyKey,
   });
 
   if (!publishResult.ok) {
-    return { success: false, count: 0, message: publishResult.message };
+    return {
+      success: false,
+      count: 0,
+      message: publishResult.message,
+      failure: publishResult.failure,
+    };
   }
 
   const historyResult = await storeContentHistory(
@@ -112,9 +136,9 @@ export async function publishViaRegistry(
       description: args.body,
       media_url: publishResult.postUrl ?? args.mediaUrl,
       batch_id: args.batchId,
-      scheduled_post_id: args.scheduledPostId,
+      scheduled_post_id: postOrigin.scheduledPostId,
       status: "posted",
-      media_type: args.mediaType,
+      media_type: args.postType,
       extra: {
         post_url: publishResult.postUrl,
         published_via: "provider_registry",
@@ -128,144 +152,188 @@ export async function publishViaRegistry(
   if (!historyResult.success) {
     console.error(
       `${logPrefix} CONTENT HISTORY NOT RECORDED for a published post ` +
-        `(account=${account.id} scheduled_post_id=${args.scheduledPostId ?? "direct"} ` +
+        `(account=${account.id} scheduled_post_id=${postOrigin.scheduledPostId ?? "post-now"} ` +
         `content_id=${publishResult.postId}): ${historyResult.message}`,
     );
   }
 
-  return { success: true, count: 1 };
+  return { success: true, count: 1, reconnectWarning: tokenResult.reconnectWarning };
 }
 
-type FreshTokenResult =
-  | { success: true; accessToken: string }
-  | { success: false; message: string };
+type RegistryTokenFailure = { success: false; message: string; reason: TokenRefreshFailureReason };
 
-/**
- * Returns a credential valid for this publish, refreshing and persisting
- * first when the stored one is expired or about to expire. The refresh runs
- * under refreshWithAccountLock, so concurrent publishes to one account
- * refresh it once and share the saved token.
- *
- * Registry providers with no refresh function either never expire
- * (credentials providers store null expiry, so the expiry check is never
- * true) or require a reconnect once expired (Threads).
- */
+export type FreshTokenResult =
+  | { success: true; accessToken: string; reconnectWarning: string | null }
+  | RegistryTokenFailure;
+
+export async function refreshRegistryAccountToken(
+  account: SocialAccount,
+  options: RefreshWindowOptions = {},
+): Promise<FreshTokenResult> {
+  const providerResult = resolveConfiguredProvider(account.platform);
+  if (!providerResult.ok) {
+    return { success: false, message: providerResult.message, reason: "transient" };
+  }
+  return ensureFreshRegistryToken(providerResult.provider, account, options);
+}
+
 async function ensureFreshRegistryToken(
   provider: ProviderDefinition,
   account: SocialAccount,
+  options: RefreshWindowOptions = {},
 ): Promise<FreshTokenResult> {
   if (!account.access_token) {
     return {
       success: false,
       message: `Your ${provider.label} account needs to be reconnected.`,
+      reason: "auth_expired",
     };
   }
 
-  if (!isTokenExpiring(account.token_expires_at)) {
-    return { success: true, accessToken: account.access_token };
+  if (!isTokenExpiring(account.token_expires_at, options.refreshIfExpiringWithinMs)) {
+    return { success: true, accessToken: account.access_token, reconnectWarning: null };
   }
 
+  if (!provider.refresh) {
+    return settleRegistryRefusal({
+      providerLabel: provider.label,
+      accountId: account.id,
+      platform: account.platform,
+      refusedExpiresAt: account.token_expires_at,
+      refusal: buildSessionExpiredResult(provider.label),
+    });
+  }
   const refreshCredential = provider.refresh;
-  if (!refreshCredential || !account.refresh_token) {
-    return buildSessionExpiredResult(provider.label);
-  }
 
-  const outcome = await refreshWithAccountLock(account.id, (stored) =>
-    refreshAndStoreRegistryToken(provider.label, refreshCredential, account, stored),
-  );
+  const config = readAccountConfig(account.extra);
+  const outcome = await refreshWithAccountLock({
+    accountId: account.id,
+    refreshTokenRotation: provider.refreshTokenRotation,
+    refreshIfExpiringWithinMs: options.refreshIfExpiringWithinMs,
+    refreshStoredCredential: (locked) =>
+      refreshAndStoreRegistryToken({
+        providerLabel: provider.label,
+        refreshCredential,
+        accountId: account.id,
+        platform: account.platform,
+        config,
+        locked,
+      }),
+  });
   switch (outcome.kind) {
     case "stored_token_fresh":
-      return { success: true, accessToken: outcome.accessToken };
+      return { success: true, accessToken: outcome.accessToken, reconnectWarning: null };
     case "refreshed":
       return outcome.value;
     case "unavailable":
-      return {
-        success: false,
-        message: `We could not refresh your ${provider.label} connection just now. Please try again in a few minutes.`,
-      };
+      return buildRetryLaterResult(provider.label);
   }
 }
 
-/**
- * Refreshes a registry account's token from the credential just read under
- * the refresh lock (the caller's copy may predate a rotation), then saves
- * the new one.
- */
-async function refreshAndStoreRegistryToken(
-  providerLabel: string,
-  refreshCredential: NonNullable<ProviderDefinition["refresh"]>,
-  account: SocialAccount,
-  stored: StoredCredential,
-): Promise<FreshTokenResult> {
-  const logPrefix = `[refreshAndStoreRegistryToken ${account.platform}]`;
+async function refreshAndStoreRegistryToken(input: {
+  providerLabel: string;
+  refreshCredential: NonNullable<ProviderDefinition["refresh"]>;
+  accountId: string;
+  platform: string;
+  config: ProviderConfig;
+  locked: LockedCredential;
+}): Promise<FreshTokenResult> {
+  const { providerLabel } = input;
+  const { stored } = input.locked;
+  const logPrefix = `[refreshAndStoreRegistryToken ${input.platform}]`;
 
-  if (!stored.refresh_token) {
-    return buildSessionExpiredResult(providerLabel);
-  }
-
-  const refreshed = await refreshCredential(stored.refresh_token);
+  const refreshed = await input.refreshCredential({
+    accessToken: stored.access_token,
+    refreshToken: stored.refresh_token,
+    config: input.config,
+  });
   if (!refreshed.ok) {
-    return {
+    const refusal: RegistryTokenFailure = {
       success: false,
       message: `Unable to refresh your ${providerLabel} connection: ${refreshed.message}`,
+      reason: refreshed.reason,
     };
+    if (refreshed.reason === "transient") return refusal;
+    return settleRegistryRefusal({
+      providerLabel,
+      accountId: input.accountId,
+      platform: input.platform,
+      refusedExpiresAt: stored.token_expires_at,
+      refusal,
+    });
   }
 
-  const nextRefreshToken = refreshed.refreshToken ?? stored.refresh_token;
-  const nextExpiresAt =
-    refreshed.expiresIn === null
-      ? null
-      : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString();
+  const storeOutcome = await input.locked.storeCredential({
+    access_token: refreshed.accessToken,
+    refresh_token: refreshed.rotatedRefreshToken ?? stored.refresh_token,
+    token_expires_at:
+      refreshed.expiresIn === null
+        ? null
+        : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+  });
+  if (storeOutcome.kind === "stored") {
+    return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };
+  }
+  if (storeOutcome.kind === "superseded") {
+    return { success: true, accessToken: storeOutcome.accessToken, reconnectWarning: null };
+  }
 
-  const { error: persistError } = await runQuery(
-    db
-      .update(social_accounts)
-      .set({
-        access_token: refreshed.accessToken,
-        refresh_token: nextRefreshToken,
-        token_expires_at: nextExpiresAt,
-        updated_at: new Date().toISOString(),
-      })
-      .where(eq(social_accounts.id, account.id)),
+  const hasRotatedRefreshToken =
+    refreshed.rotatedRefreshToken !== null &&
+    refreshed.rotatedRefreshToken !== stored.refresh_token;
+  if (!hasRotatedRefreshToken) {
+    console.error(
+      `${logPrefix} Token persist failed for account ${input.accountId}; the ` +
+        `stored refresh token is still valid. ${storeOutcome.message}`,
+    );
+    return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };
+  }
+  console.error(
+    `${logPrefix} RECONNECT REQUIRED: the rotated refresh token for account ` +
+      `${input.accountId} could not be saved. ${storeOutcome.message}`,
   );
-
-  if (persistError) {
-    // Same asymmetry ensureValidToken documents: the in-hand token still
-    // works for THIS post, but a rotated refresh token that was not
-    // persisted means the stored credential chain is now dead.
-    const rotated =
-      Boolean(refreshed.refreshToken) &&
-      refreshed.refreshToken !== stored.refresh_token;
-    if (rotated) {
-      console.error(
-        `${logPrefix} RECONNECT REQUIRED: refresh token rotated but could ` +
-          `not be persisted for account ${account.id}; automatic refresh ` +
-          `will fail from here on. ${persistError.message}`,
-      );
-    } else {
-      console.error(
-        `${logPrefix} Token persist failed for account ${account.id}; the ` +
-          `stored refresh token is still valid. ${persistError.message}`,
-      );
-    }
-  }
-
-  return { success: true, accessToken: refreshed.accessToken };
-}
-
-/** No refresh is possible: the provider has none, or no refresh token is stored. */
-function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
   return {
-    success: false,
-    message: `Your ${providerLabel} session has expired and cannot be renewed automatically. Please reconnect the account.`,
+    success: true,
+    accessToken: refreshed.accessToken,
+    reconnectWarning: `${providerLabel} renewed this connection but the renewed credential could not be saved, so it will stop working when the current token expires. Please reconnect the account.`,
   };
 }
 
-/**
- * Narrows a Json column value to the flat object shape providers take.
- * Non-object values (null, arrays, scalars) degrade to {} so a malformed
- * row cannot throw inside a provider.
- */
-function narrowAccountConfig(rawValue: unknown): JsonObject {
-  return toJsonObject(rawValue) ?? {};
+async function settleRegistryRefusal(input: {
+  providerLabel: string;
+  accountId: string;
+  platform: string;
+  refusedExpiresAt: string | null;
+  refusal: RegistryTokenFailure;
+}): Promise<FreshTokenResult> {
+  const settled = await settleRefusedRefresh(input);
+  switch (settled.kind) {
+    case "refreshed_elsewhere":
+      return { success: true, accessToken: settled.accessToken, reconnectWarning: null };
+    case "needs_reconnect":
+      return input.refusal;
+    case "retry_later":
+      return buildRetryLaterResult(input.providerLabel);
+  }
+}
+
+function buildRetryLaterResult(providerLabel: string): RegistryTokenFailure {
+  return {
+    success: false,
+    message: `We could not refresh your ${providerLabel} connection just now. Please try again in a few minutes.`,
+    reason: "transient",
+  };
+}
+
+function buildSessionExpiredResult(providerLabel: string): RegistryTokenFailure {
+  return {
+    success: false,
+    message: `Your ${providerLabel} session has expired and cannot be renewed automatically. Please reconnect the account.`,
+    reason: "auth_expired",
+  };
+}
+
+function toRefusedOutcome(message: string): RegistryPublishOutcome {
+  const { failure } = refusePublish(message);
+  return { success: false, count: 0, message, failure };
 }

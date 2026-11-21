@@ -16,8 +16,6 @@ import {
 } from "@/lib/mcp/rateLimits";
 import { MCP_TOOL_NAMES } from "@/lib/mcp/toolNames";
 
-// Content of /docs/mcp. Tool and prompt rows come from mcpCatalog.ts, shared with /docs/mcp.md.
-
 export const MCP_OVERVIEW = {
   title: "MCP Server Reference",
   subtitle:
@@ -137,8 +135,6 @@ export const MCP_DOCS_SECTIONS: DocsSection[] = [
       {
         label: "Cursor · API key",
         code: buildMcpClientConfigJson(MCP_ENDPOINTS.streamableHttp),
-        // featured: this page's single signature stamp card
-        // (placement rule in docs/UI_DESIGN_SYSTEM.md).
         featured: true,
       },
     ],

@@ -1,11 +1,8 @@
 import "server-only";
 
-/**
- * Escape HTML entities for safe interpolation into HTML body/attribute context.
- * Use this for text inside <h1>, <p>, <body>, etc.
- *
- * NOT safe for use inside <script> JS string literals. Use toJsString() there.
- */
+// The script data state decodes no character references, so this output is not
+// safe inside <script>; toJsString is:
+// https://html.spec.whatwg.org/multipage/parsing.html#script-data-state
 export function escapeHtml(str: string | null | undefined): string {
   if (str === null || str === undefined) {
     return "";
@@ -18,21 +15,11 @@ export function escapeHtml(str: string | null | undefined): string {
     .replace(/'/g, "&#39;");
 }
 
-/**
- * Serialize a string as a safe JavaScript string literal for interpolation
- * into inline <script> blocks. Adds quotes automatically, escapes control
- * characters, backslashes, quotes, and unicode line separators (U+2028/U+2029).
- *
- * Usage in template:
- *   `<script>fn(${toJsString(userInput)})</script>`
- *
- * NOT `fn("${toJsString(userInput)}")` (toJsString already includes quotes).
- */
 export function toJsString(str: string | null | undefined): string {
-  // JSON.stringify handles quotes, backslashes, control chars, and unicode.
-  // We additionally escape U+2028 and U+2029 which are valid JSON but break
-  // JS parsers when used inside <script> blocks.
-  // We also escape </ to prevent </script> breakout.
+  // U+2028 and U+2029 end a string literal in engines older than ES2019:
+  // https://tc39.es/proposal-json-superset/
+  // "</script" inside a script element closes it:
+  // https://html.spec.whatwg.org/multipage/scripting.html#restrictions-for-contents-of-script-elements
   return JSON.stringify(str ?? "")
     .replace(/\u2028/g, "\\u2028")
     .replace(/\u2029/g, "\\u2029")

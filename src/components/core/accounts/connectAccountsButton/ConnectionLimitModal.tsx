@@ -1,5 +1,3 @@
-// components/core/accounts/ConnectionLimitModal.tsx
-
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

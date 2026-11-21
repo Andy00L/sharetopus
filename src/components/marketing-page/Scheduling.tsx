@@ -1,11 +1,5 @@
 import Link from "next/link";
 
-/* Scheduling feature row. Text left, autoplaying demo video left card, in the
-   same ink-bordered hard-shadow card style as Crossposting.
-
-   Video: /public/scheduling.{webm,mp4}. webm first (smaller), mp4 fallback.
-   autoplay+loop+muted+playsInline so it plays inline on mobile without sound. */
-
 export default function Scheduling() {
   return (
     <section
@@ -18,7 +12,6 @@ export default function Scheduling() {
     >
       <div className="container px-5 lg:px-4 mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-[1.08fr_0.92fr] gap-10 lg:gap-20 items-center">
-          {/* Video card (left on desktop, below text on mobile) */}
           <div className="order-2 lg:order-1 w-full flex items-center justify-center">
             <div
               className="relative w-full max-w-[560px] rounded-[24px] lg:rounded-[28px] border-[1.5px] border-[#1C1B18] bg-[#F3F4EF] p-2.5 sm:p-3"
@@ -39,7 +32,6 @@ export default function Scheduling() {
             </div>
           </div>
 
-          {/* Copy + CTAs */}
           <div className="order-1 lg:order-2 max-w-xl">
             <div className="inline-flex items-center gap-2 mb-5">
               <span className="inline-block w-[7px] h-[7px] rounded-full bg-[#FF5A36]" />

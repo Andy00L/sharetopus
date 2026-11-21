@@ -1,4 +1,3 @@
-// src/actions/server/scheduleActions/get/getScheduledPosts.ts
 import "server-only";
 
 import { and, asc, eq, ne } from "drizzle-orm";
@@ -8,22 +7,8 @@ import { scheduled_posts, social_accounts } from "@/db/schema";
 import type { CreatedVia, PostStatus } from "@/db/schema";
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { LIST_SCHEDULED_POSTS_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
-/**
- * Fetches scheduled posts owned by `principalId`, optionally filtered.
- *
- * **Authentication:** Does not call Clerk. Caller must validate
- * `principalId` (RSC: `auth()`; MCP: `extractPrincipal`).
- *
- * **Rate limiting:** 60 requests per 60s, scoped per source
- * (`web_get_scheduled_posts`, `mcp_get_scheduled_posts`).
- *
- * **Tables:** `scheduled_posts`, `social_accounts` (join).
- *
- * Default filter: excludes status='posted' (matches existing web UI behavior).
- * Caller can override with an explicit status, or set includePosted to get
- * every status at once (the calendar view shows posted posts in place).
- */
 export async function getScheduledPosts(
   principalId: string,
   source: CreatedVia,
@@ -44,9 +29,12 @@ export async function getScheduledPosts(
   );
 
   try {
-    // Step 1: rate limit
     const rateLimitScope = `${source}_get_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 60, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: LIST_SCHEDULED_POSTS_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -55,8 +43,6 @@ export async function getScheduledPosts(
       };
     }
 
-    // Step 2: build query. An explicit status wins; without one, posted rows
-    // stay hidden unless includePosted asks for every status.
     const statusCondition = filters?.status
       ? eq(scheduled_posts.status, filters.status)
       : filters?.includePosted

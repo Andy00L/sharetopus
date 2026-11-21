@@ -1,12 +1,9 @@
 import {
   PLATFORM_LABELS,
-  POSTING_PLATFORMS,
+  ADAPTER_PLATFORMS,
 } from "@/lib/platforms/capabilities";
 import { PlatformCounts } from "./handleSocialMediaPost";
 
-/**
- * Generate a user-friendly success message based on the results
- */
 export function generateSuccessMessage(
   counts: PlatformCounts,
   isScheduled: boolean,
@@ -18,7 +15,7 @@ export function generateSuccessMessage(
 
   const action = isScheduled ? "scheduled" : "published";
 
-  const platformSummaries = POSTING_PLATFORMS.filter(
+  const platformSummaries = ADAPTER_PLATFORMS.filter(
     (platform) => counts[platform] > 0,
   ).map((platform) => `${counts[platform]} on ${PLATFORM_LABELS[platform]}`);
 
@@ -39,7 +36,6 @@ export function generateSuccessMessage(
 
   let result = `Successfully ${action} ${message}`;
 
-  // TikTok processing notice (applies regardless of compliance flag)
   if (counts.tiktok > 0) {
     result +=
       ". Your TikTok post may take a few minutes to appear on your profile.";

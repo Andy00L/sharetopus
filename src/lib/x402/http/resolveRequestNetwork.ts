@@ -1,15 +1,5 @@
 import "server-only";
 
-/**
- * Resolves the network a request pays on (?network, else the default) and
- * the payout address for it. One implementation for every x402 entry point
- * (paid middleware, challenge GETs, /connect), so the unsupported-network
- * and missing-payout rules cannot drift between them.
- *
- * Called by: middleware/x402PaidEndpoint.ts, src/app/api/x402/connect/route.ts
- * Tables touched: none
- */
-
 import { getRecipientAddress } from "@/lib/x402/config";
 import {
   getDefaultNetwork,

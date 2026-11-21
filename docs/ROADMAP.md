@@ -105,7 +105,7 @@ Inngest crons handle cleanup:
 
 ### 10. SSRF Guard (safeUserFetch)
 
-Blocks 14 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved). Rejects non-http(s) schemes, blocks redirects, validates content-type, enforces a stream-based byte counter (Content-Length header untrusted). Rate limited at 10 requests per 60 seconds per principal.
+Blocks 15 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, NAT64, multicast, reserved; IPv4-mapped IPv6 is checked against the IPv4 rules). Rejects non-http(s) schemes, blocks redirects, validates content-type, enforces a stream-based byte counter (Content-Length header untrusted). Rate limited at 10 requests per 60 seconds per principal.
 
 ### 11. Storage Quota Enforcement (enforceStorageQuota)
 
@@ -137,7 +137,7 @@ One tool publishes now or schedules 1 to 30 posts, replacing schedule_post, post
 
 ### 18. Webhook Subsystem
 
-User-created webhook subscriptions with HMAC-SHA256 signing. 5 event types: `post.scheduled`, `post.published`, `post.failed`, `connection.connected`, `connection.expired`. Delivery via the `deliver-webhook` Inngest function with 3 retries and auto-disable after 10 consecutive failures. Delivery log, test endpoint, and replay endpoint. See [docs/WEBHOOKS.md](./WEBHOOKS.md).
+User-created webhook subscriptions with HMAC-SHA256 signing. 5 event types: `post.scheduled`, `post.published`, `post.failed`, `connection.connected`, `connection.expired`. Delivery via the `deliver-webhook` Inngest function with up to 4 attempts (30 s, 2 min and 10 min apart) and auto-disable after 10 failed deliveries in a row. Delivery log, test endpoint, and replay endpoint. See [docs/WEBHOOKS.md](./WEBHOOKS.md).
 
 ### 19. OpenAPI + Scalar Docs + MDX Pages
 
@@ -157,11 +157,11 @@ The MCP route moved to `mcp-handler@2.2.0` and `@modelcontextprotocol/server@2.1
 
 Wallet-based pay-per-call access for AI agents via the x402 protocol. Agents pay USDC per action on Base or Solana. No Stripe subscription, no Clerk session, no website account.
 
-**Status:** Fully implemented. 10 paid action routes under `/api/x402/*`, shared middleware (`x402PaidEndpoint` HOF), 1-step charge lifecycle (settled/refunded/failed), sanctions gating, and automatic refund on DB failure.
+**Status:** Fully implemented. 10 paid action routes under `/api/x402/*`, shared middleware (`x402PaidEndpoint` HOF), charge lifecycle (pending, then settled and refunded, or failed on a definitive settle rejection), sanctions gating, and automatic refund on DB failure.
 
 **Routes:** post-now, schedule, upload-url, reauth, reschedule, cancel, delete, connections, scheduled-posts, history.
 
-**Infrastructure:** `src/lib/x402/middleware/x402PaidEndpoint.ts` (HOF), `src/lib/x402/charges/insertX402Charge.ts`, response builders, wallet storage quota enforcement, 2 cleanup crons (siwe_nonces, x402_access_log).
+**Infrastructure:** `src/lib/x402/middleware/x402PaidEndpoint.ts` (HOF), `src/lib/x402/charges/insertPendingX402Charge.ts`, `chargeLifecycle.ts`, response builders, wallet storage quota enforcement, the `cleanup-x402-access-log` retention cron and the hourly `sweep-x402-reconciliation`.
 
 **Pricing:** Seed SQL at `/x402_pricing_actions_seed.sql`. Ranges from $0.001 (list/cancel/delete) to $1.00 (video post).
 

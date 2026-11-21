@@ -19,17 +19,10 @@ import {
 
 const PostIdSchema = z.guid();
 
-/**
- * GET /v1/posts/[id] -- fetch one post by ID.
- *
- * Principal-scoped. Posts owned by other principals return 404
- * (we do not leak existence of unrelated posts).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.get",
   handler: async (ctx, request) => {
-    // Step 1: extract id from URL path. HOF doesn't parse path params.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 1] ?? "";
 
@@ -43,8 +36,6 @@ export const GET = withRestEndpoint({
     }
     const postId = idParseResult.data;
 
-    // Step 2: fetch row scoped to calling principal. Other users' posts
-    // are filtered out by principal_id, so surface as no row -> 404.
     const { data: postRows, error: rowLookupError } = await runQuery(
       db
         .select()
@@ -89,19 +80,10 @@ export const GET = withRestEndpoint({
   },
 });
 
-/**
- * PATCH /v1/posts/[id] -- reschedule a post.
- *
- * Updates scheduled_at via updateScheduledTimeBatch, which checks
- * ownership and status and resumes cancelled posts (matches MCP behavior).
- * Only a scheduled or cancelled post can move; every other status answers
- * 409 conflict, and another principal's post answers 404 like a missing one.
- */
 export const PATCH = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.patch",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate post ID from URL path.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 1] ?? "";
 
@@ -115,7 +97,6 @@ export const PATCH = withRestEndpoint({
     }
     const postId = idParseResult.data;
 
-    // Step 2: parse and validate request body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -138,7 +119,6 @@ export const PATCH = withRestEndpoint({
     }
     const validatedPatchInput = bodyParseResult.data;
 
-    // Step 3: reschedule. A refusal maps to the status the caller can act on.
     const rescheduleResult = await updateScheduledTimeBatch(
       [postId],
       validatedPatchInput.scheduled_at,
@@ -150,7 +130,6 @@ export const PATCH = withRestEndpoint({
       return restPostBatchFailureResponse(rescheduleResult, ctx.requestId);
     }
 
-    // Step 4: fetch updated row for response DTO.
     const { data: updatedRows, error: fetchError } = await runQuery(
       db
         .select()
@@ -186,23 +165,10 @@ export const PATCH = withRestEndpoint({
   },
 });
 
-/**
- * DELETE /v1/posts/[id] -- cancel or hard-delete a post.
- *
- * Default (no query): soft-cancel via cancelScheduledPostBatch.
- * ?hard=true: permanent delete via deleteScheduledPostBatch (includes
- * media cleanup).
- *
- * 200 means the change happened; it carries the action and the batch
- * counts. Only a scheduled post can be cancelled; every other status
- * answers 409 conflict. A hard value other than true or false answers 400 instead
- * of falling back to a cancel.
- */
 export const DELETE = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.delete",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate post ID from URL path.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 1] ?? "";
 
@@ -216,8 +182,6 @@ export const DELETE = withRestEndpoint({
     }
     const postId = idParseResult.data;
 
-    // Step 2: parse the hard-delete flag. An unknown value is refused: a
-    // fallback to cancel would do something the caller did not ask for.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -233,8 +197,6 @@ export const DELETE = withRestEndpoint({
     const isHardDelete = queryParseResult.data.hard;
     const action = isHardDelete ? "deleted" : "cancelled";
 
-    // Step 3: delete or cancel. The batch function checks ownership and
-    // status; a refusal maps to the status the caller can act on.
     const changeResult = isHardDelete
       ? await deleteScheduledPostBatch(
           [postId],

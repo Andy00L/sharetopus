@@ -1,12 +1,5 @@
 import { RefreshPageButton } from "@/components/RefreshPageButton";
 
-/**
- * What a page renders when data it needs could not be read on our side.
- * The retry re-renders the page's server components, so the URL and its
- * query survive.
- *
- * Used by: InactiveSubscriptionNotice (plan check failed), AccountsLoadError
- */
 export function LoadFailedNotice({
   title,
   description,

@@ -16,31 +16,14 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/upload-url
- *
- * Pays the upload_url action (price per pricing_actions). Mints a signed
- * Supabase Storage upload URL.
- * Steps:
- * 1. Parse body (filename, content_type, size_bytes).
- * 2. Before settlement, check the content type, the per-file size cap and
- *    the wallet storage quota; a failure here costs nothing.
- * 3. x402 middleware handles payment and the charge.
- * 4. Mint the signed upload URL via generateServerSignedUploadUrl.
- *
- * The quota is checked against the declared size_bytes: a signed upload URL
- * cannot bind the size, so one upload can overshoot the cap by one file, up
- * to the storage bucket's own file size limit. The next request counts the
- * real stored bytes.
- */
-
-/** x402 wallets have no plan tier; they get the default upload limits. */
 const WALLET_UPLOAD_TIER = null;
+
+const MAX_UPLOAD_SIZE_BYTES = 250 * 1024 * 1024;
 
 const UploadUrlBodySchema = z.object({
   filename: z.string().min(1).max(255),
   content_type: z.string().min(1).max(255),
-  size_bytes: z.number().int().positive().max(250 * 1024 * 1024), // 250 MB max
+  size_bytes: z.number().int().positive().max(MAX_UPLOAD_SIZE_BYTES),
 });
 
 type UploadUrlBody = z.infer<typeof UploadUrlBodySchema>;
@@ -50,8 +33,6 @@ type UploadUrlResult = {
   path: string;
 };
 
-// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
-// the 402 challenge).
 export const GET = x402ChallengeGet({
   endpointPath: "/api/x402/upload-url",
   action: "upload_url",
@@ -113,8 +94,6 @@ export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
   },
 
   handler: async ({ body, principal }) => {
-    // Re-checked after settlement: a concurrent upload can have used the
-    // remaining quota since the precheck.
     const quotaResult = await enforceWalletStorageQuota(
       principal.principalId,
       body.size_bytes,
@@ -124,11 +103,9 @@ export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
         success: false,
         errorKind: "quota_exceeded",
         message: quotaResult.message,
-        refundable: true,
       };
     }
 
-    // The wallet quota above replaces the plan-tier storage check.
     const uploadResult = await generateServerSignedUploadUrl({
       principalId: principal.principalId,
       tier: WALLET_UPLOAD_TIER,
@@ -143,7 +120,6 @@ export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
         success: false,
         errorKind: "upload_url_mint_failed",
         message: uploadResult.message,
-        refundable: true,
       };
     }
 

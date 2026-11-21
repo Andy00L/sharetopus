@@ -1,9 +1,10 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
   ProviderToolInput,
@@ -11,16 +12,25 @@ import type {
 } from "./types";
 import { toJsonObject } from "@/lib/utils/jsonObject";
 
-import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
+import {
+  parseJsonObject,
+  providerFetch,
+  type ProviderFetchFailure,
+} from "./_shared/providerFetch";
+import { BYTES_PER_MB, readStoredMediaBytes } from "./_shared/fetchStoredMedia";
+import { joinTitleAndBody } from "./_shared/postText";
+import {
+  classifyHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 /**
- * Telegram provider. Posts to a channel or group through a bot the user
- * creates with @BotFather, so nothing needs registering on our side and the
- * connection works the moment the token is pasted.
- *
- * The bot token IS the credential and never expires, which is why this
- * provider declares no refresh. It is stored in access_token and appears in
- * the request path, so it must never reach a log line.
+ * core.telegram.org/bots/features (BotFather): the token "is required to
+ * authorize the bot and send requests to the Bot API", and a new one comes
+ * only from BotFather's /token command. The Bot API has no refresh method,
+ * so this provider declares none.
  *
  * sourceRef: core.telegram.org/bots/api (getMe, getChat, sendMessage,
  * sendPhoto, sendVideo).
@@ -32,15 +42,24 @@ const TELEGRAM_TIMEOUT_MS = 20_000;
 /** Telegram caption limit on media messages, shorter than sendMessage. */
 const TELEGRAM_CAPTION_MAX_CHARS = 1024;
 
+// core.telegram.org/bots/api (Sending files) by HTTP URL: "5 MB max size for
+// photos and 20 MB max for other types of content".
+const TELEGRAM_URL_PHOTO_MAX_MB = 5;
+const TELEGRAM_URL_VIDEO_MAX_MB = 20;
+
 /**
  * Calls one Bot API method. The token sits in the path, so failures are
  * reported by method name only, never by URL.
  */
+type BotApiFailure =
+  | { ok: false; kind: "fetch"; message: string; fetchFailure: ProviderFetchFailure }
+  | { ok: false; kind: "answer"; message: string; httpStatus: number; bodyText: string };
+
 async function callBotApi(
   botToken: string,
   method: string,
   payload: Record<string, unknown>,
-): Promise<{ ok: true; result: unknown } | { ok: false; message: string }> {
+): Promise<{ ok: true; result: unknown } | BotApiFailure> {
   const callResult = await providerFetch(
     `${TELEGRAM_API_ORIGIN}/bot${botToken}/${method}`,
     {
@@ -52,12 +71,23 @@ async function callBotApi(
   );
 
   if (!callResult.ok) {
-    return { ok: false, message: `Telegram ${method} failed: ${callResult.message}` };
+    return {
+      ok: false,
+      kind: "fetch",
+      message: `Telegram ${method} failed: ${callResult.message}`,
+      fetchFailure: callResult,
+    };
   }
 
   const envelope = parseJsonObject(callResult.bodyText);
   if (!envelope) {
-    return { ok: false, message: `Telegram ${method} returned no JSON.` };
+    return {
+      ok: false,
+      kind: "answer",
+      message: `Telegram ${method} returned no JSON.`,
+      httpStatus: callResult.status,
+      bodyText: callResult.bodyText,
+    };
   }
 
   if (envelope.ok !== true) {
@@ -67,19 +97,22 @@ async function callBotApi(
       typeof envelope.description === "string"
         ? envelope.description
         : `HTTP ${callResult.status}`;
-    return { ok: false, message: `Telegram ${method} failed: ${description}` };
+    return {
+      ok: false,
+      kind: "answer",
+      message: `Telegram ${method} failed: ${description}`,
+      httpStatus:
+        typeof envelope.error_code === "number" ? envelope.error_code : callResult.status,
+      bodyText: callResult.bodyText,
+    };
   }
 
   return { ok: true, result: envelope.result };
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Telegram connects with a bot token." };
-  }
-
   const botToken = (input.values.botToken ?? "").trim();
   const chatId = (input.values.chatId ?? "").trim();
 
@@ -98,9 +131,6 @@ async function connect(
     return { ok: false, message: "Telegram getMe returned no bot id." };
   }
 
-  // Confirm the bot can actually see the target chat now, rather than
-  // letting the first scheduled post be the thing that discovers the bot
-  // was never added as an administrator.
   const chatResult = await callBotApi(botToken, "getChat", { chat_id: chatId });
   if (!chatResult.ok) {
     return {
@@ -119,8 +149,6 @@ async function connect(
     refreshToken: null,
     expiresIn: null,
     identity: {
-      // The chat is the posting target, so it is the account identity;
-      // one bot can serve several channels as separate connections.
       accountIdentifier: chatId,
       displayName: chatTitle,
       username:
@@ -139,21 +167,30 @@ async function publish(
       ? input.config.chatId
       : input.accountIdentifier;
 
-  const messageText = buildMessageText(input);
+  const messageText = joinTitleAndBody(input);
 
-  if (input.mediaType === "text" || !input.mediaUrl) {
+  if (input.postType === "text" || !input.mediaUrl) {
     const sendResult = await callBotApi(input.accessToken, "sendMessage", {
       chat_id: chatId,
       text: messageText,
     });
-    if (!sendResult.ok) return { ok: false, message: sendResult.message };
+    if (!sendResult.ok) return failBotApiPublish(sendResult);
     return buildPublishResult(sendResult.result, chatId);
   }
 
   // Telegram fetches the media itself from the URL we pass, so no upload
   // step is needed. Captions are capped shorter than plain messages.
   const caption = messageText.slice(0, TELEGRAM_CAPTION_MAX_CHARS);
-  const isVideo = input.mediaType === "video";
+  const isVideo = input.postType === "video";
+  const mediaSize = await readStoredMediaBytes(input.mediaUrl);
+  if (!mediaSize.ok) return mediaSize;
+  const maxMb = isVideo ? TELEGRAM_URL_VIDEO_MAX_MB : TELEGRAM_URL_PHOTO_MAX_MB;
+  if (mediaSize.declaredBytes !== null && mediaSize.declaredBytes > maxMb * BYTES_PER_MB) {
+    const mediaMb = (mediaSize.declaredBytes / BYTES_PER_MB).toFixed(1);
+    return refusePublish(
+      `Telegram accepts ${isVideo ? "videos" : "photos"} sent by link up to ${maxMb} MB; this file is ${mediaMb} MB.`,
+    );
+  }
   const sendResult = await callBotApi(
     input.accessToken,
     isVideo ? "sendVideo" : "sendPhoto",
@@ -164,8 +201,31 @@ async function publish(
     },
   );
 
-  if (!sendResult.ok) return { ok: false, message: sendResult.message };
+  if (!sendResult.ok) return failBotApiPublish(sendResult);
   return buildPublishResult(sendResult.result, chatId);
+}
+
+function failBotApiPublish(callFailure: BotApiFailure): ProviderPublishFailure {
+  if (callFailure.kind === "fetch") {
+    return {
+      ...failProviderFetch({
+        platform: "telegram",
+        stage: "publish",
+        fetchFailure: callFailure.fetchFailure,
+      }),
+      message: callFailure.message,
+    };
+  }
+  return {
+    ok: false,
+    message: callFailure.message,
+    failure: classifyHttpAnswer({
+      platform: "telegram",
+      stage: "publish",
+      httpStatus: callFailure.httpStatus,
+      bodyText: callFailure.bodyText,
+    }),
+  };
 }
 
 function buildPublishResult(
@@ -179,25 +239,17 @@ function buildPublishResult(
       : null;
 
   if (!messageId) {
-    return { ok: false, message: "Telegram returned no message id." };
+    return failUnreadableAnswer({
+      message: "Telegram returned no message id.",
+      stage: "publish",
+    });
   }
 
-  // Public channels have a t.me permalink; numeric chat IDs (private
-  // groups) have none, so the URL is null rather than a broken guess.
   const postUrl = chatId.startsWith("@")
     ? `https://t.me/${chatId.slice(1)}/${messageId}`
     : null;
 
   return { ok: true, postId: messageId, postUrl };
-}
-
-/** Telegram has no title field, so a title becomes the first line. */
-function buildMessageText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
 }
 
 async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
@@ -236,8 +288,9 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   };
 }
 
-export const telegramBehavior: ProviderBehavior = {
+export const telegramBehavior = {
+  authKind: "credentials",
   connect,
   publish,
   runTool,
-};
+} satisfies ProviderBehavior;

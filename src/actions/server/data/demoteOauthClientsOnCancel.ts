@@ -9,14 +9,6 @@ export type DemoteResult =
   | { success: true; demoted: number }
   | { success: false; message: string };
 
-/**
- * Demotes all verified OAuth clients registered by a user to unverified.
- * Called when the user's Stripe subscription is cancelled.
- *
- * The trust drop is permanent: on resubscribe, clients stay unverified
- * until manually promoted OR until they register fresh clients that hit
- * the auto-verify rule.
- */
 export async function demoteOauthClientsOnCancel(
   principalId: string
 ): Promise<DemoteResult> {

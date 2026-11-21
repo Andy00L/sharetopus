@@ -18,7 +18,6 @@ export const metadata: Metadata = {
   description: `Connect Claude Desktop, Cursor, or any MCP client to Sharetopus: ${MCP_TOOL_NAMES.length} tools for posting, scheduling, media, and analytics.`,
 };
 
-/** Public MCP reference, fully static; rows come from mcpCatalog.ts, shared with /docs/mcp.md. */
 export default function McpReferencePage() {
   return (
     <ReferencePageShell
@@ -41,7 +40,7 @@ export default function McpReferencePage() {
               streamable http
             </span>
           </div>
-          <Callout tone="blue">{MCP_OVERVIEW.planNote}</Callout>
+          <Callout tone="note" className="mt-4">{MCP_OVERVIEW.planNote}</Callout>
         </>
       }
     >

@@ -3,6 +3,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { X402_FACILITATOR_SUPPORTED_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   buildSupportedResponse,
   resolveFacilitatedNetwork,
@@ -12,26 +13,15 @@ import {
   describeRateLimitRejection,
 } from "@/lib/x402/http/rateLimitRejection";
 
-/**
- * GET /api/x402/facilitator/supported
- *
- * What this facilitator will verify and settle: the exact scheme on Arc
- * mainnet, plus the address that broadcasts settlements. Open, because it
- * only reads configuration.
- *
- * Logic lives in src/lib/x402/arc/facilitatorApi.ts.
- */
-
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
 export async function GET(): Promise<NextResponse> {
-  const rateLimitResult = await checkRateLimit(
-    "x402_facilitator_supported",
-    null,
-    60,
-    60,
-  );
+  const rateLimitResult = await checkRateLimit({
+    operation: "x402_facilitator_supported",
+    identifier: null,
+    rule: X402_FACILITATOR_SUPPORTED_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     return buildRateLimitJsonResponse(describeRateLimitRejection(rateLimitResult));
   }

@@ -2,106 +2,59 @@ import "server-only";
 
 import { and, eq, isNotNull } from "drizzle-orm";
 
-import { bumpPastScheduleToFuture } from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
+import {
+  buildResumeSchedule,
+  countBumpedRows,
+} from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
 
 export type ResumeResult =
   | { success: true; resumed: number; bumped: number }
   | { success: false; message: string };
 
-/**
- * Restores all of a user's system-cancelled posts (those tagged with
- * `cancelled_by_sub_at IS NOT NULL`) back to `status='scheduled'`.
- *
- * Posts whose `scheduled_at` has elapsed during the cancellation period
- * are bumped to `now() + 1 hour` via bumpPastScheduleToFuture. The
- * `bumped` count in the result reflects how many were rescheduled vs.
- * kept at their original time.
- *
- * `cancelled_by_sub_at` is cleared on resumption so the row is no longer
- * targeted by the 7-day cleanup cron.
- *
- * Manual user cancellations (`cancelled_by_sub_at IS NULL`) are NEVER
- * touched by this helper.
- *
- * Idempotent: re-running yields zero changes because the WHERE clause
- * requires `cancelled_by_sub_at IS NOT NULL`. A post that fails to resume
- * fails the whole call, so the Stripe webhook answers 500 and its retry
- * resumes whatever is still tagged.
- */
 export async function resumeCancelledPostsOnResubscribe(
   principalId: string,
 ): Promise<ResumeResult> {
   try {
-    const { data: candidates, error: fetchErr } = await runQuery(
+    const resumeSchedule = buildResumeSchedule(new Date());
+    const { data: resumedRows, error: updateErr } = await runQuery(
       db
-        .select({
-          id: scheduled_posts.id,
-          scheduled_at: scheduled_posts.scheduled_at,
+        .update(scheduled_posts)
+        .set({
+          status: "scheduled",
+          scheduled_at: resumeSchedule.scheduledAt,
+          cancelled_by_sub_at: null,
         })
-        .from(scheduled_posts)
         .where(
           and(
             eq(scheduled_posts.principal_id, principalId),
             eq(scheduled_posts.status, "cancelled"),
             isNotNull(scheduled_posts.cancelled_by_sub_at),
           ),
-        ),
+        )
+        .returning(POST_DUE_TARGET_COLUMNS),
     );
 
-    if (fetchErr) {
+    if (updateErr) {
       return {
         success: false,
-        message: `[resumeCancelledPostsOnResubscribe] Fetch failed: ${fetchErr.message}`,
+        message: `[resumeCancelledPostsOnResubscribe] Resume failed: ${updateErr.message}`,
       };
     }
 
-    if (candidates.length === 0) {
-      return { success: true, resumed: 0, bumped: 0 };
-    }
+    await sendPostDueEvents(resumedRows);
 
-    let bumped = 0;
-    let resumed = 0;
-    let failedToResume = 0;
-
-    for (const row of candidates) {
-      const original = new Date(row.scheduled_at);
-      const newTime = bumpPastScheduleToFuture(original);
-      const wasBumped = newTime.getTime() !== original.getTime();
-
-      const { error: updateErr } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({
-            status: "scheduled",
-            scheduled_at: newTime.toISOString(),
-            cancelled_by_sub_at: null,
-          })
-          .where(eq(scheduled_posts.id, row.id)),
-      );
-
-      if (updateErr) {
-        console.error(
-          `[resumeCancelledPostsOnResubscribe] Failed to resume ${row.id}: ${updateErr.message}`,
-        );
-        failedToResume += 1;
-        continue;
-      }
-      resumed += 1;
-      if (wasBumped) bumped += 1;
-    }
-
+    const resumed = resumedRows.length;
+    const bumped = countBumpedRows(resumedRows, resumeSchedule.bumpedAtIso);
     if (resumed > 0) {
       console.log(
         `[resumeCancelledPostsOnResubscribe] Resumed ${resumed} posts for ${principalId} (${bumped} bumped to future)`,
       );
-    }
-    if (failedToResume > 0) {
-      return {
-        success: false,
-        message: `[resumeCancelledPostsOnResubscribe] ${failedToResume} of ${candidates.length} posts could not be resumed`,
-      };
     }
     return { success: true, resumed, bumped };
   } catch (err) {

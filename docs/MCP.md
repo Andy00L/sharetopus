@@ -168,7 +168,7 @@ Every tool handler is wrapped by `withMcpTool`, a higher-order function that cen
 5. **On deny:** emit audit row with status `denied` or `quota_exceeded`, return error to agent
 6. **On allow:** call the inner handler
 7. **On success or handler-returned isError:** emit audit row. Handler may override the result status via `auditStatus` (e.g., `rate_limited`) and the args via `auditArgs`
-8. **On thrown error:** emit an `error` audit row with the default audit args, then re-throw so the SDK surfaces a JSON-RPC error
+8. **On thrown error:** log the exception with the `[withMcpTool]` prefix, emit an `error` audit row with the default audit args, and return a generic tool error (`isError: true`, "<tool> failed with an internal error. Retry, or contact support if it persists."). The wrapper does not re-throw: the SDK's `tools/call` handler catches a throw and returns the raw exception message as the tool result, not a JSON-RPC error.
 
 ### McpToolContext
 
@@ -272,7 +272,7 @@ Registry options, shared with the REST post body (`src/lib/platforms/postTargetO
 
 Before anything is scheduled or dispatched, `publish_posts` rejects a post whose account is unknown, a post type the platform does not take (catalog `supportedMediaTypes`), a missing `title` on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble (catalog `titleRequired`), a missing required option above, and a Pinterest post without `pinterest_board_id`. A rejected post lands in `rejected` with its reason; the other posts of the call still go out.
 
-TikTok posts made through MCP are always public (`PUBLIC_TO_EVERYONE`, `src/lib/platforms/tikTokPrivacy.ts`); there is no privacy argument.
+TikTok posts made through MCP are always public (`PUBLIC_TO_EVERYONE`, `src/lib/api/tiktok/post/tikTokPrivacy.ts`); there is no privacy argument.
 
 ---
 
@@ -303,7 +303,7 @@ bookmark           string  optional
   Cursor from the previous page
 ```
 
-**Returns:** `{ boards: [{ id, name, description, privacy, pin_count }], bookmark }`. An expired Pinterest token returns a tool error that points at the reconnect URL.
+**Returns:** `{ boards: [{ id, name, description, privacy, pin_count }], bookmark }`. An expired Pinterest token returns a tool error that points at the reconnect URL. A token that cannot be refreshed right now returns a tool error that asks to retry.
 
 ---
 
@@ -390,7 +390,7 @@ A signed URL to upload a local file. PUT the bytes to `upload_url` with the file
 filename      string (min 1 char)  required
   With extension (e.g. photo.jpg, clip.mp4)
 content_type  string (min 1 char)  required
-  image/jpeg, image/png, video/mp4, video/mov, video/quicktime
+  image/jpeg, image/png, video/mp4, video/quicktime (video/mov is accepted as an alias)
 size_bytes    number (positive integer)  required
 ```
 
@@ -462,7 +462,7 @@ scheduled_at  string (ISO 8601 with a zone)  required for reschedule
 
 ### delete_scheduled_posts
 
-Permanently delete 1 to 50 scheduled posts. Cannot be undone; to stop a post and keep it, use `update_scheduled_posts` with `action: "cancel"`. Media files no other post uses are removed from Supabase Storage.
+Permanently delete 1 to 50 scheduled posts. Cannot be undone; to stop a post and keep it, use `update_scheduled_posts` with `action: "cancel"`. Media files no other post uses are removed from Supabase Storage. A post that is publishing now cannot be deleted; the tool answers an error and the call can be retried in a minute.
 
 **Parameters:**
 ```
@@ -607,7 +607,7 @@ sequenceDiagram
 | With `scheduled_at` | `scheduled_posts` | UNIQUE on `(principal_id, idempotency_key)` |
 | Without `scheduled_at` | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
 
-A key that already exists is counted in `duplicates` instead of being inserted or dispatched again. Without a `batch_id` the server generates one and sets no keys, so a blind retry posts twice. See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
+A key that already exists is counted in `duplicates` instead of being inserted or dispatched again. Without a `batch_id` the server generates one and sets no keys, so a blind retry posts twice. MCP calls are not paid per call, so they take no Redis key reservation; the x402 post-now and schedule routes do, before payment ([docs/BILLING.md](./BILLING.md#refund-policy)). See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
 
 ---
 
@@ -682,7 +682,7 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 - **Stateless only.** Neither protocol era keeps sessions, and no `subscriptions/listen` streams are served (`maxSubscriptions: 0`, `listChanged: false`: tools and prompts never change at runtime, and on Vercel each stream would hold a function open). Session IDs in the audit log are per-request UUIDs.
 - **TikTok posts are async.** After `publish_posts` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
-- **REST equivalent.** `POST /api/v1/posts/bulk` schedules up to 30 posts through the same `schedulePostBatch`. See [docs/REST.md](./REST.md).
+- **REST equivalent.** `POST /api/v1/posts/bulk` schedules up to 30 posts through the same `schedulePostBatch`, and `POST /api/v1/posts` without `scheduled_at` publishes one post now through the same `directPostBatch` and answers 202 with its `dispatch_id`. See [docs/REST.md](./REST.md).
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
 - **Zod 4 only.** The v2 SDK converts tool schemas to JSON Schema with Zod 4.2 or later. Tool ids use `z.guid()`, as in the REST API, because Zod 4's strict UUID check rejects some Supabase-generated ids.
 

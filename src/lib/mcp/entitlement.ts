@@ -9,7 +9,6 @@ import { type PlanTier, tierLabel, tierMeets } from "@/lib/types/plans";
 import type { McpPrincipal } from "./auth/types";
 import type { McpToolName } from "./toolNames";
 
-/** Allow, or deny with the message the agent sees. */
 export type EntitlementResult =
   | { mode: "allow" }
   | { mode: "deny"; reason: EntitlementDenyReason; detail: string };
@@ -21,7 +20,6 @@ type EntitlementDenyReason =
   | "platform_quota"
   | "infra_error";
 
-/** Minimum plan per tool. MCP is a Creator feature, so every tool asks for Creator today. */
 const ACTION_PLAN_GATE: Record<McpToolName, PlanTier> = {
   list_connections:       "creator",
   list_pinterest_boards:  "creator",
@@ -35,24 +33,18 @@ const ACTION_PLAN_GATE: Record<McpToolName, PlanTier> = {
   delete_scheduled_posts: "creator",
 };
 
-/**
- * Monthly call caps per tool and tier: a number caps it, 0 removes the tool
- * from the tier, null is unlimited. Tools without an entry are uncapped.
- */
 const MONTHLY_CAPS: Partial<Record<McpToolName, Record<PlanTier, number | null>>> = {
   publish_posts:         { starter: 0, creator: 500, pro: null },
   request_upload_url:    { starter: 0, creator: 500, pro: null },
   attach_media_from_url: { starter: 0, creator: 500, pro: null },
 };
 
-/** The monthly cap of every capped tool on a plan, for list_billing_summary. */
 export function monthlyCapsForPlan(plan: PlanTier): Record<string, number | null> {
   return Object.fromEntries(
     Object.entries(MONTHLY_CAPS).map(([toolName, capsByTier]) => [toolName, capsByTier[plan]]),
   );
 }
 
-/** Plan gate, then the atomic monthly quota increment. Runs before every tool call. */
 export async function entitlementFor(
   principal: McpPrincipal,
   action: McpToolName,
@@ -124,11 +116,6 @@ async function checkAndIncrementQuota(
   };
 }
 
-/**
- * atomic_increment_quota checks and increments in one statement, so two calls
- * at cap - 1 give one allow and one deny. It returns null when the cap is
- * already reached. A failed call fails closed: the caps bound paid usage.
- */
 async function incrementQuota(
   principalId: string,
   action: McpToolName,

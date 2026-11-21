@@ -1,4 +1,3 @@
-// components/core/scheduled/BatchDetailDialog.tsx
 "use client";
 
 import { format } from "date-fns";
@@ -33,6 +32,7 @@ import { deleteScheduledPostBatchAction } from "@/actions/server/scheduleActions
 import { updateScheduledTimeBatchAction } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatchAction";
 import { resumeScheduledPostBatchAction } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatchAction";
 import { ScheduledPostListItem } from "@/lib/types/dbTypes";
+import { isEligibleForPostChange } from "@/lib/types/postBatch";
 import PlatformContentDropdown from "./PlatformContentDropdown/PlatformContentDropdown";
 
 interface BatchDetailDialogProps {
@@ -42,13 +42,6 @@ interface BatchDetailDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
-/**
- * The detail dialog for one scheduled batch: per-platform content list plus
- * the Reschedule / Cancel / Resume / Delete actions. Extracted from
- * BatchedPostCard so the calendar chips and the list cards share one
- * implementation. When rendering it for changing batches, key it by
- * batch id so the reschedule inputs reset per batch.
- */
 export default function BatchDetailDialog({
   posts,
   userId,
@@ -61,27 +54,23 @@ export default function BatchDetailDialog({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [rescheduleOpen, setRescheduleOpen] = useState(false);
 
-  // Use the first post for main display info
   const firstPost = posts[0];
   const scheduledDate = new Date(firstPost.scheduled_at);
   const formattedDate = format(scheduledDate, "MMM d, yyyy 'at' h:mm a");
 
-  // Check permissions for actions
-  const canCancel = posts.some((post) => post.status === "scheduled");
-  const canResume = posts.some((post) => post.status === "cancelled");
-  const canReschedule = canCancel || canResume;
+  const canCancel = posts.some((post) => isEligibleForPostChange("cancel", post.status));
+  const canResume = posts.some((post) => isEligibleForPostChange("resume", post.status));
+  const canReschedule = posts.some((post) => isEligibleForPostChange("reschedule", post.status));
 
-  const [rescheduleDate, setRescheduleDate] = useState<string>(
-    format(new Date(firstPost.scheduled_at), "yyyy-MM-dd"),
-  );
-  const [rescheduleTime, setRescheduleTime] = useState<string>(
-    format(new Date(firstPost.scheduled_at), "HH:mm"),
-  );
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState("");
 
-  /**
-   * Close handler shared by every path out of the main dialog: resets the
-   * transient sub-state in the same event instead of an effect.
-   */
+  function openRescheduleForm() {
+    setRescheduleDate(format(scheduledDate, "yyyy-MM-dd"));
+    setRescheduleTime(format(scheduledDate, "HH:mm"));
+    setRescheduleOpen(true);
+  }
+
   function handleMainOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
       setLoading(false);
@@ -90,7 +79,6 @@ export default function BatchDetailDialog({
     onOpenChange(nextOpen);
   }
 
-  // Actions
   const runAction = async (
     fn: () => Promise<{ success: boolean; message: string; resetIn?: number }>,
   ) => {
@@ -102,7 +90,6 @@ export default function BatchDetailDialog({
         toast.success(res.message);
         router.refresh();
       } else if (res.resetIn) {
-        // Special handling for rate limits
         toast.error(
           `${res.message} Please try again in ${res.resetIn} seconds.`,
         );
@@ -116,7 +103,6 @@ export default function BatchDetailDialog({
     }
   };
 
-  // Reschedule handler
   const handleRescheduleSubmit = async () => {
     if (!userId) {
       toast.error("You need to be signed in to reschedule posts.");
@@ -163,10 +149,8 @@ export default function BatchDetailDialog({
     await runAction(doReschedule);
   };
 
-  // Cancel all posts in batch
   const cancelAllPosts = async () => {
     try {
-      // Use the batch function instead of multiple API calls
       const scheduledPostIds = posts
         .filter((post) => post.status === "scheduled")
         .map((post) => post.id);
@@ -209,7 +193,6 @@ export default function BatchDetailDialog({
     }
   };
 
-  // Delete all posts in batch
   const deleteAllPosts = async () => {
     try {
       const postIds = posts.map((post) => post.id);
@@ -230,7 +213,6 @@ export default function BatchDetailDialog({
     }
   };
 
-  // Resume all posts in batch
   const resumeAllPosts = async () => {
     try {
       const cancelledPostIds = posts
@@ -278,7 +260,6 @@ export default function BatchDetailDialog({
 
   return (
     <>
-      {/* Detail Dialog */}
       <AlertDialog open={open} onOpenChange={handleMainOpenChange}>
         <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
           <AlertDialogHeader className="flex-shrink-0">
@@ -370,7 +351,7 @@ export default function BatchDetailDialog({
                       variant="outline"
                       className="cursor-pointer"
                       aria-label="Reschedule"
-                      onClick={() => setRescheduleOpen(true)}
+                      onClick={openRescheduleForm}
                     >
                       <CalendarIcon className="h-4 w-4 mr-1" />
                       Reschedule
@@ -429,7 +410,6 @@ export default function BatchDetailDialog({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Cancel Dialog */}
       <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -453,7 +433,6 @@ export default function BatchDetailDialog({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete Dialog */}
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

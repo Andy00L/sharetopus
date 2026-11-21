@@ -66,7 +66,7 @@ export function encryptToken(plaintext: string): string {
 
 /**
  * Decrypts a stored token. A value without the prefix was written before
- * encryption shipped and is returned unchanged; the encrypt-social-tokens
+ * encryption shipped and is returned unchanged; the encrypt-plaintext-secrets
  * cron rewrites those rows.
  */
 export function decryptToken(storedValue: string): string {

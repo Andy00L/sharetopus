@@ -3,12 +3,6 @@ import type { AnalyticsDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
 type AnalyticsMetricsRow = typeof analytics_metrics.$inferSelect;
 
-/**
- * Public DTO for an analytics metrics row; its shape is AnalyticsDTOSchema
- * (responseSchemas.ts), the same schema the OpenAPI spec renders. Excludes
- * internal `extra` jsonb and `updated_at`. Explicit field-by-field copy
- * prevents new columns from auto-leaking.
- */
 export function toAnalyticsDTO(row: AnalyticsMetricsRow): AnalyticsDTO {
   return {
     id: row.id,

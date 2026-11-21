@@ -2,18 +2,18 @@
 
 import { Button } from "@/components/ui/button";
 import { popupCallbackNames } from "@/lib/api/oauth/web/popupCallbackNames";
-import { PLATFORM_LABELS, type PostingPlatform } from "@/lib/platforms/capabilities";
+import { PLATFORM_LABELS, type AdapterPlatform } from "@/lib/platforms/capabilities";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import ConnectionLimitModal from "./ConnectionLimitModal";
 
 const POPUP_WIDTH_PX = 600;
 const POPUP_HEIGHT_PX = 700;
-/** Whole-flow inactivity timeout (10 minutes). */
 const AUTH_FLOW_TIMEOUT_MS = 600_000;
 const POPUP_POLL_INTERVAL_MS = 1_000;
+const INITIATE_REQUEST_TIMEOUT_MS = 15_000;
 
 declare global {
   interface Window {
@@ -25,13 +25,12 @@ declare global {
 }
 
 interface ConnectPlatformButtonProps {
-  readonly platform: PostingPlatform;
+  readonly platform: AdapterPlatform;
   readonly canConnect: boolean;
   readonly currentCount: number;
   readonly maxAllowed: number;
 }
 
-/** Opens the platform's OAuth popup, or the limit modal when the plan is full. */
 export default function ConnectPlatformButton({
   platform,
   canConnect,
@@ -47,7 +46,7 @@ export default function ConnectPlatformButton({
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const stopWatchingPopup = () => {
+  const stopWatchingPopup = useCallback(() => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
@@ -56,15 +55,40 @@ export default function ConnectPlatformButton({
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-  };
+  }, []);
 
-  const cleanupAuthFlow = () => {
+  const cleanupAuthFlow = useCallback(() => {
     stopWatchingPopup();
     if (popupRef.current && !popupRef.current.closed) {
       popupRef.current.close();
     }
     popupRef.current = null;
+    const callbackNames = popupCallbackNames(platform);
+    window[callbackNames.success] = undefined;
+    window[callbackNames.failure] = undefined;
     setIsConnecting(false);
+  }, [platform, stopWatchingPopup]);
+
+  const cleanupAuthFlowOnUnmount = useCallback(
+    (connectButton: HTMLButtonElement | null) => {
+      if (!connectButton) return;
+      return cleanupAuthFlow;
+    },
+    [cleanupAuthFlow],
+  );
+
+  const registerPopupCallbacks = () => {
+    const callbackNames = popupCallbackNames(platform);
+    window[callbackNames.success] = () => {
+      toast.success(`${platformLabel} account connected successfully!`);
+      cleanupAuthFlow();
+      router.refresh();
+    };
+    window[callbackNames.failure] = (error) => {
+      console.error(`[ConnectPlatformButton] ${platform} connection failed:`, error);
+      toast.error(`Failed to connect the ${platformLabel} account`);
+      cleanupAuthFlow();
+    };
   };
 
   const watchPopupUntilClosedOrTimedOut = () => {
@@ -82,40 +106,14 @@ export default function ConnectPlatformButton({
     }, AUTH_FLOW_TIMEOUT_MS);
   };
 
-  const handlePopupSuccess = useEffectEvent(() => {
-    toast.success(`${platformLabel} account connected successfully!`);
-    cleanupAuthFlow();
-    router.refresh();
-  });
-
-  const handlePopupFailure = useEffectEvent((error?: string) => {
-    console.error(`[ConnectPlatformButton] ${platform} connection failed:`, error);
-    toast.error(`Failed to connect the ${platformLabel} account`);
-    cleanupAuthFlow();
-  });
-
-  const cleanupOnUnmount = useEffectEvent(() => cleanupAuthFlow());
-
-  // The OAuth popup reports back through window.opener globals, which React does not own.
-  useEffect(() => {
-    const callbackNames = popupCallbackNames(platform);
-    window[callbackNames.success] = () => handlePopupSuccess();
-    window[callbackNames.failure] = (error) => handlePopupFailure(error);
-
-    return () => {
-      window[callbackNames.success] = undefined;
-      window[callbackNames.failure] = undefined;
-      cleanupOnUnmount();
-    };
-  }, [platform]);
-
   const openConnectPopup = async () => {
     if (isConnecting) return;
 
     try {
       setIsConnecting(true);
 
-      // Open the popup inside the click so the browser does not block it, then navigate it.
+      // Popup blockers allow window.open only during transient user activation, which can expire
+      // before the fetch below returns (MDN: Glossary/Transient_activation), so open blank now.
       const popupLeft = window.screen.width / 2 - POPUP_WIDTH_PX / 2;
       const popupTop = window.screen.height / 2 - POPUP_HEIGHT_PX / 2;
       const popup = window.open(
@@ -134,6 +132,7 @@ export default function ConnectPlatformButton({
       const response = await fetch(`/api/social/${platform}/initiate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(INITIATE_REQUEST_TIMEOUT_MS),
       });
       const data = await response.json();
 
@@ -144,15 +143,13 @@ export default function ConnectPlatformButton({
         return;
       }
 
+      registerPopupCallbacks();
       popup.location.href = data.authUrl;
       watchPopupUntilClosedOrTimedOut();
     } catch (error) {
-      if (popupRef.current && !popupRef.current.closed) {
-        popupRef.current.close();
-      }
       console.error(`[ConnectPlatformButton] Error starting ${platform} connection:`, error);
       toast.error(`Failed to start the ${platformLabel} connection`);
-      setIsConnecting(false);
+      cleanupAuthFlow();
     }
   };
 
@@ -167,6 +164,7 @@ export default function ConnectPlatformButton({
   return (
     <>
       <Button
+        ref={cleanupAuthFlowOnUnmount}
         onClick={handleButtonClick}
         disabled={isConnecting}
         className="cursor-pointer"

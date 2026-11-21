@@ -1,39 +1,14 @@
 import "server-only";
 
-import { db, runQuery } from "@/db/client";
+import { db, isUniqueViolation, runQuery } from "@/db/client";
 import { x402_charges } from "@/db/schema";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/**
- * Unique constraints a replayed or duplicated payment violates. Postgres
- * names the violated constraint in the 23505 error message.
- * sourceRef: src/db/schema.ts (x402_charges)
- */
 const NONCE_UNIQUE_CONSTRAINT = "x402_charges_nonce_key";
 const REQUEST_ID_UNIQUE_CONSTRAINT = "x402_charges_request_id_key";
 
-/**
- * Insert an x402_charges row with status="pending" BEFORE on-chain
- * settlement.
- *
- * Ordering rationale: the row (with its UNIQUE nonce) must exist before
- * settle is called so that (a) a crash between settle and any later write
- * leaves a pending charge the reconciliation sweep can find instead of
- * settled money with no record, and (b) a concurrent replay of the same
- * payment loses the nonce-unique insert race here, before any second
- * settle attempt.
- *
- * Settlement fields (tx_hash, settled_at) are written by markChargeSettled
- * in chargeTransitions.ts after the facilitator confirms.
- *
- * Called by: charges/chargeLifecycle.settleCharge, solanaActions/postNowBlink.ts
- * Tables touched: x402_charges (insert)
- *
- * Returns errors as values. Never throws.
- */
 export async function insertPendingX402Charge(params: {
   principalId: string;
-  walletId: string;
   action: string;
   amountUsdc: number;
   amountUsdAtReceipt: number | null;
@@ -42,12 +17,8 @@ export async function insertPendingX402Charge(params: {
   requestId: string;
   payerAddress: string;
   recipientAddress: string;
-  /**
-   * Who settled the payment. Defaults to the network's settlement lane
-   * (networks.ts); the Blink path passes its own label because the wallet
-   * broadcast the payment itself and no facilitator was involved.
-   */
   facilitator?: string;
+  requestDigest?: string;
 }): Promise<
   | { success: true; chargeId: string }
   | { success: false; message: string; conflictReason?: "nonce_used" | "request_id_used" }
@@ -57,7 +28,7 @@ export async function insertPendingX402Charge(params: {
       .insert(x402_charges)
       .values({
         principal_id: params.principalId,
-        wallet_id: params.walletId,
+        wallet_id: params.principalId,
         action: params.action,
         amount_usdc: params.amountUsdc,
         amount_usd_at_receipt: params.amountUsdAtReceipt,
@@ -69,14 +40,13 @@ export async function insertPendingX402Charge(params: {
         recipient_address: params.recipientAddress,
         status: "pending",
         facilitator: params.facilitator ?? params.network.settlement,
+        request_digest: params.requestDigest ?? null,
       })
       .returning({ id: x402_charges.id }),
   );
 
   if (error) {
-    // Unique violations are identified by Postgres code, then by the
-    // constraint the error message names.
-    if (error.code === "23505") {
+    if (isUniqueViolation(error)) {
       if (error.message.includes(NONCE_UNIQUE_CONSTRAINT)) {
         return {
           success: false,

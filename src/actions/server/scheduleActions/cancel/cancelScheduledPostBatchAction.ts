@@ -1,5 +1,3 @@
-// src/actions/server/scheduleActions/cancelScheduledPostBatchAction.ts
-
 "use server";
 
 import { authCheck } from "@/actions/server/authCheck";
@@ -9,12 +7,6 @@ import {
   type CancelScheduledPostBatchResult,
 } from "./cancelScheduledPostBatch";
 
-/**
- * Browser-facing Server Action. Validates Clerk session, then delegates
- * to the core `cancelScheduledPostBatch` with source="web".
- *
- * Called by: BatchedPostCard (client component)
- */
 export async function cancelScheduledPostBatchAction(
   postIds: string[],
   userId: string | null,

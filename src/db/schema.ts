@@ -22,24 +22,9 @@ import {
   type PgTableExtraConfigValue,
 } from "drizzle-orm/pg-core";
 
-// Relative on purpose: drizzle-kit loads this file outside Next.js.
-import { decryptToken, encryptToken } from "../lib/crypto/tokenEncryption";
+import type Stripe from "stripe";
 
-/*
- * The database schema, and the source of truth for it. Every table, index,
- * foreign key, CHECK constraint and row-level security policy in the public
- * schema is declared here.
- *
- * Changing the schema: edit this file, run `bun run db:generate` to write the
- * SQL migration into drizzle/, review it, then apply it with
- * `bun run db:migrate`. drizzle/0000_baseline.sql records the database as it
- * was when Drizzle was adopted (2026-09-23) and runs nothing. Postgres
- * functions and triggers are not declared here; docs/DATABASE.md lists them.
- *
- * Rows read through Drizzle have the shape supabase-js rows had: snake_case
- * keys, timestamps as ISO strings (see timestamptz below), numeric and
- * bigint columns as numbers.
- */
+import { decryptToken, encryptToken } from "../lib/crypto/tokenEncryption";
 
 /**
  * timestamptz read back as the ISO 8601 string PostgREST returned
@@ -56,7 +41,6 @@ const timestamptz = customType<{ data: string; driverData: string }>({
   },
 });
 
-/** A jsonb value, the shape supabase-js typed jsonb with. */
 export type Json =
   | string
   | number
@@ -65,26 +49,12 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-/** Case-insensitive text from the citext extension (installed in public). */
 const citext = customType<{ data: string }>({
   dataType() {
     return "citext";
   },
 });
 
-/**
- * Text encrypted with AES-256-GCM on write and decrypted on read
- * (src/lib/crypto/tokenEncryption.ts), for the OAuth tokens and API
- * credentials in social_accounts, the webhook signing secrets and the
- * share-link tokens. The column stays `text`, so no migration.
- * Values written before encryption shipped read back unchanged until the
- * encrypt-social-tokens cron rewrites them.
- *
- * Every write uses a fresh IV, so SQL cannot compare these columns to a
- * value, and operators that bind their value through the column (eq, like)
- * would compare against a fresh ciphertext: test raw values with an sql``
- * template instead.
- */
 const encryptedText = customType<{ data: string; driverData: string }>({
   dataType() {
     return "text";
@@ -106,74 +76,50 @@ function isOneOf(column: string, values: readonly string[]) {
   return sql.raw(`${column} = ANY (ARRAY[${values.map((value) => `'${value}'::text`).join(", ")}])`);
 }
 
-// Allowed values, one list per CHECK constraint
-
-/** Platform ids a social account, connection or direct post can carry. */
 export const SOCIAL_PLATFORMS = ["linkedin", "tiktok", "pinterest", "instagram", "facebook", "threads", "youtube", "x", "bluesky", "mastodon", "telegram", "discord", "slack", "devto", "wordpress", "reddit", "tumblr", "twitch", "kick", "hashnode", "medium", "lemmy", "farcaster", "listmonk", "nostr", "linkedin_page", "dribbble", "gmb"] as const;
 
-/** Lifecycle of a scheduled post (failed_posts keeps the same list). */
 export const POST_STATUSES = ["scheduled", "queued", "processing", "posted", "failed", "cancelled"] as const;
 
-/** What a post publishes. */
 export const MEDIA_TYPES = ["text", "image", "video"] as const;
 
-/** Which surface created a post or history row. */
 export const CREATED_VIA_CHANNELS = ["web", "mcp", "x402", "api"] as const;
 
-/** Which surface started an OAuth connection. */
 export const CONNECTION_INITIATED_VIA = ["web", "mcp", "api", "x402", "share_link"] as const;
 
-/** Lifecycle of an OAuth connection attempt. */
 export const CONNECTION_STATUSES = ["pending", "connected", "expired", "failed", "revoked"] as const;
 
-/** Lifecycle of a post-now publish. */
 export const DIRECT_POST_STATUSES = ["processing", "completed", "failed"] as const;
 
-/** Lifecycle of a TikTok status poll. */
 export const TIKTOK_PULL_STATUSES = ["pending", "completed", "failed"] as const;
 
-/** Trust state of an MCP OAuth client. */
 export const OAUTH_CLIENT_TRUST_LEVELS = ["unverified", "verified", "blocked"] as const;
 
-/** Outcome of one MCP tool call. */
 export const MCP_AUDIT_RESULT_STATUSES = ["ok", "error", "denied", "rate_limited", "quota_exceeded"] as const;
 
-/** Who a principal is: a Clerk user or a paying wallet. */
 export const PRINCIPAL_KINDS = ["clerk", "wallet"] as const;
 
-/** Chains a wallet principal can pay from. */
 export const WALLET_CHAINS = ["base", "base-sepolia", "polygon", "arbitrum", "solana", "solana-devnet", "celo", "arc"] as const;
 
-/** Latest sanctions screening state of a wallet. */
 export const SANCTIONS_STATUSES = ["unchecked", "clean", "sanctioned"] as const;
 
-/** Result of one sanctions screening. */
 export const SANCTIONS_RESULTS = ["clean", "sanctioned", "error"] as const;
 
-/** Which surface an API key unlocks. */
 export const API_KEY_KINDS = ["rest", "mcp", "wallet"] as const;
 
-/** Lifecycle of an x402 charge. */
 export const X402_CHARGE_STATUSES = ["pending", "settled", "failed", "refunded"] as const;
 
-/** Outcome of one x402 endpoint call. */
 export const X402_ACCESS_RESULT_STATUSES = ["ok", "402_required", "sanctioned", "rate_limited", "error"] as const;
 
-/** How often an x402 action is billed. */
 export const PRICING_RECURRENCES = ["one_time", "monthly"] as const;
 
-/**
- * Outcome of one REST API call. client_error is any other 4xx (404 not
- * found, 409 conflict): the caller's request, not a server failure.
- */
 export const REST_AUDIT_OUTCOMES = ["success", "validation_error", "auth_error", "rate_limited", "client_error", "internal_error"] as const;
 
-/** Why an x402 payment needs a manual look. */
 export const X402_RECONCILIATION_KINDS = ["settle_unrecorded", "settle_indeterminate", "refund_failed"] as const;
 
-// Value unions of the lists above, for code that holds a column value
-// (`platform: Platform`). Adding a value to a list updates its union. Row
-// shapes come from the tables: `typeof scheduled_posts.$inferSelect`.
+export const STRIPE_SUBSCRIPTION_STATUSES = ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"] as const satisfies readonly Stripe.Subscription.Status[];
+
+export const ACCESS_GRANTING_SUBSCRIPTION_STATUSES = ["active", "trialing"] as const satisfies readonly (typeof STRIPE_SUBSCRIPTION_STATUSES)[number][];
+
 export type Platform = (typeof SOCIAL_PLATFORMS)[number];
 export type PostStatus = (typeof POST_STATUSES)[number];
 export type MediaType = (typeof MEDIA_TYPES)[number];
@@ -182,10 +128,9 @@ export type TrustLevel = (typeof OAUTH_CLIENT_TRUST_LEVELS)[number];
 export type WalletChain = (typeof WALLET_CHAINS)[number];
 export type SanctionsStatus = (typeof SANCTIONS_STATUSES)[number];
 export type PricingRecurrence = (typeof PRICING_RECURRENCES)[number];
+export type StripeSubscriptionStatus = (typeof STRIPE_SUBSCRIPTION_STATUSES)[number];
 
 export const referral_status = pgEnum("referral_status", ["pending", "verified", "redeemed", "void"]);
-
-// Identity: principals, Clerk users, wallets, API keys
 
 export const principals = pgTable("principals", {
   id: text().primaryKey(),
@@ -273,8 +218,6 @@ export const api_keys = pgTable("api_keys", {
   pgPolicy("api_keys_svc", { for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
   check("api_keys_kind_check", isOneOf("kind", API_KEY_KINDS)),
 ]).enableRLS();
-
-// Social accounts and OAuth connections
 
 // social_accounts and social_connections reference each other, so TypeScript needs the constraint list's type spelled out.
 export const social_accounts = pgTable("social_accounts", {
@@ -378,9 +321,7 @@ export const share_links = pgTable("share_links", {
   id: uuid().defaultRandom().primaryKey(),
   owner_principal_id: text().notNull(),
   platform: text().notNull(),
-  // Encrypted, so the owner can copy the link again; lookups use token_hash.
   token: encryptedText().notNull(),
-  // SHA-256 hex of the token (hashToken in src/lib/api/tokens.ts).
   token_hash: text().notNull(),
   expires_at: timestamptz(),
   max_uses: integer(),
@@ -400,8 +341,6 @@ export const share_links = pgTable("share_links", {
   check("share_links_max_uses_positive", sql`(max_uses IS NULL) OR (max_uses > 0)`),
   check("share_links_used_count_nonneg", sql`used_count >= 0`),
 ]).enableRLS();
-
-// Posting: schedule, publish, history, analytics
 
 // scheduled_posts and x402_charges reference each other, so TypeScript needs the constraint list's type spelled out.
 export const scheduled_posts = pgTable("scheduled_posts", {
@@ -429,10 +368,11 @@ export const scheduled_posts = pgTable("scheduled_posts", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   cancelled_by_sub_at: timestamptz(),
+  publish_started_at: timestamptz(),
 }, (table): PgTableExtraConfigValue[] => [
   index("idx_scheduled_posts_batch").on(table.batch_id).where(sql`(batch_id IS NOT NULL)`),
   index("idx_scheduled_posts_cancelled_by_sub_at").on(table.cancelled_by_sub_at).where(sql`(cancelled_by_sub_at IS NOT NULL)`),
-  index("idx_scheduled_posts_media_storage_path_active").on(table.media_storage_path).where(sql`(status = ANY (ARRAY['scheduled'::text, 'processing'::text]))`),
+  index("idx_scheduled_posts_media_storage_path").on(table.media_storage_path),
   index("idx_scheduled_posts_principal_platform_window").on(table.principal_id, table.platform, table.scheduled_at).where(sql`(status = ANY (ARRAY['scheduled'::text, 'queued'::text, 'processing'::text]))`),
   index("idx_scheduled_posts_principal_recent").on(table.principal_id, table.created_at.desc().nullsFirst()),
   index("idx_scheduled_posts_status_due").on(table.status, table.scheduled_at).where(sql`(status = ANY (ARRAY['scheduled'::text, 'queued'::text, 'processing'::text]))`),
@@ -512,6 +452,7 @@ export const pending_direct_posts = pgTable("pending_direct_posts", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   finished_at: timestamptz(),
   idempotency_key: text(),
+  publish_started_at: timestamptz(),
 }, (table) => [
   index("idx_pending_direct_posts_batch").on(table.batch_id),
   index("idx_pending_direct_posts_path_status").on(table.media_storage_path, table.status).where(sql`(status = 'processing'::text)`),
@@ -546,6 +487,7 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   tiktok_post_id: text(),
   creator_username: text(),
+  dispatch_id: text(),
 }, (table) => [
   index("idx_pending_tiktok_pulls_path_status").on(table.media_storage_path, table.status).where(sql`(status = 'pending'::text)`),
   index("idx_pending_tiktok_pulls_pending_age").on(table.status, table.created_at).where(sql`(status = 'pending'::text)`),
@@ -553,7 +495,12 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
     columns: [table.content_history_id],
     foreignColumns: [content_history.id],
     name: "pending_tiktok_pulls_content_history_id_fkey",
-  }),
+  }).onDelete("set null"),
+  foreignKey({
+    columns: [table.dispatch_id],
+    foreignColumns: [pending_direct_posts.event_id],
+    name: "pending_tiktok_pulls_dispatch_id_fkey",
+  }).onDelete("set null"),
   foreignKey({
     columns: [table.principal_id],
     foreignColumns: [principals.id],
@@ -563,7 +510,7 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
     columns: [table.scheduled_post_id],
     foreignColumns: [scheduled_posts.id],
     name: "pending_tiktok_pulls_scheduled_post_id_fkey",
-  }),
+  }).onDelete("set null"),
   foreignKey({
     columns: [table.social_account_id],
     foreignColumns: [social_accounts.id],
@@ -641,8 +588,6 @@ export const tiktok_webhook_events = pgTable("tiktok_webhook_events", {
   processed_at: timestamptz().default(sql`now()`).notNull(),
 }).enableRLS();
 
-// Billing: Stripe, quotas, referrals
-
 export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   id: uuid().defaultRandom().primaryKey(),
   user_id: text().notNull(),
@@ -650,7 +595,7 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   stripe_customer_id: text().notNull(),
   stripe_price_id: text(),
   plan: text(),
-  status: text().notNull(),
+  status: text({ enum: STRIPE_SUBSCRIPTION_STATUSES }).notNull(),
   start_date: timestamptz().notNull(),
   end_date: timestamptz(),
   current_period_end: timestamptz(),
@@ -659,7 +604,7 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
-  index("idx_stripe_subs_user_active").on(table.user_id).where(sql`(status = ANY (ARRAY['active'::text, 'trialing'::text]))`),
+  index("idx_stripe_subs_user_active").on(table.user_id).where(sql`(${isOneOf("status", ACCESS_GRANTING_SUBSCRIPTION_STATUSES)})`),
   foreignKey({
     columns: [table.user_id],
     foreignColumns: [users.id],
@@ -671,7 +616,6 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
 
 export const stripe_invoices = pgTable("stripe_invoices", {
   id: uuid().defaultRandom().primaryKey(),
-  // Null once the user is deleted: the invoice record outlives the account.
   user_id: text(),
   stripe_invoice_id: text(),
   amount_paid_cents: integer(),
@@ -779,8 +723,6 @@ export const referral_reward_grants = pgTable("referral_reward_grants", {
   }).onDelete("cascade"),
 ]).enableRLS();
 
-// x402 pay-per-call
-
 export const pricing_actions = pgTable("pricing_actions", {
   action: text().primaryKey(),
   display_name: text().notNull(),
@@ -823,6 +765,7 @@ export const x402_charges = pgTable("x402_charges", {
   metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   settled_at: timestamptz(),
+  request_digest: text(),
 }, (table): PgTableExtraConfigValue[] => [
   index("idx_x402_pending_aged").on(table.created_at).where(sql`(status = 'pending'::text)`),
   index("idx_x402_principal_time").on(table.principal_id, table.created_at.desc().nullsFirst()),
@@ -970,8 +913,6 @@ export const sanctions_screenings = pgTable("sanctions_screenings", {
   check("sanctions_screenings_result_check", isOneOf("result", SANCTIONS_RESULTS)),
 ]).enableRLS();
 
-// MCP, REST API and webhooks
-
 export const mcp_oauth_clients = pgTable("mcp_oauth_clients", {
   client_id: text().primaryKey(),
   client_name: text().notNull(),
@@ -1079,7 +1020,6 @@ export const webhook_subscriptions = pgTable("webhook_subscriptions", {
   principal_id: text().notNull(),
   url: text().notNull(),
   events: text().array().notNull(),
-  // Encrypted at rest; decrypted on read to sign each delivery.
   secret: encryptedText().notNull(),
   active: boolean().default(true).notNull(),
   failure_count: integer().default(0).notNull(),

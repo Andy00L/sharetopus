@@ -1,48 +1,23 @@
 import "server-only";
 
-import { and, eq, inArray } from "drizzle-orm";
-
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
-import { countPendingDirectPostsForMediaPath } from "@/actions/server/data/pendingDirectPosts";
-import { countPendingTikTokPullsForMediaPath } from "@/actions/server/data/pendingTikTokPulls";
-import { db, runQuery } from "@/db/client";
-import {
-  failed_posts,
-  pending_direct_posts,
-  pending_tiktok_pulls,
-  scheduled_posts,
-} from "@/db/schema";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
+import { findReferencedMediaPaths } from "./mediaReferences";
 
 const PAGE_SIZE = 1000;
 
-/**
- * Deletes files from Supabase Storage with reference checking. No auth.
- *
- * This is the data-layer version of the public deleteSupabaseFileAction.
- * It does NOT call authCheck or authCheckCronJob. The caller is responsible
- * for verifying the principal before calling this function.
- *
- * Allowed callers: actions/server/data/storageFiles/deleteSupabaseFileAction.ts,
- *                  actions/server/scheduleActions/*, src/lib/mcp/*, Inngest workers.
- *
- * Before removing a file from storage, checks that no rows in
- * scheduled_posts (status scheduled or processing), failed_posts,
- * pending_tiktok_pulls (status pending) or pending_direct_posts
- * (status processing) reference it via media_storage_path.
- * If any do, the file is preserved.
- *
- * Storage cleanup failures do not throw. They are logged via console.error
- * and surfaced as { success: false, message }.
- *
- * Tables read: scheduled_posts, failed_posts, pending_tiktok_pulls, pending_direct_posts
- * Storage written: MEDIA_BUCKET (delete)
- */
+const REMOVE_BATCH_SIZE = 1000;
+
+export type DeleteSupabaseFileResult =
+  | { success: true; removed: boolean; message: string }
+  | { success: false; message: string };
+
 export async function deleteSupabaseFile(
   principalId: string,
   filePath: string | null,
   forceDelete: boolean = false,
-): Promise<{ success: boolean; message: string }> {
+): Promise<DeleteSupabaseFileResult> {
   console.log(
     `[deleteSupabaseFile]: Starting deletion for principal: ${principalId}, path: ${
       filePath ?? "entire folder"
@@ -50,139 +25,15 @@ export async function deleteSupabaseFile(
   );
 
   try {
-    // CASE 1: FOLDER DELETION
-    // When only principalId is provided, delete the entire principal's folder.
     if (!filePath) {
-      console.log(
-        `[deleteSupabaseFile]: Initiating folder deletion for principal: ${principalId}`,
-      );
-
-      // #4: paginate through all files (Supabase storage default list = 100)
-      const allFiles: { name: string }[] = [];
-      let offset = 0;
-
-      while (true) {
-        const { data: page, error: listError } = await adminSupabase.storage
-          .from(MEDIA_BUCKET)
-          .list(principalId, { limit: PAGE_SIZE, offset });
-
-        if (listError) {
-          console.error(
-            `[deleteSupabaseFile]: Failed to list files for principal ${principalId} at offset ${offset}:`,
-            listError.message,
-          );
-          return {
-            success: false,
-            message: "Unable to access your files. Please try again later.",
-          };
-        }
-
-        if (!page || page.length === 0) break;
-
-        allFiles.push(...page);
-
-        if (page.length < PAGE_SIZE) break;
-        offset += PAGE_SIZE;
-      }
-
-      if (allFiles.length === 0) {
-        console.log(
-          `[deleteSupabaseFile]: No files found in folder for principal: ${principalId}`,
-        );
-        return {
-          success: true,
-          message: "No files found in your folder to delete.",
-        };
-      }
-      console.log(
-        `[deleteSupabaseFile]: Found ${allFiles.length} files in principal's folder`,
-      );
-
-      // #6: let instead of const so we can reassign after filtering
-      let filesToDelete = allFiles.map((file) => `${principalId}/${file.name}`);
-
-      // Reference check: skip if forceDelete is true.
-      if (!forceDelete) {
-        console.log(
-          `[deleteSupabaseFile]: Checking for file references before deletion (safe mode)`,
-        );
-
-        // #3: batched check across 4 tables (4 queries total instead of 4*N)
-        // #5: surface infra error explicitly instead of masking as "all in use"
-        const refCheck = await findReferencedPaths(filesToDelete);
-        if (!refCheck.success) {
-          console.error(
-            `[deleteSupabaseFile]: Reference check failed for folder ${principalId}:`,
-            refCheck.message,
-          );
-          return {
-            success: false,
-            message:
-              "Unable to verify file references. Please try again later.",
-          };
-        }
-
-        const safeFiles = filesToDelete.filter(
-          (path) => !refCheck.referenced.has(path),
-        );
-        const preservedCount = filesToDelete.length - safeFiles.length;
-        console.log(
-          `[deleteSupabaseFile]: ${safeFiles.length} files safe to delete, ${preservedCount} files preserved`,
-        );
-
-        filesToDelete = safeFiles;
-      } else {
-        console.log(
-          `[deleteSupabaseFile]: Force delete enabled, skipping reference checks for ${filesToDelete.length} files`,
-        );
-      }
-
-      if (filesToDelete.length === 0) {
-        console.log(
-          `[deleteSupabaseFile]: No files available for deletion after reference checks`,
-        );
-        return {
-          success: true,
-          message:
-            "All files are currently in use by scheduled posts and cannot be deleted.",
-        };
-      }
-
-      console.log(
-        `[deleteSupabaseFile]: Deleting ${filesToDelete.length} files for principal ${principalId}`,
-      );
-
-      const { error: deleteError } = await adminSupabase.storage
-        .from(MEDIA_BUCKET)
-        .remove(filesToDelete);
-
-      if (deleteError) {
-        console.error(
-          `[deleteSupabaseFile]: Batch file deletion failed:`,
-          deleteError.message,
-        );
-        return {
-          success: false,
-          message: `Failed to delete files. Please try again later.`,
-        };
-      }
-
-      console.log(
-        `[deleteSupabaseFile]: Successfully deleted ${filesToDelete.length} files for principal ${principalId}`,
-      );
-      return {
-        success: true,
-        message: `Successfully deleted ${filesToDelete.length} files from your folder.`,
-      };
+      return await deletePrincipalFolder(principalId, forceDelete);
     }
 
-    // CASE 2: SINGLE FILE DELETION
     console.log(
       `[deleteSupabaseFile]: Initiating single file deletion: ${filePath}`,
     );
 
-    // Ownership check: the file path must start with the principal's folder.
-    if (!filePath.startsWith(`${principalId}/`)) {
+    if (!isOwnedMediaPath(filePath, principalId)) {
       console.warn(
         `[deleteSupabaseFile]: Security violation, principal ${principalId} attempted to delete: ${filePath}`,
       );
@@ -192,110 +43,29 @@ export async function deleteSupabaseFile(
       };
     }
 
-    // Reference check: skip if forceDelete is true.
     if (!forceDelete) {
-      console.log(
-        `[deleteSupabaseFile]: Checking file references before deletion: ${filePath}`,
-      );
-
-      const { data: scheduledCount, error: checkError } = await runQuery(
-        db.$count(
-          scheduled_posts,
-          and(
-            eq(scheduled_posts.media_storage_path, filePath),
-            inArray(scheduled_posts.status, ["scheduled", "processing"]),
-          ),
-        ),
-      );
-
-      if (checkError) {
+      const refCheck = await findReferencedMediaPaths([filePath], "in_use");
+      if (!refCheck.success) {
         console.error(
-          `[deleteSupabaseFile]: Failed to check scheduled_posts references:`,
-          checkError.message,
+          `[deleteSupabaseFile]: Reference check failed for ${filePath}:`,
+          refCheck.message,
         );
         return {
           success: false,
           message: `Unable to verify if the file can be safely deleted. Please try again.`,
         };
       }
-
-      const { data: failedCount, error: failedCheckError } = await runQuery(
-        db.$count(failed_posts, eq(failed_posts.media_storage_path, filePath)),
-      );
-
-      if (failedCheckError) {
-        console.error(
-          `[deleteSupabaseFile]: Failed to check failed_posts references:`,
-          failedCheckError.message,
-        );
-        return {
-          success: false,
-          message: `Unable to verify if the file can be safely deleted. Please try again.`,
-        };
-      }
-
-      const referenceCount = scheduledCount + failedCount;
-
-      if (referenceCount > 0) {
+      if (refCheck.referenced.has(filePath)) {
         console.log(
-          `[deleteSupabaseFile]: File referenced by ${referenceCount} post(s), preserving: ${filePath}`,
+          `[deleteSupabaseFile]: File still referenced, preserving: ${filePath}`,
         );
         return {
           success: true,
-          message: `Cannot delete: This file is currently being used by ${referenceCount} scheduled posts.`,
+          removed: false,
+          message:
+            "Cannot delete: This file is still used by a post or a publish in progress.",
         };
       }
-
-      // Check pending TikTok pulls (async pull not yet completed)
-      const pendingPullsResult =
-        await countPendingTikTokPullsForMediaPath(filePath);
-      if (!pendingPullsResult.success) {
-        console.error(
-          "[deleteSupabaseFile] Failed to count pending TikTok pulls:",
-          pendingPullsResult.message,
-        );
-        // Conservative: do NOT delete on uncertainty
-        return {
-          success: false,
-          message: "Could not verify safe-to-delete; preserving file",
-        };
-      }
-      if (pendingPullsResult.count > 0) {
-        console.log(
-          `[deleteSupabaseFile]: File has ${pendingPullsResult.count} pending TikTok pull(s), preserving: ${filePath}`,
-        );
-        return {
-          success: true,
-          message: `Cannot delete: File has ${pendingPullsResult.count} pending TikTok pull(s).`,
-        };
-      }
-
-      // Check pending direct post workers (race-safe cleanup gate)
-      const pendingDirectResult =
-        await countPendingDirectPostsForMediaPath(filePath);
-      if (!pendingDirectResult.success) {
-        console.error(
-          "[deleteSupabaseFile] Failed to count pending direct posts:",
-          pendingDirectResult.message,
-        );
-        return {
-          success: false,
-          message: "Could not verify safe-to-delete; preserving file",
-        };
-      }
-      if (pendingDirectResult.count > 0) {
-        console.log(
-          `[deleteSupabaseFile]: File has ${pendingDirectResult.count} active direct post worker(s), preserving: ${filePath}`,
-        );
-        return {
-          success: true,
-          message: `Cannot delete: File has ${pendingDirectResult.count} active direct post worker(s).`,
-        };
-      }
-
-      console.log(
-        `[deleteSupabaseFile]: File reference check passed, safe to delete`,
-      );
     } else {
       console.log(
         `[deleteSupabaseFile]: Force delete enabled, skipping reference checks`,
@@ -303,7 +73,7 @@ export async function deleteSupabaseFile(
     }
 
     console.log(`[deleteSupabaseFile]: Executing file deletion: ${filePath}`);
-    const { error } = await adminSupabase.storage
+    const { data: removedFiles, error } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
       .remove([filePath]);
 
@@ -318,8 +88,13 @@ export async function deleteSupabaseFile(
       };
     }
 
+    if (removedFiles.length === 0) {
+      console.log(`[deleteSupabaseFile]: No stored file at ${filePath}`);
+      return { success: true, removed: false, message: "No file at this path." };
+    }
+
     console.log(`[deleteSupabaseFile]: File deleted successfully: ${filePath}`);
-    return { success: true, message: "File deleted successfully." };
+    return { success: true, removed: true, message: "File deleted successfully." };
   } catch (err) {
     console.error(
       `[deleteSupabaseFile]: Unexpected error during file deletion:`,
@@ -333,115 +108,181 @@ export async function deleteSupabaseFile(
   }
 }
 
-/**
- * Batched reference check across the 4 tables that can reference a media path.
- * Returns the set of paths still referenced (must be preserved from deletion).
- *
- * Used by the folder-deletion path to avoid N*4 round-trips. Single-file
- * deletion stays on per-table queries because each query short-circuits cleanly.
- *
- * Status filters on pending_tiktok_pulls (pending) and pending_direct_posts
- * (processing) match the partial indexes idx_pending_*_path_status, so the
- * Postgres planner uses the index instead of a seq scan.
- */
-async function findReferencedPaths(
-  paths: string[],
-): Promise<
-  | { success: true; referenced: Set<string> }
-  | { success: false; message: string }
-> {
-  if (paths.length === 0) {
-    return { success: true, referenced: new Set() };
-  }
+export type DeleteUnreferencedMediaResult =
+  | { success: true; removedCount: number; preservedCount: number }
+  | { success: false; message: string };
 
-  const referenced = new Set<string>();
-
-  // scheduled_posts (active statuses only -> hits idx_scheduled_posts_media_storage_path_active)
-  const { data: scheduledRows, error: scheduledError } = await runQuery(
-    db
-      .select({ media_storage_path: scheduled_posts.media_storage_path })
-      .from(scheduled_posts)
-      .where(
-        and(
-          inArray(scheduled_posts.media_storage_path, paths),
-          inArray(scheduled_posts.status, ["scheduled", "processing"]),
-        ),
+export async function deleteUnreferencedMediaFiles(
+  principalId: string,
+  filePaths: string[],
+): Promise<DeleteUnreferencedMediaResult> {
+  const ownedPaths = [
+    ...new Set(
+      filePaths.filter(
+        (filePath) => isOwnedMediaPath(filePath, principalId),
       ),
+    ),
+  ];
+  if (ownedPaths.length === 0) {
+    return { success: true, removedCount: 0, preservedCount: 0 };
+  }
+
+  const refCheck = await findReferencedMediaPaths(ownedPaths, "in_use");
+  if (!refCheck.success) {
+    console.error(
+      `[deleteUnreferencedMediaFiles] Reference check failed for principal ${principalId}:`,
+      refCheck.message,
+    );
+    return { success: false, message: "Unable to verify file references." };
+  }
+
+  const removablePaths = ownedPaths.filter(
+    (filePath) => !refCheck.referenced.has(filePath),
+  );
+  const removed = await removeStorageFiles(removablePaths);
+  if (!removed.success) {
+    console.error(
+      `[deleteUnreferencedMediaFiles] Storage remove failed for principal ${principalId}:`,
+      removed.message,
+    );
+    return { success: false, message: "Failed to delete files." };
+  }
+
+  return {
+    success: true,
+    removedCount: removed.removedCount,
+    preservedCount: ownedPaths.length - removablePaths.length,
+  };
+}
+
+async function removeStorageFiles(
+  filePaths: string[],
+): Promise<{ success: true; removedCount: number } | { success: false; message: string }> {
+  let removedCount = 0;
+  for (
+    let batchStart = 0;
+    batchStart < filePaths.length;
+    batchStart += REMOVE_BATCH_SIZE
+  ) {
+    const batch = filePaths.slice(batchStart, batchStart + REMOVE_BATCH_SIZE);
+    const { data: removedFiles, error } = await adminSupabase.storage
+      .from(MEDIA_BUCKET)
+      .remove(batch);
+    if (error) {
+      return { success: false, message: error.message };
+    }
+    removedCount += removedFiles.length;
+  }
+  return { success: true, removedCount };
+}
+
+async function deletePrincipalFolder(
+  principalId: string,
+  forceDelete: boolean,
+): Promise<DeleteSupabaseFileResult> {
+  console.log(
+    `[deletePrincipalFolder]: Initiating folder deletion for principal: ${principalId}`,
   );
 
-  if (scheduledError) {
-    return {
-      success: false,
-      message: `scheduled_posts check failed: ${scheduledError.message}`,
-    };
-  }
-  for (const row of scheduledRows) {
-    if (row.media_storage_path) referenced.add(row.media_storage_path);
+  const allFiles: { name: string }[] = [];
+  let offset = 0;
+
+  while (true) {
+    const { data: page, error: listError } = await adminSupabase.storage
+      .from(MEDIA_BUCKET)
+      .list(principalId, { limit: PAGE_SIZE, offset });
+
+    if (listError) {
+      console.error(
+        `[deletePrincipalFolder]: Failed to list files for principal ${principalId} at offset ${offset}:`,
+        listError.message,
+      );
+      return {
+        success: false,
+        message: "Unable to access your files. Please try again later.",
+      };
+    }
+
+    if (!page || page.length === 0) break;
+
+    allFiles.push(...page);
+
+    if (page.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
-  // failed_posts (hits idx_failed_posts_media_storage_path)
-  const { data: failedRows, error: failedError } = await runQuery(
-    db
-      .select({ media_storage_path: failed_posts.media_storage_path })
-      .from(failed_posts)
-      .where(inArray(failed_posts.media_storage_path, paths)),
+  if (allFiles.length === 0) {
+    console.log(
+      `[deletePrincipalFolder]: No files found in folder for principal: ${principalId}`,
+    );
+    return {
+      success: true,
+      removed: false,
+      message: "No files found in your folder to delete.",
+    };
+  }
+  console.log(
+    `[deletePrincipalFolder]: Found ${allFiles.length} files in principal's folder`,
   );
 
-  if (failedError) {
-    return {
-      success: false,
-      message: `failed_posts check failed: ${failedError.message}`,
-    };
-  }
-  for (const row of failedRows) {
-    if (row.media_storage_path) referenced.add(row.media_storage_path);
+  const folderPaths = allFiles.map((file) => `${principalId}/${file.name}`);
+  let filesToDelete = folderPaths;
+
+  if (!forceDelete) {
+    const refCheck = await findReferencedMediaPaths(folderPaths, "in_use");
+    if (!refCheck.success) {
+      console.error(
+        `[deletePrincipalFolder]: Reference check failed for folder ${principalId}:`,
+        refCheck.message,
+      );
+      return {
+        success: false,
+        message: "Unable to verify file references. Please try again later.",
+      };
+    }
+
+    filesToDelete = folderPaths.filter(
+      (filePath) => !refCheck.referenced.has(filePath),
+    );
+    console.log(
+      `[deletePrincipalFolder]: ${filesToDelete.length} files safe to delete, ${folderPaths.length - filesToDelete.length} files preserved`,
+    );
+  } else {
+    console.log(
+      `[deletePrincipalFolder]: Force delete enabled, skipping reference checks for ${filesToDelete.length} files`,
+    );
   }
 
-  // pending_tiktok_pulls (filter on status='pending' to hit idx_pending_tiktok_pulls_path_status)
-  const { data: pullsRows, error: pullsError } = await runQuery(
-    db
-      .select({ media_storage_path: pending_tiktok_pulls.media_storage_path })
-      .from(pending_tiktok_pulls)
-      .where(
-        and(
-          inArray(pending_tiktok_pulls.media_storage_path, paths),
-          eq(pending_tiktok_pulls.status, "pending"),
-        ),
-      ),
+  if (filesToDelete.length === 0) {
+    console.log(
+      `[deletePrincipalFolder]: No files available for deletion after reference checks`,
+    );
+    return {
+      success: true,
+      removed: false,
+      message:
+        "All files are currently in use by scheduled posts and cannot be deleted.",
+    };
+  }
+
+  const removed = await removeStorageFiles(filesToDelete);
+  if (!removed.success) {
+    console.error(
+      `[deletePrincipalFolder]: Batch file deletion failed:`,
+      removed.message,
+    );
+    return {
+      success: false,
+      message: `Failed to delete files. Please try again later.`,
+    };
+  }
+
+  console.log(
+    `[deletePrincipalFolder]: Deleted ${removed.removedCount} of ${filesToDelete.length} files for principal ${principalId}`,
   );
-
-  if (pullsError) {
-    return {
-      success: false,
-      message: `pending_tiktok_pulls check failed: ${pullsError.message}`,
-    };
-  }
-  for (const row of pullsRows) {
-    if (row.media_storage_path) referenced.add(row.media_storage_path);
-  }
-
-  // pending_direct_posts (filter on status='processing' to hit idx_pending_direct_posts_path_status)
-  const { data: directRows, error: directError } = await runQuery(
-    db
-      .select({ media_storage_path: pending_direct_posts.media_storage_path })
-      .from(pending_direct_posts)
-      .where(
-        and(
-          inArray(pending_direct_posts.media_storage_path, paths),
-          eq(pending_direct_posts.status, "processing"),
-        ),
-      ),
-  );
-
-  if (directError) {
-    return {
-      success: false,
-      message: `pending_direct_posts check failed: ${directError.message}`,
-    };
-  }
-  for (const row of directRows) {
-    if (row.media_storage_path) referenced.add(row.media_storage_path);
-  }
-
-  return { success: true, referenced };
+  return {
+    success: true,
+    removed: removed.removedCount > 0,
+    message: `Successfully deleted ${removed.removedCount} files from your folder.`,
+  };
 }

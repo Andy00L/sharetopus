@@ -6,41 +6,30 @@ import { z } from "zod";
 import {
   x402PaidEndpoint,
   x402ChallengeGet,
+  type KeyedReplayBatchLookup,
+  type ReplayResultRecovery,
 } from "@/lib/x402/middleware/x402PaidEndpoint";
+import { digestRequestBody } from "@/lib/x402/charges/requestDigest";
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
 import {
   PostBodyBaseSchema,
-  withMediaPathRule,
+  withPostTypeRules,
 } from "@/lib/x402/middleware/postBodySchema";
 import {
   directPostBatch,
   preflightDirectPost,
+  readDirectPostBatchOutcomes,
+  readKeyedDirectPost,
 } from "@/actions/server/directPostActions/directPostBatch";
-import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
+import type {
+  DirectPostData,
+  DirectPostOutcome,
+} from "@/actions/server/directPostActions/directPostBatch";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/post-now
- *
- * Pays post.text / post.image / post.video (price per pricing_actions).
- * Steps:
- * 1. Parse body (shared posting schema; media path required for image/video).
- * 2. Resolve pricing action from post_type.
- * 3. Before settlement, check the post would dispatch: fields, media path,
- *    account ownership, platform match, unused idempotency_key. A failure
- *    here costs nothing.
- * 4. On settle, call directPostBatch with createdVia="x402".
- * 5. The batch id is stored on the charge (metadata.batch_id), the only
- *    link between a settlement and the post it paid for.
- *
- * Publishing runs asynchronously after the dispatch. A dispatch failure is
- * refunded on-chain; a post the platform rejects later, at publish time, is
- * not refunded.
- */
-
-const PostNowBodySchema = withMediaPathRule(PostBodyBaseSchema);
+const PostNowBodySchema = withPostTypeRules(PostBodyBaseSchema);
 
 type PostNowBody = z.infer<typeof PostNowBodySchema>;
 
@@ -50,7 +39,8 @@ type PostNowResult = {
   dispatched: number;
 };
 
-/** The single post this request pays for, as directPostBatch takes it. */
+type PostNowReplayResult = PostNowResult & { posts: DirectPostOutcome[] };
+
 function toDirectPostData(body: PostNowBody): DirectPostData {
   return {
     socialAccountId: body.social_account_id,
@@ -62,13 +52,47 @@ function toDirectPostData(body: PostNowBody): DirectPostData {
     coverTimestamp: body.cover_timestamp,
     pinterestBoardId: body.pinterest_board_id,
     pinterestBoardName: body.pinterest_board_name,
-    pinterestLink: body.pinterest_link,
+    link: body.platform === "pinterest" ? body.pinterest_link : undefined,
     idempotency_key: body.idempotency_key,
   };
 }
 
-// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
-// the 402 challenge). post.text is the representative price for the probe.
+const recoverPostNowReplay: ReplayResultRecovery<PostNowBody> = async ({
+  principal,
+  chargeId,
+  storedMetadata,
+  body,
+}) => {
+  const storedBatchId = storedMetadata.batch_id;
+  const batchId = typeof storedBatchId === "string" ? storedBatchId : chargeId;
+  const outcomeRead = await readDirectPostBatchOutcomes({
+    batchId,
+    principalId: principal.principalId,
+    target: { socialAccountId: body.social_account_id, platform: body.platform },
+  });
+  if (!outcomeRead.success) return { kind: "lookup_failed", message: outcomeRead.message };
+  if (outcomeRead.outcomes.length === 0) return { kind: "not_found" };
+  const replayResult = {
+    batchId,
+    eventIds: outcomeRead.outcomes.map((outcome) => outcome.eventId),
+    dispatched: outcomeRead.outcomes.length,
+    posts: outcomeRead.outcomes,
+  } satisfies PostNowReplayResult;
+  return { kind: "recovered", data: replayResult };
+};
+
+const findKeyedPostNowBatch: KeyedReplayBatchLookup<PostNowBody> = async ({ principal, body }) => {
+  if (!body.idempotency_key) return { kind: "not_found" };
+  const keyedDispatch = await readKeyedDirectPost({
+    principalId: principal.principalId,
+    idempotencyKey: body.idempotency_key,
+  });
+  if (!keyedDispatch.success) return { kind: "lookup_failed", message: keyedDispatch.message };
+  return keyedDispatch.batchId === null
+    ? { kind: "not_found" }
+    : { kind: "found", batchId: keyedDispatch.batchId };
+};
+
 export const GET = x402ChallengeGet({
   endpointPath: "/api/x402/post-now",
   action: "post.text",
@@ -111,12 +135,16 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
     return { success: true, action: result.action };
   },
 
+  idempotencyKey: (body) => body.idempotency_key,
+
+  requestDigest: digestRequestBody,
+
   precheck: ({ body, principal }) =>
     preflightDirectPost(toDirectPostData(body), principal.principalId),
 
-  handler: async ({ body, principal, requestId }) => {
+  handler: async ({ body, principal, chargeId, requestId }) => {
     const batchResult = await directPostBatch(
-      [toDirectPostData(body)],
+      [{ ...toDirectPostData(body), batch_id: chargeId }],
       principal.principalId,
       "x402",
       undefined,
@@ -128,18 +156,14 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         success: false,
         errorKind: "execution_failed",
         message: batchResult.message,
-        refundable: true,
       };
     }
 
-    // The precheck rejects a used idempotency_key, but a concurrent request
-    // can claim it in between; then nothing was dispatched for this payment.
     if (batchResult.details.dispatched === 0) {
       return {
         success: false,
         errorKind: "duplicate_idempotency_key",
         message: "A post with this idempotency_key was already dispatched.",
-        refundable: true,
       };
     }
 
@@ -150,7 +174,11 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         eventIds: batchResult.eventIds,
         dispatched: batchResult.details.dispatched,
       },
-      chargeMetadata: { batch_id: batchResult.batchId },
+      chargeRecord: { metadata: { batch_id: batchResult.batchId } },
     };
   },
+
+  recoverReplayResult: recoverPostNowReplay,
+
+  findKeyedReplayBatch: findKeyedPostNowBatch,
 });

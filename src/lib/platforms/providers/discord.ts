@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -12,13 +12,17 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import { joinTitleAndBody } from "./_shared/postText";
+import { REGISTRY_PROVIDER_CATALOG } from "./catalog";
 
 /**
- * Discord provider, webhook mode.
- *
- * A channel webhook needs no bot, no OAuth app, and no review: the user
- * copies one URL from channel settings and the connection works. The
- * webhook URL is both the credential and the target, so it is stored in
+ * The webhook URL is both the credential and the target, so it is stored in
  * access_token and never logged.
  *
  * sourceRef: discord.com/developers/docs/resources/webhook (Get Webhook
@@ -27,12 +31,8 @@ import {
 
 const DISCORD_TIMEOUT_MS = 20_000;
 
-/**
- * Hosts a Discord webhook may live on. The URL is pasted by the user, so
- * without this check "webhook URL" would be an open request-forgery field
- * pointed at any host we can reach. providerFetch already blocks private
- * addresses; this additionally pins the provider to Discord itself.
- */
+const DISCORD_MAX_CHARS = REGISTRY_PROVIDER_CATALOG.discord.rules.maxTextLength;
+
 const ALLOWED_DISCORD_HOSTS: readonly string[] = [
   "discord.com",
   "discordapp.com",
@@ -73,12 +73,8 @@ function validateWebhookUrl(rawWebhookUrl: string): WebhookUrlValidation {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Discord connects with a webhook URL." };
-  }
-
   const validation = validateWebhookUrl(input.values.webhookUrl ?? "");
   if (!validation.ok) return { ok: false, message: validation.message };
 
@@ -117,8 +113,6 @@ async function connect(
     ok: true,
     accessToken: validation.webhookUrl,
     refreshToken: null,
-    // Webhook tokens do not expire; null stops ensureValidToken from
-    // trying to refresh something that has no refresh flow.
     expiresIn: null,
     identity: {
       accountIdentifier: webhookId,
@@ -136,22 +130,23 @@ async function connect(
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  // Re-validate on every send: the stored value is the posting target, and
-  // a row edited by any other path must not become a request forgery.
   const validation = validateWebhookUrl(input.accessToken);
-  if (!validation.ok) return { ok: false, message: validation.message };
+  if (!validation.ok) return refusePublish(validation.message);
 
-  const content = buildContent(input);
+  const content = joinTitleAndBody(input, { formatTitle: (title) => `**${title}**` }).slice(
+    0,
+    DISCORD_MAX_CHARS,
+  );
 
   const payload: Record<string, unknown> = { content };
 
   // Discord renders an image from an embed URL, so media needs no upload:
   // it fetches our signed URL itself. Video is not embeddable, so the URL
   // goes in the message body where Discord unfurls it.
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     payload.embeds = [{ image: { url: input.mediaUrl } }];
-  } else if (input.mediaType === "video" && input.mediaUrl) {
-    payload.content = `${content}\n${input.mediaUrl}`.slice(0, 2000);
+  } else if (input.postType === "video" && input.mediaUrl) {
+    payload.content = `${content}\n${input.mediaUrl}`.slice(0, DISCORD_MAX_CHARS);
   }
 
   // wait=true makes Discord return the created message instead of 204, so
@@ -164,24 +159,30 @@ async function publish(
     timeoutMs: DISCORD_TIMEOUT_MS,
   });
 
-  if (!sendResult.ok) return { ok: false, message: sendResult.message };
-
-  if (sendResult.status === 429) {
-    // Distinct wording so the worker's classifier routes this to the
-    // retryable path instead of failing the post outright.
-    return { ok: false, message: "Discord rate limit reached (429)." };
+  if (!sendResult.ok) {
+    return failProviderFetch({
+      platform: "discord",
+      stage: "publish",
+      fetchFailure: sendResult,
+    });
   }
   if (sendResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Discord webhook post failed (${sendResult.status}): ${sendResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "discord",
+      stage: "publish",
+      action: "Discord webhook post",
+      httpStatus: sendResult.status,
+      bodyText: sendResult.bodyText,
+    });
   }
 
   const message = parseJsonBody(sendResult.bodyText);
   const messageId = readStringField(message, "id");
   if (!messageId) {
-    return { ok: false, message: "Discord returned no message id." };
+    return failUnreadableAnswer({
+      message: "Discord returned no message id.",
+      stage: "publish",
+    });
   }
 
   const channelId = readStringField(message, "channel_id");
@@ -198,16 +199,8 @@ async function publish(
   };
 }
 
-/** Discord has no title field, so a title becomes a bold first line. */
-function buildContent(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  const combined = !trimmedTitle
-    ? trimmedBody
-    : !trimmedBody
-      ? `**${trimmedTitle}**`
-      : `**${trimmedTitle}**\n\n${trimmedBody}`;
-  return combined.slice(0, 2000);
-}
-
-export const discordBehavior: ProviderBehavior = { connect, publish };
+export const discordBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

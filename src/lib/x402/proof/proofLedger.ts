@@ -3,38 +3,11 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { content_history, failed_posts, scheduled_posts, x402_charges } from "@/db/schema";
+import { content_history, pending_direct_posts, scheduled_posts, x402_charges } from "@/db/schema";
 import type { Json } from "@/db/schema";
+import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 
-/**
- * Public proof ledger behind /proof and the per-network pages.
- *
- * Reads the most recent x402 charges that reached a chain and resolves what
- * each payment bought and whether that post went live. Only values already
- * public on-chain (transaction hash, payer, amount) or harmless (network,
- * action, outcome, timestamp) leave this module. Principal ids, wallet ids,
- * nonces, request ids, error messages, and post content never do.
- *
- * Outcome resolution follows how each route records its work:
- *   - post-now stores metadata.batch_id on the charge; the post.now consumer
- *     writes content_history on success and failed_posts on failure, both
- *     keyed by that batch_id (src/inngest/functions/processDirectPostHelpers.ts,
- *     src/actions/server/contentHistoryActions/storeFailedPost.ts).
- *   - schedule wires x402_charges.scheduled_post_id; scheduled_posts.status
- *     carries the outcome.
- *   - every other action (connect, upload_url, list_*) buys no post.
- *
- * Called by: src/app/(marketing)/proof/page.tsx (every network),
- *            src/app/(marketing)/solana/page.tsx (scoped to solana)
- * Tables touched: x402_charges, content_history, failed_posts,
- *                 scheduled_posts (all read-only)
- */
-
-/** Rows on the public page: enough to prove the lane, one screen tall. */
 const LEDGER_LIMIT = 25;
-
-/** Prefix shared by the three post actions. sourceRef: middleware/resolvePostAction.ts */
-const POST_ACTION_PREFIX = "post.";
 
 export type LedgerOutcome =
   | "published"
@@ -47,7 +20,6 @@ export type LedgerOutcome =
   | "unlinked";
 
 export interface ProofLedgerEntry {
-  /** Registry slug of the network the payment settled on. */
   network: string;
   txHash: string;
   action: string;
@@ -55,7 +27,6 @@ export interface ProofLedgerEntry {
   payerAddress: string;
   outcome: LedgerOutcome;
   platform: string | null;
-  /** ISO timestamp of settlement, falling back to charge creation. */
   settledAt: string;
 }
 
@@ -80,21 +51,19 @@ type LookupResult<Value> =
   | { ok: true; value: Value }
   | { ok: false };
 
-/**
- * The ledger, newest first. Pass networkName to scope it to one lane;
- * omit it for the cross-network page.
- */
 export async function loadProofLedger(options?: {
   networkName?: string;
 }): Promise<ProofLedgerResult> {
   const { data: charges, error: chargesError } = await runQuery(
     db
       .select({
+        id: x402_charges.id,
         network: x402_charges.network,
         action: x402_charges.action,
         amount_usdc: x402_charges.amount_usdc,
         status: x402_charges.status,
         tx_hash: x402_charges.tx_hash,
+        error_message: x402_charges.error_message,
         payer_address: x402_charges.payer_address,
         settled_at: x402_charges.settled_at,
         created_at: x402_charges.created_at,
@@ -119,32 +88,33 @@ export async function loadProofLedger(options?: {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
-  const batchIds = charges
-    .map((charge) => readBatchId(charge.metadata))
-    .filter((batchId): batchId is string => batchId !== null);
+  const batchIds = charges.map((charge) => readBatchId(charge.metadata) ?? readUnlinkedPostChargeId(charge));
+  const lookupBatchIds = batchIds.filter((batchId): batchId is string => batchId !== null);
   const scheduledPostIds = charges
     .map((charge) => charge.scheduled_post_id)
     .filter((postId): postId is string => postId !== null);
 
   const [publishedLookup, failedLookup, scheduledLookup] = await Promise.all([
-    fetchPublishedPlatformsByBatch(batchIds),
-    fetchFailedPlatformsByBatch(batchIds),
+    fetchPublishedPlatformsByBatch(lookupBatchIds),
+    fetchFailedPlatformsByBatch(lookupBatchIds),
     fetchScheduledOutcomesById(scheduledPostIds),
   ]);
-  // A secondary read failing would mislabel real posts as still publishing;
-  // an honest error state beats a wrong ledger.
   if (!publishedLookup.ok || !failedLookup.ok || !scheduledLookup.ok) {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
   const entries: ProofLedgerEntry[] = [];
   for (const charge of charges) {
-    // Filtered server-side already; the narrow keeps the type honest.
     if (charge.tx_hash === null) continue;
     const resolved = resolveOutcome({
       chargeStatus: charge.status,
+      hasActionFailed: charge.error_message !== null,
       action: charge.action,
-      batchId: readBatchId(charge.metadata),
+      batchId: readLinkedBatchId({
+        charge,
+        publishedByBatch: publishedLookup.value,
+        failedByBatch: failedLookup.value,
+      }),
       scheduledPostId: charge.scheduled_post_id,
       publishedByBatch: publishedLookup.value,
       failedByBatch: failedLookup.value,
@@ -165,7 +135,6 @@ export async function loadProofLedger(options?: {
   return { ok: true, entries };
 }
 
-/** metadata.batch_id when post-now stored it; null for every other shape. */
 function readBatchId(metadata: Json): string | null {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     return null;
@@ -174,8 +143,30 @@ function readBatchId(metadata: Json): string | null {
   return typeof batchId === "string" && batchId.length > 0 ? batchId : null;
 }
 
+function readUnlinkedPostChargeId(charge: {
+  id: string;
+  action: string;
+  scheduled_post_id: string | null;
+}): string | null {
+  return charge.action.startsWith(POST_ACTION_PREFIX) && charge.scheduled_post_id === null ? charge.id : null;
+}
+
+function readLinkedBatchId(params: {
+  charge: { id: string; action: string; metadata: Json; scheduled_post_id: string | null };
+  publishedByBatch: PlatformByKey;
+  failedByBatch: PlatformByKey;
+}): string | null {
+  const storedBatchId = readBatchId(params.charge.metadata);
+  if (storedBatchId !== null) return storedBatchId;
+  const chargeBatchId = readUnlinkedPostChargeId(params.charge);
+  if (chargeBatchId === null) return null;
+  const hasPostRow = params.publishedByBatch.has(chargeBatchId) || params.failedByBatch.has(chargeBatchId);
+  return hasPostRow ? chargeBatchId : null;
+}
+
 function resolveOutcome(params: {
   chargeStatus: "pending" | "settled" | "failed" | "refunded";
+  hasActionFailed: boolean;
   action: string;
   batchId: string | null;
   scheduledPostId: string | null;
@@ -186,7 +177,7 @@ function resolveOutcome(params: {
   if (params.chargeStatus === "refunded") {
     return { outcome: "refunded", platform: null };
   }
-  if (params.chargeStatus === "failed") {
+  if (params.chargeStatus === "failed" || params.hasActionFailed) {
     return { outcome: "failed", platform: null };
   }
   if (!params.action.startsWith(POST_ACTION_PREFIX)) {
@@ -270,18 +261,23 @@ async function fetchFailedPlatformsByBatch(
 
   const { data: failedRows, error } = await runQuery(
     db
-      .select({ batch_id: failed_posts.batch_id, platform: failed_posts.platform })
-      .from(failed_posts)
-      .where(inArray(failed_posts.batch_id, batchIds)),
+      .select({ batch_id: pending_direct_posts.batch_id, platform: pending_direct_posts.platform })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.batch_id, batchIds),
+          eq(pending_direct_posts.status, "failed"),
+        ),
+      ),
   );
   if (error) {
     console.error(
-      `[fetchFailedPlatformsByBatch] failed_posts read failed: ${error.message}`,
+      `[fetchFailedPlatformsByBatch] pending_direct_posts read failed: ${error.message}`,
     );
     return { ok: false };
   }
   for (const row of failedRows) {
-    if (row.batch_id !== null) platformByBatch.set(row.batch_id, row.platform);
+    platformByBatch.set(row.batch_id, row.platform);
   }
   return { ok: true, value: platformByBatch };
 }

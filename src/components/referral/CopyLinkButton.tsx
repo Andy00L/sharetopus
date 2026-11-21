@@ -3,7 +3,6 @@
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 
-/** Copies the referral link and shows "Copied" for 2 seconds. */
 export function CopyLinkButton({ link }: { link: string }) {
   const [copied, setCopied] = useState(false);
 

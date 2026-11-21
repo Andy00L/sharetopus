@@ -1,13 +1,13 @@
+import { SOCIAL_PLATFORMS } from "@/db/schema";
 import type {
   DocsSection,
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
 
-/**
- * Connections resource of the /docs/rest reference. Field lists mirror
- * src/lib/api/rest/validation/connectionSchemas.ts (read in full) and the
- * ConnectionDTO factory.
- */
+const PLATFORM_LIST_FORMAT = new Intl.ListFormat("en", { type: "disjunction" });
+const ANY_PLATFORM_LIST = PLATFORM_LIST_FORMAT.format(SOCIAL_PLATFORMS);
+const OAUTH_PLATFORM_LIST = PLATFORM_LIST_FORMAT.format(ADAPTER_PLATFORMS);
 
 const CONNECTION_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (ConnectionDTO)",
@@ -22,8 +22,7 @@ const CONNECTION_DTO_FIELDS: ParamTableData = {
       name: "platform",
       type: "string",
       required: true,
-      description:
-        "linkedin, tiktok, pinterest, instagram, facebook, threads, youtube, or x.",
+      description: `${ANY_PLATFORM_LIST}.`,
     },
     {
       name: "account_identifier",
@@ -108,8 +107,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
               name: "platform",
               type: "string",
               required: false,
-              description:
-                "Any of linkedin, tiktok, pinterest, instagram, facebook, threads, youtube, x.",
+              description: `Any of ${ANY_PLATFORM_LIST}.`,
             },
             {
               name: "include_unavailable",
@@ -158,8 +156,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
               name: "platform",
               type: "string",
               required: true,
-              description:
-                "linkedin, tiktok, pinterest, instagram, youtube, x, or facebook.",
+              description: `${OAUTH_PLATFORM_LIST}.`,
             },
             {
               name: "redirect_url",
@@ -245,7 +242,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
       path: "/api/v1/connections/{id}/reauth",
       title: "Reauthorize a connection",
       description:
-        "For an account whose platform token expired (is_available false). Returns a fresh authorization URL to open in a browser, plus the current account snapshot.",
+        `For an account whose platform token expired (is_available false). Returns a fresh authorization URL to open in a browser, plus the current account snapshot. Only ${OAUTH_PLATFORM_LIST} connections have reauth links; any other platform answers 400 validation_error and is reconnected from the connections page.`,
       sourceRef: "src/app/api/v1/connections/[id]/reauth/route.ts",
       paramTables: [
         {
@@ -280,7 +277,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
       path: "/api/v1/connections/{id}/boards",
       title: "List Pinterest boards",
       description:
-        "Boards of a connected Pinterest account, for the pinterest_board_id field when posting. 400 when the account is not Pinterest; 401 with a reauth_url when the Pinterest token expired and could not be refreshed; 429 when board lookups are rate limited (ours, 15 a minute per account owner, or Pinterest's); 503 when the rate limiter cannot answer.",
+        "Boards of a connected Pinterest account, for the pinterest_board_id field when posting. 400 when the account is not Pinterest; 401 with a reauth_url when the Pinterest token expired and could not be refreshed; 429 when board lookups are rate limited (ours, 15 a minute per account owner, or Pinterest's); 503 with retry_after_seconds when the rate limiter cannot answer or the Pinterest token cannot be refreshed right now.",
       sourceRef:
         "src/app/api/v1/connections/[id]/boards/route.ts, connectionSchemas.ts (PinterestBoardsQuerySchema)",
       paramTables: [

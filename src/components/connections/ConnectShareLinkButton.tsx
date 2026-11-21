@@ -3,7 +3,6 @@
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 
-/** Posts to the share link initiate route, which redirects to TikTok; disabled after the first click. */
 export function ConnectShareLinkButton({
   initiateUrl,
 }: {

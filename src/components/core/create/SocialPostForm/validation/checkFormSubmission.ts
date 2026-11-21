@@ -171,7 +171,5 @@ export function checkFormSubmission(params: CheckFormParams): CheckFormResult {
     }
   }
 
-  // TikTok rules are checked by findTikTokPublishBlocker
-  // (tikTokPublishRules.ts), which also disables the publish button.
   return { valid: true };
 }

@@ -1,18 +1,18 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
-import type { PostChangeFailure } from "@/lib/types/postBatch";
+import {
+  POST_CHANGE_ELIGIBLE_STATUSES,
+  type PostChangeFailure,
+} from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { CANCEL_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { checkPostChangeRules } from "../preflightScheduledPostChange";
 
-/**
- * A success carries the counts. A failure carries `failure` (see
- * PostChangeFailure) so each caller can answer in its own terms; `message`
- * is safe to show and never carries a database error.
- */
 export type CancelScheduledPostBatchResult = {
   message: string;
   resetIn?: number;
@@ -24,24 +24,6 @@ export type CancelScheduledPostBatchResult = {
   | { success: false; failure: PostChangeFailure }
 );
 
-/**
- * Cancels scheduled posts in batch. Sets status='cancelled' on rows
- * currently in 'scheduled' status that belong to `principalId`, and clears
- * cancelled_by_sub_at: only a subscription lapse sets that tag, and the
- * 7-day grace cleanup deletes the posts that carry it.
- *
- * **Authentication:** Does not call Clerk. Caller must validate
- * `principalId` (Server Action: `auth()`; MCP: `extractPrincipal`).
- *
- * **Rate limiting:** 30 requests per 60s, scoped per source (e.g.
- * `web_cancel_scheduled_posts`, `mcp_cancel_scheduled_posts`).
- *
- * **Tables:** `scheduled_posts` (read + update).
- *
- * @param postIds - Array of scheduled_posts.id to cancel
- * @param principalId - Owner principal; ownership check enforced
- * @param source - Channel label; drives rate-limit scope
- */
 export async function cancelScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -60,9 +42,12 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_cancel_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: CANCEL_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -72,7 +57,6 @@ export async function cancelScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
@@ -95,47 +79,47 @@ export async function cancelScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return {
-        success: false,
-        failure: "not_found",
-        message: "No posts found with the provided IDs.",
-      };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.cancel,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, failure: "not_found", message: "No posts found with the provided IDs." };
+        case "not_owned":
+          console.warn(
+            `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to cancel ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return { success: false, failure: "not_eligible", message: "Only scheduled posts can be cancelled." };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
+    const cancellablePosts = rules.eligiblePosts;
 
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
-      console.warn(
-        `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to cancel ${unauthorizedPosts.length} post(s) they don't own`,
-      );
-      return {
-        success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    // Step 3: filter cancellable posts (only 'scheduled' status)
-    const cancellablePosts = posts.filter(
-      (post) => post.status === "scheduled",
-    );
-    if (cancellablePosts.length === 0) {
-      return {
-        success: false,
-        failure: "not_eligible",
-        message: "Only scheduled posts can be cancelled.",
-      };
-    }
-
-    // Step 4: batch update to 'cancelled'
     const cancellableIds = cancellablePosts.map((post) => post.id);
-    const { error: updateError } = await runQuery(
+    const { data: cancelledRows, error: updateError } = await runQuery(
       db
         .update(scheduled_posts)
         .set({ status: "cancelled", cancelled_by_sub_at: null })
-        .where(inArray(scheduled_posts.id, cancellableIds)),
+        .where(
+          and(
+            inArray(scheduled_posts.id, cancellableIds),
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "scheduled"),
+          ),
+        )
+        .returning({ id: scheduled_posts.id }),
     );
 
     if (updateError) {
@@ -150,13 +134,21 @@ export async function cancelScheduledPostBatch(
       };
     }
 
+    if (cancelledRows.length === 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: "Only scheduled posts can be cancelled.",
+      };
+    }
+
     return {
       success: true,
-      message: `Cancelled ${cancellablePosts.length} post(s).`,
+      message: `Cancelled ${cancelledRows.length} post(s).`,
       details: {
         total: postIds.length,
-        succeeded: cancellablePosts.length,
-        failed: postIds.length - cancellablePosts.length,
+        succeeded: cancelledRows.length,
+        failed: postIds.length - cancelledRows.length,
       },
     };
   } catch (err) {

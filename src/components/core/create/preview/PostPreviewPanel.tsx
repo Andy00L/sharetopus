@@ -12,8 +12,9 @@ import PlatformPostPreview, {
   type PreviewableAccount,
 } from "./PlatformPostPreview";
 
+const ROOM_FOR_BADGE_OVERHANG_CLASSES = "pl-1.5 pt-1.5";
+
 interface PostPreviewPanelProps {
-  /** The currently selected accounts, in selection order. */
   readonly accounts: PreviewableAccount[];
   readonly accountContent: AccountContentEntry[];
   readonly defaultTitle: string;
@@ -24,12 +25,6 @@ interface PostPreviewPanelProps {
   readonly pinterestLink: string;
 }
 
-/**
- * Live post preview for the composer's right column: pick any selected
- * account and see exactly what it will publish, with that platform's real
- * character limit counted against the effective caption (per-account
- * overrides included).
- */
 export default function PostPreviewPanel({
   accounts,
   accountContent,
@@ -42,8 +37,6 @@ export default function PostPreviewPanel({
 }: PostPreviewPanelProps) {
   const [previewAccountId, setPreviewAccountId] = useState<string | null>(null);
 
-  // Derived active account: the picked one while it stays selected,
-  // otherwise the first selected account. No effect needed.
   const activeAccount =
     accounts.find((account) => account.id === previewAccountId) ??
     accounts[0] ??
@@ -88,8 +81,9 @@ export default function PostPreviewPanel({
       </div>
 
       {accounts.length > 1 && (
-        // The scroll row clips on both axes; the left and top padding keeps each badge's overhang visible.
-        <div className="mb-3 flex items-center gap-2 overflow-x-auto pb-1 pl-1.5 pt-1.5">
+        <div
+          className={`mb-3 flex items-center gap-2 overflow-x-auto pb-1 ${ROOM_FOR_BADGE_OVERHANG_CLASSES}`}
+        >
           {accounts.map((account) => {
             const isActive = account.id === activeAccount.id;
             return (

@@ -10,7 +10,6 @@ import { format } from "date-fns";
 import { CalendarIcon, Clock, Loader2, SendHorizontal } from "lucide-react";
 
 interface SchedulingPanelProps {
-  /** Still needed for the upload-progress block below. */
   readonly selectedFile: File | null;
   readonly isScheduled: boolean;
   readonly setIsScheduled: (isScheduled: boolean) => void;
@@ -25,11 +24,9 @@ interface SchedulingPanelProps {
   readonly disabled: boolean;
   readonly hasTikTokAccounts: boolean;
   readonly tikTokOptions?: TikTokOptions;
-  /** Why the post cannot go to TikTok yet (findTikTokPublishBlocker); null when nothing blocks it. */
   readonly publishBlocker: string | null;
 }
 
-/** Schedule toggle, date and time, TikTok declaration, and the publish button. */
 export default function SchedulingPanel({
   selectedFile,
   isScheduled,
@@ -47,16 +44,14 @@ export default function SchedulingPanel({
   tikTokOptions,
   publishBlocker,
 }: SchedulingPanelProps) {
-  // TikTok's required declaration: the Branded Content Policy joins the
-  // Music Usage Confirmation once branded content is disclosed.
+  // TikTok Content Sharing Guidelines, Required UX Implementation 4: the
+  // declaration adds the Branded Content Policy once branded content is checked.
   const showBrandedPolicyLink =
     tikTokOptions?.brandContentToggle === true &&
     tikTokOptions?.brandedContent === true;
   return (
     <>
-      {/**Scheduling button */}
       <div className=" p-2.5 border rounded-2xl  bg-card">
-        {/* Scheduling toggle */}
         <div className="flex items-center  space-x-2 py-2">
           <Switch
             id="schedule-toggle"
@@ -66,7 +61,6 @@ export default function SchedulingPanel({
           <Label htmlFor="schedule-toggle">Schedule for later</Label>
         </div>
 
-        {/* Scheduling options */}
         {isScheduled && (
           <div className="grid gap-4 py-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -101,7 +95,6 @@ export default function SchedulingPanel({
           </div>
         )}
 
-        {/* Error display */}
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -150,8 +143,6 @@ export default function SchedulingPanel({
         )}
 
         {!isLoading && (
-          // The wrapper carries the hover text: a disabled button gets no
-          // pointer events, so its own title would never show.
           <div
             className="pt-4 flex justify-between"
             title={publishBlocker ?? undefined}

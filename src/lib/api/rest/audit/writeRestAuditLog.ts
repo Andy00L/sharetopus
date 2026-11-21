@@ -6,7 +6,6 @@ import { redactSecrets } from "@/lib/api/audit/redactPatterns";
 import { toJsonValue } from "@/lib/utils/jsonObject";
 import type { RestApiKeyContext } from "../auth/types";
 
-/** The rest_audit_log.outcome values, from the column's CHECK list. */
 export type RestAuditOutcome = (typeof REST_AUDIT_OUTCOMES)[number];
 
 export type RestAuditWriteInput = {
@@ -16,18 +15,9 @@ export type RestAuditWriteInput = {
   errorCode: string | null;
   argsPayload: Record<string, unknown> | null;
   responseSummary: Record<string, unknown> | null;
+  finishedAt: number;
 };
 
-/**
- * Writes one row to rest_audit_log. Never throws.
- *
- * Args payload redacted via the shared redactSecrets helper (same
- * patterns MCP uses). Latency computed from context.startedAt to now.
- *
- * Caller pattern: called once per request from inside withRestEndpoint.
- * Awaited so the row lands before the function returns. If insert
- * fails, log a warning and return; the request is already complete.
- */
 export async function writeRestAuditLog(
   input: RestAuditWriteInput,
 ): Promise<void> {
@@ -39,6 +29,7 @@ export async function writeRestAuditLog(
       errorCode,
       argsPayload,
       responseSummary,
+      finishedAt,
     } = input;
 
     const redactedArgs = argsPayload ? redactSecrets(argsPayload) : null;
@@ -54,7 +45,7 @@ export async function writeRestAuditLog(
       status_code: statusCode,
       outcome,
       error_code: errorCode,
-      latency_ms: Date.now() - context.startedAt,
+      latency_ms: finishedAt - context.startedAt,
       args_redacted: toJsonValue(redactedArgs),
       response_summary: toJsonValue(responseSummary),
     };

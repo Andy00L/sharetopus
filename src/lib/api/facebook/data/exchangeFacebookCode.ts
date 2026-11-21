@@ -2,16 +2,12 @@ import "server-only";
 
 import { z } from "zod";
 
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import { requestCodeExchange } from "@/lib/api/oauth/requestCodeExchange";
 import type { TokenExchangeResult } from "@/lib/types/dbTypes";
 
-/**
- * Graph API version pinned across the repo; postToInstagram.ts pins the
- * same version on graph.instagram.com.
- */
-const GRAPH_API_VERSION = "v23.0";
-
-/** 60 days in seconds, the documented long-lived user token lifetime. */
+// Facebook documents long-lived user tokens as lasting about 60 days:
+// https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived
 const LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
 
 /**
@@ -24,22 +20,6 @@ const FacebookTokenSchema = z.object({
   expires_in: z.number().optional(),
 });
 
-/**
- * Exchanges a Facebook Login code for a LONG-LIVED USER token.
- *
- * Two phases:
- *   1. code -> short-lived user token (GET /oauth/access_token)
- *   2. short-lived -> long-lived user token (grant_type=fb_exchange_token)
- *
- * The returned token is the USER token. Page tokens (what posting actually
- * uses) are derived from it via getFacebookPages; page tokens minted from a
- * long-lived user token do not expire.
- * sourceRef: https://developers.facebook.com/docs/pages-api/getting-started/
- *
- * `redirectUri` must be the exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeFacebookCode(
   code: string,
   redirectUri: string,
@@ -51,7 +31,7 @@ export async function exchangeFacebookCode(
     return { success: false, message: "Facebook configuration missing." };
   }
 
-  const graphTokenUrl = `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token`;
+  const graphTokenUrl = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/oauth/access_token`;
 
   const shortLived = await requestCodeExchange({
     caller: "exchangeFacebookCode",

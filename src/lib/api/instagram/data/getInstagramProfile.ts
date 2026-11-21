@@ -2,18 +2,16 @@ import "server-only";
 
 import { z } from "zod";
 
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import type { InstagramProfile } from "@/lib/types/dbTypes";
 
-/** Outbound Instagram API calls are bounded to 15s. */
 const PROFILE_TIMEOUT_MS = 15_000;
 
-/** Characters of an error body kept in logs. Graph error bodies hold no profile data. */
 const ERROR_BODY_LOG_LIMIT = 300;
 
-/**
- * /me answer. user_id is the Instagram professional account ID that
- * postToInstagram publishes under, so the account row is keyed on it.
- */
+// /me user_id is the Instagram professional account ID that content publishing
+// posts under, so the account row is keyed on it:
+// https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/get-started
 const InstagramMeSchema = z.object({
   user_id: z.union([z.string().min(1), z.number()]),
   username: z.string().optional(),
@@ -24,7 +22,6 @@ const InstagramMeSchema = z.object({
   follows_count: z.number().optional(),
 });
 
-/** /me answers the object itself; { data: [object] } is accepted too. */
 const InstagramMeAnswerSchema = z.union([
   z.object({ data: z.array(InstagramMeSchema).nonempty() }),
   InstagramMeSchema,
@@ -34,13 +31,6 @@ export type InstagramProfileResult =
   | { success: true; data: InstagramProfile }
   | { success: false; message: string };
 
-/**
- * Reads the professional account behind an Instagram Login token. The URL
- * carries the token, so it is never logged; neither is a successful body,
- * which holds the account's profile.
- *
- * Called by: connectPlatformAccounts
- */
 export async function getInstagramProfile(
   accessToken: string,
 ): Promise<InstagramProfileResult> {
@@ -56,7 +46,7 @@ export async function getInstagramProfile(
 
   try {
     const response = await fetch(
-      `https://graph.instagram.com/v23.0/me?${new URLSearchParams({
+      `https://graph.instagram.com/${META_GRAPH_API_VERSION}/me?${new URLSearchParams({
         fields,
         access_token: accessToken,
       })}`,

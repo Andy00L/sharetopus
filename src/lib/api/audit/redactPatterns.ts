@@ -1,11 +1,8 @@
-// Redaction shared by the MCP and REST audit logs. Keys are matched by name, case-insensitive.
 const REDACT_KEYS =
   /^(token|password|secret|authorization|bearer|api_key|apikey|access_token|refresh_token|credential|private_key|jwt)$/i;
 
-/** Max size of args_redacted, in characters. */
-const MAX_ARGS_LENGTH = 4096;
+const MAX_ARGS_REDACTED_CHARS = 4096;
 
-/** Replaces secret-named keys and JWT-looking strings with markers, at any depth. */
 export function redactSecrets(
   obj: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -34,16 +31,14 @@ function redactValue(value: unknown): unknown {
   return value;
 }
 
-/** Rough JWT detector: three base64url segments separated by dots. */
 function looksLikeJwt(value: string): boolean {
   return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value);
 }
 
-/** Truncate to MAX_ARGS_LENGTH chars. Returns the parsed-safe JSON object. */
 export function truncateJson(
   obj: Record<string, unknown>,
 ): Record<string, unknown> {
   const str = JSON.stringify(obj);
-  if (str.length <= MAX_ARGS_LENGTH) return obj;
-  return { _truncated: true, _preview: str.slice(0, MAX_ARGS_LENGTH) };
+  if (str.length <= MAX_ARGS_REDACTED_CHARS) return obj;
+  return { _truncated: true, _preview: str.slice(0, MAX_ARGS_REDACTED_CHARS) };
 }

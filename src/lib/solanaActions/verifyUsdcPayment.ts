@@ -3,29 +3,15 @@ import "server-only";
 import { createSolanaRpc, signature as toSignature } from "@solana/kit";
 import type { Signature } from "@solana/kit";
 
+import { pollUntilDeadline } from "@/lib/x402/chain/pollUntilDeadline";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/**
- * Verifies, from the chain itself, that a wallet-broadcast transaction paid
- * at least the expected USDC to the recipient. No facilitator is involved on
- * the Blink path, so this is the payment verification: the transaction must
- * be confirmed and successful, its fee payer (first signer) must be the
- * wallet that claims to have paid, and the recipient's USDC balance must
- * rise by at least the price. Balance deltas come from the RPC's pre and
- * post token balances, which hold for any wallet-injected instructions
- * (Lighthouse guards, compute budget) around the transfer.
- *
- * Replay protection is not here: the caller records the signature as the
- * charge nonce, and x402_charges.nonce is UNIQUE.
- *
- * Called by: solanaActions/postNowBlink.ts (confirm step)
- * Tables touched: none. Network: getTransaction on the pinned RPC.
- */
+const CONFIRMATION_TIMEOUT_MS = 12_000;
+const CONFIRMATION_POLL_INTERVAL_MS = 1_500;
 
-/** Poll budget after a wallet reports its signature: 10 x 1.5s covers confirmation. */
-const CONFIRMATION_POLL_ATTEMPTS = 10;
-const CONFIRMATION_POLL_INTERVAL_MS = 1500;
+/** One getTransaction call; the Solana HTTP transport sets no timeout of its own. */
+const RPC_REQUEST_TIMEOUT_MS = 4_000;
 
 export type VerifyUsdcPaymentResult =
   | {
@@ -38,13 +24,20 @@ export type VerifyUsdcPaymentResult =
     }
   | {
       ok: false;
+      reason: "amount_short";
+      message: string;
+      txSignature: string;
+      payerAddress: string;
+      atomicReceived: bigint;
+    }
+  | {
+      ok: false;
       reason:
         | "invalid_signature"
         | "not_found"
         | "failed_on_chain"
         | "payer_mismatch"
         | "no_usdc_credit"
-        | "amount_short"
         | "rpc_error";
       message: string;
     };
@@ -69,25 +62,25 @@ export async function verifyUsdcPayment(params: {
   }
 
   const rpc = createSolanaRpc(getRpcUrl(params.network));
-  let transaction: Awaited<ReturnType<typeof fetchConfirmedTransaction>> = null;
-  for (let attempt = 0; attempt < CONFIRMATION_POLL_ATTEMPTS; attempt += 1) {
-    try {
-      transaction = await fetchConfirmedTransaction(rpc, txSignature);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "RPC read failed.";
+  const pollOutcome = await pollUntilDeadline({
+    timeoutMs: CONFIRMATION_TIMEOUT_MS,
+    intervalMs: CONFIRMATION_POLL_INTERVAL_MS,
+    requestTimeoutMs: RPC_REQUEST_TIMEOUT_MS,
+    readOnce: (abortSignal) => fetchConfirmedTransaction(rpc, txSignature, abortSignal),
+  });
+  if (pollOutcome.status === "timed_out") {
+    if (pollOutcome.lastError !== null) {
+      const message = pollOutcome.lastError instanceof Error ? pollOutcome.lastError.message : "RPC read failed.";
       console.error(`[verifyUsdcPayment] getTransaction failed: ${message}`);
       return { ok: false, reason: "rpc_error", message: "Could not read the transaction from the network." };
     }
-    if (transaction) break;
-    await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_INTERVAL_MS));
-  }
-  if (!transaction) {
     return {
       ok: false,
       reason: "not_found",
       message: "Transaction not confirmed yet. Wait a few seconds and try again.",
     };
   }
+  const transaction = pollOutcome.value;
 
   if (transaction.meta?.err) {
     return {
@@ -97,9 +90,7 @@ export async function verifyUsdcPayment(params: {
     };
   }
 
-  // The fee payer is static account 0 and must sign; the Blink's payment is
-  // built with the wallet in that slot, so anything else is not that wallet's
-  // payment.
+  // Solana's fee payer is the first required signer, static account index 0 (solana.com/docs/core/fees).
   const feePayer = transaction.transaction.message.accountKeys[0];
   if (
     !feePayer ||
@@ -129,7 +120,7 @@ export async function verifyUsdcPayment(params: {
   const preBalance = (transaction.meta?.preTokenBalances ?? []).find(
     (balance) => balance.accountIndex === postBalance.accountIndex,
   );
-  // A freshly created recipient account has no pre entry: it started at zero.
+  // The RPC lists no preTokenBalances entry for a token account the transaction itself created.
   const atomicBefore = BigInt(preBalance?.uiTokenAmount.amount ?? "0");
   const atomicAfter = BigInt(postBalance.uiTokenAmount.amount);
   const atomicReceived = atomicAfter - atomicBefore;
@@ -138,6 +129,9 @@ export async function verifyUsdcPayment(params: {
       ok: false,
       reason: "amount_short",
       message: `The transaction paid ${atomicReceived} atomic USDC; ${params.minimumAtomicAmount} was required.`,
+      txSignature: String(txSignature),
+      payerAddress: String(feePayer.pubkey),
+      atomicReceived,
     };
   }
 
@@ -154,6 +148,7 @@ export async function verifyUsdcPayment(params: {
 async function fetchConfirmedTransaction(
   rpc: ReturnType<typeof createSolanaRpc>,
   txSignature: Signature,
+  abortSignal: AbortSignal,
 ) {
   return rpc
     .getTransaction(txSignature, {
@@ -161,5 +156,5 @@ async function fetchConfirmedTransaction(
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     })
-    .send();
+    .send({ abortSignal });
 }

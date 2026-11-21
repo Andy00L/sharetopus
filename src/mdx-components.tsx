@@ -1,5 +1,7 @@
 import type { MDXComponents } from "mdx/types";
 
+import { TABLE_HEAD_CELL_CLASS } from "@/components/apiReference/tableClasses";
+
 /**
  * Required by @next/mdx. Maps every MDX element onto the brand token
  * sheet (docs/UI_DESIGN_SYSTEM.md) so the guide pages read like the API
@@ -74,7 +76,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
     ),
     th: (props) => (
       <th
-        className="border-b border-border bg-[var(--cream-2)]/50 px-3 py-2 text-left font-semibold text-[var(--ink-2)]"
+        className={`border-b border-border bg-[var(--cream-2)]/50 ${TABLE_HEAD_CELL_CLASS}`}
         {...props}
       />
     ),

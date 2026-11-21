@@ -13,11 +13,11 @@ import {
 } from "@/components/ui/select";
 import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import { Loader2 } from "lucide-react";
-import type { BoardEntry } from "../hooks/usePinterestBoards";
+import type { BoardsByAccount } from "../state/accountBoards";
 
 interface PinterestSettingsTabProps {
   readonly selectedPinterestAccounts: ClientSocialAccount[];
-  readonly boards: BoardEntry[];
+  readonly boardsByAccount: BoardsByAccount;
   readonly isLoadingBoards: boolean;
   readonly newBoardName: string;
   readonly setNewBoardName: (name: string) => void;
@@ -32,7 +32,7 @@ interface PinterestSettingsTabProps {
 
 export default function PinterestSettingsTab({
   selectedPinterestAccounts,
-  boards,
+  boardsByAccount,
   isLoadingBoards,
   newBoardName,
   setNewBoardName,
@@ -46,36 +46,36 @@ export default function PinterestSettingsTab({
 }: PinterestSettingsTabProps) {
   return (
     <div className="space-y-4  ">
-      {/* Board selection for each Pinterest account */}
-      {selectedPinterestAccounts.map((account) => (
-        <div
-          key={`pinterest-${account.id}`}
-          className="space-y-3 border rounded p-3 bg-accent"
-        >
-          <div className="flex items-center gap-2">
-            <AvatarWithFallback
-              src={account.avatar_url}
-              alt={account.username ?? "Account"}
-              size={42}
-              className="h-8 w-8"
-            />
-            <span className="font-medium">
-              {account.display_name ?? account.username}
-            </span>
-          </div>
-
-          {isLoadingBoards && (
-            <div className="p-2 border rounded-md text-muted-foreground">
-              Loading boards...
+      {selectedPinterestAccounts.map((account) => {
+        const accountBoards = boardsByAccount[account.id];
+        const loadedBoards =
+          !isLoadingBoards && accountBoards?.status === "loaded"
+            ? accountBoards.boards
+            : null;
+        return (
+          <div
+            key={`pinterest-${account.id}`}
+            className="space-y-3 border rounded p-3 bg-accent"
+          >
+            <div className="flex items-center gap-2">
+              <AvatarWithFallback
+                src={account.avatar_url}
+                alt={account.username ?? "Account"}
+                size={42}
+                className="h-8 w-8"
+              />
+              <span className="font-medium">
+                {account.display_name ?? account.username}
+              </span>
             </div>
-          )}
 
-          {!isLoadingBoards &&
-            boards.some(
-              (board) =>
-                board.accountId === account.id &&
-                board.boardName === "no-boards"
-            ) && (
+            {isLoadingBoards && (
+              <div className="p-2 border rounded-md text-muted-foreground">
+                Loading boards...
+              </div>
+            )}
+
+            {loadedBoards?.length === 0 && (
               <div className="flex gap-2 bg-card">
                 <Input
                   placeholder="Board name"
@@ -96,24 +96,16 @@ export default function PinterestSettingsTab({
               </div>
             )}
 
-          {!isLoadingBoards &&
-            boards.some(
-              (board) =>
-                board.accountId === account.id && board.boardName === "error"
-            ) && (
+            {!isLoadingBoards && accountBoards?.status === "failed" && (
               <div className="p-2 border rounded-md bg-card text-red-500">
-                Error loading boards for this account. Please try reconnecting.
+                {accountBoards.message}
               </div>
             )}
 
-          {!isLoadingBoards &&
-            boards.filter((board) => board.accountId === account.id).length >
-              0 && (
+            {loadedBoards !== null && loadedBoards.length > 0 && (
               <Select
                 value={
-                  boards.find(
-                    (board) => board.accountId === account.id && board.isSelected
-                  )?.boardID ?? ""
+                  loadedBoards.find((board) => board.isSelected)?.boardID ?? ""
                 }
                 onValueChange={(boardId) => onSelectBoard(account.id, boardId)}
               >
@@ -121,27 +113,20 @@ export default function PinterestSettingsTab({
                   <SelectValue placeholder="Select a board" />
                 </SelectTrigger>
                 <SelectContent>
-                  {boards
-                    .filter(
-                      (board) =>
-                        board.accountId === account.id &&
-                        board.boardName !== "no-boards" &&
-                        board.boardName !== "error"
-                    )
-                    .map((board) => (
-                      <SelectItem
-                        key={`${account.id}-${board.boardID}`}
-                        value={board.boardID}
-                      >
-                        {board.boardName}
-                      </SelectItem>
-                    ))}
+                  {loadedBoards.map((board) => (
+                    <SelectItem
+                      key={`${account.id}-${board.boardID}`}
+                      value={board.boardID}
+                    >
+                      {board.boardName}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             )}
-        </div>
-      ))}
-      {/* Single title field for all Pinterest accounts */}
+          </div>
+        );
+      })}
       <div className="space-y-2 mb-4 ">
         <Label htmlFor="pinterest-title">Title (Optional)</Label>
         <Input
@@ -152,7 +137,6 @@ export default function PinterestSettingsTab({
           placeholder="Add a title for all Pinterest pins"
         />
       </div>
-      {/* Single link field for all Pinterest accounts */}
       <div className="space-y-2 ">
         <Label htmlFor="pinterest-link">Link (Optional)</Label>
         <Input

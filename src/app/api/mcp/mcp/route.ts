@@ -25,10 +25,8 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-/** Largest body read for the client name (bodies carrying it are under 2 KB); bounds the clone against huge POSTs. */
 const MAX_CLIENT_INFO_BODY_BYTES = 16 * 1024;
 
-/** Seconds a client waits before retrying when its credentials could not be checked. */
 const AUTH_RETRY_AFTER_SECONDS = 30;
 
 const MCP_AUTH_OPTIONS = {
@@ -36,7 +34,6 @@ const MCP_AUTH_OPTIONS = {
   resourceMetadataPath: "/.well-known/oauth-protected-resource",
 };
 
-/** Strips control and HTML characters from the client name before it lands in mcp_oauth_clients (stored XSS guard). */
 function sanitizeClientField(raw: string, maxLength: number): string {
   return raw.replace(/[\x00-\x1f<>'"&]/g, "").slice(0, maxLength);
 }
@@ -54,7 +51,6 @@ function readClientName(parsedBody: unknown): string | null {
     : null;
 }
 
-/** Best effort: the name only enriches the first-sight client row, so any failure returns null. */
 async function readClientNameFromRequest(req: Request): Promise<string | null> {
   if (req.method !== "POST") return null;
 
@@ -85,27 +81,20 @@ async function readClientNameFromRequest(req: Request): Promise<string | null> {
   }
 }
 
-/**
- * The bearer token from the Authorization header, parsed the way withMcpAuth
- * parses it (sourceRef: node_modules/mcp-handler/dist/index.mjs, withMcpAuth).
- */
+// Parsed the way mcp-handler's withMcpAuth parses it (node_modules/mcp-handler/dist/index.mjs withMcpAuth).
 function readBearerToken(authorizationHeader: string | null): string | undefined {
   const [scheme, token] = authorizationHeader?.split(" ") ?? [];
   return scheme?.toLowerCase() === "bearer" ? token : undefined;
 }
 
-/**
- * Resolves the token before withMcpAuth: withMcpAuth answers 401 to every
- * failure, which would sign OAuth clients out during a database outage, so
- * an unreadable database answers 503 with Retry-After instead.
- */
+// mcp-handler's withMcpAuth answers 401 to every verify failure (dist/index.mjs withMcpAuth), which signs OAuth
+// clients out, so a database outage is answered here before it.
 async function authenticateMcpRequest(req: Request): Promise<Response> {
   const bearerToken = readBearerToken(req.headers.get("authorization"));
   let authInfo: AuthInfo | undefined;
 
   if (bearerToken) {
     const clientName = await readClientNameFromRequest(req);
-    // API key or Clerk OAuth, including the subscription gate and the client trust check.
     const resolution = await resolveMcpPrincipal(bearerToken, { clientName });
     if (resolution.status === "unavailable") {
       return NextResponse.json(
@@ -128,7 +117,6 @@ async function authenticateMcpRequest(req: Request): Promise<Response> {
   return withMcpAuth(mcpHandler, async () => authInfo, MCP_AUTH_OPTIONS)(req);
 }
 
-/** The AuthInfo the SDK hands every tool as `ctx.http?.authInfo`. */
 function toAuthInfo(bearerToken: string, principal: McpPrincipal): AuthInfo {
   return {
     token: bearerToken,
@@ -136,18 +124,11 @@ function toAuthInfo(bearerToken: string, principal: McpPrincipal): AuthInfo {
     clientId: clientIdForAuthInfo(principal),
     extra: {
       principal: principal satisfies McpPrincipal,
-      // Serving is stateless, so this per-request id stands in for a session id in logs.
       requestId: randomUUID(),
     },
   };
 }
 
-/**
- * The MCP server at /api/mcp/mcp: stateless Streamable HTTP, protocol
- * 2026-07-28 with a fallback for 2025-era clients. Auth: stp_mcp_ API key or
- * Clerk OAuth; a missing or bad token gets a 401 pointing at
- * /.well-known/oauth-protected-resource.
- */
 const mcpHandler = createMcpHandler(
   (server) => {
     registerTools(server);
@@ -159,7 +140,7 @@ const mcpHandler = createMcpHandler(
       version: "0.2.0",
     },
     instructions: MCP_SERVER_INSTRUCTIONS,
-    // Tools never change at runtime; a listen stream would hold a Vercel function open until maxDuration.
+    // A listen stream holds the Vercel function open until maxDuration.
     capabilities: {
       tools: { listChanged: false },
       prompts: { listChanged: false },
@@ -169,20 +150,18 @@ const mcpHandler = createMcpHandler(
   },
 );
 
-/**
- * Per-IP ceiling before any token handling; it answers 429 or 503, never a
- * 401 that would sign OAuth clients out. The per-user budget lives in withMcpTool.
- */
 async function handleMcpRequest(req: Request): Promise<Response> {
   const clientIpHash = hashClientIp(resolveClientIp(req.headers));
 
   if (clientIpHash) {
-    const routeLimit = await checkRateLimit(
-      "mcp_route",
-      clientIpHash,
-      MCP_ROUTE_RATE_LIMIT.requests,
-      MCP_ROUTE_RATE_LIMIT.windowSeconds,
-    );
+    const routeLimit = await checkRateLimit({
+      operation: "mcp_route",
+      identifier: clientIpHash,
+      rule: {
+        limit: MCP_ROUTE_RATE_LIMIT.requests,
+        windowSeconds: MCP_ROUTE_RATE_LIMIT.windowSeconds,
+      },
+    });
     if (!routeLimit.success) {
       const rejection = describeRateLimitRejection(routeLimit);
       console.warn(

@@ -1,31 +1,21 @@
 import { inngest } from "@/inngest/client";
 import { sweepStaleOauthClients } from "@/actions/server/data/sweepStaleOauthClients";
 
-/**
- * Daily cron at 04:00 UTC. Runs one hour after sweepOrphanStorageFiles
- * to avoid contention.
- *
- * Deletes unverified OAuth clients older than 90 days with no recent
- * session activity. Verified clients preserved indefinitely.
- */
 export const sweepStaleOauthClientsCron = inngest.createFunction(
   {
     id: "sweep-stale-oauth-clients",
     name: "Sweep stale unverified OAuth clients older than 90d",
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "0 4 * * *" }],
   },
   async ({ step }) => {
-    const result = await step.run("sweep-stale-clients", () =>
-      sweepStaleOauthClients()
-    );
-
-    if (!result.success) {
-      console.error(
-        `[sweepStaleOauthClientsCron] ${result.message}`
-      );
-      return { ok: false, reason: result.message };
-    }
+    const result = await step.run("sweep-stale-clients", async () => {
+      const stepResult = await sweepStaleOauthClients();
+      // Inngest marks a step failed, and retries it, only when it throws:
+      // https://www.inngest.com/docs/guides/error-handling
+      if (!stepResult.success) throw new Error(`[sweepStaleOauthClientsCron] ${stepResult.message}`);
+      return stepResult;
+    });
 
     return {
       ok: true,

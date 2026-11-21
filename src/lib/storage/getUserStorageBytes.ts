@@ -5,18 +5,8 @@ import { sql } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 
-/**
- * Reads the total storage bytes for a principal from Supabase Storage.
- *
- * Wraps the `get_user_storage_bytes(_bucket text, _prefix text)` Postgres
- * function (reads storage.objects directly), providing a single source of
- * truth for storage metering across both MCP/REST and x402 code paths.
- *
- * The function returns bigint, which db.execute hands back as a string;
- * a NULL total (nothing stored) counts as 0 bytes.
- *
- * Returns errors as values. Never throws.
- */
+// postgres.js returns a bigint as a string by default:
+// node_modules/postgres/README.md, "Numbers, bigint, numeric".
 export async function getUserStorageBytes(
   principalId: string,
 ): Promise<

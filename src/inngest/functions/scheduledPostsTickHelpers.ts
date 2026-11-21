@@ -1,101 +1,85 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lt, lte } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
+import { POST_DUE_TARGET_COLUMNS } from "@/inngest/dispatch/sendPostDueEvents";
+import type { PostDueTarget } from "@/inngest/events/postDue";
+import { finalizeProcessingPost } from "./processSinglePostHelpers";
 
-/** The scheduled_posts columns a post.due event carries (platform is plain text). */
-export type DuePost = Pick<
-  typeof scheduled_posts.$inferSelect,
-  "id" | "principal_id" | "social_account_id" | "platform" | "scheduled_at"
->;
+const UNCLAIMED_POST_STATUSES: PostStatus[] = ["scheduled", "queued"];
 
-export type FetchDueResult =
-  | { success: true; message: string; posts: DuePost[] }
-  | { success: false; message: string; posts: [] };
+export type FetchUnclaimedPostsResult =
+  | { success: true; targets: PostDueTarget[] }
+  | { success: false; message: string };
 
-export async function fetchDueScheduledPosts(
-  nowIso: string,
-  limit: number
-): Promise<FetchDueResult> {
+export async function fetchUnclaimedPostsDueBy(input: {
+  dueByIso: string;
+  limit: number;
+}): Promise<FetchUnclaimedPostsResult> {
   const { data, error } = await runQuery(
     db
-      .select({
-        id: scheduled_posts.id,
-        principal_id: scheduled_posts.principal_id,
-        social_account_id: scheduled_posts.social_account_id,
-        platform: scheduled_posts.platform,
-        scheduled_at: scheduled_posts.scheduled_at,
-      })
+      .select(POST_DUE_TARGET_COLUMNS)
       .from(scheduled_posts)
       .where(
         and(
-          eq(scheduled_posts.status, "scheduled" satisfies PostStatus),
-          lte(scheduled_posts.scheduled_at, nowIso),
+          inArray(scheduled_posts.status, UNCLAIMED_POST_STATUSES),
+          lte(scheduled_posts.scheduled_at, input.dueByIso),
         ),
       )
       .orderBy(asc(scheduled_posts.scheduled_at))
-      .limit(limit),
+      .limit(input.limit),
   );
 
   if (error) {
-    console.error("[scheduledPostsTick] fetch failed:", error.message);
-    return {
-      success: false,
-      message: `Failed to fetch due posts: ${error.message}`,
-      posts: [],
-    };
+    console.error("[fetchUnclaimedPostsDueBy] fetch failed:", error.message);
+    return { success: false, message: `Failed to fetch due posts: ${error.message}` };
   }
-  return {
-    success: true,
-    message: `Fetched ${data.length} due posts`,
-    posts: data,
-  };
+  return { success: true, targets: data };
 }
 
-export type MarkQueuedResult =
-  | { success: true; message: string; updated: number }
-  | { success: false; message: string; updated: 0 };
+export type SettleStuckPostsResult =
+  | { success: true; settledCount: number; failures: { postId: string; message: string }[] }
+  | { success: false; message: string };
 
-/**
- * Idempotent: only flips rows still in 'scheduled' state. Concurrent
- * tick attempts cannot double-update.
- */
-export async function markPostsAsQueued(
-  postIds: string[]
-): Promise<MarkQueuedResult> {
-  if (postIds.length === 0) {
-    return { success: true, message: "Nothing to mark", updated: 0 };
-  }
-  const { data, error } = await runQuery(
+export async function settleStuckProcessingPosts(input: {
+  claimedBeforeIso: string;
+  limit: number;
+  failureMessage: string;
+}): Promise<SettleStuckPostsResult> {
+  const { data: stuckPosts, error } = await runQuery(
     db
-      .update(scheduled_posts)
-      .set({
-        status: "queued" satisfies PostStatus,
-        updated_at: new Date().toISOString(),
-      })
+      .select()
+      .from(scheduled_posts)
       .where(
         and(
-          inArray(scheduled_posts.id, postIds),
-          eq(scheduled_posts.status, "scheduled" satisfies PostStatus),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          lt(scheduled_posts.updated_at, input.claimedBeforeIso),
         ),
       )
-      .returning({ id: scheduled_posts.id }),
+      .orderBy(asc(scheduled_posts.updated_at))
+      .limit(input.limit),
   );
-
   if (error) {
-    console.error("[scheduledPostsTick] mark queued failed:", error.message);
-    return {
-      success: false,
-      message: `Failed to mark queued: ${error.message}`,
-      updated: 0,
-    };
+    console.error("[settleStuckProcessingPosts] fetch failed:", error.message);
+    return { success: false, message: `Failed to fetch stuck posts: ${error.message}` };
   }
-  return {
-    success: true,
-    message: `Marked ${data.length} as queued`,
-    updated: data.length,
-  };
+
+  let settledCount = 0;
+  const failures: { postId: string; message: string }[] = [];
+  for (const stuckPost of stuckPosts) {
+    const finalized = await finalizeProcessingPost({
+      post: stuckPost,
+      failureMessage: input.failureMessage,
+      abandonedClaimBeforeIso: input.claimedBeforeIso,
+    });
+    if (!finalized.success) {
+      failures.push({ postId: stuckPost.id, message: finalized.message });
+      continue;
+    }
+    if (finalized.updated) settledCount += 1;
+  }
+  return { success: true, settledCount, failures };
 }

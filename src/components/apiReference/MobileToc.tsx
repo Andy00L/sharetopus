@@ -1,11 +1,5 @@
 import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Small-screen table of contents: a sticky, horizontally scrollable pill
- * row replacing the sidebar below lg. Server-rendered anchors only, no
- * scroll-spy (the band is too short to show an active state without
- * jitter while scrolling).
- */
 export function MobileToc({ items }: { items: SidebarItem[] }) {
   return (
     <nav

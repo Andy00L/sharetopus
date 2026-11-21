@@ -1,5 +1,3 @@
-"use client";
-
 import { Plus, Minus } from "lucide-react";
 import {
   Accordion,
@@ -8,8 +6,6 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 
-/* FAQ items. Prices match planPrices in plans.ts ($9/$18/$27).
-   Platform list matches docs/PLATFORMS.md (LinkedIn, TikTok, Pinterest, Instagram). */
 const FAQ_ITEMS = [
   {
     id: "f1",
@@ -43,17 +39,9 @@ const FAQ_ITEMS = [
   },
 ];
 
-/* FAQ section. Centered heading with serif-italic accent.
-   Uses shadcn Accordion in single-expand collapsible mode.
-   The default ChevronDownIcon from the AccordionTrigger is hidden via
-   [&>svg]:hidden. A custom icon span shows Plus when closed and Minus
-   when open, with an orange filled-circle background on the open state.
-   The group class on the trigger + group-data-[state=open] variants
-   on children handle the state-dependent styling. */
 export default function Faq() {
   return (
     <section id="faq" className="py-16 md:py-24 px-4 md:px-8 max-w-4xl mx-auto">
-      {/* Section header. */}
       <div className="text-center mb-8 md:mb-12">
         <div className="t-eyebrow mb-3">
           <span className="inline-block size-1.5 rounded-full bg-primary mr-2 align-middle" />
@@ -64,8 +52,6 @@ export default function Faq() {
         </h2>
       </div>
 
-      {/* Accordion. Single-expand: only one item open at a time.
-          collapsible: clicking the open item closes it. */}
       <Accordion type="single" collapsible className="w-full">
         {FAQ_ITEMS.map((item) => (
           <AccordionItem
@@ -73,10 +59,6 @@ export default function Faq() {
             value={item.id}
             className="border-t border-[var(--line-2)] last:border-b border-b-0 py-2"
           >
-            {/* Trigger: question text left, plus/minus icon right.
-                group class enables group-data-[state=open] on children.
-                [&>svg]:hidden hides the default ChevronDownIcon (direct SVG child).
-                Our Plus/Minus are inside a span, so they are unaffected. */}
             <AccordionTrigger className="group hover:no-underline py-5 [&>svg]:hidden">
               <span className="t-faq-q text-left flex-1">{item.q}</span>
               <span className="size-8 rounded-full border border-foreground/60 flex items-center justify-center shrink-0 transition-colors group-data-[state=open]:bg-primary group-data-[state=open]:border-primary group-data-[state=open]:text-white">

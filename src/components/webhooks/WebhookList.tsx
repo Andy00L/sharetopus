@@ -1,33 +1,42 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { DeliveryLog } from "./DeliveryLog";
-import { useState } from "react";
+import type {
+  WebhookDeliveryDTO,
+  WebhookSubscriptionDTO,
+} from "@/lib/api/rest/openapi/responseSchemas";
+import { DeliveryLog, fetchRecentDeliveriesOrEmpty } from "./DeliveryLog";
+import { Suspense, useState } from "react";
 
-type WebhookSubscription = {
-  id: string;
-  url: string;
-  events: string[];
-  active: boolean;
-  failure_count: number;
-  last_delivery_at: string | null;
-  last_disabled_at: string | null;
-  created_at: string;
+type OpenDeliveryLog = {
+  subscriptionId: string;
+  deliveriesPromise: Promise<WebhookDeliveryDTO[]>;
 };
 
-/** Webhook subscriptions, each with an expandable delivery log. */
 export function WebhookList({
   subscriptions,
   onDelete,
   onToggle,
   onTest,
 }: {
-  subscriptions: WebhookSubscription[];
+  subscriptions: WebhookSubscriptionDTO[];
   onDelete: (id: string) => void;
   onToggle: (id: string, active: boolean) => void;
   onTest: (id: string) => void;
 }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [openDeliveryLog, setOpenDeliveryLog] =
+    useState<OpenDeliveryLog | null>(null);
+
+  const toggleDeliveryLog = (subscriptionId: string) => {
+    if (openDeliveryLog?.subscriptionId === subscriptionId) {
+      setOpenDeliveryLog(null);
+      return;
+    }
+    setOpenDeliveryLog({
+      subscriptionId,
+      deliveriesPromise: fetchRecentDeliveriesOrEmpty(subscriptionId),
+    });
+  };
 
   if (subscriptions.length === 0) {
     return (
@@ -92,13 +101,7 @@ export function WebhookList({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() =>
-                  setExpandedId(
-                    expandedId === subscription.id
-                      ? null
-                      : subscription.id,
-                  )
-                }
+                onClick={() => toggleDeliveryLog(subscription.id)}
               >
                 Deliveries
               </Button>
@@ -111,9 +114,19 @@ export function WebhookList({
               </Button>
             </div>
           </div>
-          {expandedId === subscription.id && (
+          {openDeliveryLog?.subscriptionId === subscription.id && (
             <div className="mt-4 border-t border-border pt-4">
-              <DeliveryLog subscriptionId={subscription.id} />
+              <Suspense
+                fallback={
+                  <p className="text-xs text-muted-foreground">
+                    Loading deliveries...
+                  </p>
+                }
+              >
+                <DeliveryLog
+                  deliveriesPromise={openDeliveryLog.deliveriesPromise}
+                />
+              </Suspense>
             </div>
           )}
         </div>

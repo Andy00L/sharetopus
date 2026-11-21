@@ -7,40 +7,42 @@ import { social_accounts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { FETCH_SOCIAL_ACCOUNTS_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
-/**
- * The principal's social accounts, never deleted ones; filterByAvailability
- * keeps only is_available rows. Caller validates principalId. 30 calls per 60 s per source.
- */
+export type SocialAccountsLoadFailure =
+  | { success: false; reason: "rate_limited"; message: string; resetIn: number }
+  | { success: false; reason: "unavailable"; message: string };
+
+export type FetchSocialAccountsResult =
+  | { success: true; data: SocialAccount[] }
+  | SocialAccountsLoadFailure;
+
 export async function fetchSocialAccounts(
   principalId: string,
   source: CreatedVia,
   filterByAvailability: boolean = true,
-): Promise<{
-  success: boolean;
-  message: string;
-  data?: SocialAccount[];
-  resetIn?: number;
-}> {
+): Promise<FetchSocialAccountsResult> {
   try {
     console.log(
       `[fetchSocialAccounts] Fetching social accounts for principal: ${principalId}`,
       `Source: ${source}`,
     );
 
-    const rateCheck = await checkRateLimit(
-      `${source}_fetch_social_accounts`,
-      principalId,
-      30,
-      60,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: `${source}_fetch_social_accounts`,
+      identifier: principalId,
+      rule: FETCH_SOCIAL_ACCOUNTS_RATE_LIMIT,
+    });
 
     if (!rateCheck.success) {
-      return {
-        success: false,
-        message: rateCheck.message,
-        resetIn: rateCheck.resetIn,
-      };
+      return rateCheck.reason === "limited"
+        ? {
+            success: false,
+            reason: "rate_limited",
+            message: rateCheck.message,
+            resetIn: rateCheck.resetIn,
+          }
+        : { success: false, reason: "unavailable", message: rateCheck.message };
     }
 
     const { data, error } = await runQuery(
@@ -62,33 +64,20 @@ export async function fetchSocialAccounts(
       console.error("[fetchSocialAccounts] DB error:", error.message);
       return {
         success: false,
+        reason: "unavailable",
         message: "Failed to retrieve your social accounts.",
       };
     }
 
-    if (data.length === 0) {
-      console.log(
-        `[fetchSocialAccounts]: No social accounts found for principal: ${principalId}`,
-      );
-      return {
-        success: true,
-        message: "No social accounts found.",
-        data: [],
-      };
-    }
-
-    return {
-      success: true,
-      message: "Social accounts retrieved successfully.",
-      data,
-    };
+    return { success: true, data };
   } catch (err) {
     console.error(
-      `[fetchSocialAccounts]: Unexpected error fetching social accounts:`,
+      "[fetchSocialAccounts] Unexpected error fetching social accounts:",
       err instanceof Error ? err.message : err,
     );
     return {
       success: false,
+      reason: "unavailable",
       message:
         "An unexpected error occurred. Please try again or contact support.",
     };

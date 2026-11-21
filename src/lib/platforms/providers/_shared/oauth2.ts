@@ -1,60 +1,34 @@
 import "server-only";
 
+import { REGISTRY_OAUTH_REQUEST_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+
+import type {
+  AuthorizeUrlInput,
+  AuthorizeUrlResult,
+  OAuthCodeConnectInput,
+  ProviderRefreshInput,
+  ProviderRefreshResult,
+  TokenRefreshFailureReason,
+} from "../types";
 import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
 
-/**
- * Shared OAuth2 authorization-code plumbing.
- *
- * Sixteen of the remaining providers differ only in URLs, scopes, and how
- * they name the profile fields. Without this, each would carry its own copy
- * of the same authorize-URL builder and token-exchange call, which is how
- * the original seven platforms ended up with four parallel switch
- * statements. A provider supplies configuration; this supplies behavior.
- *
- * Called by: the oauth2 provider modules.
- * Tables touched: none.
- */
-
-const OAUTH_TIMEOUT_MS = 20_000;
+const TOKEN_ERROR_DESCRIPTION_MAX_CHARS = 200;
 
 export type OAuth2Config = {
-  /** Provider's authorize endpoint. */
   authorizeUrl: string;
-  /** Provider's token endpoint. */
   tokenUrl: string;
-  /** Env var holding the client id. */
   clientIdEnv: string;
-  /** Env var holding the client secret. */
   clientSecretEnv: string;
   /** Scopes, already joined with the separator this provider expects. */
   scope: string;
-  /**
-   * Extra authorize-URL parameters. Use for the flags that decide whether
-   * a refresh token is issued at all (Reddit's duration=permanent,
-   * Google's access_type=offline).
-   */
   extraAuthorizeParams?: Record<string, string>;
-  /**
-   * True when the token endpoint wants HTTP Basic with the client
-   * credentials instead of them in the form body. Reddit and Twitch differ
-   * here, and getting it wrong yields an opaque 401.
-   */
   useBasicAuthForToken: boolean;
 };
 
-export type BuildAuthorizeUrlResult =
-  | { ok: true; url: string }
-  | { ok: false; message: string };
-
-/**
- * Builds the authorize URL, or reports which env var is missing. Returning
- * the failure rather than throwing means an unconfigured provider is a
- * clear message, not a 500 halfway through a redirect.
- */
 export function buildOAuth2AuthorizeUrl(
   config: OAuth2Config,
-  input: { state: string; redirectUri: string; codeChallenge: string | null },
-): BuildAuthorizeUrlResult {
+  input: AuthorizeUrlInput,
+): AuthorizeUrlResult {
   const clientId = process.env[config.clientIdEnv];
   if (!clientId) {
     return {
@@ -91,12 +65,11 @@ export type OAuth2TokenResult =
       refreshToken: string | null;
       expiresIn: number | null;
     }
-  | { ok: false; message: string };
+  | { ok: false; message: string; reason: TokenRefreshFailureReason };
 
-/** Exchanges an authorization code for tokens. */
 export async function exchangeOAuth2Code(
   config: OAuth2Config,
-  input: { code: string; redirectUri: string; codeVerifier: string | null },
+  input: OAuthCodeConnectInput & { codeVerifier?: string },
 ): Promise<OAuth2TokenResult> {
   return requestToken(config, {
     grant_type: "authorization_code",
@@ -106,15 +79,44 @@ export async function exchangeOAuth2Code(
   });
 }
 
-/** Exchanges a refresh token for a fresh access token. */
-export async function refreshOAuth2Token(
+export async function refreshOAuth2Credential(
   config: OAuth2Config,
-  refreshToken: string,
-): Promise<OAuth2TokenResult> {
-  return requestToken(config, {
+  input: ProviderRefreshInput,
+): Promise<ProviderRefreshResult> {
+  if (!input.refreshToken) {
+    return { ok: false, message: "No refresh token is stored.", reason: "auth_expired" };
+  }
+  const tokens = await requestToken(config, {
     grant_type: "refresh_token",
-    refresh_token: refreshToken,
+    refresh_token: input.refreshToken,
   });
+  if (!tokens.ok) return tokens;
+  return {
+    ok: true,
+    accessToken: tokens.accessToken,
+    rotatedRefreshToken: tokens.refreshToken,
+    expiresIn: tokens.expiresIn,
+  };
+}
+
+// RFC 6749 section 5.2: a refused grant answers 400 (401 for invalid_client).
+export function classifyTokenHttpStatus(httpStatus: number): TokenRefreshFailureReason {
+  const isRefusedGrant = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429;
+  return isRefusedGrant ? "auth_expired" : "transient";
+}
+
+// RFC 6749 section 5.2: a token error is a JSON object with a required
+// "error" code and optional "error_description" and "error_uri". Only the
+// code and the description are echoed; nothing else of the body is.
+function describeTokenError(httpStatus: number, bodyText: string): string {
+  const tokenError = parseJsonObject(bodyText);
+  const errorDetails = [
+    readStringField(tokenError, "error"),
+    readStringField(tokenError, "error_description")?.slice(0, TOKEN_ERROR_DESCRIPTION_MAX_CHARS),
+  ].filter((errorDetail) => typeof errorDetail === "string" && errorDetail.length > 0);
+  return errorDetails.length > 0
+    ? `Token exchange failed (${httpStatus}): ${errorDetails.join(": ")}`
+    : `Token exchange failed (${httpStatus}).`;
 }
 
 async function requestToken(
@@ -132,6 +134,7 @@ async function requestToken(
     return {
       ok: false,
       message: `Missing env: ${missing.join(", ")}.`,
+      reason: "transient",
     };
   }
 
@@ -156,24 +159,32 @@ async function requestToken(
     method: "POST",
     headers,
     body: body.toString(),
-    timeoutMs: OAUTH_TIMEOUT_MS,
+    timeoutMs: REGISTRY_OAUTH_REQUEST_TIMEOUT_MS,
   });
 
-  if (!tokenResult.ok) return { ok: false, message: tokenResult.message };
-  if (tokenResult.status !== 200) {
-    // The body carries the provider's error slug (invalid_grant,
-    // redirect_uri_mismatch), which is the actionable part. The client
-    // secret is never in the response, so echoing a slice is safe.
+  if (!tokenResult.ok) {
     return {
       ok: false,
-      message: `Token exchange failed (${tokenResult.status}): ${tokenResult.bodyText.slice(0, 200)}`,
+      message: tokenResult.message,
+      reason: "transient",
+    };
+  }
+  if (tokenResult.status !== 200) {
+    return {
+      ok: false,
+      message: describeTokenError(tokenResult.status, tokenResult.bodyText),
+      reason: classifyTokenHttpStatus(tokenResult.status),
     };
   }
 
   const tokenBody = parseJsonObject(tokenResult.bodyText);
   const accessToken = readStringField(tokenBody, "access_token");
   if (!accessToken) {
-    return { ok: false, message: "Token response carried no access_token." };
+    return {
+      ok: false,
+      message: "Token response carried no access_token.",
+      reason: "transient",
+    };
   }
 
   const rawExpiresIn = tokenBody?.expires_in;

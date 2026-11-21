@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { WEBHOOK_EVENT_TYPES } from "@/lib/api/rest/webhooks/eventTypes";
 import { EventPicker } from "./EventPicker";
 
-/** Create form for a webhook subscription: HTTPS URL plus event checkboxes. */
 export function WebhookForm({
   onSubmit,
   onCancel,

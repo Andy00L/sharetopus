@@ -6,18 +6,10 @@ import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
 import type { ApiKeyKind } from "@/lib/api/tokens";
 
-/** Unrevoked keys of one kind a user may hold at a time (docs/AUTH.md, API key lifecycle). */
 export const MAX_ACTIVE_API_KEYS_PER_KIND = 10;
 
 const KIND_LABELS: Record<ApiKeyKind, string> = { mcp: "MCP", rest: "REST" };
 
-/**
- * Whether a principal may create one more key of this kind: fewer than
- * MAX_ACTIVE_API_KEYS_PER_KIND unrevoked ones. A failed count refuses with a
- * retry message; reading it as zero let a key past the limit.
- *
- * Called by createApiKey (kind 'mcp') and createRestApiKey (kind 'rest').
- */
 export async function checkActiveApiKeyCap(
   principalId: string,
   kind: ApiKeyKind,

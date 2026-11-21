@@ -4,29 +4,22 @@ import { createHash } from "node:crypto";
 import { WebSocket } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
+import {
+  acquirePinnedDispatcher,
+  resolveHostToPublicAddresses,
+} from "@/lib/net/pinnedFetch";
+
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
+import { failPublish, refusePublish } from "./_shared/publishFailure";
+import { joinTitleAndBody } from "./_shared/postText";
+import { parseJsonBody } from "./_shared/providerFetch";
 
-/**
- * Nostr provider. The credential is the account's secp256k1 private key
- * (hex); events are signed locally per NIP-01 (schnorr over the sha256 of
- * the canonical serialization) and published to the user's relays over
- * WebSocket. undici's WebSocket keeps this independent of the runtime's
- * global availability.
- *
- * The key never leaves this process: connect only derives the public key,
- * and publish signs locally. Success requires at least one relay OK.
- *
- * sourceRef: NIP-01 (event id serialization, EVENT/OK messages).
- */
-
-/** 32-byte hex key. nsec bech32 is deliberately not accepted; the help
- * text tells the user to convert, which keeps decoding surface out. */
 const HEX_KEY_PATTERN = /^[0-9a-f]{64}$/;
 const RELAY_TIMEOUT_MS = 10_000;
 const MAX_RELAYS = 5;
@@ -49,11 +42,8 @@ function isValidRelayUrl(relayUrl: string): boolean {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Nostr connects with a private key." };
-  }
   const privateKeyHex = (input.values.privateKey ?? "").trim().toLowerCase();
   if (!HEX_KEY_PATTERN.test(privateKeyHex)) {
     return {
@@ -102,16 +92,13 @@ async function publish(
     typeof input.config.relays === "string" ? input.config.relays : "",
   ).filter(isValidRelayUrl);
   if (relays.length === 0) {
-    return { ok: false, message: "Stored Nostr account has no relays." };
+    return refusePublish("Stored Nostr account has no relays.");
   }
   if (!HEX_KEY_PATTERN.test(input.accessToken)) {
-    return { ok: false, message: "Stored Nostr key is invalid. Reconnect." };
+    return refusePublish("Stored Nostr key is invalid. Reconnect.");
   }
 
-  const content = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n")
-    .concat(input.mediaUrl ? `\n${input.mediaUrl}` : "");
+  const content = joinTitleAndBody(input).concat(input.mediaUrl ? `\n${input.mediaUrl}` : "");
 
   const privateKeyBytes = Buffer.from(input.accessToken, "hex");
   const publicKeyHex = Buffer.from(
@@ -148,47 +135,56 @@ async function publish(
   const relayOutcomes = await Promise.all(
     relays.map((relayUrl) => publishToRelay(relayUrl, signedEvent)),
   );
-  const acceptedCount = relayOutcomes.filter(
-    (outcome) => outcome.accepted,
-  ).length;
-
-  if (acceptedCount === 0) {
-    const firstReason = relayOutcomes[0]?.reason ?? "no relay reachable";
-    return {
-      ok: false,
-      message: `No relay accepted the note (${firstReason}).`,
-    };
+  if (relayOutcomes.some((outcome) => outcome.kind === "accepted")) {
+    return { ok: true, postId: signedEvent.id, postUrl: null };
   }
 
-  return { ok: true, postId: signedEvent.id, postUrl: null };
+  const firstReason = relayOutcomes[0]?.reason ?? "no relay reachable";
+  const message = `No relay accepted the note (${firstReason}).`;
+  if (relayOutcomes.some((outcome) => outcome.kind === "unconfirmed")) {
+    return failPublish({ message, reason: "unknown", mayHavePublished: true });
+  }
+  if (relayOutcomes.some((outcome) => outcome.kind === "refused")) {
+    return failPublish({ message, reason: "policy_rejected", mayHavePublished: false });
+  }
+  return failPublish({ message, reason: "transient", mayHavePublished: false });
 }
 
-type RelayOutcome = { accepted: boolean; reason: string };
+type RelayOutcome =
+  | { kind: "accepted"; reason: string }
+  | { kind: "refused"; reason: string }
+  | { kind: "unconfirmed"; reason: string }
+  | { kind: "not_sent"; reason: string };
 
 /** Sends ["EVENT", event] and waits for the matching ["OK", id, bool]. */
-function publishToRelay(
+async function publishToRelay(
   relayUrl: string,
   signedEvent: { id: string },
 ): Promise<RelayOutcome> {
+  const resolution = await resolveHostToPublicAddresses(new URL(relayUrl).hostname);
+  if (!resolution.ok) {
+    return { kind: "not_sent", reason: `relay host not permitted (${resolution.reason})` };
+  }
+  const pinnedDispatcher = acquirePinnedDispatcher(resolution.addresses);
+
   return new Promise((resolve) => {
     let settled = false;
+    let isEventSent = false;
+    const failUnanswered = (reason: string): RelayOutcome =>
+      isEventSent ? { kind: "unconfirmed", reason } : { kind: "not_sent", reason };
     const settle = (outcome: RelayOutcome) => {
       if (settled) return;
       settled = true;
-      try {
-        relaySocket.close();
-      } catch {
-        // Already closed.
-      }
+      relaySocket.close();
       resolve(outcome);
     };
 
     let relaySocket: WebSocket;
     try {
-      relaySocket = new WebSocket(relayUrl);
+      relaySocket = new WebSocket(relayUrl, { dispatcher: pinnedDispatcher });
     } catch (socketError) {
       resolve({
-        accepted: false,
+        kind: "not_sent",
         reason:
           socketError instanceof Error ? socketError.message : "socket error",
       });
@@ -196,40 +192,35 @@ function publishToRelay(
     }
 
     const timeoutHandle = setTimeout(
-      () => settle({ accepted: false, reason: "relay timeout" }),
+      () => settle(failUnanswered("relay timeout")),
       RELAY_TIMEOUT_MS,
     );
 
     relaySocket.addEventListener("open", () => {
       relaySocket.send(JSON.stringify(["EVENT", signedEvent]));
+      isEventSent = true;
     });
     relaySocket.addEventListener("message", (messageEvent) => {
-      try {
-        const frame = JSON.parse(String(messageEvent.data));
-        if (
-          Array.isArray(frame) &&
-          frame[0] === "OK" &&
-          frame[1] === signedEvent.id
-        ) {
-          clearTimeout(timeoutHandle);
-          settle({
-            accepted: frame[2] === true,
-            reason: typeof frame[3] === "string" ? frame[3] : "rejected",
-          });
-        }
-      } catch {
-        // Non-JSON frame; keep waiting until timeout.
+      const frame = parseJsonBody(String(messageEvent.data));
+      if (Array.isArray(frame) && frame[0] === "OK" && frame[1] === signedEvent.id) {
+        clearTimeout(timeoutHandle);
+        const relayReason = typeof frame[3] === "string" ? frame[3] : "rejected";
+        settle({ kind: frame[2] === true ? "accepted" : "refused", reason: relayReason });
       }
     });
     relaySocket.addEventListener("error", () => {
       clearTimeout(timeoutHandle);
-      settle({ accepted: false, reason: "relay connection failed" });
+      settle(failUnanswered("relay connection failed"));
     });
     relaySocket.addEventListener("close", () => {
       clearTimeout(timeoutHandle);
-      settle({ accepted: false, reason: "relay closed early" });
+      settle(failUnanswered("relay closed early"));
     });
   });
 }
 
-export const nostrBehavior: ProviderBehavior = { connect, publish };
+export const nostrBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

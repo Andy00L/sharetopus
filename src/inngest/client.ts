@@ -1,12 +1,12 @@
 import { Inngest } from "inngest";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 
-/**
- * Inngest v4 client. Checkpointing is enabled by default; we cap
- * maxRuntime to match Vercel's maxDuration so multi-step runs split
- * across invocations cleanly on Hobby's 300s ceiling.
- */
+// Inngest starts another step in the same request only until
+// checkpointing.maxRuntime has elapsed, then hands the run back for a new
+// request (node_modules/inngest/components/execution/engine.js:773).
 export const inngest = new Inngest({
   id: "sharetopus",
-  maxRuntime: RUNTIME.maxDurationS * 1000,
+  checkpointing: {
+    maxRuntime: (RUNTIME.maxDurationS - RUNTIME.minStepBudgetS) * 1000,
+  },
 });

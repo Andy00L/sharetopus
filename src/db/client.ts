@@ -4,18 +4,6 @@ import { DrizzleQueryError } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
-/*
- * The Drizzle client for server code. DATABASE_URL is the Supabase
- * transaction pooler connection string (port 6543), which suits short-lived
- * serverless functions. It connects over TLS as the database owner and
- * bypasses row-level security the way the service-role key does, so this
- * module must never reach the browser.
- *
- * Tables and value lists live in src/db/schema.ts. Queries use the core
- * builder (db.select / insert / update / delete), wrapped in runQuery.
- */
-
-/** Seconds an unused connection stays open before postgres.js closes it, so an idle warm function does not hold pooler slots. */
 const IDLE_CONNECTION_TIMEOUT_SECONDS = 20;
 
 /**
@@ -27,16 +15,47 @@ const IDLE_CONNECTION_TIMEOUT_SECONDS = 20;
  */
 const MAX_CONNECTIONS_PER_INSTANCE = 1;
 
+/**
+ * postgres.js pipelines queries that have no bound values, and the transaction
+ * pooler stalls the connection on them. max_pipeline=0 sends each query only
+ * after the previous one finished. The option is read from the URL because the
+ * package types omit it. sourceRef: node_modules/postgres/cjs/src/connection.js (max_pipeline).
+ */
+function disableQueryPipelining(databaseUrl: string): string {
+  const connectionUrl = new URL(databaseUrl);
+  connectionUrl.searchParams.set("max_pipeline", "0");
+  return connectionUrl.toString();
+}
+
+// Next.js sets NEXT_PHASE before it collects page data and prerenders:
+// node_modules/next/dist/build/index.js (PHASE_PRODUCTION_BUILD).
+const NEXT_BUILD_PHASE = "phase-production-build";
+
+// Names under .invalid never resolve (RFC 6761 section 6.4).
+const UNCONFIGURED_DATABASE_HOST = "database-url-not-set.invalid";
+
+function createUnconfiguredBuildClient() {
+  console.warn(
+    "[createUnconfiguredBuildClient] DATABASE_URL is not set during next build: every query fails, and pages that read the database prerender their fallback.",
+  );
+  return drizzle(
+    postgres({
+      host: UNCONFIGURED_DATABASE_HOST,
+      max: MAX_CONNECTIONS_PER_INSTANCE,
+      prepare: false,
+    }),
+  );
+}
+
 function createDatabaseClient() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    // Fails the build or the first import instead of shipping code that
-    // cannot reach the database.
+    if (process.env.NEXT_PHASE === NEXT_BUILD_PHASE) return createUnconfiguredBuildClient();
     throw new Error(
       "[createDatabaseClient] DATABASE_URL is not set. Use the Supabase transaction pooler connection string (port 6543).",
     );
   }
-  const queryClient = postgres(databaseUrl, {
+  const queryClient = postgres(disableQueryPipelining(databaseUrl), {
     // postgres.js only negotiates TLS when asked, and the pooler also
     // accepts unencrypted connections, so without this every query and row
     // crossed the network in clear text. "require" encrypts without checking
@@ -53,24 +72,22 @@ function createDatabaseClient() {
 
 export const db = createDatabaseClient();
 
-/** A failed query: Postgres' message and SQLSTATE code ("23505" is a unique violation), or the connection error. */
 export interface DatabaseError {
   message: string;
   code: string | null;
+}
+
+// SQLSTATE unique_violation: https://www.postgresql.org/docs/current/errcodes-appendix.html
+const UNIQUE_VIOLATION_SQLSTATE = "23505";
+
+export function isUniqueViolation(error: DatabaseError): boolean {
+  return error.code === UNIQUE_VIOLATION_SQLSTATE;
 }
 
 export type QueryResult<Data> =
   | { data: Data; error: null }
   | { data: null; error: DatabaseError };
 
-/**
- * Runs a Drizzle query and returns `{ data, error }` instead of throwing,
- * the shape supabase-js returned, so callers keep branching on `error`.
- *
- * Drizzle wraps driver errors in DrizzleQueryError, whose message carries
- * the SQL and every bound parameter (tokens included). Only the underlying
- * Postgres message and code are kept, so logging `error.message` stays safe.
- */
 export async function runQuery<Data>(
   query: PromiseLike<Data>,
 ): Promise<QueryResult<Data>> {

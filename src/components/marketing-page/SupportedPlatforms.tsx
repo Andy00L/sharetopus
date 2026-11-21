@@ -3,7 +3,6 @@ import Link from "next/link";
 
 type Platform = { label: string; src: string; soon?: boolean };
 
-// Logos live at the /public root; "soon" networks render blurred with a Soon tag.
 const PLATFORMS: Platform[] = [
   { label: "LinkedIn", src: "/linkedin.svg" },
   { label: "TikTok", src: "/tiktok.svg" },
@@ -17,7 +16,6 @@ const PLATFORMS: Platform[] = [
   { label: "Google Business", src: "/google-business.svg", soon: true },
 ];
 
-/** #platforms section: live networks link to /create, upcoming ones show blurred. */
 export default function SupportedPlatforms() {
   return (
     <section

@@ -4,7 +4,6 @@ const STATS = [
   { value: "2 min", label: "Average time to post everywhere" },
 ];
 
-/** Three headline numbers between hairline dividers, no card chrome. */
 export default function StatsBand() {
   return (
     <section
@@ -15,7 +14,6 @@ export default function StatsBand() {
       }}
     >
       <div className="container px-5 lg:px-4 mx-auto max-w-[1180px]">
-        {/* top hairline */}
         <div className="h-px w-full" style={{ background: "#D6D5CF" }} />
         <div className="grid grid-cols-1 md:grid-cols-3">
           {STATS.map((stat) => (
@@ -43,7 +41,6 @@ export default function StatsBand() {
             </div>
           ))}
         </div>
-        {/* bottom hairline */}
         <div className="h-px w-full" style={{ background: "#D6D5CF" }} />
       </div>
     </section>

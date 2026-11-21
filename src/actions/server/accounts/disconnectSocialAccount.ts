@@ -1,50 +1,61 @@
-import { authCheck } from "@/actions/server/authCheck";
-import { db, runQuery } from "@/db/client";
-import { scheduled_posts, social_accounts } from "@/db/schema";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import "server-only";
-import { deleteSupabaseFile } from "../data/storageFiles/deleteSupabaseFile";
-import { checkRateLimit } from "../rateLimit/checkRateLimit";
 
-/**
- * Disconnects a social media account from the user's profile and cleans up associated resources
- *
- * This function:
- * 1. Verifies user authentication and ownership of the account
- * 2. Performs rate limiting to prevent abuse (max 30 requests per minute)
- * 3. Identifies media files used by scheduled posts for this account
- * 4. Removes the social account from the database
- * 5. Deletes orphaned media files no longer used by any posts
- * 6. Returns a structured response with the operation result
- *
- * @param accountId - ID of the social account to disconnect
- * @param userId - ID of the authenticated user
- * @returns Object with success status, message, and optional reset time
- */
+import { and, eq, inArray, isNotNull, notExists } from "drizzle-orm";
+
+import { db, runQuery } from "@/db/client";
+import { pending_direct_posts, scheduled_posts, social_accounts } from "@/db/schema";
+import { deleteUnreferencedMediaFiles } from "../data/storageFiles/deleteSupabaseFile";
+import { MEDIA_HOLDING_POST_STATUSES } from "../data/storageFiles/mediaReferences";
+import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { DISCONNECT_SOCIAL_ACCOUNT_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { PUBLISHING_POST_STATUS } from "../scheduleActions/preflightScheduledPostChange";
+
+const PUBLISHING_ACCOUNT_REFUSAL = "A post on this account is publishing now. Try again in a minute.";
+
+function selectPublishingScheduledPosts(accountId: string) {
+  return db
+    .select({ id: scheduled_posts.id })
+    .from(scheduled_posts)
+    .where(
+      and(
+        eq(scheduled_posts.social_account_id, accountId),
+        eq(scheduled_posts.status, PUBLISHING_POST_STATUS),
+      ),
+    );
+}
+
+function selectPublishingDirectPosts(accountId: string) {
+  return db
+    .select({ event_id: pending_direct_posts.event_id })
+    .from(pending_direct_posts)
+    .where(
+      and(
+        eq(pending_direct_posts.social_account_id, accountId),
+        eq(pending_direct_posts.status, "processing"),
+      ),
+    );
+}
+
+export type DisconnectSocialAccountResult = {
+  success: boolean;
+  message: string;
+  resetIn?: number;
+};
+
 export async function disconnectSocialAccount(
   accountId: string,
-  userId: string | null,
-): Promise<{ success: boolean; message: string; resetIn?: number }> {
+  userId: string,
+): Promise<DisconnectSocialAccountResult> {
   try {
     console.log(
       `[disconnectSocialAccount] Processing account: ${accountId}, user: ${userId}`,
     );
 
-    // Verify user is properly authenticated
-    if (!userId || !(await authCheck(userId))) {
-      return {
-        success: false,
-        message: "Authentication validation failed. Please sign in again.",
-      };
-    }
-
-    // Step 2: Check rate limits to prevent abuse
-    const rateCheck = await checkRateLimit(
-      "disconnectSocialAccount", // Unique identifier for this operation
-      userId, // User identifier
-      30, // Limit (30 requests)
-      60, // Window (60 seconds)
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "disconnectSocialAccount",
+      identifier: userId,
+      rule: DISCONNECT_SOCIAL_ACCOUNT_RATE_LIMIT,
+    });
 
     if (!rateCheck.success) {
       console.warn(
@@ -59,7 +70,6 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 3: fetch account, verify ownership.
     const { data: accountRows, error: fetchError } = await runQuery(
       db
         .select({
@@ -70,8 +80,6 @@ export async function disconnectSocialAccount(
         .where(eq(social_accounts.id, accountId))
         .limit(1),
     );
-    // A failed read is not a missing account: "already disconnected" would
-    // tell the user their account is gone while it is still connected.
     if (fetchError) {
       console.error(
         `[disconnectSocialAccount]: Account fetch error:`,
@@ -92,7 +100,6 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Security check: ensure the account belongs to this user
     if (account.principal_id !== userId) {
       console.warn(
         `[disconnectSocialAccount]: Unauthorized access - User ${userId} attempted to disconnect account ${accountId} owned by ${account.principal_id}`,
@@ -103,15 +110,14 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 4: collect media paths from active scheduled posts BEFORE the cascade delete wipes them.
     const { data: mediaPaths, error: postsError } = await runQuery(
       db
-        .select({ media_storage_path: scheduled_posts.media_storage_path })
+        .selectDistinct({ media_storage_path: scheduled_posts.media_storage_path })
         .from(scheduled_posts)
         .where(
           and(
             eq(scheduled_posts.social_account_id, accountId),
-            inArray(scheduled_posts.status, ["scheduled", "processing"]),
+            inArray(scheduled_posts.status, MEDIA_HOLDING_POST_STATUSES),
             isNotNull(scheduled_posts.media_storage_path),
           ),
         ),
@@ -122,21 +128,27 @@ export async function disconnectSocialAccount(
         `[disconnectSocialAccount]: Error fetching media paths:`,
         postsError.message,
       );
-      // Continue anyway - we'll just not be able to clean up files
+      return {
+        success: false,
+        message: "Could not load the account's posts. Please try again.",
+      };
     }
 
-    // Step 5: Extract unique file paths to check
-    const filesToCheck = [
-      ...new Set(
-        (mediaPaths ?? [])
-          .map((row) => row.media_storage_path)
-          .filter((path): path is string => Boolean(path)),
-      ),
-    ];
+    const filesToCheck = mediaPaths
+      .map((row) => row.media_storage_path)
+      .filter((mediaPath): mediaPath is string => mediaPath !== null);
 
-    // Step 6: delete the account. FK CASCADE wipes scheduled_posts, pending_*, social_connections.
-    const { error: deleteError } = await runQuery(
-      db.delete(social_accounts).where(eq(social_accounts.id, accountId)),
+    const { data: deletedAccounts, error: deleteError } = await runQuery(
+      db
+        .delete(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.id, accountId),
+            notExists(selectPublishingScheduledPosts(accountId)),
+            notExists(selectPublishingDirectPosts(accountId)),
+          ),
+        )
+        .returning({ id: social_accounts.id }),
     );
 
     if (deleteError) {
@@ -150,27 +162,21 @@ export async function disconnectSocialAccount(
       };
     }
 
-    // Step 7: try to delete each media file. deleteSupabaseFile re-checks all reference
-    // tables (scheduled_posts, failed_posts, pending pulls, pending direct posts) and
-    // preserves files still referenced.
-
-    const deleteResults = await Promise.allSettled(
-      filesToCheck.map((filePath) =>
-        deleteSupabaseFile(userId, filePath, false),
-      ),
-    );
-
-    let deletedFiles = 0;
-    for (const result of deleteResults) {
-      if (result.status === "fulfilled" && result.value.success === true) {
-        deletedFiles++;
-      } else if (result.status === "rejected") {
-        console.error(
-          "[disconnectSocialAccount] File deletion threw:",
-          result.reason,
-        );
-      }
+    if (deletedAccounts.length === 0) {
+      console.warn(
+        `[disconnectSocialAccount] Refused account ${accountId}: a post on it is publishing now`,
+      );
+      return { success: false, message: PUBLISHING_ACCOUNT_REFUSAL };
     }
+
+    const mediaCleanup = await deleteUnreferencedMediaFiles(userId, filesToCheck);
+    if (!mediaCleanup.success) {
+      console.error(
+        "[disconnectSocialAccount] Media cleanup failed:",
+        mediaCleanup.message,
+      );
+    }
+    const deletedFiles = mediaCleanup.success ? mediaCleanup.removedCount : 0;
 
     const platformName =
       account.platform.charAt(0).toUpperCase() + account.platform.slice(1);
@@ -184,7 +190,6 @@ export async function disconnectSocialAccount(
       }`,
     };
   } catch (err) {
-    // Step 10: Handle unexpected errors
     console.error(`[disconnectSocialAccount]: Unexpected error:`, err);
     return {
       success: false,

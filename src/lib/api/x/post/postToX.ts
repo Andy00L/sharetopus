@@ -2,23 +2,29 @@ import "server-only";
 
 import { z } from "zod";
 
+import {
+  PLATFORM_API_TIMEOUT_MS,
+  PLATFORM_PUBLISH_TIMEOUT_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
+import {
+  buildHttpFailure,
+  buildInputFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** Small JSON calls (initialize, finalize, tweet create) are bounded to 15s. */
-const API_TIMEOUT_MS = 15_000;
-/** One chunk APPEND moves at most 4 MB; 60s covers it on a slow link. */
 const APPEND_TIMEOUT_MS = 60_000;
-/** Chunk size in bytes. X accepts 1 MB to 4 MB per APPEND segment. sourceRef: docs.x.com chunked media upload quickstart. */
+// X asks for APPEND segments at or below 5 MB:
+// https://docs.x.com/x-api/media/quickstart/media-upload-chunked
 const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
-/** Max STATUS polls while X processes a video before giving up. */
 const MAX_PROCESSING_POLLS = 10;
-/** Fallback wait between STATUS polls when X omits check_after_secs, in seconds. */
 const DEFAULT_POLL_WAIT_SECONDS = 3;
 
-/**
- * Media id envelope shared by initialize/finalize/status responses.
- * sourceRef: https://docs.x.com/x-api/media/quickstart/media-upload-chunked
- */
+// Initialize, finalize and status answer:
+// https://docs.x.com/x-api/media/quickstart/media-upload-chunked
 const XMediaSchema = z.object({
   data: z.object({
     id: z.string().min(1),
@@ -31,9 +37,7 @@ const XMediaSchema = z.object({
   }),
 });
 
-/**
- * Tweet create response. sourceRef: https://docs.x.com POST /2/tweets
- */
+// POST /2/tweets answer: https://docs.x.com/x-api/posts/create-post
 const XTweetSchema = z.object({
   data: z.object({
     id: z.string().min(1),
@@ -41,31 +45,10 @@ const XTweetSchema = z.object({
   }),
 });
 
-export interface XPostResult {
-  success: boolean;
-  postId?: string;
-  postUrl?: string;
-  error?: string;
-  details?: Record<string, unknown>;
-  message?: string;
-}
+export type XPostResult =
+  | { success: true; postId: string; postUrl: string; message: string }
+  | PlatformPostFailure;
 
-/**
- * Publish one tweet, optionally with one image or video.
- *
- * Media uses the v2 chunked upload flow (the dedicated endpoints that
- * replaced command-style /2/media/upload in May 2025):
- *   1. POST /2/media/upload/initialize (JSON)
- *   2. POST /2/media/upload/{id}/append (multipart, 4 MB segments)
- *   3. POST /2/media/upload/{id}/finalize
- *   4. GET  /2/media/upload?command=STATUS while X processes video
- * then POST /2/tweets with media.media_ids.
- *
- * sourceRef: https://docs.x.com/x-api/media/quickstart/media-upload-chunked
- * Requires the media.write scope on the user token for media uploads.
- *
- * Called by: directPostForXAccounts
- */
 export async function postToX({
   accessToken,
   text,
@@ -79,16 +62,15 @@ export async function postToX({
   buffer?: Buffer;
   mediaType?: string;
   postType: "text" | "image" | "video";
-  /** Handle used to build the public post URL; falls back to /i/status. */
   username?: string;
 }): Promise<XPostResult> {
   if (!accessToken) {
     console.error("[postToX] Missing access token");
-    return { success: false, error: "Missing access token" };
+    return buildInputFailure("Missing access token");
   }
   if (postType === "text" && text.trim().length === 0) {
     console.error("[postToX] Text post with empty text");
-    return { success: false, error: "Tweet text is required for text posts" };
+    return buildInputFailure("Tweet text is required for text posts");
   }
 
   let mediaId: string | null = null;
@@ -96,10 +78,7 @@ export async function postToX({
   if (postType !== "text") {
     if (!buffer || buffer.length === 0 || !mediaType) {
       console.error("[postToX] Media post without buffer or media type");
-      return {
-        success: false,
-        error: "Media file is required for image and video tweets",
-      };
+      return buildInputFailure("Media file is required for image and video tweets");
     }
 
     const uploadResult = await uploadMediaChunked({
@@ -114,7 +93,6 @@ export async function postToX({
     mediaId = uploadResult.mediaId;
   }
 
-  // Create the tweet.
   try {
     const tweetBody: {
       text: string;
@@ -131,7 +109,7 @@ export async function postToX({
         "Content-Type": "application/json",
       },
       body: JSON.stringify(tweetBody),
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
     });
 
     const responseText = await response.text();
@@ -140,20 +118,22 @@ export async function postToX({
       console.error(
         `[postToX] Tweet create failed (${response.status}): ${responseText}`,
       );
-      return {
-        success: false,
-        error: `X tweet creation failed (${response.status})`,
-        details: parseErrorDetails(responseText),
-      };
+      return buildHttpFailure({
+        platform: "x",
+        action: "X tweet creation",
+        httpStatus: response.status,
+        responseText,
+        isPublishRequest: true,
+      });
     }
 
-    const parsed = XTweetSchema.safeParse(JSON.parse(responseText));
+    const parsed = XTweetSchema.safeParse(parseJsonObject(responseText));
     if (!parsed.success) {
       console.error("[postToX] Tweet response failed validation.");
-      return {
-        success: false,
-        error: "X tweet response had an unexpected shape",
-      };
+      return buildUnreadableAnswerFailure({
+        action: "X tweet creation",
+        isPublishRequest: true,
+      });
     }
 
     const tweetId = parsed.data.data.id;
@@ -167,22 +147,22 @@ export async function postToX({
         : `https://x.com/i/status/${tweetId}`,
       message: `Successfully created ${postType} post on X`,
     };
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToX] Tweet create error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "X tweet creation request failed" };
+    return buildNetworkFailure({
+      action: "X tweet creation",
+      requestError,
+      isPublishRequest: true,
+    });
   }
 }
 
-// ---------------------------------------------------------------------------
-// Chunked media upload
-// ---------------------------------------------------------------------------
-
 type MediaUploadOutcome =
   | { success: true; mediaId: string }
-  | (XPostResult & { success: false });
+  | PlatformPostFailure;
 
 async function uploadMediaChunked({
   accessToken,
@@ -197,7 +177,6 @@ async function uploadMediaChunked({
 }): Promise<MediaUploadOutcome> {
   const authHeader = { Authorization: `Bearer ${accessToken}` };
 
-  // 1. initialize
   let mediaId: string;
   try {
     const initResponse = await fetch(
@@ -210,7 +189,7 @@ async function uploadMediaChunked({
           total_bytes: buffer.length,
           media_category: mediaCategory,
         }),
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       },
     );
 
@@ -219,31 +198,36 @@ async function uploadMediaChunked({
       console.error(
         `[postToX] Media initialize failed (${initResponse.status}): ${initText}`,
       );
-      return {
-        success: false,
-        error: `X media upload initialization failed (${initResponse.status})`,
-        details: parseErrorDetails(initText),
-      };
+      return buildHttpFailure({
+        platform: "x",
+        action: "X media upload initialization",
+        httpStatus: initResponse.status,
+        responseText: initText,
+        isPublishRequest: false,
+      });
     }
 
-    const parsed = XMediaSchema.safeParse(JSON.parse(initText));
+    const parsed = XMediaSchema.safeParse(parseJsonObject(initText));
     if (!parsed.success) {
       console.error("[postToX] Media initialize response failed validation.");
-      return {
-        success: false,
-        error: "X media initialize response had an unexpected shape",
-      };
+      return buildUnreadableAnswerFailure({
+        action: "X media upload initialization",
+        isPublishRequest: false,
+      });
     }
     mediaId = parsed.data.data.id;
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToX] Media initialize error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "X media initialize request failed" };
+    return buildNetworkFailure({
+      action: "X media upload initialization",
+      requestError,
+      isPublishRequest: false,
+    });
   }
 
-  // 2. append, 4 MB segments
   const segmentCount = Math.ceil(buffer.length / UPLOAD_CHUNK_BYTES);
   for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++) {
     const chunkStart = segmentIndex * UPLOAD_CHUNK_BYTES;
@@ -252,7 +236,7 @@ async function uploadMediaChunked({
     try {
       const formData = new FormData();
       formData.append("segment_index", String(segmentIndex));
-      formData.append("media", new Blob([new Uint8Array(chunk)]));
+      formData.append("media", new Blob([viewBufferAsFetchBody(chunk)]));
 
       const appendResponse = await fetch(
         `https://api.x.com/2/media/upload/${mediaId}/append`,
@@ -269,22 +253,27 @@ async function uploadMediaChunked({
         console.error(
           `[postToX] Media append segment ${segmentIndex} failed (${appendResponse.status}): ${appendText}`,
         );
-        return {
-          success: false,
-          error: `X media upload failed at segment ${segmentIndex} (${appendResponse.status})`,
-          details: parseErrorDetails(appendText),
-        };
+        return buildHttpFailure({
+          platform: "x",
+          action: `X media upload segment ${segmentIndex}`,
+          httpStatus: appendResponse.status,
+          responseText: appendText,
+          isPublishRequest: false,
+        });
       }
-    } catch (error) {
+    } catch (requestError) {
       console.error(
         `[postToX] Media append segment ${segmentIndex} error:`,
-        error instanceof Error ? error.message : error,
+        requestError instanceof Error ? requestError.message : requestError,
       );
-      return { success: false, error: "X media append request failed" };
+      return buildNetworkFailure({
+        action: `X media upload segment ${segmentIndex}`,
+        requestError,
+        isPublishRequest: false,
+      });
     }
   }
 
-  // 3. finalize
   let processingState: "pending" | "in_progress" | "succeeded" | "failed" =
     "succeeded";
   let waitSeconds = DEFAULT_POLL_WAIT_SECONDS;
@@ -294,7 +283,7 @@ async function uploadMediaChunked({
       {
         method: "POST",
         headers: authHeader,
-        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       },
     );
 
@@ -303,29 +292,34 @@ async function uploadMediaChunked({
       console.error(
         `[postToX] Media finalize failed (${finalizeResponse.status}): ${finalizeText}`,
       );
-      return {
-        success: false,
-        error: `X media finalize failed (${finalizeResponse.status})`,
-        details: parseErrorDetails(finalizeText),
-      };
+      return buildHttpFailure({
+        platform: "x",
+        action: "X media finalize",
+        httpStatus: finalizeResponse.status,
+        responseText: finalizeText,
+        isPublishRequest: false,
+      });
     }
 
-    const parsed = XMediaSchema.safeParse(JSON.parse(finalizeText));
+    const parsed = XMediaSchema.safeParse(parseJsonObject(finalizeText));
     if (parsed.success && parsed.data.data.processing_info) {
       processingState = parsed.data.data.processing_info.state;
       waitSeconds =
         parsed.data.data.processing_info.check_after_secs ??
         DEFAULT_POLL_WAIT_SECONDS;
     }
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToX] Media finalize error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "X media finalize request failed" };
+    return buildNetworkFailure({
+      action: "X media finalize",
+      requestError,
+      isPublishRequest: false,
+    });
   }
 
-  // 4. STATUS polling while X transcodes video. Images finish synchronously.
   let pollCount = 0;
   while (
     (processingState === "pending" || processingState === "in_progress") &&
@@ -340,7 +334,7 @@ async function uploadMediaChunked({
         {
           method: "GET",
           headers: authHeader,
-          signal: AbortSignal.timeout(API_TIMEOUT_MS),
+          signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
         },
       );
 
@@ -349,42 +343,49 @@ async function uploadMediaChunked({
         console.error(
           `[postToX] Media status poll failed (${statusResponse.status}): ${statusText}`,
         );
-        return {
-          success: false,
-          error: `X media status check failed (${statusResponse.status})`,
-          details: parseErrorDetails(statusText),
-        };
+        return buildHttpFailure({
+          platform: "x",
+          action: "X media status check",
+          httpStatus: statusResponse.status,
+          responseText: statusText,
+          isPublishRequest: false,
+        });
       }
 
-      const parsed = XMediaSchema.safeParse(JSON.parse(statusText));
+      const parsed = XMediaSchema.safeParse(parseJsonObject(statusText));
       if (!parsed.success) {
         console.error("[postToX] Media status response failed validation.");
-        return {
-          success: false,
-          error: "X media status response had an unexpected shape",
-        };
+        return buildUnreadableAnswerFailure({
+          action: "X media status check",
+          isPublishRequest: false,
+        });
       }
 
       processingState = parsed.data.data.processing_info?.state ?? "succeeded";
       waitSeconds =
         parsed.data.data.processing_info?.check_after_secs ??
         DEFAULT_POLL_WAIT_SECONDS;
-    } catch (error) {
+    } catch (requestError) {
       console.error(
         "[postToX] Media status poll error:",
-        error instanceof Error ? error.message : error,
+        requestError instanceof Error ? requestError.message : requestError,
       );
-      return { success: false, error: "X media status request failed" };
+      return buildNetworkFailure({
+        action: "X media status check",
+        requestError,
+        isPublishRequest: false,
+      });
     }
   }
 
   if (processingState === "failed") {
-    return { success: false, error: "X rejected the media during processing" };
+    return buildInputFailure("X rejected the media during processing");
   }
   if (processingState !== "succeeded") {
     return {
       success: false,
       error: `X media processing did not finish after ${MAX_PROCESSING_POLLS} status checks`,
+      failure: { reason: "transient", mayHavePublished: false },
     };
   }
 
@@ -395,9 +396,4 @@ function sleepSeconds(seconds: number): Promise<void> {
   return new Promise((resolveSleep) =>
     setTimeout(resolveSleep, seconds * 1000),
   );
-}
-
-/** Best-effort JSON parse of a provider error body for the details field. */
-function parseErrorDetails(errorText: string): Record<string, unknown> {
-  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

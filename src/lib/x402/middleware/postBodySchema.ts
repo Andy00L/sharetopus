@@ -2,21 +2,10 @@ import "server-only";
 
 import { z } from "zod";
 
-import { X402_PLATFORMS } from "@/lib/x402/config";
+import { StoredPostOptionsSchema } from "@/inngest/events/postOptions";
+import { PLATFORM_LABELS, platformSupportsMediaType } from "@/lib/platforms/capabilities";
+import { X402_PLATFORMS, type X402Platform } from "@/lib/x402/config";
 
-/**
- * Shared request-body schema for the two posting endpoints (post-now and
- * schedule). Keeping the field list here means the routes cannot drift on
- * what a post body looks like.
- *
- * media_storage_path is required for image/video posts and may be absent or
- * empty for text posts. A plain `.min(1).default("")` cannot express that
- * (Zod 4 defaults bypass inner validation entirely), so the rule lives in
- * withMediaPathRule, applied AFTER any .extend() because refinements do not
- * survive extension.
- *
- * Called by: /api/x402/post-now, /api/x402/schedule
- */
 export const PostBodyBaseSchema = z.object({
   social_account_id: z.string().uuid(),
   platform: z.enum(X402_PLATFORMS),
@@ -31,14 +20,40 @@ export const PostBodyBaseSchema = z.object({
   idempotency_key: z.string().optional(),
 });
 
-/** Enforces media_storage_path presence for image/video post types. */
-export function withMediaPathRule<
+export const SchedulePostOptionsSchema = StoredPostOptionsSchema.omit({ privacyLevel: true })
+  .extend({
+    link: z.string().url().max(2048).optional(),
+    board: z.string().max(128).optional(),
+    boardName: z.string().max(200).optional(),
+    visibility: z.string().max(32).optional(),
+  })
+  .transform((options) => ({
+    ...options,
+    disableComment: options.disableComment ?? undefined,
+    disableDuet: options.disableDuet ?? undefined,
+    disableStitch: options.disableStitch ?? undefined,
+    brandContentToggle: options.brandContentToggle ?? undefined,
+    yourBrand: options.yourBrand ?? undefined,
+    brandedContent: options.brandedContent ?? undefined,
+    isAigc: options.isAigc ?? undefined,
+    privacyStatus: options.privacyStatus ?? undefined,
+  }));
+
+export function withPostTypeRules<
   TSchema extends z.ZodType<{
+    platform: X402Platform;
     post_type: "text" | "image" | "video";
     media_storage_path?: string;
   }>,
 >(schema: TSchema) {
   return schema.superRefine((body, ctx) => {
+    if (!platformSupportsMediaType(body.platform, body.post_type)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["post_type"],
+        message: `${PLATFORM_LABELS[body.platform]} does not accept ${body.post_type} posts.`,
+      });
+    }
     if (
       body.post_type !== "text" &&
       (!body.media_storage_path || body.media_storage_path.length === 0)

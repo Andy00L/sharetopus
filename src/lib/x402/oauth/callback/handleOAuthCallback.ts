@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { after } from "next/server";
 
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
 import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
@@ -12,18 +12,15 @@ import {
   type ShareLinkRefusal,
 } from "@/actions/server/share-link/validateShareToken";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
+import { runWriteWithOneRetry } from "@/lib/x402/db/runWriteWithOneRetry";
 import {
   buildSocialAccountValues,
   connectPlatformAccounts,
 } from "@/lib/api/oauth/connectPlatformAccounts";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export interface OAuthCallbackInput {
-  platform: Platform;
+  platform: AdapterPlatform;
   code: string;
   state: string;
   errorCode: string | null;
@@ -57,20 +54,19 @@ export type OAuthCallbackResult =
         | { kind: "temporarily_unavailable"; message: string };
     };
 
-export type CallbackErrorKind = Extract<
-  OAuthCallbackResult,
-  { ok: false }
->["error"]["kind"];
+type CallbackError = Extract<OAuthCallbackResult, { ok: false }>["error"];
 
-/**
- * A database read failed before the code was exchanged. Nothing is used up:
- * the connection stays pending and the code is still valid, so reloading the
- * callback page retries.
- */
+export type CallbackErrorKind = CallbackError["kind"];
+
+type PendingConnectionTransition = {
+  status: "expired" | "failed";
+  error_code?: string;
+  error_message?: string;
+};
+
 const TEMPORARILY_UNAVAILABLE_MESSAGE =
   "Could not finish connecting right now. Refresh this page to try again.";
 
-/** The callback error for each reason a share link cannot be used. */
 const SHARE_LINK_REFUSAL_KINDS = {
   invalid_format: "share_link_not_found",
   not_found: "share_link_not_found",
@@ -80,11 +76,6 @@ const SHARE_LINK_REFUSAL_KINDS = {
   lookup_failed: "temporarily_unavailable",
 } as const satisfies Record<ShareLinkRefusal, CallbackErrorKind>;
 
-/**
- * Reasons the consume_share_link function returns. It lives only in the
- * database (sourceRef: pg_get_functiondef of public.consume_share_link,
- * read 2026-09-24; docs/DATABASE.md lists it).
- */
 const CONSUME_REFUSAL_REASONS = [
   "not_found",
   "revoked",
@@ -98,42 +89,9 @@ function isConsumeRefusalReason(
   return CONSUME_REFUSAL_REASONS.some((knownReason) => knownReason === reason);
 }
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Shared callback handler for all 7 platforms, serving both x402-initiated
- * and REST-initiated connections (owner resolved from social_connections by
- * oauth_state; no session cookie involved).
- *
- * Flow:
- *   1. Look up social_connections WHERE oauth_state = $state (must be pending)
- *   2. Share-link flows: re-validate link + owner plan and limits before any
- *      exchange. A failed database read in steps 1-2 answers
- *      temporarily_unavailable and leaves the connection pending: the code
- *      is not spent yet, so reloading the page retries.
- *   3. If the OAuth provider returned an error: transition to 'failed'
- *   4. Exchange the code and read the account (connectPlatformAccounts,
- *      shared with the web popup), sending the redirect URI stored on the
- *      connection: the one its authorize URL carried
- *   5. Share-link flows: consume_share_link RPC (atomic used_count)
- *   6. UPSERT social_accounts row
- *   7. Transition pending -> connected (status-scoped; a concurrent duplicate
- *      callback loses this transition and reports state_already_used)
- *
- * Concurrency: the pending check in step 1 is advisory; correctness comes
- * from every status transition being scoped to the expected prior status,
- * so a duplicate delivery of the same callback can never overwrite a
- * winner's 'connected' with 'failed'.
- *
- * Tables touched: social_connections, social_accounts, share_links (via RPC)
- */
 export async function handleOAuthCallback(
   input: OAuthCallbackInput
 ): Promise<OAuthCallbackResult> {
-  // -- 1. Look up connection by oauth_state. oauth_code_verifier carries
-  //       the PKCE verifier for platforms that mandate it (X).
   const { data: connectionRows, error: lookupError } = await runQuery(
     db
       .select({
@@ -175,8 +133,6 @@ export async function handleOAuthCallback(
   }
 
   if (connection.status !== "pending") {
-    // Generic on purpose: this page renders to whoever holds the state
-    // string, and the internal status value is none of their business.
     return {
       ok: false,
       error: {
@@ -187,22 +143,13 @@ export async function handleOAuthCallback(
   }
 
   if (new Date(connection.expires_at) < new Date()) {
-    await transitionPendingTo(connection.id, {
-      status: "expired",
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "state_expired",
-        message: "OAuth connection has expired.",
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "expired" },
+      { kind: "state_expired", message: "OAuth connection has expired." },
+    );
   }
 
-  // The callback path names the platform whose code is about to be
-  // exchanged; it must be the platform this connection was created and paid
-  // for. The connection is left pending, so its own callback still works.
   if (connection.platform !== input.platform) {
     return {
       ok: false,
@@ -213,10 +160,6 @@ export async function handleOAuthCallback(
     };
   }
 
-  // -- 2. Share link steps: validate share link, owner tier, owner account
-  //    limits. These run BEFORE token exchange so we abort early if the link
-  //    was revoked/expired between the friend clicking "Connect" and the
-  //    callback.
   const shareLinkId = connection.share_link_id;
 
   if (shareLinkId !== null) {
@@ -230,24 +173,19 @@ export async function handleOAuthCallback(
         };
       }
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: errorKind,
-        error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: {
-          kind: errorKind,
-          message: `Share link is no longer valid: ${shareLinkValidation.reason}.`,
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: errorKind,
+          error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
         },
-      };
+        { kind: errorKind, message: `Share link is no longer valid: ${shareLinkValidation.reason}.` },
+      );
     }
 
-    // Owner plan + account limit check
     const ownerCapacity = await checkShareLinkOwnerCapacity(
       connection.principal_id,
     );
@@ -267,41 +205,32 @@ export async function handleOAuthCallback(
           ? "The link owner's subscription is not active. The connection cannot be completed."
           : "The link owner has reached their account limit. The connection cannot be completed.";
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: ownerCapacity.reason,
-        error_message: ownerRefusalMessage,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: { kind: ownerCapacity.reason, message: ownerRefusalMessage },
-      };
+      return failPendingConnection(
+        connection.id,
+        { status: "failed", error_code: ownerCapacity.reason, error_message: ownerRefusalMessage },
+        { kind: ownerCapacity.reason, message: ownerRefusalMessage },
+      );
     }
   }
 
-  // -- 3. Provider error (user denied consent)
   if (input.errorCode) {
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: input.errorCode,
-      error_message: input.errorDescription ?? input.errorCode,
-    });
-
-    return {
-      ok: false,
-      error: {
+    return failPendingConnection(
+      connection.id,
+      {
+        status: "failed",
+        error_code: input.errorCode,
+        error_message: input.errorDescription ?? input.errorCode,
+      },
+      {
         kind: "provider_error",
         code: input.errorCode,
         message: input.errorDescription ?? "OAuth provider returned an error.",
       },
-    };
+    );
   }
 
-  // -- 4. Exchange the code and read the account. The redirect URI must be
-  //       the one the authorize URL carried, which is what the row stores.
   const connectResult = await connectPlatformAccounts(input.platform, {
     code: input.code,
     redirectUri: connection.redirect_uri,
@@ -314,63 +243,46 @@ export async function handleOAuthCallback(
     const failureMessage = connectResult.success
       ? `No ${input.platform} account found to connect.`
       : connectResult.message;
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "exchange_failed",
-      error_message: failureMessage,
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "token_exchange_failed",
-        message: failureMessage,
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "failed", error_code: "exchange_failed", error_message: failureMessage },
+      { kind: "token_exchange_failed", message: failureMessage },
+    );
   }
   if (otherAccounts.length > 0) {
-    // One connection stores one account. The web popup stores every
-    // Facebook Page; here the first is kept.
     console.warn(
       `[handleOAuthCallback] ${otherAccounts.length + 1} ${input.platform} accounts returned; storing the first (${connectedAccount.accountIdentifier}).`,
     );
   }
 
-  // -- 5. Share link: consume_share_link RPC (atomic used_count increment).
-  //    Called AFTER token exchange succeeds so a failed exchange never burns
-  //    a use. Called BEFORE social_accounts upsert so we don't create an
-  //    account if the link was fully consumed by a concurrent request.
   if (shareLinkId !== null) {
     const { data: consumeRows, error: consumeError } = await runQuery(
       db.execute(sql`select * from public.consume_share_link(${shareLinkId}::uuid)`),
     );
 
-    // One (success boolean, reason text) row; any other shape is a failure.
     const consumeResult = consumeRows?.[0];
     const consumeReason = consumeResult?.reason;
 
-    // The code is spent by now, so every failure here ends the attempt.
     if (consumeError) {
       console.error(
         `[handleOAuthCallback] consume_share_link failed: ${consumeError.message}`,
       );
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: "db_update_failed",
-        error_message: "Could not record the share link use.",
-      });
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
-      return {
-        ok: false,
-        error: {
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: "db_update_failed",
+          error_message: "Could not record the share link use.",
+        },
+        {
           kind: "db_update_failed",
           message: "Could not record the share link use. Please open the link again.",
         },
-      };
+      );
     }
 
     if (consumeResult?.success !== true) {
-      // An unknown reason reads as not_found, as it always has.
       const refusal = isConsumeRefusalReason(consumeReason)
         ? consumeReason
         : "not_found";
@@ -379,26 +291,20 @@ export async function handleOAuthCallback(
         `[handleOAuthCallback] consume_share_link refused: ${refusal}`,
       );
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: errorKind,
-        error_message: `Share link consumption failed: ${refusal}`,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: {
-          kind: errorKind,
-          message: `Share link could not be used: ${refusal}.`,
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: errorKind,
+          error_message: `Share link consumption failed: ${refusal}`,
         },
-      };
+        { kind: errorKind, message: `Share link could not be used: ${refusal}.` },
+      );
     }
   }
 
-  // -- 6. UPSERT social_accounts row, with the same values the web popup
-  //       writes, so a reconnect through either flow updates it the same way.
   const socialAccountValues = {
     ...buildSocialAccountValues(
       connection.principal_id,
@@ -425,23 +331,17 @@ export async function handleOAuthCallback(
   const socialAccount = upsertedAccounts?.[0];
   if (upsertError || !socialAccount) {
     console.error(`[handleOAuthCallback] Failed to upsert social_accounts: ${upsertError?.message}`);
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "db_upsert_failed",
-      error_message: upsertError?.message ?? "Failed to save account.",
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "db_update_failed",
-        message: "Failed to save social account.",
+    return failPendingConnection(
+      connection.id,
+      {
+        status: "failed",
+        error_code: "db_upsert_failed",
+        error_message: upsertError?.message ?? "Failed to save account.",
       },
-    };
+      { kind: "db_update_failed", message: "Failed to save social account." },
+    );
   }
 
-  // -- 7. Transition pending -> connected (status-scoped). The PKCE
-  //       verifier is spent with the code, so it is cleared.
   const { data: connectedRows, error: connectError } = await runQuery(
     db
       .update(social_connections)
@@ -458,27 +358,14 @@ export async function handleOAuthCallback(
 
   if (connectError) {
     console.error(`[handleOAuthCallback] Failed to update social_connections: ${connectError.message}`);
-    // Compensating transition: the tokens are already stored on the
-    // social_accounts row, but a connection stuck in 'pending' would keep
-    // polling agents waiting until cron expiry. Mark it failed so the state
-    // is at least terminal; the account row stays for manual reconciliation.
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "db_update_failed",
-      error_message: connectError.message,
-    });
-    return {
-      ok: false,
-      error: {
-        kind: "db_update_failed",
-        message: "Failed to update connection status.",
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "failed", error_code: "db_update_failed", error_message: connectError.message },
+      { kind: "db_update_failed", message: "Failed to update connection status." },
+    );
   }
 
   if (connectedRows.length === 0) {
-    // A concurrent duplicate callback won the transition; this delivery is
-    // the loser and must not double-fire the webhook.
     return {
       ok: false,
       error: {
@@ -492,9 +379,6 @@ export async function handleOAuthCallback(
     logShareLinkAudit(input.platform, "share_link.use_succeeded", "ok");
   }
 
-  // The webhook runs after the response: a slow subscriber must not block
-  // the callback page, and after() keeps the serverless function alive until
-  // the dispatch finishes instead of dropping a floating promise.
   const connectedWebhookPayload = {
     connection_id: connection.id,
     social_account_id: socialAccount.id,
@@ -506,7 +390,6 @@ export async function handleOAuthCallback(
     dispatchWebhook(connection.principal_id, "connection.connected", connectedWebhookPayload),
   );
 
-  // The success page greets the account by handle, or by name without one.
   const accountUsername =
     connectedAccount.username ?? connectedAccount.displayName;
 
@@ -519,27 +402,24 @@ export async function handleOAuthCallback(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
+async function failPendingConnection(
+  connectionId: string,
+  transition: PendingConnectionTransition,
+  callbackError: CallbackError,
+): Promise<OAuthCallbackResult> {
+  const transitionWrite = await transitionPendingTo(connectionId, transition);
+  if (!transitionWrite.ok) {
+    console.error(
+      `[failPendingConnection] CONNECTION LEFT PENDING: connection ${connectionId} could not move to ${transition.status} after a retry (${transitionWrite.message}); its status poll reports expired once expires_at passes.`,
+    );
+  }
+  return { ok: false, error: callbackError };
+}
 
-/**
- * Status-scoped transition out of 'pending'. Scoping to the prior status is
- * what makes duplicate concurrent callbacks safe: the loser's transition
- * matches zero rows instead of overwriting the winner's outcome. A terminal
- * connection never exchanges a code again, so its PKCE verifier is
- * cleared. Errors are logged but not propagated; every caller is already
- * on a failure path (or lazily expiring) where the user-facing error
- * matters more than the bookkeeping write.
- */
 async function transitionPendingTo(
   connectionId: string,
-  fields: {
-    status: "expired" | "failed";
-    error_code?: string;
-    error_message?: string;
-  }
-): Promise<void> {
+  fields: PendingConnectionTransition,
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const updateFields: {
     status: "expired" | "failed";
     updated_at: string;
@@ -562,26 +442,17 @@ async function transitionPendingTo(
     updateFields.error_message = fields.error_message;
   }
 
-  const { error } = await runQuery(
+  const { error } = await runWriteWithOneRetry(() =>
     db
       .update(social_connections)
       .set(updateFields)
-      .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending")))
+      .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending"))),
   );
-
-  if (error) {
-    console.error(
-      `[handleOAuthCallback] Transition to ${fields.status} failed for connection ${connectionId}: ${error.message}`
-    );
-  }
+  return error ? { ok: false, message: error.message } : { ok: true };
 }
 
-/**
- * Share-link audit entry. Fire-and-forget per the audit logger's contract;
- * the action strings are seeded in pricing_actions as audit-only rows.
- */
 function logShareLinkAudit(
-  platform: Platform,
+  platform: AdapterPlatform,
   action: "share_link.use_failed" | "share_link.use_succeeded",
   resultStatus: "ok" | "error"
 ): void {

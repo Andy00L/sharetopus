@@ -1,17 +1,19 @@
 import "server-only";
 
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import { toPublishFailureReason } from "@/actions/server/data/storageRead";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import { postToYouTube } from "@/lib/api/youtube/post/postToYouTube";
+import {
+  postToYouTube,
+  YOUTUBE_TITLE_MAX_CHARS,
+} from "@/lib/api/youtube/post/postToYouTube";
 import type { YouTubePostResult } from "@/lib/api/youtube/post/postToYouTube";
 import type { CreatedVia, MediaType } from "@/db/schema";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-
-/** YouTube video titles are capped at 100 characters. sourceRef: postToYouTube.ts */
-const YOUTUBE_TITLE_MAX_CHARS = 100;
 
 interface YouTubeDirectPostConfig {
   account: SocialAccount;
@@ -35,15 +37,6 @@ type YouTubePassthrough = {
   config: YouTubeDirectPostConfig;
 };
 
-/**
- * Publish one video to one YouTube channel via the shared direct-post
- * pipeline. Only called from the Inngest workers (post.now and post.due),
- * which already rate limit at the batch layer, so no per-account
- * checkRateLimit hook here.
- *
- * YouTube accepts video only; the platform compatibility check rejects
- * text/image upstream and validate() backstops it.
- */
 export async function directPostForYouTubeAccounts(
   config: YouTubeDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -63,18 +56,16 @@ export async function directPostForYouTubeAccounts(
     {
       validate: (passthrough) => {
         if (passthrough.config.postType !== "video") {
-          return {
-            success: false,
-            count: 0,
-            message: "YouTube only supports video posts",
-          };
+          return buildDirectPostRefusal(
+            "YouTube only supports video posts",
+            "invalid_input",
+          );
         }
         if (!passthrough.config.mediaPath) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media file is required for YouTube posts",
-          };
+          return buildDirectPostRefusal(
+            "Media file is required for YouTube posts",
+            "invalid_input",
+          );
         }
         return null;
       },
@@ -88,7 +79,7 @@ export async function directPostForYouTubeAccounts(
             "[YouTube Direct Post] Failed to fetch media:",
             fileResult.message,
           );
-          return { success: false, count: 0, message: fileResult.message };
+          return buildDirectPostRefusal(fileResult.message, toPublishFailureReason(fileResult.reason));
         }
         return {
           success: true,
@@ -97,7 +88,8 @@ export async function directPostForYouTubeAccounts(
       },
       call: async (accessToken, passthrough) => {
         const content = passthrough.config.accountContent;
-        // YouTube requires a non-empty title; fall back to the caption head.
+        // YouTube refuses an empty title with invalidTitle:
+        // https://developers.google.com/youtube/v3/docs/errors
         const resolvedTitle =
           content.title?.trim() ||
           content.description.trim().slice(0, YOUTUBE_TITLE_MAX_CHARS) ||
@@ -107,7 +99,7 @@ export async function directPostForYouTubeAccounts(
           accessToken,
           title: resolvedTitle,
           description: content.description,
-          buffer: passthrough.buffer!,
+          buffer: passthrough.buffer ?? Buffer.alloc(0),
           mediaType: passthrough.config.mediaType ?? "video/mp4",
           privacyStatus:
             passthrough.config.platformOptions.youtube?.privacyStatus ??

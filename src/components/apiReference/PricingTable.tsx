@@ -1,15 +1,9 @@
 import type { PricingResult } from "@/app/(marketing)/(api-reference)/docs/x402/data/pricing";
+import { TABLE_HEAD_CELL_CLASS } from "./tableClasses";
 
-// The one-line truth that survives any fetch outcome: the 402 response is
-// the pricing authority, this table is a convenience.
 const AUTHORITATIVE_NOTE =
   "Prices are returned authoritatively in every 402 response; this table is informational.";
 
-/**
- * Live pricing table rendered from pricing_actions at build/revalidate time.
- * On fetch failure the table is replaced by the single authoritative-pricing
- * line, nothing else.
- */
 export function PricingTable({ result }: { result: PricingResult }) {
   if (!result.ok) {
     return <p className="text-sm text-[var(--ink-2)]">{AUTHORITATIVE_NOTE}</p>;
@@ -21,16 +15,16 @@ export function PricingTable({ result }: { result: PricingResult }) {
         <table className="table w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-[var(--cream-2)]/50">
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Action
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Display name
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Price (USDC)
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Recurrence
               </th>
             </tr>

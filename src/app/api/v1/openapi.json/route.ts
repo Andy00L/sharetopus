@@ -1,12 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildOpenApiDocument } from "@/lib/api/rest/openapi/buildDocument";
 
-/**
- * GET /api/v1/openapi.json -- public OpenAPI 3.1 specification.
- *
- * No auth required (matches Stripe/GitHub convention). Cached for
- * 1 hour via Cache-Control and Next.js revalidate.
- */
 export const revalidate = 3600;
 
 export async function GET() {

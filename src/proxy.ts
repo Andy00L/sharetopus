@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import {
+  REFERRAL_CODE_PATTERN,
   REFERRAL_COOKIE_MAX_AGE_SECONDS,
   REFERRAL_COOKIE_NAME,
 } from "@/lib/referral/referralRules";
@@ -19,7 +20,6 @@ const isPublicRoute = createRouteMatcher([
   "/.well-known/oauth-authorization-server(.*)",
 ]);
 
-// Create a matcher for all protected routes
 const isProtectedRoute = createRouteMatcher([
   "/accounts(.*)",
   "/config(.*)",
@@ -37,19 +37,14 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  // --- Referral cookie: first-touch attribution ---
-  // On any non-protected request carrying a valid ?ref= code and no existing
-  // attribution cookie, stamp one. ensureUserExists reads it when the user is
-  // first created and records the referral.
-  // Protected routes are excluded because auth.protect() may redirect to
-  // the login page, losing the query param. The referral link targets the
-  // homepage: /?ref=CODE
+  // Clerk's auth.protect() redirects a signed-out visitor to sign-in and drops
+  // the query string, so a ?ref= code is read only on unprotected routes.
   const refCode = req.nextUrl.searchParams.get("ref");
   if (
     refCode &&
     !isProtectedRoute(req) &&
     !req.cookies.has(REFERRAL_COOKIE_NAME) &&
-    /^[A-Z0-9]{1,16}$/.test(refCode)
+    REFERRAL_CODE_PATTERN.test(refCode)
   ) {
     const response = NextResponse.next();
     response.cookies.set({
@@ -67,23 +62,21 @@ export default clerkMiddleware(async (auth, req) => {
   if (isProtectedRoute(req)) await auth.protect();
 });
 
-// The x402 lane and the Solana Actions (Blink) lane never use Clerk. They are
-// kept out of the matcher entirely, not just short-circuited inside the
-// handler above: clerkMiddleware parses any `Authorization: Bearer` header
-// before the handler runs and throws on a token that looks like a JWT but is
-// not one. The x402 connection token (`v1.<payload>.<signature>`) is exactly
-// that shape, so GET /api/x402/oauth/status answered a plain 500 to every
-// agent polling it. Paid x402 calls were unaffected because they carry
-// PAYMENT-SIGNATURE, not Authorization.
+// Clerk's auth() throws unless clerkMiddleware ran for the request, so only
+// routes whose code never calls auth() or currentUser() may skip this proxy.
+// Skipped API prefixes:
+// - x402 and Solana Actions (Blink): clerkMiddleware parses any
+//   `Authorization: Bearer` header before the handler runs and throws on a
+//   token that looks like a JWT but is not one, and the x402 connection token
+//   (`v1.<payload>.<signature>`) is exactly that shape.
+// - inngest, webhooks, v1, media, docs and oauth/callback: authenticated by
+//   signatures, API keys, signed URLs or OAuth state, never by a Clerk session.
 //
-// The exclusion `api/x402(?:/|$)|api/actions(?:/|$)|actions\.json$` is
-// repeated in both entries as a literal: Next.js reads `matcher` statically
-// at build time and ignores values built from variables.
+// The exclusions are repeated in both entries as literals: Next.js reads
+// `matcher` statically at build time and ignores values built from variables.
 export const config = {
   matcher: [
-    // Skip Next.js internals, the machine lanes, and all static files, unless found in search params
-    "/((?!_next|api/x402(?:/|$)|api/actions(?:/|$)|actions\\.json$|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes, except the machine lanes
-    "/((?!api/x402(?:/|$)|api/actions(?:/|$))(?:api|trpc).*)",
+    "/((?!_next|api/(?:x402|actions|inngest|webhooks|v1|media|docs|oauth/callback)(?:/|$)|actions\\.json$|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest|mp4|webm|mp3|txt|xml|pdf)).*)",
+    "/((?!api/(?:x402|actions|inngest|webhooks|v1|media|docs|oauth/callback)(?:/|$))(?:api|trpc).*)",
   ],
 };

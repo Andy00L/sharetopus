@@ -1,9 +1,11 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
@@ -12,22 +14,18 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
-
-/**
- * WordPress provider, self-hosted mode.
- *
- * Uses an Application Password, which core WordPress has issued since 5.6:
- * the user creates one under Users, Profile, Application Passwords and
- * pastes it with their username. No plugin, no OAuth app, no review.
- *
- * The site URL is a connect field and therefore untrusted input, so every
- * call goes through providerFetch (DNS validated, IP pinned, redirects
- * refused). Without that, "your WordPress site" would be an open
- * request-forgery field.
- *
- * sourceRef: developer.wordpress.org/rest-api/reference (users/me, posts,
- * media).
- */
+import {
+  fetchStoredMedia,
+  STORED_MEDIA_MAX_BYTES,
+} from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import { toUploadFileName } from "./_shared/uploadFileName";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const WORDPRESS_TIMEOUT_MS = 30_000;
 const WORDPRESS_MEDIA_TIMEOUT_MS = 60_000;
@@ -36,7 +34,7 @@ function normalizeSiteUrl(rawSiteUrl: string): string {
   return rawSiteUrl.trim().replace(/\/+$/, "");
 }
 
-function readSiteUrl(config: Record<string, unknown>): string | null {
+function readSiteUrl(config: ProviderConfig): string | null {
   const siteUrl = config.siteUrl;
   if (typeof siteUrl !== "string" || siteUrl.trim().length === 0) return null;
   return normalizeSiteUrl(siteUrl);
@@ -51,23 +49,11 @@ function buildBasicAuthHeader(credential: string): string {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return {
-      ok: false,
-      message: "WordPress connects with an application password.",
-    };
-  }
-
   const siteUrl = normalizeSiteUrl(input.values.siteUrl ?? "");
   const username = (input.values.username ?? "").trim();
-  // WordPress displays application passwords in spaced groups; the spaces
-  // are presentational and the API rejects them.
-  const applicationPassword = (input.values.applicationPassword ?? "").replace(
-    /\s+/g,
-    "",
-  );
+  const applicationPassword = input.values.applicationPassword ?? "";
 
   if (!siteUrl || !username || !applicationPassword) {
     return {
@@ -137,23 +123,18 @@ async function publish(
 ): Promise<ProviderPublishResult> {
   const siteUrl = readSiteUrl(input.config);
   if (!siteUrl) {
-    return {
-      ok: false,
-      message: "Stored WordPress account is missing its site URL.",
-    };
+    return refusePublish("Stored WordPress account is missing its site URL.");
   }
 
   const postTitle = input.title.trim();
   if (!postTitle) {
-    return { ok: false, message: "WordPress posts require a title." };
+    return refusePublish("WordPress posts require a title.");
   }
 
   const authorization = buildBasicAuthHeader(input.accessToken);
 
-  // A cover image becomes the featured image, which is what a WordPress
-  // theme expects, rather than being inlined at the top of the content.
   let featuredMediaId: number | null = null;
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     const uploadResult = await uploadMedia(
       siteUrl,
       authorization,
@@ -161,7 +142,7 @@ async function publish(
       input.fileName,
       input.mediaMimeType,
     );
-    if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+    if (!uploadResult.ok) return uploadResult;
     featuredMediaId = uploadResult.mediaId;
   }
 
@@ -182,12 +163,21 @@ async function publish(
     timeoutMs: WORDPRESS_TIMEOUT_MS,
   });
 
-  if (!createResult.ok) return { ok: false, message: createResult.message };
+  if (!createResult.ok) {
+    return failProviderFetch({
+      platform: "wordpress",
+      stage: "publish",
+      fetchFailure: createResult,
+    });
+  }
   if (createResult.status !== 201 && createResult.status !== 200) {
-    return {
-      ok: false,
-      message: `WordPress post create failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "wordpress",
+      stage: "publish",
+      action: "WordPress post create",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
 
   const created = parseJsonObject(createResult.bodyText);
@@ -195,70 +185,58 @@ async function publish(
     created && typeof created.id === "number" ? String(created.id) : null;
 
   if (!postId) {
-    return { ok: false, message: "WordPress returned no post id." };
+    return failUnreadableAnswer({
+      message: "WordPress returned no post id.",
+      stage: "publish",
+    });
   }
 
   return { ok: true, postId, postUrl: readStringField(created, "link") };
 }
 
-type MediaUploadResult =
-  | { ok: true; mediaId: number }
-  | { ok: false; message: string };
+type MediaUploadResult = { ok: true; mediaId: number } | ProviderPublishFailure;
 
 /**
- * Uploads media to the site's library. Our own signed URL supplies the
- * bytes, so that read needs no SSRF guard; the site call gets one.
- *
  * WordPress accepts a raw body with Content-Disposition rather than a
  * multipart envelope, which keeps this simple.
  */
 async function uploadMedia(
   siteUrl: string,
   authorization: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
-  let mediaBytes: Uint8Array;
-  try {
-    const mediaResponse = await fetch(mediaUrl);
-    if (!mediaResponse.ok) {
-      return {
-        ok: false,
-        message: `Could not read the post media (HTTP ${mediaResponse.status}).`,
-      };
-    }
-    mediaBytes = new Uint8Array(await mediaResponse.arrayBuffer());
-  } catch (mediaError) {
-    return {
-      ok: false,
-      message: `Could not read the post media: ${
-        mediaError instanceof Error ? mediaError.message : "unknown error"
-      }`,
-    };
-  }
+  const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
+  if (!storedMedia.ok) return storedMedia;
 
-  // Strip anything that could break out of the header value; the filename
-  // comes from stored data but this header is attacker-adjacent input.
-  const safeFileName = fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "upload";
 
   const uploadResult = await providerFetch(`${siteUrl}/wp-json/wp/v2/media`, {
     method: "POST",
     headers: {
       Authorization: authorization,
       "Content-Type": mimeType,
-      "Content-Disposition": `attachment; filename="${safeFileName}"`,
+      "Content-Disposition": `attachment; filename="${toUploadFileName(fileName, "upload")}"`,
     },
-    body: mediaBytes,
+    body: storedMedia.media,
     timeoutMs: WORDPRESS_MEDIA_TIMEOUT_MS,
   });
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "wordpress",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 201 && uploadResult.status !== 200) {
-    return {
-      ok: false,
-      message: `WordPress media upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "wordpress",
+      stage: "prepare",
+      action: "WordPress media upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
   const uploaded = parseJsonObject(uploadResult.bodyText);
@@ -266,10 +244,17 @@ async function uploadMedia(
     uploaded && typeof uploaded.id === "number" ? uploaded.id : null;
 
   if (mediaId === null) {
-    return { ok: false, message: "WordPress media upload returned no id." };
+    return failUnreadableAnswer({
+      message: "WordPress media upload returned no id.",
+      stage: "prepare",
+    });
   }
 
   return { ok: true, mediaId };
 }
 
-export const wordpressBehavior: ProviderBehavior = { connect, publish };
+export const wordpressBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

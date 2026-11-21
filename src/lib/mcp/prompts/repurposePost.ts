@@ -3,12 +3,8 @@ import { z } from "zod";
 
 import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 
-/**
- * `target_platforms` arrives as one comma-separated string: MCP prompt
- * arguments are always strings on the wire, so an array schema can never
- * match what a client sends. The schema splits the list and checks each
- * entry against SCHEDULABLE_PLATFORMS before the handler runs.
- */
+// MCP prompt arguments are strings on the wire: prompts/get params.arguments is a string-to-string record
+// (@modelcontextprotocol/server GetPromptRequest schema).
 const targetPlatformsArgument = z
   .string()
   .describe(
@@ -22,7 +18,6 @@ const targetPlatformsArgument = z
   )
   .pipe(z.array(z.enum(SCHEDULABLE_PLATFORMS)).min(1));
 
-/** Prompt: rewrite one existing post for other platforms. */
 export function registerRepurposePost(server: McpServer): void {
   server.registerPrompt(
     "repurpose_post",

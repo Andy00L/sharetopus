@@ -3,15 +3,9 @@ import "server-only";
 import { buildBasicAuthHeader } from "@/lib/api/oauth/buildBasicAuthHeader";
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 
-/**
- * Refreshes an expired X access token. Requires the offline.access scope on
- * the original grant. X rotates the refresh token: every refresh returns a
- * new one and the old one stops working, so the caller must store the
- * returned value. The old one is kept only if the answer omits it.
- * sourceRef: https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token
- *
- * Called by: ensureValidToken (case "x")
- */
+// X issues a refresh token only when the grant asked for offline.access, and it
+// rotates the refresh token: every refresh returns a new one and the old one
+// stops working: https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token
 export default async function refreshXToken(
   refreshToken: string,
 ): Promise<TokenRefreshResult> {

@@ -16,17 +16,10 @@ import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 
 const SubscriptionIdSchema = z.guid();
 
-/**
- * GET /v1/webhooks/[id]/deliveries -- list delivery log for a subscription.
- *
- * Keyset pagination on (created_at, id), newest first.
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.deliveries",
   handler: async (ctx, request) => {
-    // Step 1: extract subscription ID from URL.
-    // Path: /api/v1/webhooks/[id]/deliveries -> id is second-to-last.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
@@ -40,7 +33,6 @@ export const GET = withRestEndpoint({
     }
     const subscriptionId = idParseResult.data;
 
-    // Step 2: verify subscription ownership.
     const { data: subscriptionRows, error: ownershipError } = await runQuery(
       db
         .select({ id: webhook_subscriptions.id })
@@ -73,7 +65,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 3: parse query params.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -89,7 +80,6 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 4: query deliveries with cursor pagination.
     const { data: fetchedRows, error: queryError } = await runQuery(
       db
         .select()
@@ -115,7 +105,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 5: compute pagination.
     const { pageRows, nextCursor } = toListPage(
       fetchedRows,
       query.limit,

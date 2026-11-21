@@ -17,14 +17,13 @@ import {
 } from "./calendarMath";
 import CalendarBatchChip from "./CalendarBatchChip";
 
-/** Hour the week view scrolls to on first paint (start of a workday). */
 const INITIAL_SCROLL_HOUR = 7;
 
-/** Minimum hour-row height in px; matches the min-h-12 cell class. */
 const HOUR_ROW_MIN_PX = 48;
 
-/** Now-line refresh cadence in ms (one minute keeps it visually honest). */
 const NOW_TICK_INTERVAL_MS = 60_000;
+
+const HOUR_ROW_STYLE = { minHeight: HOUR_ROW_MIN_PX };
 
 const HOURS_OF_DAY = Array.from({ length: 24 }, (_, hourIndex) => hourIndex);
 
@@ -58,7 +57,8 @@ function CalendarHourCell({
   return (
     <div
       ref={setNodeRef}
-      className={`group relative min-h-12 space-y-1 bg-card p-1 transition-colors duration-150 ${
+      style={HOUR_ROW_STYLE}
+      className={`group relative space-y-1 bg-card p-1 transition-colors duration-150 ${
         isPastHour ? "bg-muted/30" : ""
       } ${isOver && !isPastHour ? "bg-chart-1/5 ring-2 ring-inset ring-chart-1/50" : ""}`}
     >
@@ -79,7 +79,7 @@ function CalendarHourCell({
           key={batch.batchId}
           batch={batch}
           draggable={isBatchDraggable(batch)}
-          pending={pendingBatchIds.has(batch.batchId)}
+          isReschedulePending={pendingBatchIds.has(batch.batchId)}
           onOpen={onOpenBatch}
         />
       ))}
@@ -104,11 +104,6 @@ interface CalendarWeekGridProps {
   readonly onOpenBatch: (batchId: string) => void;
 }
 
-/**
- * The week view: seven day columns over 24 hour rows, each hour cell a
- * drop target that reschedules to that hour (minutes preserved). A
- * chart-1 now line marks the current minute in today's column.
- */
 export default function CalendarWeekGrid({
   anchor,
   batchesByDay,
@@ -118,8 +113,22 @@ export default function CalendarWeekGrid({
   const now = useNowTick(NOW_TICK_INTERVAL_MS);
   const didInitialScrollRef = useRef(false);
 
-  const weekDays = buildWeekDays(anchor);
   const todayStart = startOfDay(now);
+  const weekColumns = buildWeekDays(anchor).map((day) => {
+    const dayKey = formatDayKey(day);
+    const batchesByHour = new Map<number, CalendarBatch[]>();
+    for (const batch of batchesByDay.get(dayKey) ?? []) {
+      const batchHour = new Date(batch.scheduledAtIso).getHours();
+      batchesByHour.set(batchHour, [...(batchesByHour.get(batchHour) ?? []), batch]);
+    }
+    return {
+      day,
+      dayKey,
+      isDayToday: isToday(day),
+      isPastDay: isBefore(day, todayStart),
+      batchesByHour,
+    };
+  });
 
   function scrollToWorkdayOnFirstPaint(scrollContainer: HTMLDivElement | null) {
     if (scrollContainer && !didInitialScrollRef.current) {
@@ -130,18 +139,17 @@ export default function CalendarWeekGrid({
 
   return (
     <div className="overflow-hidden rounded-xl border bg-border">
-      {/* Day header row */}
       <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] gap-px">
         <div className="bg-card" />
-        {weekDays.map((day) => (
+        {weekColumns.map(({ day, dayKey, isDayToday }) => (
           <div
-            key={formatDayKey(day)}
+            key={dayKey}
             className="flex items-center justify-center gap-1.5 bg-card px-1 py-1.5"
           >
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {format(day, "EEE")}
             </span>
-            {isToday(day) ? (
+            {isDayToday ? (
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-chart-1 text-[11px] font-semibold text-white">
                 {format(day, "d")}
               </span>
@@ -154,7 +162,6 @@ export default function CalendarWeekGrid({
         ))}
       </div>
 
-      {/* Hour rows */}
       <div
         ref={scrollToWorkdayOnFirstPaint}
         className="max-h-[65vh] overflow-y-auto"
@@ -162,22 +169,18 @@ export default function CalendarWeekGrid({
         <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] gap-px">
           {HOURS_OF_DAY.map((hour) => (
             <div key={hour} className="contents">
-              <div className="flex min-h-12 items-start justify-end bg-card pr-1.5 pt-0.5">
+              <div
+                style={HOUR_ROW_STYLE}
+                className="flex items-start justify-end bg-card pr-1.5 pt-0.5"
+              >
                 <span className="font-mono text-[10px] text-muted-foreground tabular-nums">
                   {format(setHours(now, hour), "h a")}
                 </span>
               </div>
-              {weekDays.map((day) => {
-                const dayKey = formatDayKey(day);
-                const isDayToday = isToday(day);
-                const isPastDay = isBefore(day, todayStart);
+              {weekColumns.map(({ dayKey, isDayToday, isPastDay, batchesByHour }) => {
                 const isPastHour =
                   isPastDay || (isDayToday && hour < now.getHours());
-                const dayBatches = batchesByDay.get(dayKey) ?? [];
-                const hourBatches = dayBatches.filter(
-                  (batch) =>
-                    new Date(batch.scheduledAtIso).getHours() === hour,
-                );
+                const hourBatches = batchesByHour.get(hour) ?? [];
                 return (
                   <CalendarHourCell
                     key={`${dayKey}-${hour}`}

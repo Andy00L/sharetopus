@@ -1,20 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 
-/**
- * Re-renders on a fixed interval and returns the current time, so
- * time-anchored UI (the calendar's now line) stays current while the page
- * sits open. The interval synchronizes React with the wall clock, a system
- * React does not own; cleanup clears the timer.
- */
+function createTickingClock(intervalMs: number) {
+  let now = new Date();
+  return {
+    subscribe(onTick: () => void) {
+      const timerId = window.setInterval(() => {
+        now = new Date();
+        onTick();
+      }, intervalMs);
+      return () => window.clearInterval(timerId);
+    },
+    getSnapshot: () => now,
+  };
+}
+
 export function useNowTick(intervalMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const timerId = window.setInterval(() => setNow(new Date()), intervalMs);
-    return () => window.clearInterval(timerId);
-  }, [intervalMs]);
-
-  return now;
+  const clock = useMemo(() => createTickingClock(intervalMs), [intervalMs]);
+  return useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot);
 }

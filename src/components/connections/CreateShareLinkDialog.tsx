@@ -23,17 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
-
-/**
- * Dialog for creating a new TikTok share link.
- *
- * Two-step flow: first shows the creation form (expiry + max_uses),
- * then on success swaps to a result view with a copyable URL.
- *
- * Called by: connections page (TikTok section)
- * Server action: createShareLink
- */
+import { copyShareLinkToClipboard } from "./copyShareLinkToClipboard";
 
 const EXPIRY_OPTIONS = [
   { value: "3600", label: "1 hour" },
@@ -52,7 +42,9 @@ const MAX_USES_OPTIONS = [
 type ExpiryOption = (typeof EXPIRY_OPTIONS)[number]["value"];
 type MaxUsesOption = (typeof MAX_USES_OPTIONS)[number]["value"];
 
-/** The listed option matching a radio/select value, or undefined for anything else. */
+const DEFAULT_EXPIRY: ExpiryOption = "86400";
+const DEFAULT_MAX_USES: MaxUsesOption = "1";
+
 function findOptionValue<OptionValue extends string>(
   options: readonly { value: OptionValue }[],
   candidate: string,
@@ -64,8 +56,8 @@ export function CreateShareLinkDialog() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [expiry, setExpiry] = useState<ExpiryOption>("86400");
-  const [maxUses, setMaxUses] = useState<MaxUsesOption>("1");
+  const [expiry, setExpiry] = useState<ExpiryOption>(DEFAULT_EXPIRY);
+  const [maxUses, setMaxUses] = useState<MaxUsesOption>(DEFAULT_MAX_USES);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -86,35 +78,33 @@ export function CreateShareLinkDialog() {
 
     if (result.success) {
       setResultUrl(result.data.shareUrl);
-      // Re-renders the connections page so ShareLinkList shows the new link behind the dialog.
       router.refresh();
     } else {
       setErrorMessage(result.message);
     }
   }
 
-  function handleCopy() {
+  async function handleCopy() {
     if (!resultUrl) return;
-    navigator.clipboard.writeText(resultUrl);
-    toast.success("Link copied to clipboard");
+    await copyShareLinkToClipboard(resultUrl);
+  }
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setResultUrl(null);
+      setErrorMessage(null);
+      setExpiry(DEFAULT_EXPIRY);
+      setMaxUses(DEFAULT_MAX_USES);
+    }
+    setOpen(nextOpen);
   }
 
   function handleClose() {
     setOpen(false);
-    // Reset state after close animation
-    setTimeout(() => {
-      setResultUrl(null);
-      setErrorMessage(null);
-      setExpiry("86400");
-      setMaxUses("1");
-    }, 200);
   }
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!nextOpen) handleClose();
-      else setOpen(true);
-    }}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button
           variant="outline"
@@ -171,7 +161,6 @@ export function CreateShareLinkDialog() {
             </DialogHeader>
 
             <div className="space-y-4">
-              {/* Expiry options */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Link expires in</Label>
                 <RadioGroup
@@ -193,7 +182,6 @@ export function CreateShareLinkDialog() {
                 </RadioGroup>
               </div>
 
-              {/* Max uses */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Max uses</Label>
                 <Select

@@ -2,52 +2,46 @@
 
 import { eq } from "drizzle-orm";
 
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { db, runQuery } from "@/db/client";
 import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
+import { priceIdToTier } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { CHECKOUT_SESSION_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
-/**
- * Creates a Stripe checkout session for subscription purchase
- *
- * This function handles the entire process of creating a checkout session:
- * 1. Verifies user authentication
- * 2. Performs rate limiting to prevent abuse (max 15 requests per minute)
- * 3. Retrieves the user's Stripe customer ID from the database
- * 4. Creates a Stripe checkout session for the selected price/plan
- * 5. Returns the session URL for client-side redirect
- *
- * @param {object} params - The function parameters
- * @param {string} params.priceId - The Stripe price ID for the subscription plan
- * @returns {Promise<{success: boolean; message: string; data?: string; resetIn?: number}>}
- *   Success response contains the checkout URL in the data field
- *   Error response includes descriptive message and optional resetIn time for rate limits
- */
-export async function checkOutSession(priceId: string): Promise<{
-  success: boolean;
-  message: string;
-  data?: string;
-  resetIn?: number;
-}> {
+export type CheckOutSessionResult =
+  | { success: true; message: string; data: string }
+  | {
+      success: false;
+      reason: "already_subscribed" | "failed";
+      message: string;
+      resetIn?: number;
+    };
+
+export async function checkOutSession(
+  priceId: string,
+): Promise<CheckOutSessionResult> {
   try {
     console.log(
       "[checkOutSession]: Starting checkout session creation process"
     );
 
-    // Validate price ID input
-    if (!priceId) {
-      console.error("[checkOutSession]: Missing required price ID");
+    // A server action takes any string from the browser: only the plan
+    // prices the app sells may open a checkout.
+    if (!priceId || priceIdToTier(priceId) === null) {
+      console.error(`[checkOutSession]: Unknown or missing price ID: ${priceId}`);
       return {
         success: false,
+        reason: "failed",
         message: "Subscription plan not specified. Please select a valid plan.",
       };
     }
 
     const { userId } = await auth();
 
-    // Verify user is properly authenticated
     const authResult = await authCheck(userId);
     if (!authResult || !userId) {
       console.error(
@@ -55,6 +49,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Authentication validation failed. Please sign in again.",
       };
     }
@@ -63,12 +58,11 @@ export async function checkOutSession(priceId: string): Promise<{
     );
 
     console.log(`[checkOutSession]: Checking rate limits for user: ${userId}`);
-    const rateCheck = await checkRateLimit(
-      "stripeCheckOutSession", // Unique identifier for this operation
-      userId, // User identifier
-      15, // Limit (15 requests)
-      60 // Window (60 seconds)
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "stripeCheckOutSession",
+      identifier: userId,
+      rule: CHECKOUT_SESSION_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       console.warn(
         `[checkOutSession]: Rate limit exceeded for user: ${userId}. Reset in: ${
@@ -77,13 +71,36 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
     }
     console.log("[checkOutSession]: Rate limit check passed");
 
-    // Step 3: Retrieve the user's Stripe customer ID from the database
+    // A second checkout would start a second subscription: a subscriber
+    // changes plans in the billing portal. Banked referral weeks are not a
+    // Stripe subscription, so those users may still buy one.
+    const subscription = await checkActiveSubscription(userId);
+    if (subscription.status === "unavailable") {
+      return {
+        success: false,
+        reason: "failed",
+        message: "Could not check your subscription. Please try again.",
+      };
+    }
+    if (subscription.status === "active" || subscription.status === "trialing") {
+      console.warn(
+        `[checkOutSession]: User ${userId} already has a ${subscription.status} subscription`
+      );
+      return {
+        success: false,
+        reason: "already_subscribed",
+        message:
+          "You already have an active subscription. Manage it from the billing portal.",
+      };
+    }
+
     console.log(
       `[checkOutSession]: Fetching Stripe customer ID for user: ${userId}`
     );
@@ -95,7 +112,6 @@ export async function checkOutSession(priceId: string): Promise<{
         .limit(1)
     );
 
-    // A missing users row gets the same reply as a failed lookup.
     const userRow = userRows?.[0];
     if (error || !userRow) {
       console.error(
@@ -104,17 +120,18 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Unable to retrieve your customer information .",
       };
     }
 
-    // Check if customer ID exists
     if (!userRow.stripe_customer_id) {
       console.error(
         `[checkOutSession]: No Stripe customer ID found for user: ${userId}`
       );
       return {
         success: false,
+        reason: "failed",
         message: "Your customer profile is incomplete. Please contact support.",
       };
     }
@@ -124,7 +141,6 @@ export async function checkOutSession(priceId: string): Promise<{
     );
     const customerId = userRow.stripe_customer_id;
 
-    // Step 4: Create the Stripe checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
@@ -137,7 +153,6 @@ export async function checkOutSession(priceId: string): Promise<{
       allow_promotion_codes: true,
     });
 
-    // Add this validation block
     if (!session || !session.url) {
       console.error(
         `[checkOutSession]: Stripe returned invalid session object: ${JSON.stringify(
@@ -146,6 +161,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Failed to create a valid checkout session. Please try again.",
       };
     }
@@ -153,7 +169,6 @@ export async function checkOutSession(priceId: string): Promise<{
       `[checkOutSession]: Successfully created checkout session URL: ${session.url}`
     );
 
-    // Return success with the checkout URL
     return {
       success: true,
       message: "Checkout session created successfully",
@@ -166,6 +181,7 @@ export async function checkOutSession(priceId: string): Promise<{
     );
     return {
       success: false,
+      reason: "failed",
       message:
         "An unexpected error occurred. Please try again or contact support.",
     };

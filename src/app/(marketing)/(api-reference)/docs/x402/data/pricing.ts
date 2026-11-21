@@ -1,35 +1,14 @@
 import "server-only";
 
-import { and, asc, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pricing_actions } from "@/db/schema";
 import type { PricingRecurrence } from "@/db/schema";
-
-/**
- * Action ids charged by the public x402 endpoints, and nothing else.
- *
- * pricing_actions also holds audit-only rows (FK targets for
- * x402_access_log.action, e.g. the share_link.* ids) that are never
- * purchasable; selecting by this allow-list keeps them off the public page.
- *
- * sourceRef: resolveAction call sites in src/app/api/x402/<route>/route.ts,
- *            src/lib/x402/middleware/resolvePostAction.ts,
- *            src/lib/x402/connect/handleConnectChallenge.ts
- */
-const PUBLIC_X402_ACTIONS = [
-  "cancel",
-  "connect_account",
-  "delete",
-  "list_connections",
-  "list_history",
-  "list_posts",
-  "post.image",
-  "post.text",
-  "post.video",
-  "reschedule",
-  "upload_url",
-] as const;
+import {
+  isPriceEffectiveAt,
+  PURCHASABLE_X402_ACTIONS,
+} from "@/lib/x402/pricing/readActionPrice";
 
 export interface PricingRow {
   action: string;
@@ -43,14 +22,6 @@ export type PricingResult =
   | { ok: true; rows: PricingRow[] }
   | { ok: false; reason: string };
 
-/**
- * Reads the currently effective public pricing rows for the docs page.
- *
- * Mirrors the temporal-window rule of the runtime lookup
- * (src/lib/x402/pricing/readActionPrice.ts): a row is effective when
- * effective_from <= now and effective_until is null or in the future.
- * Read-only, never throws; the page renders a fallback line on ok: false.
- */
 export async function fetchX402Pricing(): Promise<PricingResult> {
   const nowIso = new Date().toISOString();
 
@@ -66,9 +37,8 @@ export async function fetchX402Pricing(): Promise<PricingResult> {
       .from(pricing_actions)
       .where(
         and(
-          inArray(pricing_actions.action, [...PUBLIC_X402_ACTIONS]),
-          lte(pricing_actions.effective_from, nowIso),
-          or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso))
+          inArray(pricing_actions.action, [...PURCHASABLE_X402_ACTIONS]),
+          isPriceEffectiveAt(nowIso)
         )
       )
       .orderBy(asc(pricing_actions.action))

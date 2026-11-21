@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -18,8 +19,7 @@ interface FacebookDirectPostConfig {
     description: string;
   };
   userId: string | null;
-  /** Public signed URL Facebook pulls media from; empty for text posts. */
-  mediaUrl: string;
+  mediaUrl: string | null;
   batchId: string;
   postType: MediaType;
   scheduledPostId?: string;
@@ -30,16 +30,6 @@ type FacebookPassthrough = {
   config: FacebookDirectPostConfig;
 };
 
-/**
- * Publish one post to one Facebook Page via the shared direct-post
- * pipeline. The account row stores the PAGE id as account_identifier and
- * the non-expiring PAGE token as access_token, so ensureValidToken passes
- * it straight through (token_expires_at is null for Facebook).
- *
- * Only called from the Inngest workers (post.now and post.due), which
- * already rate limit at the batch layer, so no per-account checkRateLimit
- * hook here.
- */
 export async function directPostForFacebookAccounts(
   config: FacebookDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -59,21 +49,19 @@ export async function directPostForFacebookAccounts(
     {
       validate: (passthrough) => {
         if (!passthrough.config.account.account_identifier) {
-          return {
-            success: false,
-            count: 0,
-            message: "No Facebook Page id found for account",
-          };
+          return buildDirectPostRefusal(
+            "No Facebook Page id found for account",
+            "invalid_input",
+          );
         }
         if (
           passthrough.config.postType !== "text" &&
           !passthrough.config.mediaUrl
         ) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media URL is required for Facebook image and video posts",
-          };
+          return buildDirectPostRefusal(
+            "Media URL is required for Facebook image and video posts",
+            "invalid_input",
+          );
         }
         return null;
       },
@@ -82,7 +70,7 @@ export async function directPostForFacebookAccounts(
           pageAccessToken: accessToken,
           pageId: passthrough.config.account.account_identifier,
           message: passthrough.config.accountContent.description,
-          mediaUrl: passthrough.config.mediaUrl || undefined,
+          mediaUrl: passthrough.config.mediaUrl,
           postType: passthrough.config.postType,
         }),
       toHistoryFields: (postResult, _passthrough, adapterConfig) => ({

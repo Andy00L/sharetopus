@@ -1,22 +1,50 @@
+import type { Platform } from "@/db/schema";
+
 import type { ProviderMetadata } from "./types";
 
-// Client-safe metadata for every registry provider. No implementation imports:
-// the browser reads this file, and provider code handles credentials.
+export const REGISTRY_PLATFORM_IDS = [
+  "bluesky",
+  "mastodon",
+  "telegram",
+  "discord",
+  "slack",
+  "devto",
+  "wordpress",
+  "reddit",
+  "threads",
+  "tumblr",
+  "twitch",
+  "kick",
+  "hashnode",
+  "medium",
+  "lemmy",
+  "farcaster",
+  "listmonk",
+  "nostr",
+  "linkedin_page",
+  "dribbble",
+  "gmb",
+] as const satisfies readonly Platform[];
+
+export type RegistryPlatformId = (typeof REGISTRY_PLATFORM_IDS)[number];
+
+type RegistryProviderCatalog = {
+  readonly [PlatformId in RegistryPlatformId]: ProviderMetadata & { readonly id: PlatformId };
+};
 
 /** Bluesky posts cap at 300 graphemes. sourceRef: atproto app.bsky.feed.post */
 const BLUESKY_MAX_CHARS = 300;
 /** Mastodon's default instance limit; instances may raise it. */
 const MASTODON_MAX_CHARS = 500;
-/** Telegram sendMessage caps at 4096 UTF-8 chars. */
+/** Telegram sendMessage caps at 4096 chars. */
 const TELEGRAM_MAX_CHARS = 4096;
 /** Discord webhook content caps at 2000 chars. */
 const DISCORD_MAX_CHARS = 2000;
 /** Slack chat.postMessage practical text ceiling. */
 const SLACK_MAX_CHARS = 40_000;
-/** Sanity ceiling for long-form bodies; not an API limit. */
 const ARTICLE_MAX_CHARS = 100_000;
 
-export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
+export const REGISTRY_PROVIDER_CATALOG = {
   bluesky: {
     id: "bluesky",
     label: "Bluesky",
@@ -26,8 +54,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: BLUESKY_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 4,
-      mediaRequired: false,
     },
     credentialFields: [
       {
@@ -69,8 +95,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: MASTODON_MAX_CHARS,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 4,
-      mediaRequired: false,
     },
     credentialFields: [
       {
@@ -90,7 +114,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "",
         helpText:
           "Instance settings, Development, New application. Needs the write:statuses and write:media scopes.",
-        mapsTo: "access_token",
       },
     ],
     tools: [],
@@ -105,8 +128,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: TELEGRAM_MAX_CHARS,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
     },
     credentialFields: [
       {
@@ -116,7 +137,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         required: true,
         placeholder: "123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         helpText: "Token from @BotFather after creating your bot.",
-        mapsTo: "access_token",
       },
       {
         key: "chatId",
@@ -154,8 +174,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: DISCORD_MAX_CHARS,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
     },
     credentialFields: [
       {
@@ -166,7 +184,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "https://discord.com/api/webhooks/...",
         helpText:
           "Channel settings, Integrations, Webhooks, New Webhook, then Copy Webhook URL.",
-        mapsTo: "access_token",
       },
     ],
     tools: [],
@@ -181,8 +198,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: SLACK_MAX_CHARS,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -194,7 +209,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "xoxb-...",
         helpText:
           "Create an app at api.slack.com/apps, add the chat:write scope, install it to your workspace, then copy the Bot User OAuth Token.",
-        mapsTo: "access_token",
       },
       {
         key: "channelId",
@@ -225,8 +239,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
       hotlinksMedia: true,
     },
@@ -239,7 +251,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "",
         helpText:
           "dev.to Settings, Extensions, DEV Community API Keys. Generate a key and paste it here.",
-        mapsTo: "access_token",
       },
     ],
     tools: [],
@@ -254,8 +265,6 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
     },
     credentialFields: [
@@ -288,10 +297,7 @@ export const PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     ],
     tools: [],
   },
-};
 
-/** OAuth providers: env pairs gate availability (see requiredEnv). */
-const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   reddit: {
     id: "reddit",
     label: "Reddit",
@@ -301,8 +307,6 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 40_000,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
       hotlinksMedia: true,
     },
@@ -331,8 +335,6 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 500,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
     },
     tools: [],
   },
@@ -345,8 +347,6 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
     },
     tools: [
       {
@@ -367,8 +367,6 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       // Twitch chat message ceiling.
       maxTextLength: 500,
       supportedMediaTypes: ["text"],
-      maxMediaPerPost: 0,
-      mediaRequired: false,
     },
     tools: [],
   },
@@ -381,15 +379,10 @@ const OAUTH_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 500,
       supportedMediaTypes: ["text"],
-      maxMediaPerPost: 0,
-      mediaRequired: false,
     },
     tools: [],
   },
-};
 
-/** Additional credentials providers (no app registration needed). */
-const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   hashnode: {
     id: "hashnode",
     label: "Hashnode",
@@ -399,8 +392,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
       hotlinksMedia: true,
     },
@@ -412,7 +403,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         required: true,
         placeholder: "",
         helpText: "Hashnode account settings, Developer, Personal Access Token.",
-        mapsTo: "access_token",
       },
     ],
     tools: [
@@ -433,8 +423,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
       hotlinksMedia: true,
     },
@@ -447,7 +435,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "",
         helpText:
           "Medium Settings, Security, Integration tokens. Medium no longer issues new tokens; only accounts that already have one can connect.",
-        mapsTo: "access_token",
       },
     ],
     tools: [],
@@ -461,8 +448,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 10_000,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       titleRequired: true,
       hotlinksMedia: true,
     },
@@ -511,8 +496,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 320,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -523,7 +506,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         required: true,
         placeholder: "",
         helpText: "From dev.neynar.com. The free tier is enough for casting.",
-        mapsTo: "access_token",
       },
       {
         key: "signerUuid",
@@ -546,8 +528,6 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: ARTICLE_MAX_CHARS,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -586,23 +566,16 @@ const CREDENTIALS_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     ],
     tools: [],
   },
-};
 
-/** OAuth variants and approval-gated APIs (code complete; activate on env). */
-const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
   linkedin_page: {
     id: "linkedin_page",
     label: "LinkedIn Page",
     category: "business",
     authKind: "oauth2",
-    // Reuses the existing LinkedIn app; only the scopes differ.
     requiredEnv: ["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
     rules: {
       maxTextLength: 3000,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
-      hotlinksMedia: true,
     },
     tools: [
       {
@@ -622,8 +595,6 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 10_000,
       supportedMediaTypes: ["image"],
-      maxMediaPerPost: 1,
-      mediaRequired: true,
       titleRequired: true,
     },
     tools: [],
@@ -635,11 +606,8 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     authKind: "oauth2",
     requiredEnv: ["GMB_CLIENT_ID", "GMB_CLIENT_SECRET"],
     rules: {
-      // localPosts summary ceiling.
       maxTextLength: 1500,
       supportedMediaTypes: ["text", "image"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
     },
     tools: [
       {
@@ -659,8 +627,6 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     rules: {
       maxTextLength: 10_000,
       supportedMediaTypes: ["text", "image", "video"],
-      maxMediaPerPost: 1,
-      mediaRequired: false,
       hotlinksMedia: true,
     },
     credentialFields: [
@@ -672,7 +638,6 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
         placeholder: "64 hex characters",
         helpText:
           "Your Nostr private key as 64 hex characters. Convert an nsec key to hex in your Nostr client first.",
-        mapsTo: "access_token",
       },
       {
         key: "relays",
@@ -685,47 +650,40 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
     ],
     tools: [],
   },
-};
+} as const satisfies RegistryProviderCatalog;
 
-/** Merged view served to the registry and the connect UI. */
-export const FULL_PROVIDER_CATALOG: Readonly<Record<string, ProviderMetadata>> =
-  {
-    ...PROVIDER_CATALOG,
-    ...OAUTH_CATALOG,
-    ...CREDENTIALS_CATALOG,
-    ...VARIANT_CATALOG,
-  };
+export type RegistryCatalogEntry<PlatformId extends RegistryPlatformId> =
+  (typeof REGISTRY_PROVIDER_CATALOG)[PlatformId];
 
-/** Metadata lookup. Returns null for unknown ids so callers fail closed. */
-export function getProviderMetadata(
-  providerId: string,
-): ProviderMetadata | null {
-  return FULL_PROVIDER_CATALOG[providerId] ?? null;
+type RegistryOAuthPlatformId = {
+  [PlatformId in RegistryPlatformId]: RegistryCatalogEntry<PlatformId>["authKind"] extends "credentials"
+    ? never
+    : PlatformId;
+}[RegistryPlatformId];
+
+type RegistryCredentialsPlatformId = Exclude<RegistryPlatformId, RegistryOAuthPlatformId>;
+
+export function isRegistryPlatformId(value: string): value is RegistryPlatformId {
+  return REGISTRY_PLATFORM_IDS.some((platformId) => platformId === value);
 }
 
-/** Registry platform ids as a literal tuple, for z.enum and capabilities.ts. */
-export const REGISTRY_PLATFORM_IDS = [
-  "bluesky",
-  "mastodon",
-  "telegram",
-  "discord",
-  "slack",
-  "devto",
-  "wordpress",
-  "reddit",
-  "threads",
-  "tumblr",
-  "twitch",
-  "kick",
-  "hashnode",
-  "medium",
-  "lemmy",
-  "farcaster",
-  "listmonk",
-  "nostr",
-  "linkedin_page",
-  "dribbble",
-  "gmb",
-] as const;
+export function getProviderMetadata(providerId: string): ProviderMetadata | null {
+  return isRegistryPlatformId(providerId) ? REGISTRY_PROVIDER_CATALOG[providerId] : null;
+}
 
-export type RegistryPlatformId = (typeof REGISTRY_PLATFORM_IDS)[number];
+export function listProviderMetadata(): ProviderMetadata[] {
+  return REGISTRY_PLATFORM_IDS.map((platformId) => REGISTRY_PROVIDER_CATALOG[platformId]);
+}
+
+export function isRegistryOAuthPlatform(value: string): value is RegistryOAuthPlatformId {
+  return isRegistryPlatformId(value) && REGISTRY_PROVIDER_CATALOG[value].authKind !== "credentials";
+}
+
+function isRegistryCredentialsPlatform(
+  platformId: RegistryPlatformId,
+): platformId is RegistryCredentialsPlatformId {
+  return REGISTRY_PROVIDER_CATALOG[platformId].authKind === "credentials";
+}
+
+export const REGISTRY_CREDENTIALS_PLATFORM_IDS: readonly RegistryCredentialsPlatformId[] =
+  REGISTRY_PLATFORM_IDS.filter(isRegistryCredentialsPlatform);

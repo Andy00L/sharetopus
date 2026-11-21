@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 import { requestCodeExchange } from "@/lib/api/oauth/requestCodeExchange";
+import { readTikTokClientCredentials } from "@/lib/api/tiktok/data/readTikTokClientCredentials";
 import type { TokenExchangeResult } from "@/lib/types/dbTypes";
 
 /**
@@ -20,25 +21,12 @@ const TikTokTokenSchema = z.object({
   token_type: z.string().optional(),
 });
 
-/**
- * Exchanges a TikTok authorization code for tokens. Development builds use
- * the sandbox client (TIKTOK_CLIENT_KEY_DEV). `redirectUri` must be the
- * exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeTikTokCode(
   code: string,
   redirectUri: string,
 ): Promise<TokenExchangeResult> {
-  const isDevelopment = process.env.NODE_ENV === "development";
-  const clientKey = isDevelopment
-    ? process.env.TIKTOK_CLIENT_KEY_DEV
-    : process.env.TIKTOK_CLIENT_KEY;
-  const clientSecret = isDevelopment
-    ? process.env.TIKTOK_CLIENT_SECRET_DEV
-    : process.env.TIKTOK_CLIENT_SECRET;
-  if (!clientKey || !clientSecret) {
+  const credentials = readTikTokClientCredentials();
+  if (!credentials) {
     console.error("[exchangeTikTokCode] TikTok configuration missing.");
     return { success: false, message: "TikTok configuration missing." };
   }
@@ -49,8 +37,8 @@ export async function exchangeTikTokCode(
     url: "https://open.tiktokapis.com/v2/oauth/token/",
     method: "POST",
     body: new URLSearchParams({
-      client_key: clientKey,
-      client_secret: clientSecret,
+      client_key: credentials.clientKey,
+      client_secret: credentials.clientSecret,
       code,
       grant_type: "authorization_code",
       redirect_uri: redirectUri,

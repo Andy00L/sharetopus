@@ -29,6 +29,12 @@ type SubscriptionEvent =
   | Stripe.CustomerSubscriptionUpdatedEvent
   | Stripe.CustomerSubscriptionDeletedEvent;
 
+type InvoiceOutcomeEvent =
+  | Stripe.InvoicePaymentSucceededEvent
+  | Stripe.InvoicePaidEvent
+  | Stripe.InvoicePaymentFailedEvent
+  | Stripe.InvoiceMarkedUncollectibleEvent;
+
 function ok(body: Record<string, unknown> = {}) {
   return NextResponse.json({ received: true, ...body }, { status: 200 });
 }
@@ -71,9 +77,14 @@ export async function POST(req: NextRequest) {
     return err("Invalid signature", 400);
   }
 
-  // Stripe retries an event until it gets a 2xx (for up to three days) and
-  // may deliver one twice. An event counts as processed only once its
-  // processing succeeded; see stripeEventLog.ts.
+  const runEventHandler = selectEventHandler(event);
+  if (!runEventHandler) {
+    console.log(`[POST] Ignored Stripe event type: ${event.type}`);
+    return ok({ ignored: event.type });
+  }
+
+  // Stripe retries an event without a 2xx answer for up to three days:
+  // https://docs.stripe.com/webhooks#automatic-retries
   const processedCheck = await isStripeEventProcessed(event.id);
   if (!processedCheck.ok) {
     return err("Could not read the event log", 500);
@@ -82,11 +93,9 @@ export async function POST(req: NextRequest) {
     return ok({ duplicate: true, event_id: event.id });
   }
 
-  // The handlers throw on any failure, and the 500 makes Stripe retry: that
-  // retry is how a failed step gets run again.
   let response: NextResponse;
   try {
-    response = await processEvent(event);
+    response = await runEventHandler();
   } catch (processingErr) {
     console.error(
       `[Stripe webhook] Processing failed for ${event.id}:`,
@@ -100,36 +109,31 @@ export async function POST(req: NextRequest) {
     type: event.type,
     livemode: event.livemode,
   });
-  // Processed but not logged: Stripe delivers it again, and processing it a
-  // second time changes nothing.
   if (!logged.ok) {
     return err("Could not log the event", 500);
   }
   return response;
 }
 
-async function processEvent(event: Stripe.Event): Promise<NextResponse> {
+function selectEventHandler(
+  event: Stripe.Event,
+): (() => Promise<NextResponse>) | null {
   switch (event.type) {
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
-      return handleSubscriptionEvent(event);
+      return () => handleSubscriptionEvent(event);
     case "invoice.payment_succeeded":
-      return handleInvoiceEvent(event, "succeeded");
+    case "invoice.paid":
+      return () => handleInvoiceEvent(event, "succeeded");
     case "invoice.payment_failed":
-      return handleInvoiceEvent(event, "failed");
+    case "invoice.marked_uncollectible":
+      return () => handleInvoiceEvent(event, "failed");
     default:
-      console.log(`[Stripe webhook] Ignored event type: ${event.type}`);
-      return ok({ ignored: event.type });
+      return null;
   }
 }
 
-/**
- * The id of the user a Stripe customer belongs to, or null when no user does.
- * A failed lookup throws: POST then answers 500, so Stripe retries. Answering
- * 200 there dropped the event for good, and with it the record of a paid
- * subscription.
- */
 async function findUserIdForCustomer(
   stripeCustomerId: string,
 ): Promise<string | null> {
@@ -151,7 +155,6 @@ async function findUserIdForCustomer(
 
 async function handleSubscriptionEvent(event: SubscriptionEvent) {
   const eventSubscription = event.data.object;
-  // Webhook payloads carry the customer id; the object form only appears when expanded.
   const stripeCustomerId =
     typeof eventSubscription.customer === "string"
       ? eventSubscription.customer
@@ -160,7 +163,6 @@ async function handleSubscriptionEvent(event: SubscriptionEvent) {
   const userId = await findUserIdForCustomer(stripeCustomerId);
   if (!userId) {
     console.error(`[Stripe webhook] No user for customer ${stripeCustomerId}`);
-    // No user will ever match this customer: 200 so Stripe stops retrying.
     return ok({ no_user_match: true });
   }
 
@@ -186,21 +188,15 @@ async function handleSubscriptionEvent(event: SubscriptionEvent) {
     );
   }
 
-  // Drops this instance's cached plan so the next request reads the new
-  // row. Other instances follow when their entry expires (60s).
   invalidateCachedSubscription(userId);
 
-  // Posts and OAuth clients follow the user's access after this write, not
-  // the event type: a late "deleted" for a replaced subscription must not
-  // cancel the posts of the subscription that replaced it, and a "created"
-  // for a subscription still waiting on its first payment grants nothing.
   const access = await checkActiveSubscription(userId);
   if (access.status === "unavailable") {
     throw new Error(`Access check failed for ${userId}`);
   }
   if (access.isActive) {
     await restoreSubscriberAccess(userId);
-  } else if (event.type === "customer.subscription.deleted") {
+  } else {
     await revokeSubscriberAccess(userId);
   }
 
@@ -211,12 +207,9 @@ async function handleSubscriptionEvent(event: SubscriptionEvent) {
   });
 }
 
-/**
- * The subscription as Stripe has it now. Stripe does not deliver events in
- * order, so a payload can be older than the row a later event already wrote;
- * storing the current object leaves the row right whatever the order. A
- * subscription Stripe no longer has keeps its payload's state.
- */
+// Stripe does not guarantee event order, so a payload can be older than the row
+// a later event wrote; the current object is stored instead:
+// https://docs.stripe.com/webhooks#event-ordering
 async function retrieveCurrentSubscription(
   eventSubscription: Stripe.Subscription,
 ): Promise<Stripe.Subscription> {
@@ -231,10 +224,6 @@ async function retrieveCurrentSubscription(
   }
 }
 
-/**
- * The user has access: brings back what losing it took away. Both steps
- * are idempotent, so the retry after a failure runs them again safely.
- */
 async function restoreSubscriberAccess(userId: string): Promise<void> {
   const resumeResult = await resumeCancelledPostsOnResubscribe(userId);
   if (!resumeResult.success) {
@@ -250,7 +239,6 @@ async function restoreSubscriberAccess(userId: string): Promise<void> {
   }
 }
 
-/** The user lost access: demotes their OAuth clients and cancels their future posts. */
 async function revokeSubscriberAccess(userId: string): Promise<void> {
   const demoteResult = await demoteOauthClientsOnCancel(userId);
   invalidateCachedOAuthClientsByUser(userId);
@@ -269,7 +257,7 @@ async function revokeSubscriberAccess(userId: string): Promise<void> {
 }
 
 async function handleInvoiceEvent(
-  event: Stripe.InvoicePaymentSucceededEvent | Stripe.InvoicePaymentFailedEvent,
+  event: InvoiceOutcomeEvent,
   outcome: InvoicePaymentOutcome,
 ) {
   const invoice = event.data.object;
@@ -288,7 +276,6 @@ async function handleInvoiceEvent(
     return ok({ no_user_match: true });
   }
 
-  // Only a preview invoice lacks an id, and a preview is never paid.
   if (!invoice.id) {
     console.error(`[Stripe webhook] ${event.id} carries an invoice without an id`);
     return ok({ ignored: "invoice_without_id" });

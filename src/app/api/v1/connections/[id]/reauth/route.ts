@@ -12,26 +12,16 @@ import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
-import { isPostingPlatform } from "@/lib/platforms/capabilities";
+import { isAdapterPlatform } from "@/lib/platforms/capabilities";
 
 const ConnectionIdSchema = z.guid();
 const OAUTH_EXPIRY_MINUTES = 15;
 
-/**
- * POST /v1/connections/[id]/reauth -- get a real OAuth reauth URL.
- *
- * Generates a fresh OAuth authorization URL for the account and
- * creates a social_connections row for the state-based callback.
- * Unlike the MCP tool (which returns a generic /connections page),
- * this endpoint returns a direct reauth URL the caller can use.
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.reauth",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate connection ID from URL path.
     const urlSegments = new URL(request.url).pathname.split("/");
-    // Path is /v1/connections/[id]/reauth, so id is second-to-last.
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
     const idParseResult = ConnectionIdSchema.safeParse(idCandidate);
@@ -44,7 +34,6 @@ export const POST = withRestEndpoint({
     }
     const connectionId = idParseResult.data;
 
-    // Step 2: fetch account scoped to principal.
     const { data: accountRows, error: lookupError } = await runQuery(
       db
         .select()
@@ -79,21 +68,15 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Registry platforms have no OAuth reauth flow here: same answer as a
-    // buildOAuthUrl failure.
     const platform = accountRow.platform;
-    if (!isPostingPlatform(platform)) {
-      console.error(
-        `[v1/connections/[id]/reauth POST] No OAuth reauth flow for platform ${platform}`,
-      );
+    if (!isAdapterPlatform(platform)) {
       return restErrorResponse(
-        "internal_error",
-        "Failed to build reauth URL",
+        "validation_error",
+        `Reauth links are not available for ${platform} connections. Reconnect the account from the connections page.`,
         ctx.requestId,
       );
     }
 
-    // Step 3: build OAuth URL for reauth.
     const baseUrl =
       process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
     const redirectUri = `${baseUrl}/api/oauth/callback/${platform}`;
@@ -117,7 +100,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: create social_connections row for state-based callback.
     const expiresAt = new Date(
       Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000,
     ).toISOString();
@@ -129,7 +111,6 @@ export const POST = withRestEndpoint({
         initiated_via: "api",
         platform,
         oauth_state: oauthState,
-        // Non-null only for PKCE platforms (X); the shared callback reads it.
         oauth_code_verifier: oauthResult.codeVerifier,
         redirect_uri: redirectUri,
         status: "pending",

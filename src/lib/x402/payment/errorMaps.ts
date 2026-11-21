@@ -1,16 +1,5 @@
 import "server-only";
 
-/**
- * Shared mapping from the facilitator wrapper's typed errors to the flow
- * error vocabulary used by the connect verify handler. ConnectVerifyError
- * embeds these unions, so the mapping exists exactly once and a new
- * facilitator error kind fails to compile here instead of silently
- * diverging.
- *
- * Called by: connect/handleConnectVerify.ts
- * Tables touched: none
- */
-
 import type {
   VerifyPaymentError,
   SettlePaymentError,
@@ -27,7 +16,8 @@ export type MappedVerifyError =
   | { kind: "verify_authorization_expired"; message: string }
   | { kind: "verify_replay_detected"; message: string }
   | { kind: "verify_kyt_sanctioned"; message: string }
-  | { kind: "verify_facilitator_error"; message: string };
+  | { kind: "verify_facilitator_error"; message: string }
+  | { kind: "verify_invalid_amount"; message: string };
 
 export type MappedSettleError =
   | { kind: "settle_not_verified"; message: string }
@@ -76,6 +66,8 @@ export function mapVerifyPaymentError(
       };
     case "facilitator_error":
       return { kind: "verify_facilitator_error", message: error.message };
+    case "invalid_amount":
+      return { kind: "verify_invalid_amount", message: error.message };
   }
 }
 

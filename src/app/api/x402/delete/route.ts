@@ -10,19 +10,6 @@ import { preflightScheduledPostChange } from "@/actions/server/scheduleActions/p
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/delete
- *
- * Pays the delete action (price per pricing_actions). Hard deletes 1-50
- * scheduled or completed posts.
- * Steps:
- * 1. Parse body (post_ids array, 1-50 UUIDs).
- * 2. Before settlement, check the posts exist and belong to the payer; a
- *    failure here costs nothing.
- * 3. x402 middleware handles payment and the charge.
- * 4. Call deleteScheduledPostBatch with createdVia="x402".
- */
-
 const DeleteBodySchema = z.object({
   post_ids: z.array(z.string().uuid()).min(1).max(50),
 });
@@ -70,7 +57,7 @@ export const POST = x402PaidEndpoint<DeleteBody, DeleteResult>({
     preflightScheduledPostChange({
       postIds: body.post_ids,
       principalId: principal.principalId,
-      eligibleStatuses: null,
+      action: "delete",
     }),
 
   handler: async ({ body, principal, requestId }) => {
@@ -86,7 +73,6 @@ export const POST = x402PaidEndpoint<DeleteBody, DeleteResult>({
         success: false,
         errorKind: "execution_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

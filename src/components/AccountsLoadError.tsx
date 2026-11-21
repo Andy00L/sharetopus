@@ -1,26 +1,25 @@
+import type { SocialAccountsLoadFailure } from "@/actions/server/data/fetchSocialAccounts";
 import { LoadFailedNotice } from "@/components/LoadFailedNotice";
 import RateLimitError from "@/components/RateLimitError";
 
-/**
- * What a page renders when fetchSocialAccounts fails. fetchSocialAccounts
- * sets resetIn only when the user hit the rate limit, so the countdown
- * screen shows for that case alone; a database error or a limiter outage
- * gets a retry card that does not tell the user they went too fast.
- *
- * Used by: /connections and the /create/{text,image,video} pages
- */
 export function AccountsLoadError({
-  resetIn,
+  failure,
 }: {
-  readonly resetIn?: number;
+  readonly failure: SocialAccountsLoadFailure;
 }) {
-  if (resetIn !== undefined) {
-    return <RateLimitError resetIn={resetIn} />;
+  switch (failure.reason) {
+    case "rate_limited":
+      return <RateLimitError resetIn={failure.resetIn} />;
+    case "unavailable":
+      return (
+        <LoadFailedNotice
+          title="We couldn't load your accounts"
+          description="Something failed on our side, not with your accounts. Try again in a moment."
+        />
+      );
+    default: {
+      const _exhaustive: never = failure;
+      return _exhaustive;
+    }
   }
-  return (
-    <LoadFailedNotice
-      title="We couldn't load your accounts"
-      description="Something failed on our side, not with your accounts. Try again in a moment."
-    />
-  );
 }

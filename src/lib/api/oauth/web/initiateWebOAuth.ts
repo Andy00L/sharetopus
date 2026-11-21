@@ -10,36 +10,21 @@ import { nanoid } from "nanoid";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-/** State/verifier cookies live 15 minutes, the OAuth window. */
 const OAUTH_COOKIE_MAX_AGE_SECONDS = 60 * 15;
-/** 48 random bytes base64url-encode to 64 chars, inside the RFC 7636 43-128 range. */
+// 48 random bytes base64url-encode to 64 characters; RFC 7636 section 4.1 allows
+// a code_verifier of 43 to 128 characters.
 const PKCE_VERIFIER_RANDOM_BYTES = 48;
 
 export interface WebOAuthInitiateConfig {
-  /** Platform key, used in logs only here. */
   platform: Platform;
-  /** HTTP-only cookie holding the CSRF state, e.g. "youtube_auth_state". */
   stateCookieName: string;
-  /** Set for PKCE platforms (X); holds the code_verifier between redirects. */
   verifierCookieName?: string;
-  /**
-   * Builds the provider authorize URL. codeChallenge is the S256 challenge
-   * when verifierCookieName is set, null otherwise.
-   */
   buildAuthorizeUrl: (
     state: string,
     codeChallenge: string | null,
   ) => { ok: true; url: string } | { ok: false; message: string };
 }
 
-/**
- * Shared body of every /api/social/<platform>/initiate route: Clerk auth,
- * subscription gate, account-limit gate, CSRF state cookie, optional PKCE
- * verifier cookie, then the provider authorize URL for the popup.
- *
- * Called by: /api/social/{linkedin,tiktok,pinterest,instagram,youtube,x,facebook}/initiate
- * and /api/social/registry/[provider]/initiate
- */
 export async function initiateWebOAuth(
   config: WebOAuthInitiateConfig,
 ): Promise<NextResponse> {
@@ -94,8 +79,6 @@ export async function initiateWebOAuth(
       );
     }
 
-    // CSRF state + optional PKCE verifier, both bound to the browser via
-    // HTTP-only cookies that the connect callback verifies and clears.
     const state = nanoid(32);
     let codeChallenge: string | null = null;
 

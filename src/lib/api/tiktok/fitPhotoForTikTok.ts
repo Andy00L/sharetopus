@@ -2,31 +2,23 @@ import "server-only";
 
 import sharp from "sharp";
 
-/**
- * TikTok photo limits: JPEG or WebP, at most 1080p, at most 20MB per image
- * (developers.tiktok.com/doc/content-posting-api-media-transfer-guide). A
- * larger photo is refused with picture_size_check_failed, which is what a
- * 4032x3024 phone photo gets. 1080p is read as 1080 on the short side and
- * 1920 on the long side, the 9:16 and 16:9 frames TikTok itself uses.
- */
+// TikTok photo limits: WebP or JPEG, at most 1080p, at most 20MB per image:
+// https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide
+// A larger photo fails with fail_reason picture_size_check_failed:
+// https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status
+// 1080p is read as 1080 on the short side and 1920 on the long side.
 const TIKTOK_PHOTO_SHORT_SIDE_MAX = 1080;
 const TIKTOK_PHOTO_LONG_SIDE_MAX = 1920;
-/** High enough that the resize is invisible, far under the 20MB cap at 1080p. */
 const TIKTOK_PHOTO_JPEG_QUALITY = 90;
 
-/** EXIF orientations 5 to 8 store the image rotated 90 degrees. */
+// EXIF Orientation values 5 to 8 rotate the image by 90 or 270 degrees:
+// https://exiftool.org/TagNames/EXIF.html (tag 0x0112)
 const FIRST_ROTATED_EXIF_ORIENTATION = 5;
 
 export type FitPhotoResult =
   | { ok: true; bytes: Buffer }
   | { ok: false; message: string };
 
-/**
- * Turns a stored photo into one TikTok accepts: applies the EXIF rotation,
- * shrinks it (never enlarges) to fit 1080p in its own orientation, and
- * re-encodes it as JPEG. Only TikTok receives the result; the stored file
- * other platforms use is untouched.
- */
 export async function fitPhotoForTikTok(
   photoBytes: Buffer,
 ): Promise<FitPhotoResult> {

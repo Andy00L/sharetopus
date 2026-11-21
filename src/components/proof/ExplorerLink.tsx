@@ -1,16 +1,6 @@
 import type { ReactNode } from "react";
 import { ArrowUpRight } from "lucide-react";
 
-/**
- * External link to a block explorer, the ledger's one interactive element.
- * Mono ink text clears 4.5:1 on white and cream (orange text at 12px does
- * not); the orange up-right arrow is the interactive mark, and hover or
- * focus adds an orange underline. One focus treatment for the whole page.
- * Opens in a new tab.
- *
- * A null href means the network has no explorer on file: the value still
- * prints, as plain mono text, instead of a link that goes nowhere.
- */
 export function ExplorerLink({
   href,
   title,

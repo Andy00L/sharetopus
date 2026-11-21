@@ -1,15 +1,20 @@
 "use client";
 import { Slider } from "@/components/ui/slider";
+import { useObjectUrl } from "@/hooks/use-object-url";
 import Image from "next/image";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 interface VideoCoverSelectorProps {
   readonly videoFile: File;
   readonly onCoverChange: (timestamp: number) => void;
   readonly onError?: (errorMessage: string) => void;
-  /** The video's length in seconds, once its metadata has loaded. */
   readonly onDurationLoaded?: (durationSec: number) => void;
 }
+
+const THUMBNAIL_DEBOUNCE_MS = 150;
+const INITIAL_COVER_FRACTION = 0.1;
+const COVER_PREVIEW_MAX_WIDTH_PX = 768;
+const COVER_PREVIEW_JPEG_QUALITY = 0.85;
 
 export function VideoCoverSelector({
   videoFile,
@@ -20,114 +25,80 @@ export function VideoCoverSelector({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [coverPreview, setCoverPreview] = useState<string>("");
-  const [pendingTime, setPendingTime] = useState<number | null>(null);
 
+  const videoUrl = useObjectUrl(videoFile);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const thumbnailTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  );
 
-  useEffect(() => {
-    if (videoFile && videoRef.current) {
-      const videoUrl = URL.createObjectURL(videoFile);
-      videoRef.current.src = videoUrl;
-
-      return () => URL.revokeObjectURL(videoUrl);
-    }
-  }, [videoFile]);
-
-  const handleVideoLoaded = () => {
-    if (videoRef.current) {
-      const videoDuration = videoRef.current.duration;
-
-      // Add validation for invalid duration
-      if (!videoDuration || videoDuration === 0 || !isFinite(videoDuration)) {
-        onError?.(
-          "Unable to load video duration. Please try a different file."
-        );
-        return;
-      }
-
-      setDuration(videoDuration);
-      onDurationLoaded?.(videoDuration);
-
-      // Initial cover at 10% of the video, queued through the same debounce
-      // as a slider move.
-      const initialTime = videoDuration * 0.1;
-      setCurrentTime(initialTime);
-      setPendingTime(initialTime);
-      // Note: do NOT pre-seek here. generateThumbnail (run by the
-      // pendingTime effect) is the sole seeker. A pre-seek to the same value
-      // causes the browser to skip generateThumbnail's seek, leaving
-      // onseeked to never fire, leaving onCoverChange at 0.
-    }
-  };
-
-  // An effect event: only the pendingTime effect calls it, and it always
-  // sees the latest onCoverChange without restarting that effect.
-  const generateThumbnail = useEffectEvent(async (time: number) => {
-    if (!videoRef.current || !canvasRef.current) return;
-
+  const generateThumbnail = async (time: number) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const context = canvas.getContext("2d");
+    const context = canvas?.getContext("2d");
+    if (!video || !canvas || !context) return;
 
-    if (!context) return;
+    if (video.currentTime !== time) {
+      video.currentTime = time;
+      await new Promise<void>((resolve) => {
+        video.onseeked = () => resolve();
+      });
+    }
 
-    video.currentTime = time;
-
-    // Wait for seek to complete
-    await new Promise<void>((resolve) => {
-      video.onseeked = () => resolve();
-    });
-
-    // Set canvas size to video dimensions
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    // Draw current frame
+    const previewScale = Math.min(
+      1,
+      COVER_PREVIEW_MAX_WIDTH_PX / video.videoWidth
+    );
+    canvas.width = Math.round(video.videoWidth * previewScale);
+    canvas.height = Math.round(video.videoHeight * previewScale);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert to base64 and create preview
-    const frameData = canvas.toDataURL("image/jpeg", 1);
+    setCoverPreview(
+      canvas.toDataURL("image/jpeg", COVER_PREVIEW_JPEG_QUALITY)
+    );
+    onCoverChange(time * 1000);
+  };
 
-    // Small delay to ensure smooth transition
-    setTimeout(() => {
-      setCoverPreview(frameData);
-      onCoverChange(time * 1000);
-    }, 50);
-  });
+  const scheduleThumbnail = (time: number) => {
+    clearTimeout(thumbnailTimerRef.current);
+    thumbnailTimerRef.current = setTimeout(() => {
+      void generateThumbnail(time);
+    }, THUMBNAIL_DEBOUNCE_MS);
+  };
+
+  const handleVideoLoaded = () => {
+    const videoDuration = videoRef.current?.duration;
+    if (!videoDuration || !Number.isFinite(videoDuration)) {
+      onError?.("Unable to load video duration. Please try a different file.");
+      return;
+    }
+
+    setDuration(videoDuration);
+    onDurationLoaded?.(videoDuration);
+
+    const initialTime = videoDuration * INITIAL_COVER_FRACTION;
+    setCurrentTime(initialTime);
+    scheduleThumbnail(initialTime);
+  };
 
   const handleSliderChange = (values: number[]) => {
     const newTime = values[0];
     setCurrentTime(newTime);
-    setPendingTime(newTime);
+    scheduleThumbnail(newTime);
   };
-
-  // Synchronizes the hidden video and canvas with the chosen time,
-  // debounced so dragging the slider does not seek on every step.
-  useEffect(() => {
-    if (pendingTime === null) return;
-
-    const timer = setTimeout(() => {
-      generateThumbnail(pendingTime);
-      setPendingTime(null);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [pendingTime]);
 
   return (
     <div className="space-y-4 border-2 border-dashed border-chart-1 bg-card rounded-lg p-12 text-center transition-colors hover:border-chart-1/80 hover:bg-accent">
       {" "}
-      {/* Hidden video element for thumbnail generation */}
       <video
         ref={videoRef}
+        src={videoUrl ?? undefined}
         className="hidden"
         preload="metadata"
         onLoadedMetadata={handleVideoLoaded}
       />
-      {/* Hidden canvas for thumbnail generation */}
       <canvas ref={canvasRef} className="hidden" />
-      {/* Cover Preview */}
       <div className="space-y-3">
         <h3 className="font-medium">Cover Image</h3>
 
@@ -143,7 +114,6 @@ export function VideoCoverSelector({
           </div>
         )}
       </div>
-      {/* Frame Selection Slider */}
       {duration > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium">Select Frame for Cover</label>

@@ -20,9 +20,9 @@ import {
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
+import { withMemoizedJsonSchema } from "../_shared/memoizedJsonSchema";
 import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-/** directPostBatch accepts at most 30 posts per call. */
 const MAX_POSTS_PER_CALL = 30;
 
 const PublishPostInputSchema = z.object({
@@ -62,12 +62,15 @@ const PublishPostInputSchema = z.object({
   ...REGISTRY_POST_OPTION_FIELDS,
 });
 
-type PublishPostInput = z.infer<typeof PublishPostInputSchema>;
-
-type PublishPostsArgs = {
-  posts: PublishPostInput[];
-  batch_id?: string;
-};
+const PublishPostsInputSchema = z.object({
+  posts: z.array(PublishPostInputSchema).min(1).max(MAX_POSTS_PER_CALL),
+  batch_id: z
+    .string()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Reuse the same batch_id when retrying: posts it already created are not duplicated."),
+});
 
 const PublishPostsOutputSchema = z.object({
   batch_id: z.string(),
@@ -83,184 +86,171 @@ const PublishPostsOutputSchema = z.object({
 type PublishPostsOutput = z.infer<typeof PublishPostsOutputSchema>;
 type Rejection = PublishPostsOutput["rejected"][number];
 
-/** Publishes or schedules 1 to 30 posts in one call; list_posts with the batch_id shows the results. */
-export function registerPublishPosts(server: McpServer): void {
-  server.registerTool(
-    "publish_posts",
-    {
-      title: "Publish Posts",
-      description: `Publish or schedule 1 to ${MAX_POSTS_PER_CALL} posts. A post with scheduled_at is scheduled; one without it is published now. To cross-post, add one entry per account with the same media_storage_path. Check the outcome with list_posts and the returned batch_id.`,
-      inputSchema: z.object({
-        posts: z.array(PublishPostInputSchema).min(1).max(MAX_POSTS_PER_CALL),
-        batch_id: z
-          .string()
-          .min(1)
-          .max(200)
-          .optional()
-          .describe("Reuse the same batch_id when retrying: posts it already created are not duplicated."),
-      }),
-      outputSchema: PublishPostsOutputSchema,
-      annotations: {
-        title: "Publish Posts",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-    },
-    withMcpTool(
-      "publish_posts",
-      async (ctx, args: PublishPostsArgs) => {
-        const batchId = args.batch_id ?? generateBatchId();
-        const idempotencyKeyFor = (postIndex: number) =>
-          args.batch_id ? `${batchId}:${postIndex}` : undefined;
+const PUBLISH_POSTS_TOOL = {
+  title: "Publish Posts",
+  description: `Publish or schedule 1 to ${MAX_POSTS_PER_CALL} posts. A post with scheduled_at is scheduled; one without it is published now. To cross-post, add one entry per account with the same media_storage_path. Check the outcome with list_posts and the returned batch_id.`,
+  inputSchema: withMemoizedJsonSchema(PublishPostsInputSchema),
+  outputSchema: withMemoizedJsonSchema(PublishPostsOutputSchema),
+  annotations: {
+    title: "Publish Posts",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+};
 
-        const ownership = await loadOwnedAccountPlatforms(
-          args.posts.map((post) => post.social_account_id),
-          ctx.principal.principalId,
-        );
-        if (!ownership.success) {
-          console.error(`[publish_posts] [req=${ctx.requestId ?? "?"}] ${ownership.message}`);
-          return errorResult("Could not check account ownership. Retry in a moment.");
-        }
+const handlePublishPosts = withMcpTool(
+  "publish_posts",
+  async (ctx, args: z.infer<typeof PublishPostsInputSchema>) => {
+    const batchId = args.batch_id ?? generateBatchId();
+    const idempotencyKeyFor = (postIndex: number) =>
+      args.batch_id ? `${batchId}:${postIndex}` : undefined;
 
-        const rejected: Rejection[] = [];
-        const postsToSchedule: SchedulePostData[] = [];
-        const postsToPublishNow: DirectPostData[] = [];
+    const ownership = await loadOwnedAccountPlatforms(
+      args.posts.map((post) => post.social_account_id),
+      ctx.principal.principalId,
+    );
+    if (!ownership.success) {
+      console.error(`[publish_posts] [req=${ctx.requestId ?? "?"}] ${ownership.message}`);
+      return errorResult("Could not check account ownership. Retry in a moment.");
+    }
 
-        args.posts.forEach((post, postIndex) => {
-          const platform = ownership.platformByAccountId.get(post.social_account_id);
-          if (!platform || !isSchedulablePlatform(platform)) {
-            rejected.push({
-              social_account_id: post.social_account_id,
-              reason: "Unknown social_account_id. Call list_connections for your account ids.",
-            });
-            return;
-          }
+    const rejected: Rejection[] = [];
+    const postsToSchedule: SchedulePostData[] = [];
+    const postsToPublishNow: DirectPostData[] = [];
 
-          const targetIssues = findPostTargetIssues({ ...post, platform });
-          if (targetIssues.length > 0) {
-            rejected.push({
-              social_account_id: post.social_account_id,
-              reason: targetIssues.map((issue) => issue.message).join("; "),
-            });
-            return;
-          }
-
-          const pinterestOptions =
-            platform === "pinterest"
-              ? { board: post.pinterest_board_id ?? "", link: post.pinterest_link ?? "" }
-              : null;
-
-          if (post.scheduled_at) {
-            postsToSchedule.push({
-              socialAccountId: post.social_account_id,
-              platform,
-              scheduledAt: post.scheduled_at,
-              postType: post.post_type,
-              title: post.title ?? null,
-              description: post.description,
-              mediaStoragePath: post.media_storage_path,
-              coverTimestamp: post.cover_timestamp,
-              postOptions: pinterestOptions ?? buildRegistryPostOptions(post),
-              batch_id: batchId,
-              idempotency_key: idempotencyKeyFor(postIndex),
-            });
-          } else {
-            postsToPublishNow.push({
-              socialAccountId: post.social_account_id,
-              platform,
-              postType: post.post_type,
-              title: post.title ?? null,
-              description: post.description,
-              mediaStoragePath: post.media_storage_path,
-              coverTimestamp: post.cover_timestamp,
-              pinterestBoardId: post.pinterest_board_id,
-              pinterestLink: post.pinterest_link,
-              idempotency_key: idempotencyKeyFor(postIndex),
-              postOptions: buildRegistryPostOptions(post),
-            });
-          }
+    args.posts.forEach((post, postIndex) => {
+      const platform = ownership.platformByAccountId.get(post.social_account_id);
+      if (!platform || !isSchedulablePlatform(platform)) {
+        rejected.push({
+          social_account_id: post.social_account_id,
+          reason: "Unknown social_account_id. Call list_connections for your account ids.",
         });
+        return;
+      }
 
-        const batchErrors: string[] = [];
-        let scheduledCount = 0;
-        let publishingNowCount = 0;
-        let duplicates = 0;
-        let scheduleIds: string[] = [];
-        let eventIds: string[] = [];
+      const targetIssues = findPostTargetIssues({ ...post, platform });
+      if (targetIssues.length > 0) {
+        rejected.push({
+          social_account_id: post.social_account_id,
+          reason: targetIssues.map((issue) => issue.message).join("; "),
+        });
+        return;
+      }
 
-        if (postsToSchedule.length > 0) {
-          const scheduleResult = await schedulePostBatch(
-            postsToSchedule,
-            ctx.principal.principalId,
-            "mcp",
-            ctx.requestId,
-          );
-          scheduledCount = scheduleResult.details.inserted;
-          duplicates += scheduleResult.details.duplicates;
-          scheduleIds = scheduleResult.scheduleIds;
-          rejected.push(...toRejections(scheduleResult.details.rejected));
-          if (!scheduleResult.success && scheduleResult.details.rejected.length === 0) {
-            batchErrors.push(`Scheduling failed: ${scheduleResult.message}`);
-          }
-        }
+      const pinterestOptions =
+        platform === "pinterest"
+          ? { board: post.pinterest_board_id ?? "", link: post.pinterest_link ?? "" }
+          : null;
 
-        if (postsToPublishNow.length > 0) {
-          const publishResult = await directPostBatch(
-            postsToPublishNow,
-            ctx.principal.principalId,
-            "mcp",
-            batchId,
-            ctx.requestId,
-          );
-          publishingNowCount = publishResult.details.dispatched;
-          duplicates += publishResult.details.duplicates;
-          eventIds = publishResult.eventIds;
-          rejected.push(...toRejections(publishResult.details.rejected));
-          if (!publishResult.success && publishResult.details.rejected.length === 0) {
-            batchErrors.push(`Publishing failed: ${publishResult.message}`);
-          }
-        }
-
-        const auditArgs = {
-          count: args.posts.length,
+      if (post.scheduled_at) {
+        postsToSchedule.push({
+          socialAccountId: post.social_account_id,
+          platform,
+          scheduledAt: post.scheduled_at,
+          postType: post.post_type,
+          title: post.title ?? null,
+          description: post.description,
+          mediaStoragePath: post.media_storage_path,
+          coverTimestamp: post.cover_timestamp,
+          postOptions: pinterestOptions ?? buildRegistryPostOptions(post),
           batch_id: batchId,
-          scheduled: postsToSchedule.length,
-          now: postsToPublishNow.length,
-        };
+          idempotency_key: idempotencyKeyFor(postIndex),
+        });
+      } else {
+        postsToPublishNow.push({
+          socialAccountId: post.social_account_id,
+          platform,
+          postType: post.post_type,
+          title: post.title ?? null,
+          description: post.description,
+          mediaStoragePath: post.media_storage_path,
+          coverTimestamp: post.cover_timestamp,
+          pinterestBoardId: post.pinterest_board_id,
+          link: platform === "pinterest" ? post.pinterest_link : undefined,
+          idempotency_key: idempotencyKeyFor(postIndex),
+          registryOptions: buildRegistryPostOptions(post),
+        });
+      }
+    });
 
-        if (scheduledCount + publishingNowCount + duplicates === 0) {
-          const reasons = [
-            ...batchErrors,
-            ...rejected.map((rejection) => `${rejection.social_account_id}: ${rejection.reason}`),
-          ];
-          return { ...errorResult(`Nothing was published. ${reasons.join(" | ")}`), auditArgs };
-        }
+    const batchErrors: string[] = [];
+    let scheduledCount = 0;
+    let publishingNowCount = 0;
+    let duplicates = 0;
+    let scheduleIds: string[] = [];
+    let eventIds: string[] = [];
 
-        const output: PublishPostsOutput = {
-          batch_id: batchId,
-          publishing_now: publishingNowCount,
-          scheduled: scheduledCount,
-          duplicates,
-          rejected,
-          event_ids: eventIds,
-          schedule_ids: scheduleIds,
-          message: [
-            `${publishingNowCount} publishing now, ${scheduledCount} scheduled`,
-            duplicates > 0 ? `${duplicates} already existed` : null,
-            rejected.length > 0 ? `${rejected.length} rejected` : null,
-            ...batchErrors,
-            "Call list_posts with this batch_id in about a minute to see the results.",
-          ]
-            .filter((part) => part !== null)
-            .join(". "),
-        };
-        return jsonResult(output, auditArgs);
-      },
-      { auditArgsBuilder: (args) => ({ count: args.posts.length }) },
-    ),
-  );
+    const [scheduleResult, publishResult] = await Promise.all([
+      postsToSchedule.length > 0
+        ? schedulePostBatch(postsToSchedule, ctx.principal.principalId, "mcp", ctx.requestId)
+        : null,
+      postsToPublishNow.length > 0
+        ? directPostBatch(postsToPublishNow, ctx.principal.principalId, "mcp", batchId, ctx.requestId)
+        : null,
+    ]);
+
+    if (scheduleResult) {
+      scheduledCount = scheduleResult.details.inserted;
+      duplicates += scheduleResult.details.duplicates;
+      scheduleIds = scheduleResult.scheduleIds;
+      rejected.push(...toRejections(scheduleResult.details.rejected));
+      if (!scheduleResult.success && scheduleResult.details.rejected.length === 0) {
+        batchErrors.push(`Scheduling failed: ${scheduleResult.message}`);
+      }
+    }
+
+    if (publishResult) {
+      publishingNowCount = publishResult.details.dispatched;
+      duplicates += publishResult.details.duplicates;
+      eventIds = publishResult.eventIds;
+      rejected.push(...toRejections(publishResult.details.rejected));
+      if (!publishResult.success && publishResult.details.rejected.length === 0) {
+        batchErrors.push(`Publishing failed: ${publishResult.message}`);
+      }
+    }
+
+    const auditArgs = {
+      count: args.posts.length,
+      batch_id: batchId,
+      scheduled: postsToSchedule.length,
+      now: postsToPublishNow.length,
+    };
+
+    if (scheduledCount + publishingNowCount + duplicates === 0) {
+      const reasons = [
+        ...batchErrors,
+        ...rejected.map((rejection) => `${rejection.social_account_id}: ${rejection.reason}`),
+      ];
+      return { ...errorResult(`Nothing was published. ${reasons.join(" | ")}`), auditArgs };
+    }
+
+    const output: PublishPostsOutput = {
+      batch_id: batchId,
+      publishing_now: publishingNowCount,
+      scheduled: scheduledCount,
+      duplicates,
+      rejected,
+      event_ids: eventIds,
+      schedule_ids: scheduleIds,
+      message: [
+        `${publishingNowCount} publishing now, ${scheduledCount} scheduled`,
+        duplicates > 0 ? `${duplicates} already existed` : null,
+        rejected.length > 0 ? `${rejected.length} rejected` : null,
+        ...batchErrors,
+        "Call list_posts with this batch_id in about a minute to see the results.",
+      ]
+        .filter((part) => part !== null)
+        .join(". "),
+    };
+    return jsonResult(output, auditArgs);
+  },
+  { auditArgsBuilder: (args) => ({ count: args.posts.length }) },
+);
+
+export function registerPublishPosts(server: McpServer): void {
+  server.registerTool("publish_posts", PUBLISH_POSTS_TOOL, handlePublishPosts);
 }
 
 function toRejections(

@@ -1,65 +1,71 @@
 import { inngest } from "@/inngest/client";
+import { planPostDueEvents, POST_DUE_LOOKAHEAD_MS } from "@/inngest/events/postDue";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
-import {
-  fetchDueScheduledPosts,
-  markPostsAsQueued,
-} from "./scheduledPostsTickHelpers";
+import { fetchUnclaimedPostsDueBy, settleStuckProcessingPosts } from "./scheduledPostsTickHelpers";
 
-/**
- * Runs once per minute on Inngest's cron infrastructure.
- * Replaces the Supabase Edge Function process-scheduled-posts AND
- * /api/cron/process-scheduled-posts. Vercel cron is not used
- * (Hobby plan has a 1 invocation/day cap).
- */
+const STUCK_PROCESSING_AGE_MS = 2 * 60 * 60 * 1000;
+
+const STUCK_PROCESSING_MESSAGE = "Publishing stopped without a result; the post may have published";
+
+// Inngest retries a step only when it throws, and a completed step's result
+// is stored, so `nowMs` and the event ids stay the same on a retry.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const scheduledPostsTick = inngest.createFunction(
   {
     id: "scheduled-posts-tick",
-    name: "Scheduled posts dispatcher",
+    name: "Scheduled posts safety net",
     concurrency: { limit: 1 },
-    retries: 0,
-    triggers: [{ cron: "*/5 * * * *" }],
+    retries: 2,
+    triggers: [{ cron: "0 * * * *" }],
   },
   async ({ step }) => {
-    const due = await step.run("fetch-due-posts", () =>
-      fetchDueScheduledPosts(
-        new Date().toISOString(),
-        RUNTIME.dispatcherBatchSize,
-      ),
-    );
+    const unclaimed = await step.run("read-unclaimed-posts", async () => {
+      const nowMs = Date.now();
+      const found = await fetchUnclaimedPostsDueBy({
+        dueByIso: new Date(nowMs + POST_DUE_LOOKAHEAD_MS).toISOString(),
+        limit: RUNTIME.dispatcherBatchSize,
+      });
+      if (!found.success) throw new Error(found.message);
+      return { nowMs, targets: found.targets };
+    });
 
-    if (!due.success) {
-      return { enqueued: 0, marked: 0, message: due.message };
+    const plannedEvents = planPostDueEvents(unclaimed);
+    if (plannedEvents.length > 0) {
+      await step.sendEvent(
+        "send-post-due-events",
+        plannedEvents.map((planned) => planned.event),
+      );
     }
-    if (due.posts.length === 0) {
-      return { enqueued: 0, marked: 0, message: "no due posts" };
+
+    const lateEvents = plannedEvents.filter((planned) => planned.timing === "late");
+    if (lateEvents.length > 0) {
+      console.warn(
+        `[scheduledPostsTick] Re-sent ${lateEvents.length} overdue post(s):`,
+        lateEvents.map((planned) => planned.event.data.scheduled_post_id).join(", "),
+      );
     }
 
-    // Inngest dedupes events with identical id within 24h. The id
-    // includes scheduled_at so a manual reschedule (status flipped
-    // back from failed to scheduled with a new scheduled_at) gets
-    // a fresh event id.
-    const events = due.posts.map((post) => ({
-      name: "post.due" as const,
-      id: `post.due-${post.id}-${post.scheduled_at}`,
-      data: {
-        scheduled_post_id: post.id,
-        principal_id: post.principal_id,
-        social_account_id: post.social_account_id,
-        platform: post.platform,
-        scheduled_at: post.scheduled_at,
-      },
-    }));
+    const settledCount = await step.run("settle-stuck-processing-posts", async () => {
+      const settled = await settleStuckProcessingPosts({
+        claimedBeforeIso: new Date(Date.now() - STUCK_PROCESSING_AGE_MS).toISOString(),
+        limit: RUNTIME.dispatcherBatchSize,
+        failureMessage: STUCK_PROCESSING_MESSAGE,
+      });
+      if (!settled.success) throw new Error(settled.message);
+      if (settled.failures.length > 0) {
+        const failedPosts = settled.failures
+          .map((failure) => `${failure.postId}: ${failure.message}`)
+          .join("; ");
+        throw new Error(`[scheduledPostsTick] Could not settle stuck post(s): ${failedPosts}`);
+      }
+      if (settled.settledCount > 0) {
+        console.warn(
+          `[scheduledPostsTick] Settled ${settled.settledCount} post(s) left in processing with no run`,
+        );
+      }
+      return settled.settledCount;
+    });
 
-    await step.sendEvent("dispatch-due-posts", events);
-
-    const marked = await step.run("mark-queued", () =>
-      markPostsAsQueued(due.posts.map((duePost) => duePost.id)),
-    );
-
-    return {
-      enqueued: events.length,
-      marked: marked.updated,
-      message: `Dispatched ${events.length}, marked ${marked.updated} queued`,
-    };
+    return { sent: plannedEvents.length, late: lateEvents.length, settled: settledCount };
   },
 );

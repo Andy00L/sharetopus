@@ -1,4 +1,3 @@
-// components/core/scheduled/PlatformContentDropdown.tsx
 "use client";
 
 import { useState } from "react";
@@ -20,7 +19,6 @@ export default function PlatformContentDropdown({
   };
   return (
     <div className="border rounded-md overflow-hidden">
-      {/* Platform header - always visible */}
       <div
         className="flex items-center gap-3 p-3 cursor-pointer hover:bg-accent/50"
         onClick={() => setExpanded(!expanded)}
@@ -46,7 +44,6 @@ export default function PlatformContentDropdown({
             Status: <span className="font-medium">{post.status}</span>
           </p>
         </div>
-        {/* Dropdown chevron */}
         <ChevronDown
           className={`h-5 w-5 transition-transform ${
             expanded ? "rotate-180" : ""
@@ -54,7 +51,6 @@ export default function PlatformContentDropdown({
         />
       </div>
 
-      {/* Content dropdown - visible when expanded */}
       {expanded && (
         <div className="p-3 pt-0 border-t bg-muted/30">
           <p className="text-xs font-medium text-muted-foreground mb-1">

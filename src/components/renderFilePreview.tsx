@@ -44,5 +44,3 @@ export default function FilePreview({
     </>
   );
 }
-
-//collors #EEEFE8 #F3F4EF

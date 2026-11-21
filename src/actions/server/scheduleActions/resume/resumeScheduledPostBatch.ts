@@ -1,26 +1,24 @@
-// src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
+import { POST_CHANGE_ELIGIBLE_STATUSES } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
-import { bumpPastScheduleToFuture } from "./_shared/bumpPastScheduleToFuture";
+import { RESUME_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { checkPostChangeRules } from "../preflightScheduledPostChange";
+import {
+  buildResumeSchedule,
+  countBumpedRows,
+} from "./_shared/bumpPastScheduleToFuture";
+import { checkAccessToRevivePosts } from "./_shared/checkAccessToRevivePosts";
 
-/**
- * Resumes cancelled posts back to "scheduled" status.
- *
- * **Authentication:** Does not call Clerk. Caller must validate `principalId`.
- * **Rate limiting:** 30 requests per 60s, scoped per source.
- * **Tables:** `scheduled_posts` (read + update).
- *
- * If a post's scheduled_at is in the past, bumps it to 1 hour from now.
- * Clears cancelled_by_sub_at: a post the user brings back is no longer a
- * subscription cancellation, and a stale tag let the 7-day grace cleanup
- * delete it after a later manual cancel.
- */
 export async function resumeScheduledPostBatch(
   postIds: string[],
   principalId: string,
@@ -46,9 +44,12 @@ export async function resumeScheduledPostBatch(
       return { success: false, message: "No post IDs provided." };
     }
 
-    // Step 1: rate limit
     const rateLimitScope = `${source}_resume_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: RESUME_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -57,14 +58,13 @@ export async function resumeScheduledPostBatch(
       };
     }
 
-    // Step 2: fetch posts and verify ownership
     const { data: posts, error: fetchError } = await runQuery(
       db
         .select({
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
           status: scheduled_posts.status,
-          scheduled_at: scheduled_posts.scheduled_at,
+          created_via: scheduled_posts.created_via,
         })
         .from(scheduled_posts)
         .where(inArray(scheduled_posts.id, postIds)),
@@ -80,98 +80,87 @@ export async function resumeScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return { success: false, message: "No posts found." };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.resume,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, message: "No posts found." };
+        case "not_owned":
+          console.warn(
+            `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to resume ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return { success: false, message: "No posts are in a resumable (cancelled) state." };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
-
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
+    const reviveAccess = await checkAccessToRevivePosts({
+      principalId,
+      revivedPosts: rules.eligiblePosts,
+    });
+    if (!reviveAccess.ok) {
       console.warn(
-        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to resume ${unauthorizedPosts.length} post(s) they don't own`,
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Refused for ${principalId}: ${reviveAccess.failure}`,
       );
-      return {
-        success: false,
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
+      return { success: false, message: reviveAccess.message };
     }
+    const resumableIds = rules.eligiblePosts.map((post) => post.id);
 
-    // Step 3: split resumable posts by past/future scheduled_at
-    const resumablePosts = posts.filter((post) => post.status === "cancelled");
-    if (resumablePosts.length === 0) {
+    const resumeSchedule = buildResumeSchedule(new Date());
+    const { data: resumedRows, error: updateError } = await runQuery(
+      db
+        .update(scheduled_posts)
+        .set({
+          status: "scheduled",
+          scheduled_at: resumeSchedule.scheduledAt,
+          cancelled_by_sub_at: null,
+        })
+        .where(
+          and(
+            inArray(scheduled_posts.id, resumableIds),
+            eq(scheduled_posts.principal_id, principalId),
+            eq(scheduled_posts.status, "cancelled"),
+          ),
+        )
+        .returning(POST_DUE_TARGET_COLUMNS),
+    );
+
+    if (updateError) {
+      console.error(
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Update error:`,
+        updateError.message,
+      );
+      return { success: false, message: "Database error resuming posts." };
+    }
+    if (resumedRows.length === 0) {
       return {
         success: false,
         message: "No posts are in a resumable (cancelled) state.",
       };
     }
 
-    const pastIds: string[] = [];
-    const futureIds: string[] = [];
-    let timeUpdated = 0;
+    await sendPostDueEvents(resumedRows);
 
-    for (const post of resumablePosts) {
-      const originalDate = new Date(post.scheduled_at);
-      const bumpedDate = bumpPastScheduleToFuture(originalDate);
-      if (bumpedDate.getTime() !== originalDate.getTime()) {
-        pastIds.push(post.id);
-        timeUpdated++;
-      } else {
-        futureIds.push(post.id);
-      }
-    }
-
-    // Step 4: update DB. Past-scheduled posts get a new time; future ones just flip status.
-    let allUpdatesOk = true;
-
-    if (pastIds.length > 0) {
-      const newScheduledAt = bumpPastScheduleToFuture(new Date(0));
-      const { error: updatePastError } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({
-            status: "scheduled",
-            scheduled_at: newScheduledAt.toISOString(),
-            cancelled_by_sub_at: null,
-          })
-          .where(inArray(scheduled_posts.id, pastIds)),
-      );
-      if (updatePastError) {
-        console.error(
-          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Past update error:`,
-          updatePastError.message,
-        );
-        allUpdatesOk = false;
-      }
-    }
-
-    if (futureIds.length > 0) {
-      const { error: updateFutureError } = await runQuery(
-        db
-          .update(scheduled_posts)
-          .set({ status: "scheduled", cancelled_by_sub_at: null })
-          .where(inArray(scheduled_posts.id, futureIds)),
-      );
-      if (updateFutureError) {
-        console.error(
-          `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Future update error:`,
-          updateFutureError.message,
-        );
-        allUpdatesOk = false;
-      }
-    }
-
-    if (!allUpdatesOk) {
-      return { success: false, message: "Database error resuming posts." };
-    }
+    const timeUpdated = countBumpedRows(resumedRows, resumeSchedule.bumpedAtIso);
 
     return {
       success: true,
-      message: `Resumed ${resumablePosts.length} post(s)${timeUpdated > 0 ? `, ${timeUpdated} rescheduled` : ""}.`,
+      message: `Resumed ${resumedRows.length} post(s)${timeUpdated > 0 ? `, ${timeUpdated} rescheduled` : ""}.`,
       details: {
         total: postIds.length,
-        succeeded: resumablePosts.length,
-        failed: postIds.length - resumablePosts.length,
+        succeeded: resumedRows.length,
+        failed: postIds.length - resumedRows.length,
         timeUpdated,
       },
     };

@@ -9,7 +9,6 @@ const PLATFORMS = [
   { label: "TikTok", src: "/tiktok.svg" },
 ];
 
-// Positions in percent of the diagram (also the SVG's 0-100 viewBox); spokes and icons share them.
 const PLATFORM_TOP_PERCENTS = [15, 30, 50, 70, 85];
 
 const HUB = { leftPercent: 50, topPercent: 50 };
@@ -36,7 +35,6 @@ const LINE_ANIM_CSS = `
 }
 `;
 
-/** Cross-posting section: copy plus an animated user, hub and platforms diagram. */
 export default function Crossposting() {
   return (
     <section

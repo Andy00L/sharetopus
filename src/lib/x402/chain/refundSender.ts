@@ -1,22 +1,44 @@
 import "server-only";
 
+import type { Address, Hex } from "viem";
+
+import { broadcastCall, type OperatorSigner } from "@/lib/x402/chain/broadcastCall";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/**
- * Shared contract for the per-lane refund senders (CDP EVM, Celo, Arc,
- * Solana). A sender only builds and broadcasts; facilitator.refundPayment
- * confirms the transaction on-chain before anything is recorded as refunded.
- */
 export interface RefundSendInput {
-  /** Refund destination: the payer the facilitator recovered at verify. */
   payerAddress: string;
-  /** Amount in USDC units (human, not atomic). */
   amountUsdc: number;
   network: NetworkConfig;
-  /** Why the refund is owed. Logged for observability. */
   reason: string;
+  idempotencyKey: string;
 }
 
 export type RefundSendResult =
-  | { ok: true; txHash: string }
-  | { ok: false; message: string };
+  | { status: "sent"; txHash: string }
+  | { status: "not_sent"; message: string }
+  | { status: "outcome_unknown"; txHash: string | null; message: string };
+
+export async function sendOperatorRefund(params: {
+  signer: OperatorSigner;
+  call: { to: Address; data: Hex };
+  input: RefundSendInput;
+}): Promise<RefundSendResult> {
+  const { signer, call, input } = params;
+  const broadcast = await broadcastCall(signer, call, "refund");
+  switch (broadcast.status) {
+    case "accepted":
+      console.log(
+        `[sendOperatorRefund] Refund sent on ${signer.chain.name}: ${broadcast.transactionHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
+      );
+      return { status: "sent", txHash: broadcast.transactionHash };
+    case "delivery_unknown":
+      return { status: "outcome_unknown", txHash: broadcast.transactionHash, message: broadcast.message };
+    case "not_sent":
+      console.error(`[sendOperatorRefund] Refund on ${signer.chain.name} not sent: ${broadcast.message}`);
+      return { status: "not_sent", message: broadcast.message };
+    default: {
+      const unhandledBroadcast: never = broadcast;
+      return { status: "not_sent", message: `Unhandled broadcast result ${JSON.stringify(unhandledBroadcast)}.` };
+    }
+  }
+}

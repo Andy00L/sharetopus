@@ -12,27 +12,10 @@ import { toJsonObject } from "@/lib/utils/jsonObject";
 
 const UuidSchema = z.guid();
 
-/**
- * POST /v1/webhooks/[id]/deliveries/[delivery_id]/replay
- *
- * Re-dispatches a past delivery's event, with its original event_id and
- * payload, to this subscription only, through the same Inngest pipeline
- * as live events (sendWebhookDispatchEvent).
- *
- * - Deleted subscription: 404
- * - Disabled subscription: 403 (re-enable first)
- * - Delivery not found or not owned: 404
- * - Database lookup or Inngest send failure: 500
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.replay",
   handler: async (ctx, request) => {
-    // Step 1: extract IDs from URL path.
-    // Path: /api/v1/webhooks/[id]/deliveries/[delivery_id]/replay, so the
-    // delivery id is second-to-last and the subscription id fourth-to-last.
-    // Reading fifth-to-last picked up "webhooks" and rejected every replay
-    // as an invalid id.
     const urlSegments = new URL(request.url).pathname.split("/");
     const deliveryIdCandidate = urlSegments[urlSegments.length - 2] ?? "";
     const subscriptionIdCandidate = urlSegments[urlSegments.length - 4] ?? "";
@@ -50,7 +33,6 @@ export const POST = withRestEndpoint({
     const subscriptionId = subscriptionIdResult.data;
     const deliveryId = deliveryIdResult.data;
 
-    // Step 2: verify subscription exists and is owned by principal.
     const { data: subscriptionRows, error: subError } = await runQuery(
       db
         .select({ active: webhook_subscriptions.active })
@@ -92,7 +74,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 3: load original delivery row.
     const { data: deliveryRows, error: deliveryError } = await runQuery(
       db
         .select({
@@ -130,9 +111,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: queue one delivery for this subscription. dispatchWebhook
-    // would send the event to every active subscription of the principal
-    // that listens for this event type, not only the one being replayed.
     const replayPayload = toJsonObject(originalDeliveryRow.payload) ?? {};
 
     const replaySendResult = await sendWebhookDispatchEvent({

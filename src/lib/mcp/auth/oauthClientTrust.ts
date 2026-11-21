@@ -3,12 +3,13 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import type { RateLimitRule } from "@/actions/server/rateLimit/rateLimitRules";
 import { db, runQuery } from "@/db/client";
 import { mcp_oauth_clients, rate_limit_events } from "@/db/schema";
 
 import { getCachedOAuthClient, setCachedOAuthClient } from "./oauthClientCache";
 
-export type OAuthTrustResult =
+type OAuthTrustResult =
   | { allowed: true }
   | {
       allowed: false;
@@ -17,47 +18,15 @@ export type OAuthTrustResult =
 
 const MAX_VERIFIED_CLIENTS_PER_USER = 5;
 
-/**
- * New OAuth clients one user may bring, per minute and per day. A client
- * id is the URL of the client's metadata document (CIMD), so one user can
- * still point Sharetopus at many of them. Keyed on the user, not the IP:
- * hosted clients (Claude, ChatGPT) call this route from shared egress IPs,
- * so a per-IP limit refused every user of the same client after the first
- * few. The first-sight insert only runs after Clerk verified the token and
- * the subscription gate passed, so the user is always known here.
- */
-const NEW_CLIENTS_PER_USER_PER_MINUTE = 3;
-const NEW_CLIENTS_PER_USER_PER_DAY = 10;
+const NEW_CLIENTS_PER_USER_PER_MINUTE: RateLimitRule = { limit: 3, windowSeconds: 60 };
+const NEW_CLIENTS_PER_USER_PER_DAY: RateLimitRule = { limit: 10, windowSeconds: 86400 };
 
-export type OAuthClientHints = {
+type OAuthClientHints = {
   clientName?: string | null;
   softwareId?: string | null;
   softwareVersion?: string | null;
 };
 
-/**
- * Checks the trust state of an OAuth client and lazily populates
- * `mcp_oauth_clients` on first sight.
- *
- * Flow:
- *   1. Cache hit -> return based on cached trust_level + revoked_at
- *   2. Cache miss -> SELECT mcp_oauth_clients WHERE client_id = X
- *   3a. If row exists and revoked_at IS NOT NULL -> refuse "revoked"
- *   3b. If row exists and trust_level = 'blocked' -> refuse "blocked"
- *   3c. If row exists otherwise -> allow + cache
- *   4.  If row does NOT exist -> firstSightInsert() (not cached)
- *
- * Fails CLOSED on lookup errors. Clerk token verification and the
- * subscription gate have already passed; this trust check is the
- * admin override layer (blocked / revoked enforcement). A DB hiccup
- * briefly denying a legit client is acceptable; bypassing an admin
- * block is not.
- *
- * @param clientId   OAuth client ID from the Clerk-issued token
- * @param principalId User ID who is authenticating (consent giver)
- * @param hints      Optional client name the route read from the request
- *                   (2025-era initialize, or the 2026 _meta envelope)
- */
 export async function checkOAuthClientTrust(
   clientId: string,
   principalId: string,
@@ -80,54 +49,9 @@ export async function checkOAuthClientTrust(
   }
 
   try {
-    const { data: existingRows, error: lookupErr } = await runQuery(
-      db
-        .select({
-          trust_level: mcp_oauth_clients.trust_level,
-          revoked_at: mcp_oauth_clients.revoked_at,
-          registered_by_user_id: mcp_oauth_clients.registered_by_user_id,
-        })
-        .from(mcp_oauth_clients)
-        .where(eq(mcp_oauth_clients.client_id, clientId))
-        .limit(1),
-    );
-
-    if (lookupErr) {
-      console.error(
-        `[checkOAuthClientTrust] Lookup failed for ${clientId}:`,
-        lookupErr.message,
-      );
-      // Fail CLOSED. Clerk token + subscription gate already passed.
-      // Trust check is the admin override layer; err on enforcement.
-      // Do NOT cache so the next request retries the SELECT.
-      return { allowed: false, reason: "lookup_failed" };
-    }
-
-    const existing = existingRows[0];
-    if (existing) {
-      // Cache both allow and deny outcomes. A repeatedly-probing
-      // revoked or blocked client otherwise hammers the DB.
-      setCachedOAuthClient(clientId, {
-        trustLevel: existing.trust_level,
-        revokedAt: existing.revoked_at,
-        registeredByUserId: existing.registered_by_user_id,
-      });
-
-      if (existing.revoked_at) {
-        console.log(
-          `[checkOAuthClientTrust] Refused revoked client ${clientId}`,
-        );
-        return { allowed: false, reason: "revoked" };
-      }
-      if (existing.trust_level === "blocked") {
-        console.log(
-          `[checkOAuthClientTrust] Refused blocked client ${clientId}`,
-        );
-        return { allowed: false, reason: "blocked" };
-      }
-      return { allowed: true };
-    }
-
+    const lookup = await readClientTrustRow(clientId);
+    if (!lookup.ok) return { allowed: false, reason: "lookup_failed" };
+    if (lookup.row) return decideTrustFromRow(clientId, lookup.row);
     return await firstSightInsert(clientId, principalId, hints);
   } catch (err) {
     console.error(
@@ -138,32 +62,73 @@ export async function checkOAuthClientTrust(
   }
 }
 
-/**
- * Handles first-sight INSERT: per-user new-client limits, count verified
- * clients for the registering user, decide trust_level, INSERT.
- *
- * Populates the cache with the freshly-inserted row so the next
- * request on this instance is a cache hit.
- */
+type ClientTrustRow = Pick<
+  typeof mcp_oauth_clients.$inferSelect,
+  "trust_level" | "revoked_at" | "registered_by_user_id"
+>;
+
+const CLIENT_TRUST_COLUMNS = {
+  trust_level: mcp_oauth_clients.trust_level,
+  revoked_at: mcp_oauth_clients.revoked_at,
+  registered_by_user_id: mcp_oauth_clients.registered_by_user_id,
+};
+
+async function readClientTrustRow(
+  clientId: string,
+): Promise<{ ok: true; row: ClientTrustRow | null } | { ok: false }> {
+  const { data: clientRows, error: lookupError } = await runQuery(
+    db
+      .select(CLIENT_TRUST_COLUMNS)
+      .from(mcp_oauth_clients)
+      .where(eq(mcp_oauth_clients.client_id, clientId))
+      .limit(1),
+  );
+  if (lookupError) {
+    console.error(
+      `[readClientTrustRow] Lookup failed for ${clientId}:`,
+      lookupError.message,
+    );
+    return { ok: false };
+  }
+  return { ok: true, row: clientRows[0] ?? null };
+}
+
+function decideTrustFromRow(
+  clientId: string,
+  clientRow: ClientTrustRow,
+): OAuthTrustResult {
+  setCachedOAuthClient(clientId, {
+    trustLevel: clientRow.trust_level,
+    revokedAt: clientRow.revoked_at,
+    registeredByUserId: clientRow.registered_by_user_id,
+  });
+  if (clientRow.revoked_at) {
+    console.log(`[decideTrustFromRow] Refused revoked client ${clientId}`);
+    return { allowed: false, reason: "revoked" };
+  }
+  if (clientRow.trust_level === "blocked") {
+    console.log(`[decideTrustFromRow] Refused blocked client ${clientId}`);
+    return { allowed: false, reason: "blocked" };
+  }
+  return { allowed: true };
+}
+
 async function firstSightInsert(
   clientId: string,
   principalId: string,
   hints: OAuthClientHints,
 ): Promise<OAuthTrustResult> {
   const newClientLimits = [
-    { scope: "oauth_client_first_sight", limit: NEW_CLIENTS_PER_USER_PER_MINUTE, windowSeconds: 60 },
-    { scope: "oauth_client_first_sight_daily", limit: NEW_CLIENTS_PER_USER_PER_DAY, windowSeconds: 86400 },
+    { scope: "oauth_client_first_sight", rule: NEW_CLIENTS_PER_USER_PER_MINUTE },
+    { scope: "oauth_client_first_sight_daily", rule: NEW_CLIENTS_PER_USER_PER_DAY },
   ];
-  for (const { scope, limit, windowSeconds } of newClientLimits) {
-    const limitResult = await checkRateLimit(scope, principalId, limit, windowSeconds);
+  for (const { scope, rule } of newClientLimits) {
+    const limitResult = await checkRateLimit({ operation: scope, identifier: principalId, rule });
     if (!limitResult.success && limitResult.reason === "limited") {
       await logRateLimitEvent(scope, principalId);
       console.warn(`[firstSightInsert] ${scope} limit hit for ${clientId}`);
       return { allowed: false, reason: "rate_limited" };
     }
-    // A limiter outage fails open: Clerk and the subscription gate
-    // already vetted this user, and a Redis incident should not stop
-    // paying users from connecting a new client.
     if (!limitResult.success) {
       console.warn(
         `[firstSightInsert] Rate limiter ${limitResult.reason} for ${scope}; continuing.`,
@@ -186,7 +151,6 @@ async function firstSightInsert(
       `[firstSightInsert] Verified-count query failed for ${principalId}:`,
       countErr.message,
     );
-    // Falls through to unverified: an unknown count grants no verified slot.
   }
 
   const trustLevel: "verified" | "unverified" =
@@ -194,9 +158,7 @@ async function firstSightInsert(
       ? "verified"
       : "unverified";
 
-  // ON CONFLICT DO NOTHING handles the race: two simultaneous requests
-  // for the same new client_id resolve to one row.
-  const { error: insertErr } = await runQuery(
+  const { data: insertedRows, error: insertErr } = await runQuery(
     db
       .insert(mcp_oauth_clients)
       .values({
@@ -209,7 +171,8 @@ async function firstSightInsert(
         trust_level: trustLevel,
         metadata: {},
       })
-      .onConflictDoNothing({ target: mcp_oauth_clients.client_id }),
+      .onConflictDoNothing({ target: mcp_oauth_clients.client_id })
+      .returning(CLIENT_TRUST_COLUMNS),
   );
 
   if (insertErr) {
@@ -220,25 +183,23 @@ async function firstSightInsert(
     return { allowed: false, reason: "lookup_failed" };
   }
 
-  // Cache the freshly-inserted row so the next request from this
-  // client on the same instance skips the SELECT round-trip.
-  setCachedOAuthClient(clientId, {
-    trustLevel,
-    revokedAt: null,
-    registeredByUserId: principalId,
-  });
+  const insertedRow = insertedRows[0];
+  if (insertedRow) {
+    console.log(
+      `[firstSightInsert] Inserted ${clientId} as ${trustLevel} ` +
+        `(registered_by ${principalId}, verified_count_before ${count ?? "unknown"})`,
+    );
+    return decideTrustFromRow(clientId, insertedRow);
+  }
 
-  console.log(
-    `[firstSightInsert] Inserted ${clientId} as ${trustLevel} ` +
-      `(registered_by ${principalId}, verified_count_before ${count ?? "unknown"})`,
-  );
-  return { allowed: true };
+  const winningLookup = await readClientTrustRow(clientId);
+  if (!winningLookup.ok || !winningLookup.row) {
+    console.error(`[firstSightInsert] Lost the insert race for ${clientId} and found no row`);
+    return { allowed: false, reason: "lookup_failed" };
+  }
+  return decideTrustFromRow(clientId, winningLookup.row);
 }
 
-/**
- * Logs a rate-limit event for forensic analysis, with the user who hit
- * the limit and the hashed IP they came from.
- */
 async function logRateLimitEvent(
   scope: string,
   principalId: string,

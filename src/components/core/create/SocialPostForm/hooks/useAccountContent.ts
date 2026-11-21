@@ -16,10 +16,6 @@ export function useAccountContent() {
     []
   );
 
-  /**
-   * Called when an account is toggled ON. Adds a new entry with the
-   * current default text values. Idempotent: skips if already present.
-   */
   function addAccountContent(
     account: ClientSocialAccount,
     defaultText: { title: string; description: string; link: string },
@@ -43,17 +39,12 @@ export function useAccountContent() {
     });
   }
 
-  /** Called when an account is toggled OFF. */
   function removeAccountContent(accountId: string) {
     setAccountContent((prev) =>
       prev.filter((item) => item.accountId !== accountId)
     );
   }
 
-  /**
-   * Called when the default caption/title/link text inputs change.
-   * Updates only entries that have NOT been customized by the user.
-   */
   function updateDefaultText(
     textInputs: { title: string; description: string; link: string },
     pinterestLink: string,
@@ -74,7 +65,6 @@ export function useAccountContent() {
     );
   }
 
-  /** Called from CaptionsTab when a user edits a per-account caption. */
   function setCustomCaption(
     accountId: string,
     description: string,
@@ -89,7 +79,6 @@ export function useAccountContent() {
     );
   }
 
-  /** Reverts a single account's content to the current defaults. */
   function clearCustomization(
     accountId: string,
     defaultDescription: string,
@@ -109,7 +98,6 @@ export function useAccountContent() {
     );
   }
 
-  /** Called from resetForm. */
   function resetContent() {
     setAccountContent([]);
   }

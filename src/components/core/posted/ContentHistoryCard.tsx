@@ -83,7 +83,6 @@ export default function ContentHistoryCard({ items }: ContentHistoryCardProps) {
         </CardFooter>
       </Card>
 
-      {/* Alert Dialog (wallet-style) */}
       <AlertDialog open={isOpen} onOpenChange={setIsOpen}>
         <AlertDialogContent className="sm:max-w-[450px] max-h-[80vh] flex flex-col">
           <AlertDialogHeader className="flex-shrink-0">

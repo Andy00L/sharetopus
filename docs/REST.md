@@ -52,7 +52,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/posts` | Create/schedule a post |
+| POST | `/api/v1/posts` | Schedule a post (200, PostDTO), or publish it now when `scheduled_at` is omitted (202, PostDispatch) |
 | GET | `/api/v1/posts` | List posts (filtered by platform, status) |
 | GET | `/api/v1/posts/:id` | Get a single post |
 | PATCH | `/api/v1/posts/:id` | Update a scheduled post |
@@ -67,7 +67,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 | GET | `/api/v1/connections` | List connected social accounts |
 | GET | `/api/v1/connections/:id` | Get a single connection |
 | POST | `/api/v1/connections/initiate` | Initiate OAuth connection flow |
-| POST | `/api/v1/connections/:id/reauth` | Get re-auth URL for expired token |
+| POST | `/api/v1/connections/:id/reauth` | Get re-auth URL for expired token (the 7 adapter platforms only; a registry connection answers 400 `validation_error`) |
 | GET | `/api/v1/connections/:id/boards` | List Pinterest boards for a connection |
 | GET | `/api/v1/connections/credentials` | List the providers connected by pasted credentials, with their fields |
 | POST | `/api/v1/connections/credentials` | Verify pasted credentials with the provider and store the connection |
@@ -130,7 +130,7 @@ flowchart TD
     E -->|OK| G[Validate request body/query/params]
     G -->|Invalid| H[400 Validation Error + audit log]
     G -->|Valid| I[Execute handler]
-    I -->|Success| J[200/201 Response + audit log]
+    I -->|Success| J[200/201/202 Response + audit log]
     I -->|Error| K[Error Response + audit log]
 ```
 
@@ -157,7 +157,7 @@ Error codes:
 | Code | HTTP Status | Description |
 |------|------------|-------------|
 | `unauthorized` | 401 | Invalid, expired, or revoked API key |
-| `forbidden` | 403 | Valid key but insufficient permissions |
+| `forbidden` | 403 | Valid key but insufficient permissions, or a reschedule that would bring back a cancelled post while the owner has no active plan or referral weeks (`access_required`) |
 | `not_found` | 404 | Resource does not exist or not owned by principal, including the social account a post names |
 | `conflict` | 409 | The post's status does not allow the change: only a scheduled post can be cancelled, and only a scheduled or cancelled post can be rescheduled |
 | `validation_error` | 400 | Request body or parameters failed validation, or a post breaks a platform rule (media type, required title or target, caption length, account on another platform) |
@@ -167,15 +167,19 @@ Error codes:
 
 Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
+`POST /v1/posts/bulk` gives every item one generated `batch_id` (a 32-character nanoid) and overwrites a `batch_id` sent on an item; an item without an `idempotency_key` gets `batch_id:index`. The response's `batch_id` is that shared id.
+
 When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
 
-`PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel.
+`POST /v1/posts` without `scheduled_at` publishes now through `directPostBatch`, which writes a `pending_direct_posts` dispatch row and sends a `post.now` event; it writes no `scheduled_posts` row. The call answers 202 with `{ dispatch_id, batch_id, status: "processing", platform, social_account_id }`, built from the dispatch result without a database read. A `batch_id` in the body is stored on the dispatch row and answered back, as on the scheduled path; it labels the post and dedupes nothing, so two keyless calls with one `batch_id` publish twice (`idempotency_key` dedupes). Without one, the server generates it. A retry with an `idempotency_key` that was already dispatched answers 202 with the first call's `dispatch_id` and `batch_id`, read from the existing `pending_direct_posts` row by the lock lookup. The published post then appears in `GET /v1/content-history`. The post-now job fires `post.published` or `post.failed` with the `dispatch_id` and `batch_id` once the dispatch is recorded (by its run, the hourly sweep, or a TikTok rejection), see WEBHOOKS.md; no REST endpoint reads a dispatch. Before this change the route reread `scheduled_posts` by batch id, found nothing, and answered 500 after the post was dispatched.
+
+`PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 403 (a cancelled post comes back only with access), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel. A post that is publishing now cannot be deleted (409 conflict); try again in a minute.
 
 ---
 
 ## Rate limiting
 
-Per-principal rate limits via Upstash Redis sliding window. Limits vary by endpoint. When exceeded, the API returns 429 with `retry_after_seconds`. When the limiter itself cannot answer (Redis unreachable), the API returns 503 `service_unavailable` with `retry_after_seconds: 30` instead: the request did not run, and the client should retry, not slow down.
+Per-principal rate limits via Upstash Redis sliding window. Every endpoint has its own budget of 20 requests per 60 seconds (`REST_ENDPOINT_RATE_LIMIT` in `src/actions/server/rateLimit/rateLimitRules.ts`, keyed on the endpoint's `rateLimitAction` and the principal); the batch cores add their own limits on top (scheduling 10 per 60 s, post now 20 per 60 s, reschedule, cancel, delete and resume 30 per 60 s). When exceeded, the API returns 429 with `retry_after_seconds`. When the limiter itself cannot answer (Redis unreachable), the API returns 503 `service_unavailable` with `retry_after_seconds: 30` instead: the request did not run, and the client should retry, not slow down.
 
 Rate limit state is tracked per `principal_id`, not per API key. Multiple keys for the same principal share the same rate limit pool.
 
@@ -239,7 +243,7 @@ The spec is public (no auth required) and cached.
 
 ### Interactive docs
 
-`/docs/api` renders the Scalar interactive API viewer via `@scalar/nextjs-api-reference@0.10.16`. Users can explore endpoints, see schemas, and try requests.
+`/docs/api` renders the Scalar interactive API viewer via `@scalar/nextjs-api-reference@0.10.16`. Users can explore endpoints, see schemas, and try requests. The route is `force-static` (`src/app/(marketing)/docs/api/route.ts`): the viewer page is built once, and it loads `/api/v1/openapi.json` in the browser.
 
 ### MDX documentation
 

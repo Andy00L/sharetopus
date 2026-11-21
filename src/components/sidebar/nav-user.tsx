@@ -35,8 +35,7 @@ export function NavUser() {
   const { user, isLoaded, isSignedIn } = useUser();
   const { isMobile } = useSidebar();
   const { signOut } = useClerk();
-  const [isLoading, setIsLoading] = useState(false); // Add loading state
-  // Show loading state when authentication is being processed
+  const [isLoading, setIsLoading] = useState(false);
   if (!isLoaded) {
     return (
       <SidebarMenu>
@@ -54,14 +53,10 @@ export function NavUser() {
     );
   }
 
-  // Only show component when user is logged in
   if (!isSignedIn) {
     return null;
   }
 
-  /* Opens the Stripe billing portal. The portal action checks the
-     subscription from the Clerk session: users with nothing to manage go to
-     the pricing section, and any other failure shows its own message. */
   const handleBillingPortal = async () => {
     setIsLoading(true);
     try {
@@ -82,7 +77,6 @@ export function NavUser() {
       setIsLoading(false);
     }
   };
-  // Get user data from Clerk
   const userData = {
     name: user?.fullName,
     email: user?.primaryEmailAddress?.emailAddress ?? "",

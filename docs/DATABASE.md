@@ -41,11 +41,11 @@
 | `bun run db:migrate` | Applies the pending migrations in `drizzle/` and records each one in `drizzle.__drizzle_migrations`. |
 | `bun run db:pull` | Reads the live database into `drizzle/`. Only for checking drift: `src/db/schema.ts` is edited by hand. |
 
-To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object. `drizzle/0001_drop_unused_access.sql` (2026-09-24) is the first applied change: generated from the schema, then extended by hand with grants, which `src/db/schema.ts` cannot express (see [RLS posture](#rls-posture)). `db:migrate` runs every pending migration in one transaction.
+To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object. `drizzle/0001_drop_unused_access.sql` (2026-09-24) is the first applied change: generated from the schema, then extended by hand with grants, which `src/db/schema.ts` cannot express (see [RLS posture](#rls-posture)). `db:migrate` runs every pending migration in one transaction. `drizzle/0006_media_path_index_and_tiktok_pull_fks.sql` (2026-11-19) replaced the partial media-path index on `scheduled_posts` with a full one and gave both `pending_tiktok_pulls` foreign keys ON DELETE SET NULL. `drizzle/0007_scheduled_posts_publish_started_at.sql` and `drizzle/0008_pending_direct_posts_publish_started_at.sql` (2026-11-21) add the nullable column `publish_started_at` to `scheduled_posts` and `pending_direct_posts` (no default, so no row is rewritten). `drizzle/0009_pending_tiktok_pulls_dispatch_id.sql` (2026-11-21) adds the nullable column `pending_tiktok_pulls.dispatch_id` with a foreign key to `pending_direct_posts.event_id`, ON DELETE SET NULL. The latest, `drizzle/0010_x402_charges_request_digest.sql` (2026-11-21, not applied yet), adds the nullable column `x402_charges.request_digest` (no default, so no row is rewritten).
 
 | Variable | Pooler | Used by |
 |----------|--------|---------|
-| `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`, with one connection per function instance (Supabase's serverless setting). Prepared statements are off because this pooler does not keep them between transactions. |
+| `DATABASE_URL` | Transaction pooler, port 6543 | The app, through `src/db/client.ts`, with one connection per function instance (Supabase's serverless setting). Prepared statements are off because this pooler does not keep them between transactions, and pipelining is off (`max_pipeline=0`) because the pooler stalled the connection on pipelined queries. Queries in a `Promise.all` therefore run one after another on that connection; fewer queries is what saves time. |
 | `SUPABASE_DB_URL` | Session pooler, port 5432 | drizzle-kit, through `drizzle.config.ts`. |
 
 Both connect as the `postgres` role, which bypasses RLS the way the service-role key does. Both require TLS (`ssl: "require"` in `src/db/client.ts`, `sslmode=require` added in `drizzle.config.ts`): the pooler also accepts unencrypted connections, and postgres.js only encrypts when asked.
@@ -96,6 +96,7 @@ erDiagram
     social_connections }o--o| x402_charges : "initiated_x402_charge_id"
 
     scheduled_posts ||--o| pending_tiktok_pulls : "scheduled_post_id"
+    pending_direct_posts ||--o| pending_tiktok_pulls : "dispatch_id"
     scheduled_posts ||--o| content_history : "scheduled_post_id"
 
     x402_charges ||--o{ x402_refunds : "charge_id"
@@ -137,11 +138,11 @@ erDiagram
 
 | Table | Purpose | Columns |
 |-------|---------|---------|
-| `scheduled_posts` | Posts awaiting or in-process publication. | id, principal_id, social_account_id, platform, status (`scheduled` &#124; `queued` &#124; `processing` &#124; `posted` &#124; `failed` &#124; `cancelled`), scheduled_at, posted_at, scheduled_at_date (GENERATED), post_title, post_description, post_options, media_type (`text` &#124; `image` &#124; `video`), media_storage_path, cover_image_timestamp, batch_id, error_message, retry_count, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), idempotency_key, x402_charge_id, metadata, cancelled_by_sub_at, created_at, updated_at |
+| `scheduled_posts` | Posts awaiting or in-process publication. | id, principal_id, social_account_id, platform, status (`scheduled` &#124; `queued` &#124; `processing` &#124; `posted` &#124; `failed` &#124; `cancelled`), scheduled_at, posted_at, scheduled_at_date (GENERATED), post_title, post_description, post_options, media_type (`text` &#124; `image` &#124; `video`), media_storage_path, cover_image_timestamp, batch_id, error_message, retry_count, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), idempotency_key, x402_charge_id, metadata, cancelled_by_sub_at, publish_started_at (the publish claim: set right before the platform call, cleared by a safe "try later" and by each claim to `processing`), created_at, updated_at |
 | `failed_posts` | Archive of terminal post failures. Same structure as `scheduled_posts`. | (mirrors `scheduled_posts`) |
 | `content_history` | Record of published content, written after successful posting. | id, principal_id, social_account_id, scheduled_post_id, platform, content_id, title, description, media_url, media_type, status, batch_id, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), extra, created_at |
-| `pending_direct_posts` | Lock table for "post now" operations. Prevents duplicate direct posts. | event_id (PK), batch_id, principal_id, social_account_id, platform, media_storage_path, status (`processing` &#124; `completed` &#124; `failed`), failure_reason, idempotency_key, finished_at, created_at |
-| `pending_tiktok_pulls` | Lock table for TikTok async publish polling. | publish_id (PK), principal_id, social_account_id, scheduled_post_id, content_history_id, media_storage_path, status (`pending` &#124; `completed` &#124; `failed`), attempt_count, last_polled_at, finalized_at, failure_reason, tiktok_post_id, creator_username, created_at |
+| `pending_direct_posts` | Lock table for "post now" operations. Prevents duplicate direct posts. | event_id (PK), batch_id, principal_id, social_account_id, platform, media_storage_path, status (`processing` &#124; `completed` &#124; `failed`), failure_reason, idempotency_key, publish_started_at (the publish claim: set right before the platform call, cleared only by a safe "try later"), finished_at, created_at |
+| `pending_tiktok_pulls` | Lock table for TikTok async publish polling. `scheduled_post_id`, `content_history_id` and `dispatch_id` are ON DELETE SET NULL, so deleting a post TikTok already pulled succeeds. A scheduled post's pull sets `scheduled_post_id`, a publish-now pull sets `dispatch_id` (the `pending_direct_posts.event_id` that made it). | publish_id (PK), principal_id, social_account_id, scheduled_post_id, content_history_id, media_storage_path, status (`pending` &#124; `completed` &#124; `failed`), attempt_count, last_polled_at, finalized_at, failure_reason, tiktok_post_id, creator_username, dispatch_id, created_at |
 
 ### Billing
 
@@ -187,11 +188,11 @@ erDiagram
 | Table | Purpose | Columns |
 |-------|---------|---------|
 | `wallet_credits` | USDC credit balance per wallet. | wallet_id, balance_usdc, updated_at |
-| `x402_charges` | x402 payment charge records. | id, principal_id, wallet_id, action, amount_usdc, amount_usd_at_receipt, network, asset, nonce, request_id, payer_address, recipient_address, status (`pending` &#124; `settled` &#124; `failed` &#124; `refunded`), facilitator, facilitator_fee_usdc, tx_hash, block_number, scheduled_post_id, social_connection_id, error_message, metadata, created_at, settled_at |
+| `x402_charges` | x402 payment charge records. | id, principal_id, wallet_id, action, amount_usdc, amount_usd_at_receipt, network, asset, nonce, request_id, payer_address, recipient_address, status (`pending` &#124; `settled` &#124; `failed` &#124; `refunded`), facilitator, facilitator_fee_usdc, tx_hash, block_number, scheduled_post_id, social_connection_id, error_message, metadata, created_at, settled_at, request_digest (SHA-256 of the post-now request body, written with the charge; null on charges from other routes, the Blink, and before migration 0010; see [BILLING.md](./BILLING.md#charge-lifecycle)) |
 | `x402_refunds` | Refund records (append-only). | id, charge_id, reason, refunded_usdc, refund_tx_hash, initiated_by, metadata, created_at |
-| `x402_access_log` | Access audit trail (append-only). | id, principal_id, wallet_id, endpoint, action, charge_id, result_status (`ok` &#124; `402_required` &#124; `sanctioned` &#124; `rate_limited` &#124; `error`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
+| `x402_access_log` | Access audit trail (append-only). `402_required` is no longer written since 2026-11-21: `logX402Call` logs an unpaid challenge as a line instead; older rows keep it until the 90-day retention removes them. | id, principal_id, wallet_id, endpoint, action, charge_id, result_status (`ok` &#124; `402_required` &#124; `sanctioned` &#124; `rate_limited` &#124; `error`), latency_ms, ip_hash, user_agent, month (GENERATED), created_at |
 | `pricing_actions` | Action pricing definitions. | action (PK), display_name, usdc_price, description, recurrence (`one_time` &#124; `monthly`), effective_from, effective_until, metadata, created_at, updated_at |
-| `x402_reconciliation` | Payments that need a manual look: settled on chain but not recorded, or a refund that failed. | id, charge_id, tx_hash, kind (`settle_unrecorded` &#124; `settle_indeterminate` &#124; `refund_failed`), payer_address, amount_atomic, network, created_at |
+| `x402_reconciliation` | Payments that need a manual look: settled on chain but not recorded, a settle with no definite answer, or a refund that failed, was not confirmed, or whose send outcome is unknown (`refund_failed`, null `tx_hash` when no refund transaction is known). The table has no column that marks a row closed, so the hourly sweep re-reads every row of the last 30 days. `amount_atomic` is the facilitator's verified amount on settle rows, and null on a refund row whose price does not convert to atomic units. | id, charge_id, tx_hash, kind (`settle_unrecorded` &#124; `settle_indeterminate` &#124; `refund_failed`), payer_address, amount_atomic, network, created_at |
 | `sanctions_screenings` | Wallet sanctions check results (append-only). | id, wallet_id, result (`clean` &#124; `sanctioned` &#124; `error`), source, raw_response, checked_at |
 
 ### Infrastructure
@@ -213,7 +214,7 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 | `principals.kind` | `clerk`, `wallet` |
 | `wallets.chain` | `base`, `base-sepolia`, `polygon`, `arbitrum`, `solana`, `solana-devnet`, `celo`, `arc` |
 | `wallets.sanctions_status` | `unchecked`, `clean`, `sanctioned` |
-| `social_accounts.platform`, `social_connections.platform`, `pending_direct_posts.platform` | `SOCIAL_PLATFORMS`: the 28 ids the code writes, `POSTING_PLATFORMS` (`src/lib/platforms/capabilities.ts`) plus `REGISTRY_PLATFORM_IDS` (`src/lib/platforms/providers/catalog.ts`). A new platform is added to that list. |
+| `social_accounts.platform`, `social_connections.platform`, `pending_direct_posts.platform` | `SOCIAL_PLATFORMS`: the 28 ids the code writes, `ADAPTER_PLATFORMS` (`src/lib/platforms/capabilities.ts`) plus `REGISTRY_PLATFORM_IDS` (`src/lib/platforms/providers/catalog.ts`). A new platform is added to that list. |
 | `social_connections.initiated_via` | `web`, `mcp`, `api`, `x402`, `share_link` |
 | `social_connections.status` | `pending`, `connected`, `expired`, `failed`, `revoked` |
 | `scheduled_posts.status`, `failed_posts.status` | `scheduled`, `queued`, `processing`, `posted`, `failed`, `cancelled` |
@@ -225,7 +226,7 @@ Enum-like values are enforced by CHECK constraints in Postgres, not Postgres ENU
 | `mcp_oauth_clients.trust_level` | `unverified`, `verified`, `blocked` |
 | `mcp_audit_log.result_status` | `ok`, `error`, `denied`, `rate_limited`, `quota_exceeded` |
 | `x402_charges.status` | `pending`, `settled`, `failed`, `refunded` |
-| `x402_access_log.result_status` | `ok`, `402_required`, `sanctioned`, `rate_limited`, `error` |
+| `x402_access_log.result_status` | `ok`, `402_required` (not written since 2026-11-21; the CHECK keeps it for older rows), `sanctioned`, `rate_limited`, `error` |
 | `pricing_actions.recurrence` | `one_time`, `monthly` |
 | `sanctions_screenings.result` | `clean`, `sanctioned`, `error` |
 | `rest_audit_log.outcome` | `success`, `validation_error`, `auth_error`, `rate_limited`, `client_error` (any other 4xx), `internal_error` |
@@ -292,11 +293,14 @@ Triggers:
 
 | Data | Retention | Mechanism |
 |------|-----------|-----------|
-| `mcp_audit_log`, `x402_access_log` | 90 days | Daily crons (`cleanup-mcp-audit-log` 04:00 UTC, `cleanup-x402-access-log` 06:00 UTC) delete older rows. Each DELETE runs in a transaction that first sets `app.allow_append_only_delete = 'on'` with `set_config(..., true)`, the one exception the append-only trigger allows. Enforced since 2026-09-24; before that every run failed at the trigger. |
+| `mcp_audit_log`, `x402_access_log` | 90 days (`RETENTION_DAYS`, `src/lib/jobs/retention.ts`) | Daily crons (`cleanup-mcp-audit-log` 04:00 UTC, `cleanup-x402-access-log` 06:00 UTC) delete older rows, filtering on the indexed `month` column first (`month <= cutoffMonth AND created_at < cutoff`). Each DELETE runs in a transaction that first sets `app.allow_append_only_delete = 'on'` with `set_config(..., true)`, the one exception the append-only trigger allows. Enforced since 2026-09-24; before that every run failed at the trigger. |
 | `rest_audit_log` | 90 days | Daily cron `cleanup-rest-audit-log` at 07:00 UTC, since 2026-09-24. A plain DELETE: the table has no `reject_mutation` trigger. |
 | `stripe_webhook_events` | 90 days | Daily cron `cleanup-stripe-webhook-events` at 03:00 UTC. |
 | `tiktok_webhook_events` | 90 days | Daily cron `cleanup-tiktok-webhook-events` at 08:00 UTC, since 2026-09-24. A plain DELETE: the table has no `reject_mutation` trigger. |
-| Posts cancelled by a subscription lapse (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | Deleted by `cleanup-cancelled-posts-after-grace` 7 days after the lapse unless the user resubscribes. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
+| `pending_tiktok_pulls` | 90 days after `finalized_at` | Daily cron `cleanup-finished-tiktok-pulls` at 08:30 UTC deletes pulls no longer `pending` that no scheduled post references. |
+| `social_connections` (`pending`, `failed`, `expired`) | 30 days | Daily cron `cleanup-social-connections` at 02:00 UTC, in batches of 1,000. |
+| `mcp_oauth_clients` (`unverified`) | 90 days without activity | Daily cron `sweep-stale-oauth-clients` at 04:00 UTC, at most 1,000 per run. |
+| Posts paused by access loss (`scheduled_posts` with status `cancelled` and `cancelled_by_sub_at` set) | 7-day grace period | The Stripe webhook and the publish-time access gate set the tag. `cleanup-cancelled-posts-after-grace` resumes them once the owner has access again, and deletes them 7 days after the pause otherwise. A manual cancel, resume or reschedule clears the tag, so posts cancelled by hand are kept. |
 | `content_history` | Indefinite | Published content records are kept for analytics and history display. |
 | `x402_charges`, `x402_refunds` | Indefinite | Financial records are never deleted. |
 | `sanctions_screenings` | Indefinite | Compliance records are never deleted. |
@@ -327,24 +331,30 @@ Tradeoff: simpler than managing per-table RLS policies, but the application laye
 
 ```mermaid
 stateDiagram-v2
-    [*] --> scheduled : insert (web, mcp, x402, api)
-    scheduled --> queued : Inngest cron picks up due posts
-    scheduled --> cancelled : user cancels
-    queued --> processing : worker claims post
-    processing --> posted : platform API returns success
-    processing --> failed : platform API error or retry exhausted
-    failed --> [*] : moved to failed_posts archive
+    [*] --> scheduled : insert (web, mcp, x402, api), post.due sent
+    scheduled --> processing : worker claims the post at scheduled_at
+    queued --> processing : legacy rows only, nothing writes queued
+    scheduled --> cancelled : user cancels, or access loss pauses it (cancelled_by_sub_at)
+    cancelled --> scheduled : resume, reschedule, or access back
+    cancelled --> [*] : deleted 7 days after an access-loss pause
+    processing --> posted : platform API returns success, or settled with a content_history row
+    processing --> failed : final platform error, retries exhausted, publish claim found held, or 2 h without a write (row copied to failed_posts)
+    posted --> failed : TikTok rejects the pull
+    failed --> [*]
     posted --> [*]
-    cancelled --> [*]
 ```
+
+The row stays in `scheduled_posts` with status `failed`; `failed_posts` holds a copy. While a post is `processing`, `publish_started_at` records that an attempt may have reached the platform: a retry that finds it set never calls the platform again, both settlers skip a post whose claim an attempt may still hold, and every delete path refuses the post (the DELETE carries `status <> 'processing'`). Transitions and their triggers: [SCHEDULING.md](./SCHEDULING.md#status-transitions).
 
 ### pending_direct_posts.status
 
 ```mermaid
 stateDiagram-v2
-    [*] --> processing : direct "post now" initiated
-    processing --> completed : platform API returns success
-    processing --> failed : platform API error
+    [*] --> processing : lock inserted before the post.now send
+    processing --> [*] : send failed, lock deleted
+    processing --> completed : platform API returns success (or onFailure finds the post published)
+    processing --> failed : final platform error or retries exhausted
+    processing --> failed : sweep-stuck-direct-posts, 60 min after created_at
     completed --> [*]
     failed --> [*]
 ```
@@ -353,15 +363,15 @@ stateDiagram-v2
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending : TikTok publish_id received
-    pending --> pending : poll attempt (increment attempt_count)
-    pending --> completed : TikTok confirms publish success
-    pending --> failed : max attempts reached or TikTok reports failure
-    completed --> [*]
-    failed --> [*]
+    [*] --> pending : TikTok publish_id received, poll sent (id tiktok-poll-publish_id)
+    pending --> pending : poll attempt (increment attempt_count, last_polled_at)
+    pending --> pending : repoll-stalled-tiktok-pulls re-sends the poll after 10 min without one
+    pending --> completed : TikTok confirms publish success (webhook or poll)
+    pending --> failed : TikTok reports failure, 60 attempts, 5 errors in a row, or the poll run fails
+    completed --> completed : publicly_available backfills tiktok_post_id
+    completed --> [*] : deleted 90 days after finalized_at, when no scheduled post references it
+    failed --> [*] : deleted 90 days after finalized_at, when no scheduled post references it
 ```
-
----
 
 ## Source files referenced
 

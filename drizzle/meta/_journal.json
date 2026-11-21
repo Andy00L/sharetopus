@@ -43,6 +43,41 @@
       "when": 1790344585998,
       "tag": "0005_share_link_token_hash_required",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795105546613,
+      "tag": "0006_media_path_index_and_tiktok_pull_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795283617341,
+      "tag": "0007_scheduled_posts_publish_started_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795286839199,
+      "tag": "0008_pending_direct_posts_publish_started_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795290936789,
+      "tag": "0009_pending_tiktok_pulls_dispatch_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795292776386,
+      "tag": "0010_x402_charges_request_digest",
+      "breakpoints": true
     }
   ]
 }

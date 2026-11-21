@@ -3,7 +3,7 @@
 import type { CreatorInfoData } from "@/lib/api/tiktok/data/getTikTokCreatorInfo";
 import { getTikTokCreatorInfoForAccount } from "@/lib/api/tiktok/data/getTikTokCreatorInfoForAccount";
 import type { ClientSocialAccount } from "@/lib/types/dbTypes";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 export type { CreatorInfoData };
 
@@ -11,7 +11,6 @@ type CreatorInfoOutcome =
   | { ok: true; data: CreatorInfoData }
   | { ok: false; message: string };
 
-/** One creator-info lookup, with a rejected server action reported as a failure. */
 async function fetchCreatorInfoOutcome(
   accountId: string,
 ): Promise<CreatorInfoOutcome> {
@@ -26,32 +25,23 @@ async function fetchCreatorInfoOutcome(
   }
 }
 
-/**
- * TikTok creator info (privacy levels, interaction toggles, duration cap)
- * for each selected TikTok account, fetched once per account. An account
- * is loading until its outcome arrives.
- */
 export function useTikTokCreatorInfo(socialAccounts: ClientSocialAccount[]) {
   const [outcomes, setOutcomes] = useState<Record<string, CreatorInfoOutcome>>(
     {},
   );
   const requestedAccountIdsRef = useRef(new Set<string>());
 
-  // Synchronizes with the TikTok creator-info API. Outcomes are stored when
-  // the request settles; nothing is set synchronously here.
-  useEffect(() => {
-    for (const account of socialAccounts) {
-      if (requestedAccountIdsRef.current.has(account.id)) continue;
-      requestedAccountIdsRef.current.add(account.id);
+  function loadCreatorInfoForAccount(accountId: string) {
+    if (requestedAccountIdsRef.current.has(accountId)) return;
+    requestedAccountIdsRef.current.add(accountId);
 
-      fetchCreatorInfoOutcome(account.id).then((outcome) => {
-        setOutcomes((previousOutcomes) => ({
-          ...previousOutcomes,
-          [account.id]: outcome,
-        }));
-      });
-    }
-  }, [socialAccounts]);
+    fetchCreatorInfoOutcome(accountId).then((outcome) => {
+      setOutcomes((previousOutcomes) => ({
+        ...previousOutcomes,
+        [accountId]: outcome,
+      }));
+    });
+  }
 
   const creatorInfo: Record<string, CreatorInfoData> = {};
   const isLoading: Record<string, boolean> = {};
@@ -65,5 +55,5 @@ export function useTikTokCreatorInfo(socialAccounts: ClientSocialAccount[]) {
     }
   }
 
-  return { creatorInfo, isLoading, errors };
+  return { creatorInfo, isLoading, errors, loadCreatorInfoForAccount };
 }

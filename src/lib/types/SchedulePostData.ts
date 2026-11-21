@@ -1,4 +1,4 @@
-import { PrivacyLevel } from "./dbTypes";
+import type { PinterestPrivacyLevel, TikTokPrivacyLevel } from "./dbTypes";
 
 // Define the structure of the data expected by this action
 export interface SchedulePostData {
@@ -13,7 +13,7 @@ export interface SchedulePostData {
   batch_id: string;
   postOptions: {
     // TikTok-specific options
-    privacyLevel?: PrivacyLevel;
+    privacyLevel?: TikTokPrivacyLevel | PinterestPrivacyLevel;
     disableComment?: boolean;
     disableDuet?: boolean;
     disableStitch?: boolean;

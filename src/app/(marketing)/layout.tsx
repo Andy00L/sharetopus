@@ -1,8 +1,5 @@
 import { DM_Sans } from "next/font/google";
 
-/* Primary marketing typeface. DM Sans covers every role in the typography
-   spec. Weights 400-800 plus italic variants. Single source of truth for
-   all marketing page text (headings, body, buttons, nav, cards). */
 const dmSans = DM_Sans({
   subsets: ["latin"],
   variable: "--font-dm-sans",
@@ -11,9 +8,6 @@ const dmSans = DM_Sans({
   style: ["normal", "italic"],
 });
 
-/* Marketing layout. The .marketing-theme wrapper scopes the
-   ReelFarm-matched neutrals palette plus DM Sans typography.
-   Protected routes never inherit these tokens. */
 export default function MarketingLayout({
   children,
 }: {

@@ -1,9 +1,10 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
   ProviderToolInput,
@@ -16,28 +17,31 @@ import {
   parseJsonObject,
   providerFetch,
   readStringField,
+  type ProviderFetchFailure,
 } from "./_shared/providerFetch";
-
-/**
- * Credentials-based long-form providers: Hashnode, Medium, Lemmy.
- * Grouped in one module because each is a compact single-credential API.
- *
- * sourceRef: apidocs.hashnode.com (gql.hashnode.com publishPost),
- * github.com/Medium/medium-api-docs (v1/me, users/{id}/posts),
- * join-lemmy.org/api (user/login, post, community/list).
- */
+import {
+  classifyHttpAnswer,
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const BLOG_TIMEOUT_MS = 30_000;
 
-// ── Hashnode ──────────────────────────────────────────────────────────────
-
 const HASHNODE_GQL = "https://gql.hashnode.com";
+
+type HashnodeGqlFailure =
+  | { ok: false; kind: "fetch"; message: string; fetchFailure: ProviderFetchFailure }
+  | { ok: false; kind: "graphql_errors"; message: string }
+  | { ok: false; kind: "unreadable"; message: string; httpStatus: number; bodyText: string };
 
 async function hashnodeGql(
   apiToken: string,
   query: string,
   variables: JsonObject,
-): Promise<{ ok: true; data: JsonObject } | { ok: false; message: string }> {
+): Promise<{ ok: true; data: JsonObject } | HashnodeGqlFailure> {
   const result = await providerFetch(HASHNODE_GQL, {
     method: "POST",
     headers: {
@@ -47,24 +51,70 @@ async function hashnodeGql(
     body: JSON.stringify({ query, variables }),
     timeoutMs: BLOG_TIMEOUT_MS,
   });
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return { ok: false, kind: "fetch", message: result.message, fetchFailure: result };
+  }
   const parsed = parseJsonObject(result.bodyText);
   const gqlErrors: unknown[] = Array.isArray(parsed?.errors) ? parsed.errors : [];
   if (gqlErrors.length > 0) {
     const firstError = toJsonObject(gqlErrors[0])?.message ?? "GraphQL error";
-    return { ok: false, message: `Hashnode: ${String(firstError).slice(0, 200)}` };
+    return {
+      ok: false,
+      kind: "graphql_errors",
+      message: `Hashnode: ${String(firstError).slice(0, 200)}`,
+    };
   }
   const data = toJsonObject(parsed?.data);
-  if (!data) return { ok: false, message: "Hashnode returned no data." };
+  if (!data) {
+    return {
+      ok: false,
+      kind: "unreadable",
+      message: `Hashnode returned no data (HTTP ${result.status}).`,
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    };
+  }
   return { ok: true, data };
 }
 
-async function hashnodeConnect(
-  input: ProviderConnectInput,
-): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Hashnode connects with an API token." };
+function failHashnodePublish(gqlFailure: HashnodeGqlFailure): ProviderPublishFailure {
+  switch (gqlFailure.kind) {
+    case "fetch":
+      return failProviderFetch({
+        platform: "hashnode",
+        stage: "publish",
+        fetchFailure: gqlFailure.fetchFailure,
+      });
+    case "graphql_errors":
+      return failPublish({
+        message: gqlFailure.message,
+        reason: "unknown",
+        mayHavePublished: false,
+      });
+    case "unreadable":
+      return {
+        ok: false,
+        message: gqlFailure.message,
+        failure: classifyHttpAnswer({
+          platform: "hashnode",
+          stage: "publish",
+          httpStatus: gqlFailure.httpStatus,
+          bodyText: gqlFailure.bodyText,
+        }),
+      };
+    default: {
+      const unhandledFailure: never = gqlFailure;
+      return failUnreadableAnswer({
+        message: `Unhandled Hashnode failure: ${String(unhandledFailure)}`,
+        stage: "publish",
+      });
+    }
   }
+}
+
+async function hashnodeConnect(
+  input: CredentialsConnectInput,
+): Promise<ProviderConnectResult> {
   const apiToken = (input.values.apiToken ?? "").trim();
   if (!apiToken) return { ok: false, message: "API token is required." };
 
@@ -79,8 +129,6 @@ async function hashnodeConnect(
   const userId = meNode && typeof meNode.id === "string" ? meNode.id : null;
   if (!userId) return { ok: false, message: "Hashnode token is not valid." };
 
-  // Default publication: the first one on the account. listPublications
-  // lets an agent pick another.
   const publications = toJsonObject(meNode?.publications);
   const edges: unknown[] = Array.isArray(publications?.edges) ? publications.edges : [];
   const firstNode = toJsonObject(toJsonObject(edges[0])?.node);
@@ -105,20 +153,17 @@ async function hashnodeConnect(
 async function hashnodePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const publicationId =
-    typeof input.options.publicationId === "string" && input.options.publicationId
-      ? input.options.publicationId
-      : typeof input.config.publicationId === "string"
-        ? input.config.publicationId
-        : null;
+  const storedPublicationId =
+    typeof input.config.publicationId === "string" ? input.config.publicationId : null;
+  const publicationId = input.options.publicationId || storedPublicationId;
   if (!publicationId) {
-    return { ok: false, message: "Hashnode account has no publication." };
+    return refusePublish("Hashnode account has no publication.");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Hashnode posts require a title." };
+  if (!title) return refusePublish("Hashnode posts require a title.");
 
   const markdown =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `![${title}](${input.mediaUrl})\n\n${input.body}`
       : input.body;
 
@@ -129,11 +174,13 @@ async function hashnodePublish(
      }`,
     { input: { title, contentMarkdown: markdown, publicationId } },
   );
-  if (!published.ok) return { ok: false, message: published.message };
+  if (!published.ok) return failHashnodePublish(published);
 
   const post = toJsonObject(toJsonObject(published.data.publishPost)?.post);
   const postId = post && typeof post.id === "string" ? post.id : null;
-  if (!postId) return { ok: false, message: "Hashnode returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Hashnode returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -168,22 +215,18 @@ async function hashnodeRunTool(
   return { ok: true, data: { publications: list } };
 }
 
-export const hashnodeBehavior: ProviderBehavior = {
+export const hashnodeBehavior = {
+  authKind: "credentials",
   connect: hashnodeConnect,
   publish: hashnodePublish,
   runTool: hashnodeRunTool,
-};
-
-// ── Medium ────────────────────────────────────────────────────────────────
+} satisfies ProviderBehavior;
 
 const MEDIUM_API = "https://api.medium.com/v1";
 
 async function mediumConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Medium connects with an integration token." };
-  }
   const integrationToken = (input.values.integrationToken ?? "").trim();
   if (!integrationToken) {
     return { ok: false, message: "Integration token is required." };
@@ -229,10 +272,10 @@ async function mediumPublish(
       ? input.config.userId
       : input.accountIdentifier;
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Medium posts require a title." };
+  if (!title) return refusePublish("Medium posts require a title.");
 
   const markdown =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `![${title}](${input.mediaUrl})\n\n${input.body}`
       : input.body;
 
@@ -251,17 +294,24 @@ async function mediumPublish(
     timeoutMs: BLOG_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "medium", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 201 && result.status !== 200) {
-    return {
-      ok: false,
-      message: `Medium post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "medium",
+      stage: "publish",
+      action: "Medium post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const data = toJsonObject(parseJsonObject(result.bodyText)?.data);
   const postId = data && typeof data.id === "string" ? data.id : null;
-  if (!postId) return { ok: false, message: "Medium returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Medium returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -270,23 +320,19 @@ async function mediumPublish(
   };
 }
 
-export const mediumBehavior: ProviderBehavior = {
+export const mediumBehavior = {
+  authKind: "credentials",
   connect: mediumConnect,
   publish: mediumPublish,
-};
-
-// ── Lemmy ─────────────────────────────────────────────────────────────────
+} satisfies ProviderBehavior;
 
 function normalizeLemmyInstance(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
 }
 
 async function lemmyConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Lemmy connects with username and password." };
-  }
   const instanceUrl = normalizeLemmyInstance(input.values.instanceUrl ?? "");
   const username = (input.values.username ?? "").trim();
   const password = input.values.password ?? "";
@@ -318,7 +364,6 @@ async function lemmyConnect(
 
   return {
     ok: true,
-    // The password is deliberately NOT stored; the session JWT replaces it.
     accessToken: jwt,
     refreshToken: null,
     expiresIn: null,
@@ -340,17 +385,14 @@ async function lemmyPublish(
       ? normalizeLemmyInstance(input.config.instanceUrl)
       : null;
   if (!instanceUrl) {
-    return { ok: false, message: "Stored Lemmy account has no instance URL." };
+    return refusePublish("Stored Lemmy account has no instance URL.");
   }
-  const communityId = Number(input.options.communityId);
-  if (!Number.isInteger(communityId) || communityId <= 0) {
-    return {
-      ok: false,
-      message: "A community is required (options.communityId).",
-    };
+  const communityId = input.options.communityId;
+  if (communityId === undefined || !Number.isInteger(communityId) || communityId <= 0) {
+    return refusePublish("A community is required (options.communityId).");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Lemmy posts require a title." };
+  if (!title) return refusePublish("Lemmy posts require a title.");
 
   const postPayload: JsonObject = {
     name: title,
@@ -369,17 +411,24 @@ async function lemmyPublish(
     timeoutMs: BLOG_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "lemmy", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Lemmy post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "lemmy",
+      stage: "publish",
+      action: "Lemmy post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const post = toJsonObject(toJsonObject(parseJsonObject(result.bodyText)?.post_view)?.post);
   const postId = post && typeof post.id === "number" ? String(post.id) : null;
-  if (!postId) return { ok: false, message: "Lemmy returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Lemmy returned no post id.", stage: "publish" });
+  }
 
   return { ok: true, postId, postUrl: `${instanceUrl}/post/${postId}` };
 }
@@ -424,8 +473,9 @@ async function lemmyRunTool(
   return { ok: true, data: { communities } };
 }
 
-export const lemmyBehavior: ProviderBehavior = {
+export const lemmyBehavior = {
+  authKind: "credentials",
   connect: lemmyConnect,
   publish: lemmyPublish,
   runTool: lemmyRunTool,
-};
+} satisfies ProviderBehavior;

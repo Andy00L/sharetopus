@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "src/app/api/direct/**/*.ts": {
-      "maxDuration": 60
-    }
-  }
-}

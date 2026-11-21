@@ -8,24 +8,9 @@ import { cookies } from "next/headers";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import { resolveConfiguredProvider } from "@/lib/platforms/providers/registry";
-import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJson";
-import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/registryOAuthPlatforms";
+import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/catalog";
+import type { ProviderConnectResult } from "@/lib/platforms/providers/types";
 
-/**
- * OAuth callback for registry providers. Pairs with
- * /api/social/registry/[provider]/initiate, which set the state cookie
- * (and, for PKCE providers, the verifier cookie) on this browser.
- *
- * Flow: verify the state param against the HTTP-only cookie in constant
- * time, exchange the code through the provider, upsert social_accounts,
- * then redirect to the connections page. The cookies are cleared on every
- * exit path, success or failure, so a state can never be replayed.
- *
- * The signed-in Clerk user is the owner. The cookie check binds the
- * callback to the same browser that initiated, which is the CSRF defense:
- * an attacker-supplied code cannot be planted on a victim's account
- * without also holding the victim's state cookie.
- */
 export async function GET(
   request: NextRequest,
   routeContext: { params: Promise<{ provider: string }> },
@@ -47,7 +32,6 @@ export async function GET(
   const verifierCookieName = `${providerId}_auth_verifier`;
   const cookieStore = await cookies();
 
-  // Clear both cookies no matter how this request ends: one-shot state.
   const clearOAuthCookies = (response: NextResponse) => {
     response.cookies.delete(stateCookieName);
     response.cookies.delete(verifierCookieName);
@@ -61,7 +45,6 @@ export async function GET(
 
   const providerError = requestUrl.searchParams.get("error");
   if (providerError) {
-    // The user declined consent (or the provider failed). Nothing to store.
     return clearOAuthCookies(redirectToConnections("error", providerError));
   }
 
@@ -88,21 +71,21 @@ export async function GET(
     return clearOAuthCookies(redirectToConnections("error", "not_configured"));
   }
   const provider = providerResult.provider;
-
-  const codeVerifier =
-    provider.authKind === "oauth2_pkce"
-      ? (cookieStore.get(verifierCookieName)?.value ?? null)
-      : null;
-  if (provider.authKind === "oauth2_pkce" && !codeVerifier) {
-    return clearOAuthCookies(redirectToConnections("error", "missing_verifier"));
+  if (provider.authKind === "credentials") {
+    return clearOAuthCookies(redirectToConnections("error", "unknown_provider"));
   }
 
-  const connectResult = await provider.connect({
-    kind: "oauth_code",
-    code: codeParam,
-    redirectUri: `${requestUrl.origin}/api/social/registry/${providerId}/callback`,
-    codeVerifier,
-  });
+  const redirectUri = `${requestUrl.origin}/api/social/registry/${providerId}/callback`;
+  let connectResult: ProviderConnectResult;
+  if (provider.authKind === "oauth2_pkce") {
+    const codeVerifier = cookieStore.get(verifierCookieName)?.value;
+    if (!codeVerifier) {
+      return clearOAuthCookies(redirectToConnections("error", "missing_verifier"));
+    }
+    connectResult = await provider.connect({ code: codeParam, redirectUri, codeVerifier });
+  } else {
+    connectResult = await provider.connect({ code: codeParam, redirectUri });
+  }
 
   if (!connectResult.ok) {
     console.error(
@@ -127,12 +110,10 @@ export async function GET(
     access_token: connectResult.accessToken,
     refresh_token: connectResult.refreshToken,
     token_expires_at: tokenExpiresAt,
-    extra: providerConfigToJson(connectResult.config),
+    extra: connectResult.config,
     updated_at: new Date().toISOString(),
   } satisfies typeof social_accounts.$inferInsert;
 
-  // A reconnect of the same account (social_accounts_unique_per_principal)
-  // overwrites these columns in place instead of adding a second row.
   const { error: upsertError } = await runQuery(
     db
       .insert(social_accounts)

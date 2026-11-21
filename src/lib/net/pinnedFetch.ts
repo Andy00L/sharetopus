@@ -6,28 +6,23 @@ import { Agent } from "undici";
 
 import { isPrivateOrReservedIp } from "./ipBlocklist";
 
-/**
- * Resolve-validate-pin primitives that close the DNS-rebinding TOCTOU in
- * every server-side fetch of a user-supplied host. The pattern:
- *   1. resolveHostToPublicAddresses() resolves DNS ONCE and rejects any
- *      private/reserved address.
- *   2. buildPinnedAgent() returns an undici dispatcher whose connector is
- *      pinned to the exact validated IP, so the socket cannot re-resolve
- *      to a different (internal) address between check and connect.
- * The original Host header and TLS SNI are preserved because only the DNS
- * step is pinned, not the request target.
- */
+export type PinnedAddress = { address: string; family: number };
+
+export type ValidatedAddresses = [PinnedAddress, ...PinnedAddress[]];
 
 export type HostResolution =
-  | { ok: true; addresses: { address: string; family: number }[] }
+  | { ok: true; addresses: ValidatedAddresses }
   | { ok: false; reason: "blocked_host" | "dns_failure" | "blocked_ip" };
 
-/**
- * Resolves a hostname (or accepts a literal IP) and validates every
- * returned address against the private/reserved blocklist. Fails closed:
- * a DNS error, an empty result, or any single blocked address rejects the
- * whole host.
- */
+const PINNED_DISPATCHER_CACHE_LIMIT = 64;
+
+class SharedPinnedDispatcher extends Agent {
+  declare readonly close: never;
+  declare readonly destroy: never;
+}
+
+const pinnedDispatchersByAddress = new Map<string, SharedPinnedDispatcher>();
+
 export async function resolveHostToPublicAddresses(
   host: string,
 ): Promise<HostResolution> {
@@ -35,43 +30,81 @@ export async function resolveHostToPublicAddresses(
     return { ok: false, reason: "blocked_host" };
   }
 
-  let addresses: { address: string; family: number }[];
+  let resolvedAddresses: PinnedAddress[];
 
   if (isIP(host) !== 0) {
-    addresses = [{ address: host, family: isIP(host) }];
+    resolvedAddresses = [{ address: host, family: isIP(host) }];
   } else {
     try {
-      addresses = await dnsLookup(host, { all: true, verbatim: false });
+      resolvedAddresses = await dnsLookup(host, { all: true, verbatim: false });
     } catch {
-      return { ok: false, reason: "dns_failure" };
-    }
-    if (addresses.length === 0) {
       return { ok: false, reason: "dns_failure" };
     }
   }
 
-  for (const entry of addresses) {
+  const [firstAddress, ...otherAddresses] = resolvedAddresses;
+  if (!firstAddress) {
+    return { ok: false, reason: "dns_failure" };
+  }
+
+  for (const entry of resolvedAddresses) {
     if (isPrivateOrReservedIp(entry.address)) {
       return { ok: false, reason: "blocked_ip" };
     }
   }
 
-  return { ok: true, addresses };
+  return { ok: true, addresses: [firstAddress, ...otherAddresses] };
 }
 
 /**
- * Builds an undici Agent pinned to the first validated address. Every
- * address in the list was already accepted by resolveHostToPublicAddresses,
- * so connecting to the first is safe; pinning stops undici from running its
- * own second DNS resolution (the rebinding window). Pass the returned Agent
- * as the `dispatcher` on the fetch, and call `.close()` when done.
+ * Node's net.connect calls the lookup with { all: true } whenever
+ * autoSelectFamily is on (the default since Node 20) and rejects a
+ * single-address answer with ERR_INVALID_IP_ADDRESS, so the answer must
+ * follow the requested shape. sourceRef: node lib/net.js,
+ * lookupAndConnectMultiple.
  */
-export function buildPinnedAgent(
-  addresses: { address: string; family: number }[],
-): Agent {
-  const primary = addresses[0];
-  const pinnedLookup: LookupFunction = (_hostname, _options, callback) => {
-    callback(null, primary.address, primary.family);
+export function buildPinnedLookup(pinnedAddress: PinnedAddress): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address: pinnedAddress.address, family: pinnedAddress.family }]);
+      return;
+    }
+    callback(null, pinnedAddress.address, pinnedAddress.family);
   };
-  return new Agent({ connect: { lookup: pinnedLookup } });
+}
+
+/**
+ * undici pools sockets per origin inside an Agent, so one dispatcher per
+ * pinned IP never lets a socket opened for one hostname serve another.
+ * An evicted entry is dropped without closing it: a request still using it
+ * finishes, and its idle sockets expire on undici's keep-alive timeout.
+ * sourceRef: node_modules/undici/lib/dispatcher/agent.js (clients keyed by
+ * origin), node_modules/undici/lib/dispatcher/client.js (keepAliveTimeout).
+ */
+export function acquirePinnedDispatcher(
+  addresses: ValidatedAddresses,
+): SharedPinnedDispatcher {
+  const pinnedAddress = addresses[0];
+  const cacheKey = `${pinnedAddress.family}/${pinnedAddress.address}`;
+
+  const cachedDispatcher = pinnedDispatchersByAddress.get(cacheKey);
+  if (cachedDispatcher) {
+    pinnedDispatchersByAddress.delete(cacheKey);
+    pinnedDispatchersByAddress.set(cacheKey, cachedDispatcher);
+    return cachedDispatcher;
+  }
+
+  const pinnedDispatcher = new SharedPinnedDispatcher({
+    connect: { lookup: buildPinnedLookup(pinnedAddress) },
+  });
+  pinnedDispatchersByAddress.set(cacheKey, pinnedDispatcher);
+
+  if (pinnedDispatchersByAddress.size > PINNED_DISPATCHER_CACHE_LIMIT) {
+    const leastRecentKey = pinnedDispatchersByAddress.keys().next().value;
+    if (leastRecentKey !== undefined) {
+      pinnedDispatchersByAddress.delete(leastRecentKey);
+    }
+  }
+
+  return pinnedDispatcher;
 }

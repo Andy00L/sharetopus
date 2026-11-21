@@ -14,24 +14,30 @@ import {
 } from "@/db/schema";
 import { IsoDateTimeSchema } from "@/lib/mcp/_shared/isoDateTimeSchema";
 
+import { withMemoizedJsonSchema } from "../_shared/memoizedJsonSchema";
 import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-/** Characters of post text a concise row keeps. */
 const CONCISE_TEXT_CHARS = 140;
 
 const LIST_STATUSES = ["upcoming", "published", "failed", "cancelled"] as const;
 
-type ListPostsArgs = {
-  status: (typeof LIST_STATUSES)[number];
-  batch_id?: string;
-  social_account_id?: string;
-  platform?: string;
-  from?: string;
-  to?: string;
-  limit: number;
-  offset: number;
-  response_format: "concise" | "detailed";
-};
+const ListPostsInputSchema = z.object({
+  status: z.enum(LIST_STATUSES).optional().default("upcoming"),
+  batch_id: z.string().max(200).optional().describe("Overrides status: returns every post of that batch."),
+  social_account_id: z.guid().optional(),
+  platform: z.string().max(32).optional().describe("Platform id, e.g. linkedin."),
+  from: IsoDateTimeSchema.optional().describe("ISO 8601 lower time bound."),
+  to: IsoDateTimeSchema.optional().describe("ISO 8601 upper time bound."),
+  limit: z.number().int().min(1).max(100).optional().default(20),
+  offset: z.number().int().min(0).optional().default(0),
+  response_format: z
+    .enum(["concise", "detailed"])
+    .optional()
+    .default("concise")
+    .describe("detailed adds full text, title, account id, content id and media URL."),
+});
+
+type ListPostsArgs = z.infer<typeof ListPostsInputSchema>;
 
 const PostRowSchema = z.object({
   id: z.string(),
@@ -78,51 +84,99 @@ const ACCOUNT_NAME_COLUMNS = {
   username: social_accounts.username,
 };
 
-/** Lists posts by status, or every post of one publish_posts batch, with account names on each row. */
-export function registerListPosts(server: McpServer): void {
-  server.registerTool(
-    "list_posts",
-    {
-      title: "List Posts",
-      description:
-        "List posts: upcoming (scheduled, oldest first), published, failed or cancelled (newest first). Pass batch_id from publish_posts to see what happened to each post of that call.",
-      inputSchema: z.object({
-        status: z.enum(LIST_STATUSES).optional().default("upcoming"),
-        batch_id: z.string().max(200).optional().describe("Overrides status: returns every post of that batch."),
-        social_account_id: z.guid().optional(),
-        platform: z.string().max(32).optional().describe("Platform id, e.g. linkedin."),
-        from: IsoDateTimeSchema.optional().describe("ISO 8601 lower time bound."),
-        to: IsoDateTimeSchema.optional().describe("ISO 8601 upper time bound."),
-        limit: z.number().int().min(1).max(100).optional().default(20),
-        offset: z.number().int().min(0).optional().default(0),
-        response_format: z
-          .enum(["concise", "detailed"])
-          .optional()
-          .default("concise")
-          .describe("detailed adds full text, title, account id, content id and media URL."),
-      }),
-      outputSchema: ListPostsOutputSchema,
-      annotations: { title: "List Posts", readOnlyHint: true, openWorldHint: false },
-    },
-    withMcpTool("list_posts", async (ctx, args: ListPostsArgs) => {
-      const rowsResult = args.batch_id
-        ? await loadBatchRows(ctx.principal.principalId, args.batch_id)
-        : await loadStatusRows(ctx.principal.principalId, args);
-      if (!rowsResult.success) {
-        console.error(`[list_posts] [req=${ctx.requestId ?? "?"}] ${rowsResult.message}`);
-        return errorResult("Could not load your posts. Retry in a moment.");
-      }
+const SCHEDULED_POST_COLUMNS = {
+  id: scheduled_posts.id,
+  status: scheduled_posts.status,
+  platform: scheduled_posts.platform,
+  scheduled_at: scheduled_posts.scheduled_at,
+  posted_at: scheduled_posts.posted_at,
+  post_title: scheduled_posts.post_title,
+  post_description: scheduled_posts.post_description,
+  media_type: scheduled_posts.media_type,
+  batch_id: scheduled_posts.batch_id,
+  error_message: scheduled_posts.error_message,
+  social_account_id: scheduled_posts.social_account_id,
+};
 
-      // Status queries fetch one extra row to tell whether another page exists.
-      const pageRows = args.batch_id ? rowsResult.rows : rowsResult.rows.slice(0, args.limit);
-      const hasMore = !args.batch_id && rowsResult.rows.length > args.limit;
-      return jsonResult({
-        posts: pageRows.map((sourceRow) => toPostRow(sourceRow, args.response_format)),
-        has_more: hasMore,
-        next_offset: hasMore ? args.offset + args.limit : null,
-      } satisfies z.infer<typeof ListPostsOutputSchema>);
-    }),
-  );
+const CONTENT_HISTORY_COLUMNS = {
+  id: content_history.id,
+  platform: content_history.platform,
+  created_at: content_history.created_at,
+  title: content_history.title,
+  description: content_history.description,
+  media_type: content_history.media_type,
+  media_url: content_history.media_url,
+  batch_id: content_history.batch_id,
+  social_account_id: content_history.social_account_id,
+  content_id: content_history.content_id,
+};
+
+const FAILED_POST_COLUMNS = {
+  id: failed_posts.id,
+  platform: failed_posts.platform,
+  created_at: failed_posts.created_at,
+  post_title: failed_posts.post_title,
+  post_description: failed_posts.post_description,
+  media_type: failed_posts.media_type,
+  batch_id: failed_posts.batch_id,
+  error_message: failed_posts.error_message,
+  social_account_id: failed_posts.social_account_id,
+};
+
+const DIRECT_JOB_COLUMNS = {
+  event_id: pending_direct_posts.event_id,
+  status: pending_direct_posts.status,
+  platform: pending_direct_posts.platform,
+  created_at: pending_direct_posts.created_at,
+  finished_at: pending_direct_posts.finished_at,
+  batch_id: pending_direct_posts.batch_id,
+  failure_reason: pending_direct_posts.failure_reason,
+  social_account_id: pending_direct_posts.social_account_id,
+};
+
+type AccountNames = { displayName: string | null; username: string | null };
+type ScheduledPostRow = AccountNames & {
+  post: Pick<typeof scheduled_posts.$inferSelect, keyof typeof SCHEDULED_POST_COLUMNS>;
+};
+type ContentHistoryRow = AccountNames & {
+  history: Pick<typeof content_history.$inferSelect, keyof typeof CONTENT_HISTORY_COLUMNS>;
+};
+type FailedPostRow = AccountNames & {
+  failure: Pick<typeof failed_posts.$inferSelect, keyof typeof FAILED_POST_COLUMNS>;
+};
+type DirectJobRow = AccountNames & {
+  job: Pick<typeof pending_direct_posts.$inferSelect, keyof typeof DIRECT_JOB_COLUMNS>;
+};
+
+const LIST_POSTS_TOOL = {
+  title: "List Posts",
+  description:
+    "List posts: upcoming (scheduled, oldest first), published, failed or cancelled (newest first). Pass batch_id from publish_posts to see what happened to each post of that call.",
+  inputSchema: withMemoizedJsonSchema(ListPostsInputSchema),
+  outputSchema: withMemoizedJsonSchema(ListPostsOutputSchema),
+  annotations: { title: "List Posts", readOnlyHint: true, openWorldHint: false },
+};
+
+const handleListPosts = withMcpTool("list_posts", async (ctx, args: ListPostsArgs) => {
+  const rowsResult = args.batch_id
+    ? await loadBatchRows(ctx.principal.principalId, args.batch_id)
+    : await loadStatusRows(ctx.principal.principalId, args);
+  if (!rowsResult.success) {
+    console.error(`[list_posts] [req=${ctx.requestId ?? "?"}] ${rowsResult.message}`);
+    return errorResult("Could not load your posts. Retry in a moment.");
+  }
+
+  const pageRows = args.batch_id ? rowsResult.rows : rowsResult.rows.slice(0, args.limit);
+  const hasMore = !args.batch_id && rowsResult.rows.length > args.limit;
+  return jsonResult({
+    posts: pageRows.map((sourceRow) => toPostRow(sourceRow, args.response_format)),
+    has_more: hasMore,
+    next_offset: hasMore ? args.offset + args.limit : null,
+  } satisfies z.infer<typeof ListPostsOutputSchema>);
+});
+
+export function registerListPosts(server: McpServer): void {
+  server.registerTool("list_posts", LIST_POSTS_TOOL, handleListPosts);
 }
 
 type RowsResult = { success: true; rows: SourceRow[] } | { success: false; message: string };
@@ -144,7 +198,7 @@ async function loadStatusRows(principalId: string, args: ListPostsArgs): Promise
       ];
       const { data, error } = await runQuery(
         db
-          .select({ post: scheduled_posts, ...ACCOUNT_NAME_COLUMNS })
+          .select({ post: SCHEDULED_POST_COLUMNS, ...ACCOUNT_NAME_COLUMNS })
           .from(scheduled_posts)
           .leftJoin(social_accounts, eq(social_accounts.id, scheduled_posts.social_account_id))
           .where(and(...conditions))
@@ -165,7 +219,7 @@ async function loadStatusRows(principalId: string, args: ListPostsArgs): Promise
       ];
       const { data, error } = await runQuery(
         db
-          .select({ history: content_history, ...ACCOUNT_NAME_COLUMNS })
+          .select({ history: CONTENT_HISTORY_COLUMNS, ...ACCOUNT_NAME_COLUMNS })
           .from(content_history)
           .leftJoin(social_accounts, eq(social_accounts.id, content_history.social_account_id))
           .where(and(...conditions))
@@ -186,7 +240,7 @@ async function loadStatusRows(principalId: string, args: ListPostsArgs): Promise
       ];
       const { data, error } = await runQuery(
         db
-          .select({ failure: failed_posts, ...ACCOUNT_NAME_COLUMNS })
+          .select({ failure: FAILED_POST_COLUMNS, ...ACCOUNT_NAME_COLUMNS })
           .from(failed_posts)
           .leftJoin(social_accounts, eq(social_accounts.id, failed_posts.social_account_id))
           .where(and(...conditions))
@@ -204,12 +258,11 @@ async function loadStatusRows(principalId: string, args: ListPostsArgs): Promise
   }
 }
 
-/** Every post of one batch: scheduled rows plus the publish-now jobs and their outcome. */
 async function loadBatchRows(principalId: string, batchId: string): Promise<RowsResult> {
   const [scheduledRead, directRead] = await Promise.all([
     runQuery(
       db
-        .select({ post: scheduled_posts, ...ACCOUNT_NAME_COLUMNS })
+        .select({ post: SCHEDULED_POST_COLUMNS, ...ACCOUNT_NAME_COLUMNS })
         .from(scheduled_posts)
         .leftJoin(social_accounts, eq(social_accounts.id, scheduled_posts.social_account_id))
         .where(and(eq(scheduled_posts.principal_id, principalId), eq(scheduled_posts.batch_id, batchId)))
@@ -217,7 +270,7 @@ async function loadBatchRows(principalId: string, batchId: string): Promise<Rows
     ),
     runQuery(
       db
-        .select({ job: pending_direct_posts, ...ACCOUNT_NAME_COLUMNS })
+        .select({ job: DIRECT_JOB_COLUMNS, ...ACCOUNT_NAME_COLUMNS })
         .from(pending_direct_posts)
         .leftJoin(social_accounts, eq(social_accounts.id, pending_direct_posts.social_account_id))
         .where(and(eq(pending_direct_posts.principal_id, principalId), eq(pending_direct_posts.batch_id, batchId)))
@@ -232,11 +285,11 @@ async function loadBatchRows(principalId: string, batchId: string): Promise<Rows
   };
 }
 
-function accountNameOf(names: { displayName: string | null; username: string | null }): string | null {
+function accountNameOf(names: AccountNames): string | null {
   return names.displayName ?? names.username;
 }
 
-function fromScheduledRow(row: { post: typeof scheduled_posts.$inferSelect; displayName: string | null; username: string | null }): SourceRow {
+function fromScheduledRow(row: ScheduledPostRow): SourceRow {
   const { post } = row;
   return {
     id: post.id,
@@ -255,7 +308,7 @@ function fromScheduledRow(row: { post: typeof scheduled_posts.$inferSelect; disp
   };
 }
 
-function fromHistoryRow(row: { history: typeof content_history.$inferSelect; displayName: string | null; username: string | null }): SourceRow {
+function fromHistoryRow(row: ContentHistoryRow): SourceRow {
   const { history } = row;
   return {
     id: history.id,
@@ -274,7 +327,7 @@ function fromHistoryRow(row: { history: typeof content_history.$inferSelect; dis
   };
 }
 
-function fromFailedRow(row: { failure: typeof failed_posts.$inferSelect; displayName: string | null; username: string | null }): SourceRow {
+function fromFailedRow(row: FailedPostRow): SourceRow {
   const { failure } = row;
   return {
     id: failure.id,
@@ -295,7 +348,7 @@ function fromFailedRow(row: { failure: typeof failed_posts.$inferSelect; display
 
 const DIRECT_JOB_STATUS = { processing: "publishing", completed: "published", failed: "failed" } as const;
 
-function fromDirectJobRow(row: { job: typeof pending_direct_posts.$inferSelect; displayName: string | null; username: string | null }): SourceRow {
+function fromDirectJobRow(row: DirectJobRow): SourceRow {
   const { job } = row;
   return {
     id: job.event_id,

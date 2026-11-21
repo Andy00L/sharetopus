@@ -16,8 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import type { MediaType } from "@/db/schema";
 import type {
   ClientSocialAccount,
-  PrivacyLevel,
   TikTokOptions,
+  TikTokPrivacyLevel,
 } from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 import {
@@ -40,29 +40,16 @@ interface TikTokPostSettingsProps {
   readonly onOptionsChange: (update: Partial<TikTokOptions>) => void;
   readonly photoTitle: string;
   readonly onPhotoTitleChange: (title: string) => void;
-  /** Null until the selected video's metadata has loaded. */
   readonly videoDurationSec: number | null;
 }
 
-/** Display names for privacy_level_options values (PUBLIC and PROTECTED are Pinterest's). */
-const PRIVACY_LEVEL_LABELS: Record<PrivacyLevel, string> = {
+const PRIVACY_LEVEL_LABELS: Record<TikTokPrivacyLevel, string> = {
   PUBLIC_TO_EVERYONE: "Public",
   MUTUAL_FOLLOW_FRIENDS: "Friends",
   FOLLOWER_OF_CREATOR: "Followers",
   SELF_ONLY: "Only me",
-  PUBLIC: "Public",
-  PROTECTED: "Protected",
 };
 
-/**
- * The TikTok part of the composer, always visible while a TikTok account
- * is selected, laid out in the order TikTok's Content Sharing Guidelines
- * describe: the account the post goes to, the title for photos, who can
- * view it (no default), the interactions (none ticked by default, greyed
- * when the creator turned them off), and the commercial content
- * disclosure. The declaration and the publish button live in
- * SchedulingPanel; the blocking rules in tikTokPublishRules.
- */
 export default function TikTokPostSettings({
   selectedTikTokAccounts,
   creatorInfo,
@@ -80,13 +67,13 @@ export default function TikTokPostSettings({
   const isBrandedContent = tikTokOptions.brandedContent === true;
   const isDisclosureOn = tikTokOptions.brandContentToggle === true;
   const isPrivacySelfOnly = tikTokOptions.privacyLevel === "SELF_ONLY";
+  const supportsDuetAndStitch = postType === "video";
   const isVideoTooLong =
     capabilities !== null &&
     videoDurationSec !== null &&
     videoDurationSec > capabilities.maxVideoDurationSec;
 
   function handleDisclosureChange(isOn: boolean) {
-    // Turning disclosure off clears both choices so no label is sent.
     onOptionsChange(
       isOn
         ? { brandContentToggle: true }
@@ -236,8 +223,7 @@ export default function TikTokPostSettings({
                   onOptionsChange({ disableComment: !isAllowed })
                 }
               />
-              {/* Duet and Stitch do not exist for photo posts. */}
-              {postType === "video" && (
+              {supportsDuetAndStitch && (
                 <>
                   <InteractionCheckbox
                     id="tiktok-allow-duet"
@@ -261,7 +247,7 @@ export default function TikTokPostSettings({
               )}
             </div>
             {(capabilities.commentDisabled ||
-              (postType === "video" &&
+              (supportsDuetAndStitch &&
                 (capabilities.duetDisabled || capabilities.stitchDisabled))) && (
               <p className="text-xs text-muted-foreground">
                 Greyed-out options are turned off in this account&apos;s
@@ -338,10 +324,6 @@ export default function TikTokPostSettings({
   );
 }
 
-/**
- * One "Allow users to" checkbox. Unticked by default; greyed out and
- * unticked when the creator turned the interaction off in TikTok.
- */
 function InteractionCheckbox({
   id,
   label,
@@ -352,15 +334,15 @@ function InteractionCheckbox({
   readonly id: string;
   readonly label: string;
   readonly isTurnedOffByCreator: boolean;
-  /** The stored disable_* flag; only an explicit false means allowed. */
   readonly isDisabledOption: boolean | undefined;
   readonly onChange: (isAllowed: boolean) => void;
 }) {
+  const isAllowedByUser = isDisabledOption === false;
   return (
     <div className="flex items-center gap-2">
       <Checkbox
         id={id}
-        checked={!isTurnedOffByCreator && isDisabledOption === false}
+        checked={!isTurnedOffByCreator && isAllowedByUser}
         disabled={isTurnedOffByCreator}
         onCheckedChange={(checkedState) => onChange(checkedState === true)}
       />
@@ -374,7 +356,6 @@ function InteractionCheckbox({
   );
 }
 
-/** One commercial disclosure choice with TikTok's explanation under it. */
 function DisclosureOption({
   id,
   label,

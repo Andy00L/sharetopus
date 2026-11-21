@@ -1,12 +1,14 @@
 import "server-only";
-import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
-import type { PinterestPostResult } from "@/lib/api/pinterest/post/postToPinterest";
-import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
+
+import type { CreatedVia, MediaType } from "@/db/schema";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import type { CreatedVia, MediaType } from "@/db/schema";
+import { postToPinterest } from "@/lib/api/pinterest/post/postToPinterest";
+import type { PinterestPostResult } from "@/lib/api/pinterest/post/postToPinterest";
+import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 
 interface PinterestDirectPostConfig {
   account: SocialAccount;
@@ -31,7 +33,7 @@ interface PinterestDirectPostConfig {
   batchId: string;
   mediaType: string;
   postType: MediaType;
-  mediaUrl: string;
+  mediaUrl: string | null;
   scheduledPostId?: string;
   createdVia: CreatedVia;
 }
@@ -43,10 +45,7 @@ type PinterestPassthrough = {
 export async function directPostForPinterestAccounts(
   config: PinterestDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
-  return directPostForAccountsGeneric<
-    PinterestPassthrough,
-    PinterestPostResult
-  >(
+  return directPostForAccountsGeneric<PinterestPassthrough, PinterestPostResult>(
     {
       platform: "pinterest",
       logPrefix: "[Pinterest Direct Post]",
@@ -60,30 +59,55 @@ export async function directPostForPinterestAccounts(
     },
     { config },
     {
-      call: async (accessToken, pt) =>
+      validate: (passthrough) => {
+        const { postType, boards, mediaUrl, mediaPath } = passthrough.config;
+        if (!boards.boardID) {
+          return buildDirectPostRefusal("No board selected for Pinterest", "invalid_input");
+        }
+        if (postType === "text") {
+          return buildDirectPostRefusal(
+            "Pinterest does not support text posts",
+            "invalid_input",
+          );
+        }
+        if (postType === "image" && !mediaUrl) {
+          return buildDirectPostRefusal(
+            "Media URL is required for Pinterest image pins",
+            "invalid_input",
+          );
+        }
+        if (postType === "video" && !mediaPath) {
+          return buildDirectPostRefusal(
+            "Media file is required for Pinterest video pins",
+            "invalid_input",
+          );
+        }
+        return null;
+      },
+      call: async (accessToken, passthrough) =>
         postToPinterest({
           accessToken,
-          boardId: pt.config.boards.boardID,
-          title: pt.config.accountContent.title,
-          description: pt.config.accountContent.description,
-          link: pt.config.accountContent.link,
-          mediaPath: pt.config.mediaPath,
-          mediaType: pt.config.mediaType,
-          fileName: pt.config.fileName,
-          coverTimestamp: pt.config.coverTimestamp,
-          postType: pt.config.postType,
-          mediaUrl: pt.config.mediaUrl,
+          boardId: passthrough.config.boards.boardID,
+          title: passthrough.config.accountContent.title,
+          description: passthrough.config.accountContent.description,
+          link: passthrough.config.accountContent.link,
+          mediaPath: passthrough.config.mediaPath,
+          mediaType: passthrough.config.mediaType,
+          fileName: passthrough.config.fileName,
+          coverTimestamp: passthrough.config.coverTimestamp,
+          postType: passthrough.config.postType,
+          mediaUrl: passthrough.config.mediaUrl,
         }),
-      toHistoryFields: (postResult, pt, cfg) => ({
-        content_id: postResult.postId ?? "",
-        media_url: postResult.postUrl ?? null,
+      toHistoryFields: (postResult, passthrough, genericConfig) => ({
+        content_id: postResult.postId,
+        media_url: postResult.postUrl,
         status: "posted",
         extra: {
           post_data: postResult.data,
-          post_type: cfg.postType,
+          post_type: genericConfig.postType,
           posted_at: new Date().toISOString(),
-          board_id: pt.config.boards.boardID,
-          board_name: pt.config.boards.boardName,
+          board_id: passthrough.config.boards.boardID,
+          board_name: passthrough.config.boards.boardName,
         },
       }),
     },

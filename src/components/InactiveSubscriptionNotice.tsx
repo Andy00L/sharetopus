@@ -2,12 +2,6 @@ import type { InactiveSubscriptionStatus } from "@/actions/checkActiveSubscripti
 import { LoadFailedNotice } from "@/components/LoadFailedNotice";
 import { SubscriptionPrompt } from "@/components/SubscriptionPrompt";
 
-/**
- * What a gated page renders when the subscription check grants no access.
- * "none" gets the subscribe prompt. "unavailable" means the check failed on
- * our side, so a paying user gets a retry instead of an offer to buy the
- * plan they already have.
- */
 export function InactiveSubscriptionNotice({
   status,
 }: {

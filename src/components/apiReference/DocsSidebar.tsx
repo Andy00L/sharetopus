@@ -1,20 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 
-/** Docs sidebar that highlights the section under the sticky header (IntersectionObserver, 96px offset). */
+const ROOT_MARGIN_BELOW_STICKY_HEADER = "-96px 0px -55% 0px";
+
 export function DocsSidebar({ items }: { items: SidebarItem[] }) {
   const [activeId, setActiveId] = useState<string>(items[0]?.id ?? "");
 
-  useEffect(() => {
+  const highlightVisibleSection = useCallback((sidebarNav: HTMLElement | null) => {
+    if (!sidebarNav) return;
     const sections = items
       .map((item) => document.getElementById(item.id))
       .filter((element): element is HTMLElement => element !== null);
     if (sections.length === 0) return;
 
-    // Activating the topmost visible section keeps fast scrolls from leaving a stale highlight.
     const visibleTops = new Map<string, number>();
     const observer = new IntersectionObserver(
       (entries) => {
@@ -32,14 +33,18 @@ export function DocsSidebar({ items }: { items: SidebarItem[] }) {
           setActiveId(topmost[0]);
         }
       },
-      { rootMargin: "-96px 0px -55% 0px", threshold: 0 }
+      { rootMargin: ROOT_MARGIN_BELOW_STICKY_HEADER, threshold: 0 }
     );
     sections.forEach((section) => observer.observe(section));
     return () => observer.disconnect();
   }, [items]);
 
   return (
-    <nav aria-label="API sections" className="sticky top-24 space-y-0.5">
+    <nav
+      ref={highlightVisibleSection}
+      aria-label="API sections"
+      className="sticky top-24 space-y-0.5"
+    >
       {items.map((item) => (
         <a
           key={item.id}

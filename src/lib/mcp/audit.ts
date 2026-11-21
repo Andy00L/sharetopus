@@ -47,24 +47,6 @@ function oauthClientIdFromPrincipal(principal: McpPrincipal): string | null {
   }
 }
 
-/**
- * Appends a row to mcp_audit_log. The INSERT is awaited so the caller
- * knows the truth-source row landed. mcp_audit_log has an UPDATE-blocking
- * trigger, so this is truly append-only.
- *
- * session_id holds the per-request correlation ID: the stateless
- * transport has no longer-lived session to record. No client name is
- * stored per call, because clientInfo arrives only on the initialize
- * handshake, which never reaches a tool. To see which client made a
- * call, JOIN mcp_oauth_clients on oauth_client_id.
- *
- * Called by: withMcpTool (src/lib/mcp/withMcpTool.ts), once per tool call
- * Tables touched: mcp_audit_log (insert only)
- *
- * Failure modes:
- *   If the insert fails we log the error but do not throw. A broken
- *   audit row should not block the user's request.
- */
 export async function logToolCall(entry: AuditEntry): Promise<void> {
   try {
     const redacted = entry.args ? redactSecrets(entry.args) : null;

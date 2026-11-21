@@ -1,20 +1,5 @@
 import "server-only";
 
-/**
- * x402 v2 HTTP transport helpers.
- *
- * v2 moved the protocol data into headers: the client submits payment proof
- * in PAYMENT-SIGNATURE (v1: X-PAYMENT), the server answers 402s with a
- * base64 PAYMENT-REQUIRED header (the JSON body is non-normative), and
- * settlement details return in PAYMENT-RESPONSE (v1: X-PAYMENT-RESPONSE).
- * Per the migration guide, v2 libraries accept both header generations, so
- * these helpers read the v2 name first and fall back to v1, and emit both
- * header generations on responses.
- *
- * Called by: x402PaidEndpoint, register/connect routes, responses/ builders
- * Tables touched: none
- */
-
 import type { NextRequest } from "next/server";
 import type { PaymentRequired, PaymentRequirements } from "@x402/core/types";
 import type { NetworkConfig } from "@/lib/x402/networks";
@@ -26,7 +11,6 @@ export function readPaymentHeader(req: NextRequest): string | null {
   return req.headers.get("payment-signature") ?? req.headers.get("x-payment");
 }
 
-/** Settlement response headers for both header generations. */
 export function paymentResponseHeaders(
   encodedSettleResponse: string
 ): Record<string, string> {
@@ -38,28 +22,18 @@ export function paymentResponseHeaders(
 
 export type BuildPaymentRequirementsResult =
   | { ok: true; requirements: PaymentRequirements }
-  | { ok: false; reason: "fee_payer_unavailable"; message: string };
+  | { ok: false; reason: "fee_payer_unavailable" | "invalid_amount"; message: string };
 
-/**
- * One exact-scheme USDC requirement for the given network and price.
- *
- * extra carries the USDC EIP-712 domain (name/version) on EVM networks:
- * exact-scheme clients need it to sign the EIP-3009 authorization and the
- * official @x402/evm client refuses to sign without it. assetTransferMethod
- * is omitted because eip3009 is the scheme default. On Solana, extra carries
- * the facilitator's feePayer (from the facilitator /supported endpoint,
- * cached in solana/feePayer.ts): the official @x402/svm client refuses to
- * build a transaction without it, and the facilitator rejects requirements
- * whose feePayer is not one of its signers. When the fee payer cannot be
- * resolved, the failure variant is returned instead of an unpayable 402 with
- * an empty extra; the EVM branch never awaits and is unaffected by a
- * fee-payer outage.
- */
 export async function buildPaymentRequirements(params: {
   network: NetworkConfig;
   amountUsdc: number;
   recipientAddress: string;
 }): Promise<BuildPaymentRequirementsResult> {
+  const atomicAmount = usdcToAtomic(params.amountUsdc, params.network.usdcDecimals);
+  if (!atomicAmount.ok) {
+    console.error(`[buildPaymentRequirements] Refusing to charge: ${atomicAmount.message}`);
+    return { ok: false, reason: "invalid_amount", message: "Pricing for this action is misconfigured." };
+  }
   const extraResult = await buildRequirementsExtra(params.network);
   if (!extraResult.ok) return extraResult;
   return {
@@ -68,7 +42,7 @@ export async function buildPaymentRequirements(params: {
       scheme: "exact",
       network: params.network.caipNetwork,
       asset: params.network.usdcAddress,
-      amount: usdcToAtomic(params.amountUsdc, params.network.usdcDecimals),
+      amount: atomicAmount.atomicAmount.toString(),
       payTo: params.recipientAddress,
       maxTimeoutSeconds: 300,
       extra: extraResult.extra,
@@ -76,7 +50,6 @@ export async function buildPaymentRequirements(params: {
   };
 }
 
-/** Scheme extra per network family. The EVM arm is frozen (see above). */
 async function buildRequirementsExtra(
   network: NetworkConfig
 ): Promise<
@@ -106,9 +79,8 @@ async function buildRequirementsExtra(
 
 export type BuildPaymentRequiredResult =
   | { ok: true; paymentRequired: PaymentRequired }
-  | { ok: false; reason: "fee_payer_unavailable"; message: string };
+  | Extract<BuildPaymentRequirementsResult, { ok: false }>;
 
-/** Full v2 PaymentRequired object for a 402 response (header and body). */
 export async function buildPaymentRequired(params: {
   resourceUrl: string;
   network: NetworkConfig;

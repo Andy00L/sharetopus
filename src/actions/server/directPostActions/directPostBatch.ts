@@ -1,30 +1,28 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
+import { getServerSignedViewUrls } from "@/actions/server/data/getServerSignedViewUrl";
 import {
   describeAccountMismatch,
   loadOwnedAccountPlatforms,
 } from "@/actions/server/data/loadOwnedAccountPlatforms";
-import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
-import { pending_direct_posts } from "@/db/schema";
+import { content_history, pending_direct_posts } from "@/db/schema";
 import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
-import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
+import type { PostNowEventData } from "@/inngest/events/postNow";
+import { buildDefaultPlatformOptions } from "@/inngest/events/postOptions";
 import type { PlatformOptions } from "@/lib/types/dbTypes";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
-import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { randomUUID } from "node:crypto";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { DIRECT_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { validatePostFields } from "../scheduleActions/validatePostFields";
 
 const MAX_BATCH_SIZE = 30;
-const RATE_LIMIT = 20;
-const RATE_WINDOW_SECONDS = 60;
 
 export type DirectPostData = {
   socialAccountId: string;
@@ -35,19 +33,14 @@ export type DirectPostData = {
   mediaStoragePath: string;
   coverTimestamp?: number;
   platformOptions?: PlatformOptions;
+  link?: string;
   pinterestBoardId?: string;
   pinterestBoardName?: string;
-  pinterestLink?: string;
   idempotency_key?: string;
-  /** Registry-provider per-post options; null/absent for legacy platforms. */
-  postOptions?: Record<string, unknown> | null;
+  batch_id?: string;
+  registryOptions?: Record<string, unknown> | null;
 };
 
-/**
- * A failed batch carries `failure` (see PostBatchFailure) so each caller can
- * answer in its own terms; `message` is safe to show and never carries a
- * database error.
- */
 export type DirectPostBatchResult = {
   message: string;
   batchId: string;
@@ -61,26 +54,19 @@ export type DirectPostBatchResult = {
   eventIds: string[];
 } & ({ success: true } | { success: false; failure: PostBatchFailure });
 
-/**
- * Dispatches N direct-post events in a single batch. Shared core for
- * web/MCP/x402.
- *
- * **Authentication:** Does not call Clerk. Caller validates `principalId`.
- * **Rate limiting:** 20 calls per 60s per source.
- * **Tables:** social_accounts (ownership + platform match), pending_direct_posts (locks).
- * **Inngest events:** post.now per accepted post.
- *
- * Flow:
- *   1. Size + per-post validation (Pinterest fields, caption length, media presence)
- *   2. Rate limit
- *   3. Ownership + platform match (1 query, IN(...))
- *   4. Mint URLs cached by media path
- *   5. Build PostNowEventData per post
- *   6. Idempotency keys derive from batch_id when agent supplies it
- *   7. dispatchPostNowEvents (lock insert + inngest.send)
- *
- * Single post = batch with N=1. Same code path.
- */
+export type DirectPostOutcome =
+  | { eventId: string; status: "processing" }
+  | { eventId: string; status: "published"; contentId: string | null }
+  | { eventId: string; status: "failed"; failureReason: string | null };
+
+export type DirectPostBatchOutcomesResult =
+  | { success: true; outcomes: DirectPostOutcome[] }
+  | { success: false; message: string };
+
+export type KeyedDirectPostLookup =
+  | { success: true; batchId: string | null }
+  | { success: false; message: string };
+
 export async function directPostBatch(
   posts: DirectPostData[],
   principalId: string,
@@ -103,7 +89,6 @@ export async function directPostBatch(
   };
 
   try {
-    // Step 0: shape checks
     if (!posts || posts.length === 0) {
       return {
         success: false,
@@ -125,14 +110,11 @@ export async function directPostBatch(
       };
     }
 
-    // Step 1: rate limit. A limiter that could not answer is not the
-    // caller's doing, so it is not reported as "too many requests".
-    const rateCheck = await checkRateLimit(
-      `${source}_direct_post_batch`,
-      principalId,
-      RATE_LIMIT,
-      RATE_WINDOW_SECONDS,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: `${source}_direct_post_batch`,
+      identifier: principalId,
+      rule: DIRECT_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,
@@ -145,12 +127,11 @@ export async function directPostBatch(
       };
     }
 
-    // Step 2: per-post validation, partial success
     const rejected: PostRejection[] = [];
     const validPosts: DirectPostData[] = [];
 
     for (const post of posts) {
-      const validationError = validatePostFields(post, principalId);
+      const validationError = validateDirectPostFields(post, principalId);
       if (validationError) {
         rejected.push({
           socialAccountId: post.socialAccountId ?? "unknown",
@@ -178,7 +159,6 @@ export async function directPostBatch(
       };
     }
 
-    // Step 3: ownership + platform match
     const ownership = await loadOwnedAccountPlatforms(
       validPosts.map((post) => post.socialAccountId),
       principalId,
@@ -228,11 +208,10 @@ export async function directPostBatch(
       };
     }
 
-    // Step 4: mint URLs cached by media path
-    const urlResult = await buildMediaUrlsCached(ownedPosts, principalId);
-    if (!urlResult.success) {
+    const mediaCheck = await confirmMediaFilesExist(ownedPosts);
+    if (!mediaCheck.success) {
       console.error(
-        `[directPostBatch] [req=${requestId ?? "?"}] ${urlResult.message}`,
+        `[directPostBatch] [req=${requestId ?? "?"}] ${mediaCheck.message}`,
       );
       return {
         success: false,
@@ -249,19 +228,15 @@ export async function directPostBatch(
       };
     }
 
-    // Step 5: build events
     const events = buildEventPayloads(
       ownedPosts,
       batchId,
-      urlResult.signedByPath,
-      urlResult.tiktokByPath,
       principalId,
       source,
       useAgentBatchId,
       requestId,
     );
 
-    // Step 6: lock + dispatch
     const dispatch = await dispatchPostNowEvents(events);
     if (!dispatch.success) {
       console.error(
@@ -283,19 +258,42 @@ export async function directPostBatch(
       };
     }
 
-    const duplicates = events.length - dispatch.freshCount;
+    for (const refusedEvent of dispatch.refused) {
+      rejected.push({
+        socialAccountId: refusedEvent.socialAccountId,
+        code: "invalid_input",
+        reason: refusedEvent.message,
+      });
+    }
+    const duplicates = events.length - dispatch.refused.length - dispatch.freshCount;
+    if (dispatch.freshCount + duplicates === 0) {
+      return {
+        success: false,
+        failure: "rejected",
+        message: "All posts failed validation.",
+        batchId,
+        details: {
+          total: posts.length,
+          dispatched: 0,
+          duplicates: 0,
+          rejected,
+        },
+        eventIds: [],
+      };
+    }
 
+    const [firstDispatch] = dispatch.dispatches;
     return {
       success: true,
       message: `Dispatched ${dispatch.freshCount} post(s)${duplicates > 0 ? `, ${duplicates} already existed (idempotent retry)` : ""}.`,
-      batchId,
+      batchId: firstDispatch?.batchId ?? batchId,
       details: {
         total: posts.length,
         dispatched: dispatch.freshCount,
         duplicates,
         rejected,
       },
-      eventIds: dispatch.eventIds,
+      eventIds: dispatch.dispatches.map((postNowDispatch) => postNowDispatch.eventId),
     };
   } catch (err) {
     console.error(
@@ -313,23 +311,15 @@ export async function directPostBatch(
   }
 }
 
-/**
- * Pre-payment check for one post: the field, media-path, ownership and
- * platform rules directPostBatch applies, plus a duplicate idempotency key,
- * without the rate limit or the dispatch. A paid caller (x402 post-now) runs
- * it before settlement so a post that cannot be dispatched costs nothing.
- * directPostBatch still enforces the same rules when it runs.
- */
 export async function preflightDirectPost(
   post: DirectPostData,
   principalId: string,
 ): Promise<PreflightResult> {
-  const validationError = validatePostFields(post, principalId);
+  const validationError = validateDirectPostFields(post, principalId);
   if (validationError) {
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
   }
 
-  // A paying agent sees these messages: the database text stays in the log.
   const ownership = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
   if (!ownership.success) {
     console.error(`[preflightDirectPost] ${ownership.message}`);
@@ -353,23 +343,13 @@ export async function preflightDirectPost(
     };
   }
 
-  // dispatchPostNowEvents skips an already-used key and reports success, so a
-  // paid retry with the same key would be charged for a post it never gets.
   if (post.idempotency_key) {
-    const { data: existingLocks, error: lockLookupError } = await runQuery(
-      db
-        .select({ event_id: pending_direct_posts.event_id })
-        .from(pending_direct_posts)
-        .where(
-          and(
-            eq(pending_direct_posts.principal_id, principalId),
-            eq(pending_direct_posts.idempotency_key, post.idempotency_key),
-          ),
-        )
-        .limit(1),
-    );
-    if (lockLookupError) {
-      console.error(`[preflightDirectPost] Idempotency lookup failed: ${lockLookupError.message}`);
+    const keyedDispatch = await readKeyedDirectPost({
+      principalId,
+      idempotencyKey: post.idempotency_key,
+    });
+    if (!keyedDispatch.success) {
+      console.error(`[preflightDirectPost] Idempotency lookup failed: ${keyedDispatch.message}`);
       return {
         ok: false,
         httpStatus: 500,
@@ -377,7 +357,7 @@ export async function preflightDirectPost(
         message: "Could not check the idempotency key.",
       };
     }
-    if (existingLocks.length > 0) {
+    if (keyedDispatch.batchId !== null) {
       return {
         ok: false,
         httpStatus: 409,
@@ -390,180 +370,183 @@ export async function preflightDirectPost(
   return { ok: true };
 }
 
-// ---------- helpers ----------
+export async function readKeyedDirectPost(params: {
+  principalId: string;
+  idempotencyKey: string;
+}): Promise<KeyedDirectPostLookup> {
+  const { data: keyedRows, error } = await runQuery(
+    db
+      .select({ batch_id: pending_direct_posts.batch_id })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          eq(pending_direct_posts.principal_id, params.principalId),
+          eq(pending_direct_posts.idempotency_key, params.idempotencyKey),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) return { success: false, message: error.message };
+  return { success: true, batchId: keyedRows[0]?.batch_id ?? null };
+}
 
-/** Returns null if valid, error message if invalid. */
-function validatePostFields(
+export async function readDirectPostBatchOutcomes(params: {
+  batchId: string;
+  principalId: string;
+  target: { socialAccountId: string; platform: Platform };
+}): Promise<DirectPostBatchOutcomesResult> {
+  const [dispatchRead, historyRead] = await Promise.all([
+    runQuery(
+      db
+        .select({
+          event_id: pending_direct_posts.event_id,
+          status: pending_direct_posts.status,
+          failure_reason: pending_direct_posts.failure_reason,
+          social_account_id: pending_direct_posts.social_account_id,
+          platform: pending_direct_posts.platform,
+        })
+        .from(pending_direct_posts)
+        .where(
+          and(
+            eq(pending_direct_posts.batch_id, params.batchId),
+            eq(pending_direct_posts.principal_id, params.principalId),
+            eq(pending_direct_posts.social_account_id, params.target.socialAccountId),
+            eq(pending_direct_posts.platform, params.target.platform),
+          ),
+        )
+        .orderBy(asc(pending_direct_posts.created_at), asc(pending_direct_posts.event_id))
+        .limit(MAX_BATCH_SIZE),
+    ),
+    runQuery(
+      db
+        .select({
+          social_account_id: content_history.social_account_id,
+          platform: content_history.platform,
+          content_id: content_history.content_id,
+        })
+        .from(content_history)
+        .where(
+          and(
+            eq(content_history.batch_id, params.batchId),
+            eq(content_history.principal_id, params.principalId),
+            eq(content_history.social_account_id, params.target.socialAccountId),
+            eq(content_history.platform, params.target.platform),
+            isNull(content_history.scheduled_post_id),
+          ),
+        )
+        .limit(MAX_BATCH_SIZE),
+    ),
+  ]);
+  if (dispatchRead.error) {
+    return { success: false, message: `Dispatch read failed: ${dispatchRead.error.message}` };
+  }
+  if (historyRead.error) {
+    return { success: false, message: `Content history read failed: ${historyRead.error.message}` };
+  }
+
+  const contentIdByTarget = new Map<string, string>();
+  for (const historyRow of historyRead.data) {
+    const targetKey = `${historyRow.social_account_id}:${historyRow.platform}`;
+    if (!contentIdByTarget.has(targetKey)) contentIdByTarget.set(targetKey, historyRow.content_id);
+  }
+
+  const outcomes = dispatchRead.data.map((dispatchRow): DirectPostOutcome => {
+    switch (dispatchRow.status) {
+      case "processing":
+        return { eventId: dispatchRow.event_id, status: "processing" };
+      case "completed":
+        return {
+          eventId: dispatchRow.event_id,
+          status: "published",
+          contentId:
+            contentIdByTarget.get(`${dispatchRow.social_account_id}:${dispatchRow.platform}`) ?? null,
+        };
+      case "failed":
+        return {
+          eventId: dispatchRow.event_id,
+          status: "failed",
+          failureReason: dispatchRow.failure_reason,
+        };
+      default: {
+        const unhandledStatus: never = dispatchRow.status;
+        return { eventId: dispatchRow.event_id, status: unhandledStatus };
+      }
+    }
+  });
+  return { success: true, outcomes };
+}
+
+function validateDirectPostFields(
   post: DirectPostData,
   principalId: string,
 ): string | null {
-  if (!post.socialAccountId || !post.platform || !post.postType) {
-    return "Missing required fields (socialAccountId, platform, postType).";
-  }
-  if (post.postType !== "text" && !post.mediaStoragePath) {
-    return `Media file is required for ${post.postType} posts.`;
-  }
-
-  // Vuln 1 fix: prevent cross-user media file reference.
-  if (
-    post.mediaStoragePath &&
-    !post.mediaStoragePath.startsWith(`${principalId}/`)
-  ) {
-    return "Media path is not owned by the calling principal.";
-  }
-  // Pinterest rules
-  if (post.platform === "pinterest" && !post.pinterestBoardId) {
-    return "Pinterest posts require pinterestBoardId.";
-  }
-  if (
-    post.platform !== "pinterest" &&
-    (post.pinterestBoardId || post.pinterestLink)
-  ) {
-    return "Pinterest-specific fields are only valid when platform='pinterest'.";
-  }
-
-  // Caption length. Registry platforms answer from their catalog rules; the
-  // legacy map alone gave every one of them the 2200 default.
-  if (post.description) {
-    const limit = resolvePlatformTextLimit(post.platform);
-    if (post.description.length > limit) {
-      return `Caption exceeds ${post.platform} limit of ${limit} chars (got ${post.description.length}).`;
-    }
-  }
-
-  return null;
+  return validatePostFields(
+    {
+      socialAccountId: post.socialAccountId,
+      platform: post.platform,
+      postType: post.postType,
+      mediaStoragePath: post.mediaStoragePath,
+      description: post.description,
+      link: post.link,
+      pinterestBoardId: post.pinterestBoardId,
+    },
+    principalId,
+  );
 }
 
-async function buildMediaUrlsCached(
+async function confirmMediaFilesExist(
   posts: DirectPostData[],
-  principalId: string,
-): Promise<
-  | {
-      success: true;
-      signedByPath: Map<string, string>;
-      tiktokByPath: Map<string, string>;
-    }
-  | { success: false; message: string }
-> {
-  const signedPaths = new Set<string>();
-  const tiktokPaths = new Set<string>();
-
-  for (const post of posts) {
-    if (!post.mediaStoragePath) continue;
-    if (post.platform === "tiktok") tiktokPaths.add(post.mediaStoragePath);
-    else signedPaths.add(post.mediaStoragePath);
+): Promise<{ success: true } | { success: false; message: string }> {
+  const mediaPaths = posts
+    .map((post) => post.mediaStoragePath)
+    .filter((mediaPath) => mediaPath !== "");
+  const signedUrls = await getServerSignedViewUrls(mediaPaths);
+  if (!signedUrls.success) {
+    return { success: false, message: `Media file check failed: ${signedUrls.message}` };
   }
-
-  const signedByPath = new Map<string, string>();
-  const tiktokByPath = new Map<string, string>();
-
-  for (const path of signedPaths) {
-    const result = await getServerSignedViewUrl(path);
-    if (!result.success) {
-      return {
-        success: false,
-        message: `Failed to mint signed URL for ${path}: ${result.message}`,
-      };
-    }
-    signedByPath.set(path, result.url);
-  }
-
-  for (const path of tiktokPaths) {
-    const result = buildProxiedTikTokMediaUrl({
-      mediaPath: path,
-      principalId,
-    });
-    if (!result.success) {
-      return {
-        success: false,
-        message: `Failed to build TikTok URL for ${path}: ${result.message}`,
-      };
-    }
-    tiktokByPath.set(path, result.url);
-  }
-
-  return { success: true, signedByPath, tiktokByPath };
+  return { success: true };
 }
 
 function buildEventPayloads(
   posts: DirectPostData[],
   batchId: string,
-  signedByPath: Map<string, string>,
-  tiktokByPath: Map<string, string>,
   principalId: string,
   source: CreatedVia,
   useAgentBatchIdForIdempotency: boolean,
   requestId?: string | null,
-): { name: "post.now"; data: PostNowEventData }[] {
+): PostNowEventData[] {
   return posts.map((post, index) => {
-    const fileName = post.mediaStoragePath
-      ? (post.mediaStoragePath.split("/").pop() ?? "")
-      : "";
-    const mediaType = deriveMediaMimeType(fileName, post.postType);
-
-    const platformOptions: PlatformOptions = post.platformOptions ?? {
-      tiktok: {
-        disableComment: false,
-        disableDuet: false,
-        disableStitch: false,
-      },
-      pinterest: {
-        privacyLevel: "PUBLIC",
-        board: post.pinterestBoardId ?? "",
-        link: post.pinterestLink ?? "",
-      },
-      linkedin: { visibility: "PUBLIC" },
-    };
-
-    const board: PostNowEventData["board"] =
-      post.platform === "pinterest"
-        ? {
-            boardID: post.pinterestBoardId ?? "",
-            boardName: post.pinterestBoardName ?? "Board",
-            accountId: post.socialAccountId,
-            isSelected: true,
-          }
-        : null;
-
-    const mediaUrl =
-      post.platform !== "tiktok" && post.mediaStoragePath
-        ? (signedByPath.get(post.mediaStoragePath) ?? null)
-        : null;
-    const tiktokMediaUrl =
-      post.platform === "tiktok" && post.mediaStoragePath
-        ? (tiktokByPath.get(post.mediaStoragePath) ?? null)
-        : null;
-
-    const data: PostNowEventData = {
-      batch_id: batchId,
+    const link = post.link ?? "";
+    return {
+      dispatch_id: randomUUID(),
+      batch_id: post.batch_id ?? batchId,
       principal_id: principalId,
       social_account_id: post.socialAccountId,
       platform: post.platform,
       post_type: post.postType,
       account_content: {
-        accountId: post.socialAccountId,
         title: post.title ?? "",
         description: post.description ?? "",
-        link: post.pinterestLink ?? "",
-        isCustomized: true,
+        link,
       },
-      platform_options: platformOptions,
-      board,
-      cover_timestamp: post.coverTimestamp ?? 1000,
-      file_name: fileName,
-      media_type: mediaType,
+      platform_options:
+        post.platformOptions ??
+        buildDefaultPlatformOptions({ pinterestBoardId: post.pinterestBoardId, link }),
+      board:
+        post.platform === "pinterest"
+          ? {
+              boardID: post.pinterestBoardId ?? "",
+              boardName: post.pinterestBoardName ?? null,
+            }
+          : null,
+      cover_timestamp: post.coverTimestamp ?? null,
       media_path: post.mediaStoragePath,
-      media_url: mediaUrl,
-      tiktok_media_url: tiktokMediaUrl,
-      dispatch_id: randomUUID(),
       created_via: source,
       idempotency_key:
         post.idempotency_key ??
         (useAgentBatchIdForIdempotency ? `${batchId}:${index}` : undefined),
       request_id: requestId ?? null,
-      post_options: post.postOptions ?? null,
+      post_options: post.registryOptions ?? null,
     };
-
-    return { name: "post.now" as const, data };
   });
 }

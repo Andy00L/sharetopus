@@ -1,7 +1,9 @@
 import "server-only";
 
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import { toPublishFailureReason } from "@/actions/server/data/storageRead";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -31,15 +33,6 @@ type XPassthrough = {
   config: XDirectPostConfig;
 };
 
-/**
- * Publish one tweet for one X account via the shared direct-post pipeline.
- * Text posts skip media entirely; image/video posts fetch the file from
- * storage and hand the buffer to the chunked upload in postToX.
- *
- * Only called from the Inngest workers (post.now and post.due), which
- * already rate limit at the batch layer, so no per-account checkRateLimit
- * hook here.
- */
 export async function directPostForXAccounts(
   config: XDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -62,11 +55,10 @@ export async function directPostForXAccounts(
           passthrough.config.postType !== "text" &&
           !passthrough.config.mediaPath
         ) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media file is required for X image and video posts",
-          };
+          return buildDirectPostRefusal(
+            "Media file is required for X image and video posts",
+            "invalid_input",
+          );
         }
         return null;
       },
@@ -86,7 +78,7 @@ export async function directPostForXAccounts(
             "[X Direct Post] Failed to fetch media:",
             fileResult.message,
           );
-          return { success: false, count: 0, message: fileResult.message };
+          return buildDirectPostRefusal(fileResult.message, toPublishFailureReason(fileResult.reason));
         }
         return {
           success: true,

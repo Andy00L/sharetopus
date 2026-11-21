@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -16,6 +16,7 @@ import {
   restInputToDirectPostData,
 } from "@/lib/api/rest/adapters/restInputToScheduledPost";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
+import type { PostDispatch } from "@/lib/api/rest/openapi/responseSchemas";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
@@ -23,23 +24,10 @@ import { directPostBatch } from "@/actions/server/directPostActions/directPostBa
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 
-/**
- * POST /v1/posts -- create a single post.
- *
- * scheduled_at omitted -> directPostBatch (publishes immediately).
- * scheduled_at provided -> schedulePostBatch.
- *
- * Returns 200 with PostDTO on success. A refused post answers what the
- * caller can act on (restPostBatchFailureResponse): 400 for invalid input
- * or an account on another platform, 404 for an account that is not the
- * caller's, 429 for the rate limit or the platform's daily quota, 503 when
- * a check could not run. Only a server failure answers 500.
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.create",
   handler: async (ctx, request) => {
-    // Step 1: parse JSON body. Reject malformed cleanly.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -57,7 +45,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 2: Zod validate. Map issues to standard validation_error.
     const validationResult = PostCreateInputSchema.safeParse(rawBody);
     if (!validationResult.success) {
       return restErrorResponse(
@@ -69,11 +56,9 @@ export const POST = withRestEndpoint({
     }
     const validatedInput = validationResult.data;
 
-    // Step 3: dispatch to correct batch function.
     const isDirectPost = !validatedInput.scheduled_at;
 
     if (isDirectPost) {
-      // Immediate publish path via directPostBatch.
       const directPostInput = restInputToDirectPostData(validatedInput);
       const batchResult = await directPostBatch(
         [directPostInput],
@@ -87,51 +72,39 @@ export const POST = withRestEndpoint({
         return restPostBatchFailureResponse(batchResult, ctx.requestId);
       }
 
-      // directPostBatch returns eventIds, not post IDs. Look up the
-      // created row by batch_id + principal_id.
-      const { data: postRows, error: rowLookupError } = await runQuery(
-        db
-          .select()
-          .from(scheduled_posts)
-          .where(
-            and(
-              eq(scheduled_posts.batch_id, batchResult.batchId),
-              eq(scheduled_posts.principal_id, ctx.principal.principalId),
-            ),
-          )
-          .orderBy(desc(scheduled_posts.created_at))
-          .limit(1),
-      );
-
-      const postRow = postRows?.[0];
-      if (rowLookupError || !postRow) {
+      const [dispatchId] = batchResult.eventIds;
+      if (!dispatchId) {
         console.error(
-          `[v1/posts POST] direct post row lookup failed for batch_id=${batchResult.batchId}:`,
-          rowLookupError?.message ?? "no row",
+          `[v1/posts POST] dispatch for batch_id=${batchResult.batchId} succeeded without a dispatch id (request_id=${ctx.requestId})`,
         );
         return restErrorResponse(
           "internal_error",
-          "Created post could not be retrieved",
+          "The post was dispatched but its dispatch id is missing",
           ctx.requestId,
         );
       }
 
-      const directPostDto = toPostDTO(postRow);
+      const postDispatch = {
+        dispatch_id: dispatchId,
+        batch_id: batchResult.batchId,
+        status: "processing",
+        platform: validatedInput.platform,
+        social_account_id: validatedInput.social_account_id,
+      } satisfies PostDispatch;
       return {
-        response: NextResponse.json(directPostDto, {
-          status: 200,
+        response: NextResponse.json(postDispatch, {
+          status: 202,
           headers: { "x-request-id": ctx.requestId },
         }),
         auditSummary: {
-          post_id: directPostDto.id,
+          dispatch_id: postDispatch.dispatch_id,
           scheduled: false,
-          platform: directPostDto.platform,
-          batch_id: directPostDto.batch_id,
+          platform: postDispatch.platform,
+          batch_id: postDispatch.batch_id,
         },
       };
     }
 
-    // Scheduled path via schedulePostBatch.
     const schedulePostInput = restInputToSchedulePostData(validatedInput);
     const batchResult = await schedulePostBatch(
       [schedulePostInput],
@@ -144,7 +117,6 @@ export const POST = withRestEndpoint({
       return restPostBatchFailureResponse(batchResult, ctx.requestId);
     }
 
-    // schedulePostBatch returns scheduleIds which are scheduled_posts.id.
     const createdPostId = batchResult.scheduleIds?.[0] ?? null;
     if (!createdPostId) {
       return restErrorResponse(
@@ -190,17 +162,10 @@ export const POST = withRestEndpoint({
   },
 });
 
-/**
- * GET /v1/posts -- paginated list, principal-scoped.
- *
- * Query: status, platform, batch_id, limit (1-100, default 20),
- * cursor (next_cursor of the previous page; keyset on created_at, id).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.list",
   handler: async (ctx, request) => {
-    // Step 1: parse query string.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -215,8 +180,6 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: query scoped to calling principal. and() skips the optional
-    // filters left undefined.
     const { data: fetchedRows, error: queryError } = await runQuery(
       db
         .select()
@@ -249,8 +212,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 3: compute pagination cursor. Over-fetch by 1 to detect
-    // more pages; the extra row never appears in the response payload.
     const { pageRows, nextCursor, hasMore } = toListPage(
       fetchedRows,
       query.limit,

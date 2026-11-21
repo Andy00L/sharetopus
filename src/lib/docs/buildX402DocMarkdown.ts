@@ -7,6 +7,7 @@ import {
 import { fetchX402Pricing } from "@/app/(marketing)/(api-reference)/docs/x402/data/pricing";
 import type {
   CalloutData,
+  CalloutTone,
   DocsSection,
   EndpointOperation,
   ParamTableData,
@@ -25,9 +26,13 @@ import {
  * drift apart. Served at /docs/x402.md via /api/docs/[slug].
  */
 
+const CALLOUT_LABELS: Record<CalloutTone, string> = {
+  warning: "Warning",
+  note: "Note",
+};
+
 function renderCallout(callout: CalloutData): string {
-  const label = callout.tone === "amber" ? "Warning" : "Note";
-  return `> **${label}:** ${callout.text}`;
+  return `> **${CALLOUT_LABELS[callout.tone]}:** ${callout.text}`;
 }
 
 function renderParamTable(paramTable: ParamTableData): string {
@@ -139,7 +144,7 @@ export async function buildX402DocMarkdown(): Promise<string> {
     "",
     `Networks: ${OVERVIEW.networks.join(", ")}.`,
     "",
-    renderCallout({ tone: "amber", text: OVERVIEW.callout }),
+    renderCallout({ tone: "warning", text: OVERVIEW.callout }),
     "",
     `The human-readable version of this reference is ${SITE_ORIGIN}/docs/x402. The site index for agents is ${SITE_ORIGIN}/llms.txt.`,
   ];

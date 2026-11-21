@@ -8,14 +8,9 @@ import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { CUSTOMER_PORTAL_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 
-/**
- * success carries the portal URL in data. A failure with reason
- * "no_subscription" means the user has nothing to manage (the billing
- * buttons then offer a plan); "failed" covers everything else, with a
- * message to show.
- */
 export type CustomerPortalResult =
   | { success: true; message: string; data: string }
   | {
@@ -25,20 +20,6 @@ export type CustomerPortalResult =
       resetIn?: number;
     };
 
-/**
- * Creates a Stripe customer portal session for the authenticated user
- *
- * This function handles the entire process of creating a Stripe customer portal session:
- * 1. Performs rate limiting to prevent abuse (max 20 requests per minute)
- * 2. Verifies the user has an active subscription (active or trialing, or banked referral access)
- * 3. Retrieves the user's Stripe customer ID from the database
- * 4. Creates a Stripe customer portal session with proper return URL
- * 5. Returns the session URL for client-side redirect
- *
- * It is also the browser's only way to ask about the user's subscription:
- * checkActiveSubscription is server-only, and this action reads the user id
- * from the Clerk session.
- */
 export async function createCustomerPortal(): Promise<CustomerPortalResult> {
   try {
     console.log(
@@ -61,12 +42,11 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
     console.log(
       `[CreateCustomerPortal]: Checking rate limits for user: ${userId}`
     );
-    const rateCheck = await checkRateLimit(
-      "createCustomerPortal", // Unique identifier for this operation
-      userId, // User identifier
-      20, // Limit (requests)
-      60 // Window (seconds)
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "createCustomerPortal",
+      identifier: userId,
+      rule: CUSTOMER_PORTAL_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       console.warn(
         `[CreateCustomerPortal]: Rate limit exceeded for user: ${userId}. Reset in: ${
@@ -87,8 +67,6 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
     );
     const subscription = await checkActiveSubscription(userId);
 
-    // Unknown is not "unsubscribed": sending a paying user to checkout
-    // could start a second subscription.
     if (subscription.status === "unavailable") {
       return {
         success: false,
@@ -113,7 +91,6 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
       `[CreateCustomerPortal]: Verified active subscription for user: ${userId}`
     );
 
-    // Retrieve the user's Stripe customer ID from the database
     console.log(
       `[CreateCustomerPortal]: Fetching Stripe customer ID for user: ${userId}`
     );
@@ -126,7 +103,6 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
         .limit(1)
     );
 
-    // A missing users row gets the same reply as a failed lookup.
     const userRow = userRows?.[0];
     if (error || !userRow) {
       console.error(
@@ -140,7 +116,6 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
       };
     }
 
-    // Check if customer ID exists
     if (!userRow.stripe_customer_id) {
       console.error(
         `[CreateCustomerPortal]: No Stripe customer ID found for user: ${userId}`

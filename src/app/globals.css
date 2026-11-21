@@ -117,9 +117,6 @@
   --sidebar: #E9EAE4;
 }
 
-/* Dark column for the dashboard scope: without this, .protected-theme's
-   light cream field would sit under dark cards. Values are the .dark root
-   field and card tones so the dashboard matches the shadcn dark set. */
 .dark .protected-theme {
   --background: oklch(0.141 0.005 285.823);
   --sidebar: oklch(0.21 0.006 285.885);
@@ -134,17 +131,7 @@
   }
 }
 
-/* ============================================================
-   Marketing layout scope (sharetopus.com landing, /pricing, etc.)
-   ReelFarm-matched neutral palette + DM Sans typography.
-   Scoped to .marketing-theme only. Protected routes are untouched.
-   ============================================================ */
 .marketing-theme {
-  /* ===== ReelFarm-matched neutral palette =====
-     Page bg: --cream. Layered sections: --cream-2. Cards: pure white.
-     Dark CTA band: --ink bg + --cream text.
-     Orange NEVER on backgrounds; only on accents (buttons, eyebrows,
-     mark, feature numbers, "Best deal" chip, stars, checkmarks). */
   --cream:    #F3F4EF;
   --cream-2:  #E9EAE4;
   --ink:      #1C1B18;
@@ -158,7 +145,6 @@
   --shadow-soft: 0 24px 60px -20px rgba(28,27,24,0.20), 0 0 0 1px rgba(28,27,24,0.04);
   --shadow-hard: 6px 6px 0 0 var(--ink);
 
-  /* shadcn token overrides resolve via the cream palette inside marketing. */
   --background: var(--cream);
   --foreground: var(--ink);
   --card: #ffffff;
@@ -177,38 +163,15 @@
   --input: var(--line-2);
   --ring: var(--orange);
 
-  /* Typography: DM Sans primary. Serif + condensed reserved for future use. */
-  --display:   var(--font-dm-sans), system-ui, sans-serif;
-  --body:      var(--font-dm-sans), system-ui, sans-serif;
-  --serif:     'Cormorant Garamond', serif;
-  --condensed: 'Bebas Neue', 'Impact', sans-serif;
-
   font-family: var(--font-dm-sans), system-ui, sans-serif;
 }
 
-/* Legacy helper classes (kept for any markup that still references them).
-   Both restyled to use DM Sans. .font-serif-italic NO LONGER COLORS ORANGE;
-   italic accents inherit the headline color per the new spec. */
 .marketing-theme .font-display {
   font-family: var(--font-dm-sans), system-ui, sans-serif;
   font-weight: 800;
   letter-spacing: -0.035em;
 }
 
-.marketing-theme .font-serif-italic {
-  font-family: var(--font-dm-sans), system-ui, sans-serif;
-  font-style: italic;
-  font-weight: 800;
-  letter-spacing: inherit;
-  color: inherit;
-}
-
-/* ===== Role-based typography utilities =====
-   One class per role. Spec sizes/weights/tracking from the typography
-   table. Components compose these on text elements instead of inlining
-   font-size/font-weight/tracking. */
-
-/* HERO */
 .marketing-theme .t-hero-h1 {
   font-family: var(--font-dm-sans), system-ui, sans-serif;
   font-weight: 800;
@@ -231,7 +194,6 @@
   color: var(--muted);
 }
 
-/* SECTIONS (composer, reviews, pricing, FAQ) */
 .marketing-theme .t-section-h2 {
   font-weight: 800;
   font-size: clamp(34px, 5vw, 60px);
@@ -253,7 +215,6 @@
   color: var(--muted);
 }
 
-/* BIG H2 (connector, features, crowd band) */
 .marketing-theme .t-big-h2 {
   font-weight: 800;
   font-size: clamp(36px, 5.5vw, 64px);
@@ -262,7 +223,6 @@
   color: var(--ink);
 }
 
-/* CTA BAND (dark) */
 .marketing-theme .t-cta-h2 {
   font-weight: 800;
   font-size: clamp(44px, 6.5vw, 82px);
@@ -277,7 +237,6 @@
   color: rgba(243, 244, 239, 0.6);
 }
 
-/* FEATURE CARDS */
 .marketing-theme .t-feature-h3 {
   font-weight: 700;
   font-size: 22px;
@@ -292,7 +251,6 @@
   color: var(--ink-2);
 }
 
-/* PRICING */
 .marketing-theme .t-pricing-tier {
   font-weight: 700;
   font-size: 26px;
@@ -318,7 +276,6 @@
   color: var(--ink-2);
 }
 
-/* FAQ */
 .marketing-theme .t-faq-q {
   font-weight: 700;
   font-size: 19px;
@@ -332,7 +289,6 @@
   color: var(--ink-2);
 }
 
-/* WORDMARK + NAV + BUTTONS */
 .marketing-theme .t-wordmark {
   font-weight: 700;
   font-size: 21px;
@@ -355,7 +311,6 @@
   letter-spacing: -0.015em;
 }
 
-/* EYEBROW + BODY */
 .marketing-theme .t-eyebrow {
   font-weight: 600;
   font-size: 12px;
@@ -370,7 +325,6 @@
   color: var(--ink-2);
 }
 
-/* FOOTER */
 .marketing-theme .t-footer-h {
   font-weight: 700;
   font-size: 14px;
@@ -385,7 +339,6 @@
   color: var(--ink-2);
 }
 
-/* MISC */
 .marketing-theme .t-stars {
   font-weight: 400;
   font-size: 15px;
@@ -416,8 +369,6 @@
   text-transform: uppercase;
 }
 
-/* Confetti on /payment/success: each piece falls 240vh (off screen from any
-   start position) and spins; durations are set per piece inline. */
 @keyframes confetti-fall {
   to {
     translate: 0 240vh;

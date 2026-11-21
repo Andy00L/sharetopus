@@ -17,9 +17,6 @@ type WebhookSubscriptionUpdate = Partial<
 
 const SubscriptionIdSchema = z.guid();
 
-/**
- * GET /v1/webhooks/[id] -- fetch a single webhook subscription.
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.get",
@@ -80,9 +77,6 @@ export const GET = withRestEndpoint({
   },
 });
 
-/**
- * PATCH /v1/webhooks/[id] -- update url, events, or active flag.
- */
 export const PATCH = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.patch",
@@ -100,7 +94,6 @@ export const PATCH = withRestEndpoint({
     }
     const subscriptionId = idParseResult.data;
 
-    // Parse body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -123,7 +116,6 @@ export const PATCH = withRestEndpoint({
     }
     const patchInput = bodyParseResult.data;
 
-    // Validate new URL if provided.
     if (patchInput.url) {
       const urlCheck = await verifyWebhookUrl(patchInput.url);
       if (!urlCheck.valid) {
@@ -135,7 +127,6 @@ export const PATCH = withRestEndpoint({
       }
     }
 
-    // Build the update payload, typed from the table schema.
     const updatePayload: WebhookSubscriptionUpdate = {
       updated_at: new Date().toISOString(),
     };
@@ -151,7 +142,6 @@ export const PATCH = withRestEndpoint({
     if (patchInput.active !== undefined) {
       updatePayload.active = patchInput.active;
       fieldsChanged.push("active");
-      // Re-enabling clears failure state so auto-disable can restart.
       if (patchInput.active) {
         updatePayload.failure_count = 0;
         updatePayload.last_disabled_at = null;
@@ -200,9 +190,6 @@ export const PATCH = withRestEndpoint({
   },
 });
 
-/**
- * DELETE /v1/webhooks/[id] -- delete subscription + cascade deliveries.
- */
 export const DELETE = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.delete",
@@ -220,18 +207,19 @@ export const DELETE = withRestEndpoint({
     }
     const subscriptionId = idParseResult.data;
 
-    // Count deliveries before deletion (for audit summary). A failed count
-    // leaves deliveryCount null and the summary reports 0, as before.
-    const { data: deliveryCount } = await runQuery(
+    const { data: deliveryCount, error: countError } = await runQuery(
       db.$count(
         webhook_deliveries,
         eq(webhook_deliveries.subscription_id, subscriptionId),
       ),
     );
+    if (countError) {
+      console.warn(
+        `[v1/webhooks/[id] DELETE] delivery count failed (request_id=${ctx.requestId}):`,
+        countError.message,
+      );
+    }
 
-    // Delete subscription (FK cascade removes deliveries). RETURNING tells a
-    // real deletion apart from an id that is missing or belongs to another
-    // principal, which deletes nothing and used to answer 200 as well.
     const { data: deletedRows, error: deleteError } = await runQuery(
       db
         .delete(webhook_subscriptions)
@@ -270,7 +258,7 @@ export const DELETE = withRestEndpoint({
       ),
       auditSummary: {
         subscription_id: subscriptionId,
-        deliveries_deleted: deliveryCount ?? 0,
+        deliveries_deleted: deliveryCount,
       },
     };
   },

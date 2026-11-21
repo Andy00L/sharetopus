@@ -8,25 +8,19 @@ import {
 } from "@/lib/api/oauth/connectPlatformAccounts";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
 import { popupCallbackNames } from "@/lib/api/oauth/web/popupCallbackNames";
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 export interface WebOAuthCallbackConfig {
-  platform: PostingPlatform;
-  /** Must match the initiate route's cookie names. */
+  platform: AdapterPlatform;
   stateCookieName: string;
   verifierCookieName?: string;
-  /** Same value the initiate route put in the authorize URL. */
   redirectUri: string | undefined;
 }
 
-/**
- * Body of every /api/social/<platform>/connect route: verifies state, exchanges
- * the code, upserts the accounts, and answers with the popup page.
- */
 export async function completeWebOAuthConnect(
   request: NextRequest,
   config: WebOAuthCallbackConfig,
@@ -75,7 +69,6 @@ export async function completeWebOAuthConnect(
       });
     }
 
-    // Both cookies are single use.
     cookieStore.delete(config.stateCookieName);
     let codeVerifier: string | null = null;
     if (config.verifierCookieName) {
@@ -144,7 +137,6 @@ export async function completeWebOAuthConnect(
       });
     }
 
-    // The unique key (principal_id, platform, account_identifier) makes a reconnect update in place.
     for (const connectedAccount of exchangeResult.accounts) {
       const accountValues = buildSocialAccountValues(
         userId,
@@ -204,7 +196,6 @@ export async function completeWebOAuthConnect(
   }
 }
 
-/** Popup page that calls the opener's callback (see popupCallbackNames) and closes itself. */
 function buildPopupResponse(
   config: WebOAuthCallbackConfig,
   page: {

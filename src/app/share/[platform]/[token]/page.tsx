@@ -7,14 +7,12 @@ import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 
-/** Masks an email address: first char + "****@" + domain */
 function maskEmail(email: string): string {
   const atIndex = email.indexOf("@");
   if (atIndex <= 0) return "****@unknown";
   return email[0] + "****" + email.slice(atIndex);
 }
 
-/** Builds a display identity from first_name/last_name or masked email */
 function buildDisplayIdentity(user: {
   first_name: string | null;
   last_name: string | null;
@@ -25,7 +23,6 @@ function buildDisplayIdentity(user: {
   return maskEmail(user.email);
 }
 
-/** Public /share/[platform]/[token] page inviting a friend to connect their TikTok; no account needed. */
 export default async function ShareLinkLandingPage({
   params,
 }: {
@@ -33,12 +30,10 @@ export default async function ShareLinkLandingPage({
 }) {
   const { platform, token } = await params;
 
-  // MVP: only TikTok
   if (platform !== "tiktok") {
     redirect(`/share/${platform}/error?reason=unsupported_platform`);
   }
 
-  // 1. Validate the share link token
   const validation = await validateShareToken(token);
   if (!validation.success) {
     redirect(`/share/${platform}/error?reason=${validation.reason}`);
@@ -46,8 +41,14 @@ export default async function ShareLinkLandingPage({
 
   const shareLink = validation.data;
 
-  // 2. Look up creator display info
-  const { data: creatorRows } = await runQuery(
+  const ownerCapacity = await checkShareLinkOwnerCapacity(
+    shareLink.owner_principal_id,
+  );
+  if (!ownerCapacity.ok) {
+    redirect(`/share/${platform}/error?reason=${ownerCapacity.reason}`);
+  }
+
+  const { data: creatorRows, error: creatorLookupError } = await runQuery(
     db
       .select({
         first_name: users.first_name,
@@ -58,28 +59,24 @@ export default async function ShareLinkLandingPage({
       .where(eq(users.id, shareLink.owner_principal_id))
       .limit(1),
   );
+  if (creatorLookupError) {
+    console.error(
+      `[ShareLinkLandingPage] Creator lookup failed for share link ${shareLink.id}:`,
+      creatorLookupError.message,
+    );
+  }
   const creatorUser = creatorRows?.[0];
 
   const displayIdentity = creatorUser
     ? buildDisplayIdentity(creatorUser)
     : "A Sharetopus user";
 
-  // 3. Pre-check the owner's plan and account limit
-  const ownerCapacity = await checkShareLinkOwnerCapacity(
-    shareLink.owner_principal_id,
-  );
-  if (!ownerCapacity.ok) {
-    redirect(`/share/${platform}/error?reason=${ownerCapacity.reason}`);
-  }
-
-  // 4. Render the landing card
   const initiateUrl = `/share/${platform}/${token}/initiate`;
 
   return (
     <SharePageShell>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-3">
-          {/* TikTok icon placeholder */}
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-black">
             <svg
               viewBox="0 0 24 24"
@@ -118,7 +115,6 @@ export default async function ShareLinkLandingPage({
   );
 }
 
-/** Centered full-viewport shell for share pages */
 function SharePageShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
