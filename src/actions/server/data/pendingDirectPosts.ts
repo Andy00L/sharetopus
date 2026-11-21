@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
@@ -156,6 +156,7 @@ export async function releasePendingDirectPosts(
         and(
           inArray(pending_direct_posts.event_id, eventIds),
           eq(pending_direct_posts.status, "processing"),
+          isNull(pending_direct_posts.publish_started_at),
         ),
       )
       .returning({ event_id: pending_direct_posts.event_id }),
@@ -276,6 +277,10 @@ export async function sweepStuckPendingDirectPosts(
         and(
           eq(pending_direct_posts.status, "processing"),
           lt(pending_direct_posts.created_at, cutoffIso),
+          or(
+            isNull(pending_direct_posts.publish_started_at),
+            lt(pending_direct_posts.publish_started_at, cutoffIso),
+          ),
         ),
       )
       .returning({ event_id: pending_direct_posts.event_id }),

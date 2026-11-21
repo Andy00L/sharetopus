@@ -452,6 +452,7 @@ export const pending_direct_posts = pgTable("pending_direct_posts", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   finished_at: timestamptz(),
   idempotency_key: text(),
+  publish_started_at: timestamptz(),
 }, (table) => [
   index("idx_pending_direct_posts_batch").on(table.batch_id),
   index("idx_pending_direct_posts_path_status").on(table.media_storage_path, table.status).where(sql`(status = 'processing'::text)`),
