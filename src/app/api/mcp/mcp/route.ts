@@ -177,12 +177,14 @@ async function handleMcpRequest(req: Request): Promise<Response> {
   const clientIpHash = hashClientIp(resolveClientIp(req.headers));
 
   if (clientIpHash) {
-    const routeLimit = await checkRateLimit(
-      "mcp_route",
-      clientIpHash,
-      MCP_ROUTE_RATE_LIMIT.requests,
-      MCP_ROUTE_RATE_LIMIT.windowSeconds,
-    );
+    const routeLimit = await checkRateLimit({
+      operation: "mcp_route",
+      identifier: clientIpHash,
+      rule: {
+        limit: MCP_ROUTE_RATE_LIMIT.requests,
+        windowSeconds: MCP_ROUTE_RATE_LIMIT.windowSeconds,
+      },
+    });
     if (!routeLimit.success) {
       const rejection = describeRateLimitRejection(routeLimit);
       console.warn(

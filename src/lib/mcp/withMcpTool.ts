@@ -6,6 +6,8 @@ import type {
   ServerContext,
 } from "@modelcontextprotocol/server";
 
+import { waitUntil } from "@vercel/functions";
+
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 
 import { logToolCall } from "./audit";
@@ -17,7 +19,7 @@ import { MCP_TOOL_CALL_RATE_LIMIT } from "./rateLimits";
 import type { McpToolName } from "./toolNames";
 
 /** Per-request context handed to every tool handler. */
-export type McpToolContext = {
+type McpToolContext = {
   principal: McpPrincipal;
   requestId: string | null;
   ipHash: string | null;
@@ -31,7 +33,7 @@ type AuditStatus = "ok" | "error" | "denied" | "rate_limited" | "quota_exceeded"
  * What a handler returns: the MCP result plus optional audit overrides.
  * auditStatus replaces the default ok/error; auditArgs replaces the logged args.
  */
-export type McpHandlerResult = {
+type McpHandlerResult = {
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
@@ -76,7 +78,7 @@ export function withMcpTool<TArgs>(
   toolName: McpToolName,
   handler: (ctx: McpToolContext, args: TArgs) => Promise<McpHandlerResult>,
   options: WithMcpToolOptions<TArgs> = {},
-): (args: TArgs, serverContext: ServerContext) => Promise<CallToolResult> {
+): (args: TArgs, serverContext: Pick<ServerContext, "http">) => Promise<CallToolResult> {
   return async (args, serverContext) => {
     const ctx = await buildContext(serverContext.http?.authInfo);
     const defaultAuditArgs = options.auditArgsBuilder
@@ -84,14 +86,16 @@ export function withMcpTool<TArgs>(
       : rawArgsAsAuditPayload(args);
 
     // A limiter outage fails open: the monthly quota still bounds usage.
-    const principalLimit = await checkRateLimit(
-      "mcp_tool_call",
-      ctx.principal.principalId,
-      MCP_TOOL_CALL_RATE_LIMIT.calls,
-      MCP_TOOL_CALL_RATE_LIMIT.windowSeconds,
-    );
+    const principalLimit = await checkRateLimit({
+      operation: "mcp_tool_call",
+      identifier: ctx.principal.principalId,
+      rule: {
+        limit: MCP_TOOL_CALL_RATE_LIMIT.calls,
+        windowSeconds: MCP_TOOL_CALL_RATE_LIMIT.windowSeconds,
+      },
+    });
     if (!principalLimit.success && principalLimit.reason === "limited") {
-      await emitAudit(ctx, toolName, defaultAuditArgs, "rate_limited");
+      emitAudit(ctx, toolName, defaultAuditArgs, "rate_limited");
       return {
         content: [
           {
@@ -112,7 +116,7 @@ export function withMcpTool<TArgs>(
     if (entitlement.mode === "deny") {
       const isQuota =
         entitlement.reason === "platform_quota" || entitlement.reason === "monthly_quota";
-      await emitAudit(ctx, toolName, defaultAuditArgs, isQuota ? "quota_exceeded" : "denied");
+      emitAudit(ctx, toolName, defaultAuditArgs, isQuota ? "quota_exceeded" : "denied");
       return {
         content: [{ type: "text" as const, text: `Denied: ${entitlement.detail}` }],
         isError: true,
@@ -124,7 +128,7 @@ export function withMcpTool<TArgs>(
       const finalAuditStatus = result.auditStatus ?? (result.isError ? "error" : "ok");
       const finalAuditArgs =
         result.auditArgs !== undefined ? result.auditArgs : defaultAuditArgs;
-      await emitAudit(ctx, toolName, finalAuditArgs, finalAuditStatus);
+      emitAudit(ctx, toolName, finalAuditArgs, finalAuditStatus);
 
       return {
         content: result.content,
@@ -134,8 +138,8 @@ export function withMcpTool<TArgs>(
         isError: result.isError,
       };
     } catch (err) {
-      await emitAudit(ctx, toolName, defaultAuditArgs, "error");
-      throw err; // The SDK turns the throw into a JSON-RPC error after the audit row lands.
+      emitAudit(ctx, toolName, defaultAuditArgs, "error");
+      throw err; // The SDK turns the throw into a JSON-RPC error.
     }
   };
 }
@@ -161,13 +165,13 @@ function rawArgsAsAuditPayload(
   return Object.keys(argsRecord).length === 0 ? null : argsRecord;
 }
 
-async function emitAudit(
+function emitAudit(
   ctx: McpToolContext,
   toolName: McpToolName,
   args: Record<string, unknown> | null,
   resultStatus: AuditStatus,
-): Promise<void> {
-  await logToolCall({
+): void {
+  waitUntil(logToolCall({
     principal: ctx.principal,
     requestId: ctx.requestId,
     toolName,
@@ -176,5 +180,5 @@ async function emitAudit(
     latencyMs: Date.now() - ctx.startedAt,
     ipHash: ctx.ipHash,
     userAgent: ctx.userAgent,
-  });
+  }));
 }

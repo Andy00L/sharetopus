@@ -48,9 +48,9 @@ function oauthClientIdFromPrincipal(principal: McpPrincipal): string | null {
 }
 
 /**
- * Appends a row to mcp_audit_log. The INSERT is awaited so the caller
- * knows the truth-source row landed. mcp_audit_log has an UPDATE-blocking
- * trigger, so this is truly append-only.
+ * Appends a row to mcp_audit_log. withMcpTool hands the promise to
+ * waitUntil, so the insert finishes after the response is sent.
+ * mcp_audit_log has an UPDATE-blocking trigger, so this is append-only.
  *
  * session_id holds the per-request correlation ID: the stateless
  * transport has no longer-lived session to record. No client name is

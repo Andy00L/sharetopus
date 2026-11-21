@@ -73,10 +73,6 @@ export function buildPinnedLookup(pinnedAddress: PinnedAddress): LookupFunction 
   };
 }
 
-export function buildPinnedAgent(addresses: ValidatedAddresses): Agent {
-  return new Agent({ connect: { lookup: buildPinnedLookup(addresses[0]) } });
-}
-
 /**
  * undici pools sockets per origin inside an Agent, so one dispatcher per
  * pinned IP never lets a socket opened for one hostname serve another.

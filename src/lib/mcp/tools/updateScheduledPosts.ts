@@ -8,13 +8,23 @@ import { updateScheduledTimeBatch } from "@/actions/server/scheduleActions/resch
 import { resumeScheduledPostBatch } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatch";
 import { IsoDateTimeSchema } from "@/lib/mcp/_shared/isoDateTimeSchema";
 
+import { withMemoizedJsonSchema } from "../_shared/memoizedJsonSchema";
 import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-type UpdateScheduledPostsArgs = {
-  post_ids: string[];
-  action: "cancel" | "resume" | "reschedule";
-  scheduled_at?: string;
-};
+const UpdateScheduledPostsInputSchema = z
+  .object({
+    post_ids: z.array(z.guid()).min(1).max(50),
+    action: z.enum(["cancel", "resume", "reschedule"]),
+    scheduled_at: IsoDateTimeSchema
+      .optional()
+      .describe("Future ISO 8601 time with a zone. Required for reschedule."),
+  })
+  .refine((args) => args.action !== "reschedule" || Boolean(args.scheduled_at), {
+    message: "scheduled_at is required when action is reschedule",
+    path: ["scheduled_at"],
+  });
+
+type UpdateScheduledPostsArgs = z.infer<typeof UpdateScheduledPostsInputSchema>;
 
 const UpdateScheduledPostsOutputSchema = z.object({
   action: z.enum(["cancel", "resume", "reschedule"]),
@@ -23,48 +33,40 @@ const UpdateScheduledPostsOutputSchema = z.object({
   message: z.string(),
 });
 
+const UPDATE_SCHEDULED_POSTS_TOOL = {
+  title: "Update Scheduled Posts",
+  description:
+    "Change up to 50 scheduled posts. cancel: stops posts in status scheduled. resume: brings cancelled posts back (a past time moves to 1 hour from now). reschedule: sets a new future time and resumes cancelled posts. Get post ids from list_posts.",
+  inputSchema: withMemoizedJsonSchema(UpdateScheduledPostsInputSchema),
+  outputSchema: withMemoizedJsonSchema(UpdateScheduledPostsOutputSchema),
+  annotations: {
+    title: "Update Scheduled Posts",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+};
+
+const handleUpdateScheduledPosts = withMcpTool(
+  "update_scheduled_posts",
+  async (ctx, args: UpdateScheduledPostsArgs) => {
+    const changeResult = await runChange(args, ctx.principal.principalId, ctx.requestId);
+    if (!changeResult.success) {
+      return errorResult(changeResult.message);
+    }
+    return jsonResult({
+      action: args.action,
+      updated: changeResult.succeeded,
+      skipped: changeResult.failed,
+      message: changeResult.message,
+    } satisfies z.infer<typeof UpdateScheduledPostsOutputSchema>);
+  },
+);
+
 /** Cancels, resumes or reschedules up to 50 scheduled posts; every change can be undone. */
 export function registerUpdateScheduledPosts(server: McpServer): void {
-  server.registerTool(
-    "update_scheduled_posts",
-    {
-      title: "Update Scheduled Posts",
-      description:
-        "Change up to 50 scheduled posts. cancel: stops posts in status scheduled. resume: brings cancelled posts back (a past time moves to 1 hour from now). reschedule: sets a new future time and resumes cancelled posts. Get post ids from list_posts.",
-      inputSchema: z
-        .object({
-          post_ids: z.array(z.guid()).min(1).max(50),
-          action: z.enum(["cancel", "resume", "reschedule"]),
-          scheduled_at: IsoDateTimeSchema
-            .optional()
-            .describe("Future ISO 8601 time with a zone. Required for reschedule."),
-        })
-        .refine((args) => args.action !== "reschedule" || Boolean(args.scheduled_at), {
-          message: "scheduled_at is required when action is reschedule",
-          path: ["scheduled_at"],
-        }),
-      outputSchema: UpdateScheduledPostsOutputSchema,
-      annotations: {
-        title: "Update Scheduled Posts",
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-    },
-    withMcpTool("update_scheduled_posts", async (ctx, args: UpdateScheduledPostsArgs) => {
-      const changeResult = await runChange(args, ctx.principal.principalId, ctx.requestId);
-      if (!changeResult.success) {
-        return errorResult(changeResult.message);
-      }
-      return jsonResult({
-        action: args.action,
-        updated: changeResult.succeeded,
-        skipped: changeResult.failed,
-        message: changeResult.message,
-      } satisfies z.infer<typeof UpdateScheduledPostsOutputSchema>);
-    }),
-  );
+  server.registerTool("update_scheduled_posts", UPDATE_SCHEDULED_POSTS_TOOL, handleUpdateScheduledPosts);
 }
 
 type ChangeOutcome =

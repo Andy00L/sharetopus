@@ -1,22 +1,22 @@
 import "server-only";
 
-import { Agent, fetch as undiciFetch, type Response as UndiciResponse } from "undici";
+import { fetch as undiciFetch, type Response as UndiciResponse } from "undici";
 
 import {
-  buildPinnedAgent,
+  acquirePinnedDispatcher,
   resolveHostToPublicAddresses,
 } from "@/lib/net/pinnedFetch";
 
-// ---------- public types ----------
+import { createBodyBytesCollector, readDeclaredBodyBytes } from "./bodyBytesCollector";
 
-export type SafeFetchOk = {
+type SafeFetchOk = {
   success: true;
   bytes: Buffer;
   contentType: string;
   finalUrl: string;
 };
 
-export type SafeFetchErr = {
+type SafeFetchErr = {
   success: false;
   message: string;
   reason:
@@ -32,9 +32,9 @@ export type SafeFetchErr = {
     | "fetch_failed";
 };
 
-export type SafeFetchResult = SafeFetchOk | SafeFetchErr;
+type SafeFetchResult = SafeFetchOk | SafeFetchErr;
 
-export type SafeFetchOptions = {
+type SafeFetchOptions = {
   maxBytes: number;
   allowedContentTypePrefixes: readonly string[];
   allowedContentTypes: readonly string[];
@@ -92,10 +92,11 @@ export async function safeUserFetch(
 
   // 4. Pin the connection to the validated IP (rebinding defense) and set
   // up the abort/timeout timers.
-  const dispatcher: Agent = buildPinnedAgent(resolution.addresses);
+  const dispatcher = acquirePinnedDispatcher(resolution.addresses);
   const controller = new AbortController();
   let abortedByTimeout = false;
   let abortedBySize = false;
+  let isBodyFullyRead = false;
 
   const totalTimer = setTimeout(() => {
     abortedByTimeout = true;
@@ -178,8 +179,13 @@ export async function safeUserFetch(
       return { success: false, message: "Response has no body.", reason: "fetch_failed" };
     }
 
+    const declaredBodyBytes = readDeclaredBodyBytes(response.headers);
+    if (declaredBodyBytes !== null && declaredBodyBytes > opts.maxBytes) {
+      return buildTooLargeError(opts.maxBytes);
+    }
+
     const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
+    const bodyCollector = createBodyBytesCollector(declaredBodyBytes);
     let byteCount = 0;
 
     try {
@@ -190,21 +196,19 @@ export async function safeUserFetch(
         if (byteCount > opts.maxBytes) {
           abortedBySize = true;
           controller.abort();
+          return buildTooLargeError(opts.maxBytes);
+        }
+        if (!bodyCollector.append(value)) {
           return {
             success: false,
-            message: `Response body exceeds the ${Math.round(opts.maxBytes / 1024 / 1024)} MB limit.`,
-            reason: "too_large",
+            message: `Response body is longer than its Content-Length (${declaredBodyBytes} bytes).`,
+            reason: "fetch_failed",
           };
         }
-        chunks.push(value);
       }
     } catch (err) {
       if (abortedBySize) {
-        return {
-          success: false,
-          message: `Response body exceeds the ${Math.round(opts.maxBytes / 1024 / 1024)} MB limit.`,
-          reason: "too_large",
-        };
+        return buildTooLargeError(opts.maxBytes);
       }
       if (abortedByTimeout) {
         return { success: false, message: "Request timed out.", reason: "timeout" };
@@ -216,15 +220,27 @@ export async function safeUserFetch(
       };
     }
 
+    isBodyFullyRead = true;
     return {
       success: true,
-      bytes: Buffer.concat(chunks),
+      bytes: bodyCollector.collectedBytes(),
       contentType,
       finalUrl: rawUrl,
     };
   } finally {
     clearTimeout(totalTimer);
     clearTimeout(connectTimer);
-    dispatcher.close().catch(() => {});
+    // undici: always consume or cancel the response body, or the pooled
+    // connection stays busy until garbage collection.
+    // sourceRef: node_modules/undici/README.md, "Garbage Collection".
+    if (!isBodyFullyRead) controller.abort();
   }
+}
+
+function buildTooLargeError(maxBytes: number): SafeFetchErr {
+  return {
+    success: false,
+    message: `Response body exceeds the ${Math.round(maxBytes / 1024 / 1024)} MB limit.`,
+    reason: "too_large",
+  };
 }
