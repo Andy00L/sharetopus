@@ -5,6 +5,7 @@ import { tikTokPublishPollEvent } from "@/inngest/events/tikTokPublishPoll";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import type { TikTokPostResult } from "@/lib/api/tiktok/post/postToTikTok";
 import { resolveTikTokPrivacyLevel } from "@/lib/api/tiktok/post/tikTokPrivacy";
+import type { PostOrigin } from "@/lib/platforms/providers/publishViaRegistry";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
   buildDirectPostRefusal,
@@ -30,7 +31,7 @@ interface TikTokDirectPostConfig {
   postType: MediaType;
   fileName: string;
   batchId: string;
-  scheduledPostId?: string;
+  origin: PostOrigin;
   createdVia: "web" | "mcp" | "x402" | "api";
 }
 
@@ -64,6 +65,8 @@ async function sendTikTokPublishPollEvent(input: {
 export async function directPostForTikTokAccounts(
   config: TikTokDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
+  const scheduledPostId = config.origin.kind === "scheduled" ? config.origin.scheduledPostId : null;
+  const dispatchId = config.origin.kind === "post_now" ? config.origin.dispatchId : null;
   return directPostForAccountsGeneric<TikTokPassthrough, TikTokPostResult>(
     {
       platform: "tiktok",
@@ -72,7 +75,7 @@ export async function directPostForTikTokAccounts(
       accountContent: config.accountContent,
       userId: config.userId,
       batchId: config.batchId,
-      scheduledPostId: config.scheduledPostId ?? null,
+      scheduledPostId,
       postType: config.postType,
       createdVia: config.createdVia,
     },
@@ -127,6 +130,7 @@ export async function directPostForTikTokAccounts(
           principal_id: genericConfig.userId,
           social_account_id: genericConfig.accountContent.accountId,
           scheduled_post_id: genericConfig.scheduledPostId,
+          dispatch_id: dispatchId,
           content_history_id: contentHistoryId,
           media_storage_path: passthrough.config.mediaPath,
           creator_username: postResult.creator_username,

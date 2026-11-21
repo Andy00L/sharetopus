@@ -61,6 +61,7 @@ function buildPull(changes: Partial<FakeRow>): FakeRow {
     created_at: "2026-11-21T10:00:05.000Z",
     tiktok_post_id: null,
     creator_username: "creator",
+    dispatch_id: "dispatch-1",
     ...changes,
   };
 }
@@ -86,6 +87,8 @@ function buildDispatch(changes: Partial<FakeRow>): FakeRow {
 function readDispatch(dispatchId: string): FakeRow | undefined {
   return fakePostgres.tables.get("pending_direct_posts")?.find((row) => row.event_id === dispatchId);
 }
+
+const LEGACY_PULL = buildPull({ dispatch_id: null });
 
 const DISPATCH_FAILED_WEBHOOK: SentWebhook = {
   principalId: "principal-1",
@@ -151,7 +154,37 @@ describe("finalizeTikTokPullInSteps for a post-now dispatch", () => {
     expect(sentWebhooks).toEqual([]);
   });
 
-  test("a pull that two dispatches could match changes neither and fires nothing", async () => {
+  test("a pull that names its dispatch fails that one when two dispatches of one file share the batch", async () => {
+    fakePostgres.tables.set("pending_tiktok_pulls", [buildPull({ dispatch_id: "dispatch-2" })]);
+    fakePostgres.tables.set("pending_direct_posts", [
+      buildDispatch({}),
+      buildDispatch({ event_id: "dispatch-2" }),
+    ]);
+    await finalizePull(TIKTOK_REJECTION);
+    expect(readDispatch("dispatch-1")?.status).toBe("completed");
+    expect(readDispatch("dispatch-2")?.status).toBe("failed");
+    expect(sentWebhooks).toEqual([
+      { ...DISPATCH_FAILED_WEBHOOK, payload: { ...DISPATCH_FAILED_WEBHOOK.payload, dispatch_id: "dispatch-2" } },
+    ]);
+  });
+
+  test("a pull that names its dispatch fails it even when its history row was never written", async () => {
+    fakePostgres.tables.set("pending_tiktok_pulls", [buildPull({ content_history_id: null })]);
+    fakePostgres.tables.set("content_history", []);
+    await finalizePull(TIKTOK_REJECTION);
+    expect(readDispatch("dispatch-1")?.status).toBe("failed");
+    expect(sentWebhooks).toEqual([DISPATCH_FAILED_WEBHOOK]);
+  });
+
+  test("a pull written before dispatch_id existed still finds its one dispatch by batch, account and file", async () => {
+    fakePostgres.tables.set("pending_tiktok_pulls", [LEGACY_PULL]);
+    await finalizePull(TIKTOK_REJECTION);
+    expect(readDispatch("dispatch-1")?.status).toBe("failed");
+    expect(sentWebhooks).toEqual([DISPATCH_FAILED_WEBHOOK]);
+  });
+
+  test("a pull written before dispatch_id existed that two dispatches could match changes neither and fires nothing", async () => {
+    fakePostgres.tables.set("pending_tiktok_pulls", [LEGACY_PULL]);
     fakePostgres.tables.set("pending_direct_posts", [
       buildDispatch({}),
       buildDispatch({ event_id: "dispatch-2" }),

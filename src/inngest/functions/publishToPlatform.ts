@@ -263,6 +263,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
           request,
           await directPostForTikTokAccounts({
             ...sharedConfig,
+            origin: request.origin,
             coverTimestamp,
             tiktokMediaUrl: media.urls.tiktokUrl ?? "",
             mediaType: mimeType,

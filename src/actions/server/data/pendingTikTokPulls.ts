@@ -9,8 +9,9 @@ export async function insertPendingTikTokPull(input: {
   publish_id: string;
   principal_id: string;
   social_account_id: string;
-  scheduled_post_id?: string | null;
-  content_history_id?: string | null;
+  scheduled_post_id: string | null;
+  dispatch_id: string | null;
+  content_history_id: string | null;
   media_storage_path: string;
   creator_username: string | null;
 }): Promise<{ success: true } | { success: false; message: string }> {
@@ -19,8 +20,9 @@ export async function insertPendingTikTokPull(input: {
       publish_id: input.publish_id,
       principal_id: input.principal_id,
       social_account_id: input.social_account_id,
-      scheduled_post_id: input.scheduled_post_id ?? null,
-      content_history_id: input.content_history_id ?? null,
+      scheduled_post_id: input.scheduled_post_id,
+      dispatch_id: input.dispatch_id,
+      content_history_id: input.content_history_id,
       media_storage_path: input.media_storage_path,
       creator_username: input.creator_username,
       status: "pending",

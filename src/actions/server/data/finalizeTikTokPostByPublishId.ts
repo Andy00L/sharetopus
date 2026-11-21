@@ -28,6 +28,7 @@ type ClaimedPull = {
   social_account_id: string;
   media_storage_path: string;
   content_history_id: string | null;
+  dispatch_id: string | null;
 };
 
 type FinalizeSuccess =
@@ -111,6 +112,7 @@ async function applyTikTokPullOutcome(
       media_storage_path: pending_tiktok_pulls.media_storage_path,
       content_history_id: pending_tiktok_pulls.content_history_id,
       scheduled_post_id: pending_tiktok_pulls.scheduled_post_id,
+      dispatch_id: pending_tiktok_pulls.dispatch_id,
       creator_username: pending_tiktok_pulls.creator_username,
     });
 
@@ -268,7 +270,7 @@ async function markScheduledPostFailed(
   };
 }
 
-async function findDirectDispatchOfPull(
+async function findDispatchOfLegacyPull(
   transaction: Transaction,
   pull: ClaimedPull,
 ): Promise<string | null> {
@@ -294,7 +296,7 @@ async function findDirectDispatchOfPull(
     .limit(AMBIGUOUS_DISPATCH_MATCH_COUNT);
   if (matchingDispatches.length >= AMBIGUOUS_DISPATCH_MATCH_COUNT) {
     console.warn(
-      `[findDirectDispatchOfPull] Batch ${history.batch_id} holds several TikTok dispatches for account ${pull.social_account_id}; none is failed`,
+      `[findDispatchOfLegacyPull] Batch ${history.batch_id} holds several TikTok dispatches for account ${pull.social_account_id}; none is failed`,
     );
     return null;
   }
@@ -305,7 +307,7 @@ async function markDirectDispatchFailed(
   transaction: Transaction,
   input: { pull: ClaimedPull; result: FailedTikTokPull; failedAt: string },
 ): Promise<FailedTikTokPost | null> {
-  const dispatchId = await findDirectDispatchOfPull(transaction, input.pull);
+  const dispatchId = input.pull.dispatch_id ?? (await findDispatchOfLegacyPull(transaction, input.pull));
   if (!dispatchId) return null;
   const [failedDispatch] = await transaction
     .update(pending_direct_posts)

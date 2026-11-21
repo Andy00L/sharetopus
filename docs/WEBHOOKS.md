@@ -55,7 +55,7 @@ Every delivery body is `{ event_type, event_id, delivery_id, created_at, data }`
 
 - `dispatch_id` is the id the publish-now answer returned for that post (`dispatch_id` in the REST 202, `event_ids` in the MCP `publish_posts` answer, `eventIds` in the x402 post-now answer), so a client can match the event to its request. `batch_id` is the batch the post was sent in.
 - `reason` is one of `auth_expired`, `rate_limited`, `transient`, `policy_rejected`, `invalid_input`, `unknown` (`PlatformFailureReason` in `src/lib/api/_shared/platformFailure.ts`).
-- `may_have_published` is `true` when the post may be live although it was recorded failed: the platform's answer was unclear, a publish attempt stopped before it reported a result, or a sweep failed a post that never reported a result. Check the account before posting again. It is `false` when the platform refused the post, a TikTok rejection included.
+- `may_have_published` is `true` when the post may be live although it was recorded failed: the platform's answer was unclear, a publish attempt stopped before it reported a result, or a sweep failed a post whose publish attempt had started. Check the account before posting again. It is `false` when the platform refused the post (a TikTok rejection included), or when the hourly publish-now sweep failed a dispatch whose publish attempt never started.
 - `src/lib/api/rest/webhooks/postWebhookPayloads.ts` builds the publish-now fields, the three failure fields and the `connection.expired` payload, so every producer names them the same way.
 
 ---
@@ -66,13 +66,13 @@ Every delivery body is `{ event_type, event_id, delivery_id, created_at, data }`
 |----------|-------|
 | Scheduled post run (`process-single-post`, its failure handler, and the 2 h safety net in `scheduled-posts-tick`) | `post.published` or `post.failed` once the post's row moves from `processing` to `posted` or `failed`; `connection.expired` with an `auth_expired` failure. The safety net records `failed` with `may_have_published: true`. |
 | Publish-now run (`process-direct-post` and its failure handler) | `post.published` or `post.failed` once the dispatch is recorded `completed` or `failed`; `connection.expired` with an `auth_expired` failure. |
-| Hourly publish-now sweep (`sweep-stuck-direct-posts`) | `post.failed` with `reason: "unknown"` and `may_have_published: true` for a dispatch still `processing` 1 h after it was created whose publish claim is null or also older than 1 h. |
+| Hourly publish-now sweep (`sweep-stuck-direct-posts`) | `post.failed` with `reason: "unknown"` for a dispatch still `processing` 1 h after it was created whose publish claim is null or also older than 1 h. With a claim, `may_have_published: true` and `error_message` "Publishing stopped without a result; the post may have published"; with no claim (the post never reached the platform), `may_have_published: false` and "Publishing never started before the hourly sweep; the post was not published". The stored failure reason is the first text in both cases. |
 | TikTok status (`tiktok-publish-status-poll` and `process-tiktok-publish-webhook`) | `post.failed` with `may_have_published: false` when TikTok rejects a post after accepting its upload (`content/init`). The scheduled post moves from `processing` or `posted` to `failed`, the dispatch from `processing` or `completed`. A post already `failed` fires nothing. A TikTok success after a post was recorded `failed` changes nothing. |
 
 - An event fires only after the write that recorded the outcome matched the row, so two writers never both fire for one outcome. A dispatch the sweep failed stays failed: a run that ends later records nothing and fires nothing.
 - A TikTok rejection can follow the `post.published` that the accepted upload fired. Take the later `post.failed` as the final state.
 - A worker stopped while it sends an event can send the same outcome again under a new `event_id`. Deduplicate on `post_id` or `dispatch_id` with the event type.
-- A publish-now TikTok post reaches its dispatch through its `content_history` row (same batch, account, platform and media file). When two dispatches of one batch match, neither changes and no event fires.
+- A publish-now TikTok post reaches its dispatch through `pending_tiktok_pulls.dispatch_id`, written when TikTok accepts the upload. A pull written before that column existed falls back to its `content_history` row (same batch, account, platform and media file); when two dispatches of one batch match, neither changes and no event fires.
 
 ---
 

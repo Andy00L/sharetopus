@@ -13,11 +13,21 @@ import {
 
 const STUCK_AGE_MS = 60 * 60 * 1000;
 
-const SWEPT_FAILURE: PostFailure = {
+const SWEPT_CLAIMED_FAILURE: PostFailure = {
   reason: "unknown",
   message: SWEPT_DIRECT_POST_REASON,
   mayHavePublished: true,
 };
+
+const SWEPT_UNCLAIMED_FAILURE: PostFailure = {
+  reason: "unknown",
+  message: "Publishing never started before the hourly sweep; the post was not published",
+  mayHavePublished: false,
+};
+
+function describeSweptFailure(sweptDispatch: SweptDirectPost): PostFailure {
+  return sweptDispatch.publish_started_at === null ? SWEPT_UNCLAIMED_FAILURE : SWEPT_CLAIMED_FAILURE;
+}
 
 function groupByPrincipal(sweptDispatches: SweptDirectPost[]): Map<string, SweptDirectPost[]> {
   const dispatchesByPrincipal = new Map<string, SweptDirectPost[]>();
@@ -35,7 +45,9 @@ async function notifySweptDispatches(sweptDispatches: SweptDirectPost[]): Promis
       dispatchWebhooks(
         principalId,
         "post.failed",
-        principalDispatches.map((sweptDispatch) => buildDispatchFailedPayload(sweptDispatch, SWEPT_FAILURE)),
+        principalDispatches.map((sweptDispatch) =>
+          buildDispatchFailedPayload(sweptDispatch, describeSweptFailure(sweptDispatch)),
+        ),
       ),
     ),
   );

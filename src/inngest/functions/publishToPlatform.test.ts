@@ -312,6 +312,13 @@ describe("publishToPlatform", () => {
     expect(readOnlyCall().config.scheduledPostId).toBe("post-3");
   });
 
+  test("the TikTok adapter gets the request's origin, so its pull can name the dispatch", async () => {
+    await publishToPlatform(
+      buildRequest({ platform: "tiktok", origin: { kind: "post_now", dispatchId: "dispatch-7" } }),
+    );
+    expect(readOnlyCall().config.origin).toEqual({ kind: "post_now", dispatchId: "dispatch-7" });
+  });
+
   test("a throw that escapes a platform call is an unknown outcome that may have published, whatever its text says", async () => {
     adapterState.registryError = new Error("rate limit reached");
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});

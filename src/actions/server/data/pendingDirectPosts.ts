@@ -172,34 +172,6 @@ export async function releasePendingDirectPosts(
   return { success: true, releasedCount: releasedRows.length };
 }
 
-export type DirectPostLockRow = Pick<
-  typeof pending_direct_posts.$inferSelect,
-  "batch_id" | "social_account_id" | "platform" | "status" | "created_at"
->;
-
-export async function readDirectPostLock(
-  eventId: string,
-): Promise<{ success: true; lock: DirectPostLockRow | null } | { success: false; message: string }> {
-  const { data: lockRows, error } = await runQuery(
-    db
-      .select({
-        batch_id: pending_direct_posts.batch_id,
-        social_account_id: pending_direct_posts.social_account_id,
-        platform: pending_direct_posts.platform,
-        status: pending_direct_posts.status,
-        created_at: pending_direct_posts.created_at,
-      })
-      .from(pending_direct_posts)
-      .where(eq(pending_direct_posts.event_id, eventId))
-      .limit(1),
-  );
-  if (error) {
-    console.error(`[readDirectPostLock] Lookup of ${eventId} failed:`, error.message);
-    return { success: false, message: `Lock lookup failed: ${error.message}` };
-  }
-  return { success: true, lock: lockRows[0] ?? null };
-}
-
 const FAILURE_REASON_MAX_CHARS = 1000;
 
 const STALE_WORKER_SWEPT_REASON = "stale_worker_swept";
@@ -269,6 +241,7 @@ export type SweptDirectPost = {
   batch_id: string;
   platform: Platform;
   social_account_id: string;
+  publish_started_at: string | null;
 };
 
 function isStuckBefore(cutoffIso: string) {
@@ -333,6 +306,7 @@ export async function sweepStuckPendingDirectPosts(input: {
         batch_id: pending_direct_posts.batch_id,
         platform: pending_direct_posts.platform,
         social_account_id: pending_direct_posts.social_account_id,
+        publish_started_at: pending_direct_posts.publish_started_at,
       })
       .from(pending_direct_posts)
       .where(

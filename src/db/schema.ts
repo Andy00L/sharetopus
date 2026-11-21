@@ -487,6 +487,7 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   tiktok_post_id: text(),
   creator_username: text(),
+  dispatch_id: text(),
 }, (table) => [
   index("idx_pending_tiktok_pulls_path_status").on(table.media_storage_path, table.status).where(sql`(status = 'pending'::text)`),
   index("idx_pending_tiktok_pulls_pending_age").on(table.status, table.created_at).where(sql`(status = 'pending'::text)`),
@@ -494,6 +495,11 @@ export const pending_tiktok_pulls = pgTable("pending_tiktok_pulls", {
     columns: [table.content_history_id],
     foreignColumns: [content_history.id],
     name: "pending_tiktok_pulls_content_history_id_fkey",
+  }).onDelete("set null"),
+  foreignKey({
+    columns: [table.dispatch_id],
+    foreignColumns: [pending_direct_posts.event_id],
+    name: "pending_tiktok_pulls_dispatch_id_fkey",
   }).onDelete("set null"),
   foreignKey({
     columns: [table.principal_id],

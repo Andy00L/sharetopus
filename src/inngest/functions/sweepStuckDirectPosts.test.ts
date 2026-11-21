@@ -6,6 +6,7 @@ type SentWebhooks = { principalId: string; eventType: string; payloads: Record<s
 
 const MINUTE_MS = 60 * 1000;
 const SWEPT_MESSAGE = "Publishing stopped without a result; the post may have published";
+const SWEPT_UNCLAIMED_MESSAGE = "Publishing never started before the hourly sweep; the post was not published";
 
 const fakePostgres = createFakePostgres();
 const sentWebhooks: SentWebhooks[] = [];
@@ -105,17 +106,25 @@ async function runSweep(input: {
   throw lastError;
 }
 
-function buildExpectedPayload(dispatchRow: FakeRow): Record<string, unknown> {
-  return {
-    dispatch_id: dispatchRow.event_id,
-    batch_id: dispatchRow.batch_id,
-    platform: dispatchRow.platform,
-    social_account_id: dispatchRow.social_account_id,
-    reason: "unknown",
-    error_message: SWEPT_MESSAGE,
-    may_have_published: true,
-  };
-}
+const UNCLAIMED_SWEPT_PAYLOAD = {
+  dispatch_id: "dispatch-stuck",
+  batch_id: "batch-1",
+  platform: "linkedin",
+  social_account_id: "account-1",
+  reason: "unknown",
+  error_message: SWEPT_UNCLAIMED_MESSAGE,
+  may_have_published: false,
+};
+
+const ABANDONED_CLAIM_SWEPT_PAYLOAD = {
+  dispatch_id: "dispatch-abandoned",
+  batch_id: "batch-2",
+  platform: "tiktok",
+  social_account_id: "account-2",
+  reason: "unknown",
+  error_message: SWEPT_MESSAGE,
+  may_have_published: true,
+};
 
 function listFailedPayloadsByDispatch(): Map<unknown, number> {
   const firedCountByDispatch = new Map<unknown, number>();
@@ -152,20 +161,38 @@ beforeEach(() => {
 });
 
 describe("sweepStuckDirectPosts", () => {
-  test("each dispatch the sweep fails fires post.failed with its dispatch ids and may_have_published true", async () => {
+  test("each dispatch the sweep fails fires post.failed with its dispatch ids, and only the stuck rows are failed", async () => {
     await runSweep();
     expect(readDispatch("dispatch-stuck")?.status).toBe("failed");
     expect(readDispatch("dispatch-abandoned")?.status).toBe("failed");
     expect(readDispatch("dispatch-fresh")?.status).toBe("processing");
     expect(readDispatch("dispatch-publishing")?.status).toBe("processing");
     expect(sentWebhooks).toEqual([
-      { principalId: "principal-1", eventType: "post.failed", payloads: [buildExpectedPayload(STUCK_UNCLAIMED)] },
-      {
-        principalId: "principal-2",
-        eventType: "post.failed",
-        payloads: [buildExpectedPayload(STUCK_ABANDONED_CLAIM)],
-      },
+      { principalId: "principal-1", eventType: "post.failed", payloads: [UNCLAIMED_SWEPT_PAYLOAD] },
+      { principalId: "principal-2", eventType: "post.failed", payloads: [ABANDONED_CLAIM_SWEPT_PAYLOAD] },
     ]);
+  });
+
+  test("a swept dispatch whose publish claim was never taken says it was not published", async () => {
+    fakePostgres.tables.set("pending_direct_posts", [STUCK_UNCLAIMED]);
+    await runSweep();
+    expect(sentWebhooks).toEqual([
+      { principalId: "principal-1", eventType: "post.failed", payloads: [UNCLAIMED_SWEPT_PAYLOAD] },
+    ]);
+  });
+
+  test("a swept dispatch whose publish claim was taken says it may have published", async () => {
+    fakePostgres.tables.set("pending_direct_posts", [STUCK_ABANDONED_CLAIM]);
+    await runSweep();
+    expect(sentWebhooks).toEqual([
+      { principalId: "principal-2", eventType: "post.failed", payloads: [ABANDONED_CLAIM_SWEPT_PAYLOAD] },
+    ]);
+  });
+
+  test("the stored record keeps the sweep's text whether or not a claim was taken", async () => {
+    await runSweep();
+    expect(readDispatch("dispatch-stuck")?.failure_reason).toBe(SWEPT_MESSAGE);
+    expect(readDispatch("dispatch-abandoned")?.failure_reason).toBe(SWEPT_MESSAGE);
   });
 
   test("a sweep whose write committed but whose reply was lost fires post.failed once per dispatch on the retry", async () => {
