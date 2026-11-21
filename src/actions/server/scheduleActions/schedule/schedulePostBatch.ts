@@ -357,7 +357,7 @@ export async function schedulePostBatch(
 }
 
 export async function preflightSchedulePost(
-  post: SchedulePostData,
+  post: Omit<SchedulePostData, "batch_id">,
   principalId: string,
 ): Promise<PreflightResult> {
   const validationError = validateSchedulePostFields(post, principalId);
@@ -431,7 +431,7 @@ export async function preflightSchedulePost(
 }
 
 function validateSchedulePostFields(
-  post: SchedulePostData,
+  post: Omit<SchedulePostData, "batch_id">,
   principalId: string,
 ): string | null {
   if (!post.scheduledAt) return "Missing required field scheduledAt.";
@@ -450,7 +450,7 @@ function validateSchedulePostFields(
 }
 
 async function checkPlatformDailyQuotas(
-  posts: SchedulePostData[],
+  posts: { platform: string }[],
   principalId: string,
   requestId?: string | null,
 ): Promise<

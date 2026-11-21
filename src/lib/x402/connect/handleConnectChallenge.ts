@@ -3,13 +3,13 @@ import "server-only";
 import type { PaymentRequired } from "@x402/core/types";
 import type { ConnectNetworkContext } from "./types";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
-import { buildPaymentRequired } from "@/lib/x402/http/paymentHttp";
+import { buildPaymentRequired, type BuildPaymentRequiredResult } from "@/lib/x402/http/paymentHttp";
 
 export type ConnectChallengeResult =
   | { ok: true; challengeBody: PaymentRequired }
   | {
       ok: false;
-      error: "pricing_lookup_failed" | "fee_payer_unavailable";
+      error: "pricing_lookup_failed" | Extract<BuildPaymentRequiredResult, { ok: false }>["reason"];
       message: string;
     };
 

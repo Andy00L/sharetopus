@@ -22,13 +22,18 @@ export function paymentResponseHeaders(
 
 export type BuildPaymentRequirementsResult =
   | { ok: true; requirements: PaymentRequirements }
-  | { ok: false; reason: "fee_payer_unavailable"; message: string };
+  | { ok: false; reason: "fee_payer_unavailable" | "invalid_amount"; message: string };
 
 export async function buildPaymentRequirements(params: {
   network: NetworkConfig;
   amountUsdc: number;
   recipientAddress: string;
 }): Promise<BuildPaymentRequirementsResult> {
+  const atomicAmount = usdcToAtomic(params.amountUsdc, params.network.usdcDecimals);
+  if (!atomicAmount.ok) {
+    console.error(`[buildPaymentRequirements] Refusing to charge: ${atomicAmount.message}`);
+    return { ok: false, reason: "invalid_amount", message: "Pricing for this action is misconfigured." };
+  }
   const extraResult = await buildRequirementsExtra(params.network);
   if (!extraResult.ok) return extraResult;
   return {
@@ -37,7 +42,7 @@ export async function buildPaymentRequirements(params: {
       scheme: "exact",
       network: params.network.caipNetwork,
       asset: params.network.usdcAddress,
-      amount: usdcToAtomic(params.amountUsdc, params.network.usdcDecimals),
+      amount: atomicAmount.atomicAmount.toString(),
       payTo: params.recipientAddress,
       maxTimeoutSeconds: 300,
       extra: extraResult.extra,
@@ -74,7 +79,7 @@ async function buildRequirementsExtra(
 
 export type BuildPaymentRequiredResult =
   | { ok: true; paymentRequired: PaymentRequired }
-  | { ok: false; reason: "fee_payer_unavailable"; message: string };
+  | Extract<BuildPaymentRequirementsResult, { ok: false }>;
 
 export async function buildPaymentRequired(params: {
   resourceUrl: string;

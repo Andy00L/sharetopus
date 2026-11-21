@@ -14,10 +14,7 @@ import {
 import { getCdpClient, sendThroughCdp } from "@/lib/x402/cdp/cdpClient";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getRecipientAddress, getRpcUrl } from "@/lib/x402/config";
-import {
-  buildTransferCheckedInstruction,
-  findAssociatedTokenAddress,
-} from "@/lib/x402/solana/splToken";
+import { buildUsdcTransferInstructions } from "@/lib/x402/solana/splToken";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
 /** The Solana HTTP transport sets no timeout of its own. */
@@ -66,37 +63,24 @@ async function buildRefundTransaction(
   senderAddress: string,
 ): Promise<{ ok: true; base64Transaction: string } | { ok: false; message: string }> {
   try {
-    const rpc = createSolanaRpc(getRpcUrl(input.network));
-
-    const { value: latestBlockhash } = await rpc
-      .getLatestBlockhash()
-      .send({ abortSignal: AbortSignal.timeout(BLOCKHASH_REQUEST_TIMEOUT_MS) });
+    const atomicAmount = usdcToAtomic(input.amountUsdc, input.network.usdcDecimals);
+    if (!atomicAmount.ok) return { ok: false, message: atomicAmount.message };
 
     const senderAddr = address(senderAddress);
-    const recipientAddr = address(input.payerAddress);
-    const usdcMint = address(input.network.usdcAddress);
-
-    const sourceAta = await findAssociatedTokenAddress(senderAddr, usdcMint);
-    const destinationAta = await findAssociatedTokenAddress(recipientAddr, usdcMint);
-
-    const atomicAmount = BigInt(
-      usdcToAtomic(input.amountUsdc, input.network.usdcDecimals),
-    );
-    if (atomicAmount <= BigInt(0)) {
-      return { ok: false, message: "Refund amount rounds to zero USDC." };
-    }
-
-    const transferInstruction = buildTransferCheckedInstruction({
-      sourceAta,
-      mint: usdcMint,
-      destinationAta,
-      authority: senderAddr,
-      atomicAmount,
+    const refundInstructions = await buildUsdcTransferInstructions({
+      sender: senderAddr,
+      recipient: address(input.payerAddress),
+      mint: address(input.network.usdcAddress),
+      atomicAmount: atomicAmount.atomicAmount,
       decimals: input.network.usdcDecimals,
     });
 
+    const { value: latestBlockhash } = await createSolanaRpc(getRpcUrl(input.network))
+      .getLatestBlockhash()
+      .send({ abortSignal: AbortSignal.timeout(BLOCKHASH_REQUEST_TIMEOUT_MS) });
+
     const txMessage = appendTransactionMessageInstructions(
-      [transferInstruction],
+      refundInstructions,
       setTransactionMessageLifetimeUsingBlockhash(
         latestBlockhash,
         setTransactionMessageFeePayer(

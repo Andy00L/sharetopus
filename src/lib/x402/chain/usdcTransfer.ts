@@ -34,10 +34,8 @@ export function buildUsdcTransferCall(params: {
     };
   }
 
-  const atomicAmount = BigInt(usdcToAtomic(amountUsdc, network.usdcDecimals));
-  if (atomicAmount <= BigInt(0)) {
-    return { ok: false, message: "Refund amount rounds to zero USDC." };
-  }
+  const atomicAmount = usdcToAtomic(amountUsdc, network.usdcDecimals);
+  if (!atomicAmount.ok) return { ok: false, message: atomicAmount.message };
 
   return {
     ok: true,
@@ -46,7 +44,7 @@ export function buildUsdcTransferCall(params: {
     calldata: encodeFunctionData({
       abi: erc20Abi,
       functionName: "transfer",
-      args: [recipientAddress, atomicAmount],
+      args: [recipientAddress, atomicAmount.atomicAmount],
     }),
   };
 }

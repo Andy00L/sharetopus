@@ -50,6 +50,7 @@ export type VerifyPaymentError =
   | { kind: "authorization_expired"; message: string }
   | { kind: "replay_detected"; nonce: string }
   | { kind: "facilitator_error"; message: string }
+  | { kind: "invalid_amount"; message: string }
   | { kind: "kyt_sanctioned"; payerAddress: string };
 
 export async function verifyPayment(
@@ -72,7 +73,8 @@ export async function verifyPayment(
     recipientAddress: input.recipientAddress,
   });
   if (!requirementsResult.ok) {
-    return { ok: false, error: { kind: "facilitator_error", message: requirementsResult.message } };
+    const errorKind = requirementsResult.reason === "invalid_amount" ? "invalid_amount" : "facilitator_error";
+    return { ok: false, error: { kind: errorKind, message: requirementsResult.message } };
   }
   const requirements = requirementsResult.requirements;
 

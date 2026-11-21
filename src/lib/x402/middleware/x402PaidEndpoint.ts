@@ -34,7 +34,6 @@ import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
-import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 
@@ -242,13 +241,14 @@ async function buildChallengeResponse(params: {
     error: "PAYMENT-SIGNATURE header is required",
   });
   if (!paymentRequiredResult.ok) {
+    const isPricingInvalid = paymentRequiredResult.reason === "invalid_amount";
     return context.fail({
       principal: null,
       action,
       chargeId: null,
       resultStatus: "error",
-      httpStatus: 502,
-      errorKind: "facilitator_error",
+      httpStatus: isPricingInvalid ? 500 : 502,
+      errorKind: isPricingInvalid ? "pricing_not_configured" : "facilitator_error",
       message: paymentRequiredResult.message,
     });
   }
@@ -384,7 +384,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             body,
             principal,
             network,
-            usdcPrice,
+            amountAtomic: verifyResult.requirements.amount,
             payerAddress: verifyResult.payerAddress,
             actionKey,
             requestId,
@@ -468,10 +468,15 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       ...(chargeRecord.metadata ?? {}),
       ...(req.method === "GET" ? {} : { result: handlerResult.data }),
     };
-    await updateChargeRecord(chargeId, {
+    const recordWrite = await updateChargeRecord(chargeId, {
       ...chargeRecord,
       metadata: Object.keys(storedMetadata).length > 0 ? storedMetadata : undefined,
     });
+    if (!recordWrite.ok) {
+      console.error(
+        `[x402PaidEndpoint] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers 409 and /proof shows no post for it.`,
+      );
+    }
 
     context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
     return buildSettledResponse({
@@ -480,7 +485,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       chargeId,
       network,
       payerAddress: verifyResult.payerAddress,
-      usdcPrice,
+      amountAtomic: verifyResult.requirements.amount,
     });
   };
 }
@@ -551,14 +556,14 @@ function buildSettledResponse(params: {
   chargeId: string;
   network: NetworkConfig;
   payerAddress: string;
-  usdcPrice: number;
+  amountAtomic: string;
 }): Response {
   const settleResponse: SettleResponse = {
     success: true,
     payer: params.payerAddress,
     transaction: params.txHash,
     network: params.network.caipNetwork,
-    amount: usdcToAtomic(params.usdcPrice, params.network.usdcDecimals),
+    amount: params.amountAtomic,
   };
   return buildGenericSuccessResponse({
     data: params.data,
@@ -577,7 +582,7 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   body: TBody;
   principal: WalletPrincipal;
   network: NetworkConfig;
-  usdcPrice: number;
+  amountAtomic: string;
   payerAddress: string;
   actionKey: string;
   requestId: string;
@@ -649,7 +654,7 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
         chargeId: replay.chargeId,
         network: params.network,
         payerAddress: params.payerAddress,
-        usdcPrice: params.usdcPrice,
+        amountAtomic: params.amountAtomic,
       });
     }
 
@@ -677,6 +682,7 @@ function describeVerifyError(error: VerifyPaymentError): string {
     case "insufficient_funds":
     case "authorization_expired":
     case "facilitator_error":
+    case "invalid_amount":
       return error.message;
     case "amount_mismatch":
       return `Expected ${error.expected} USDC, the payment authorizes ${error.received} USDC.`;
@@ -713,6 +719,8 @@ function mapVerifyErrorToHttpStatus(kind: VerifyPaymentError["kind"]): number {
       return 403;
     case "facilitator_error":
       return 502;
+    case "invalid_amount":
+      return 500;
     default: {
       const unhandledKind: never = kind;
       console.error(`[mapVerifyErrorToHttpStatus] Unhandled kind: ${String(unhandledKind)}`);

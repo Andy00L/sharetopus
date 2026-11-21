@@ -37,7 +37,7 @@ export async function findAssociatedTokenAddress(
 }
 
 // SPL Token TransferChecked: data [u8 12, u64 amount little-endian, u8 decimals]; accounts source, mint, destination, authority.
-export function buildTransferCheckedInstruction(params: {
+function buildTransferCheckedInstruction(params: {
   sourceAta: Address;
   mint: Address;
   destinationAta: Address;
@@ -63,7 +63,7 @@ export function buildTransferCheckedInstruction(params: {
 }
 
 // ATA program CreateIdempotent: data [u8 1]; accounts payer, ata, owner, mint, system program, token program.
-export function buildCreateAssociatedTokenAccountIdempotentInstruction(params: {
+function buildCreateAssociatedTokenAccountIdempotentInstruction(params: {
   payer: Address;
   ata: Address;
   owner: Address;
@@ -81,4 +81,33 @@ export function buildCreateAssociatedTokenAccountIdempotentInstruction(params: {
     ],
     data: Uint8Array.of(CREATE_ATA_IDEMPOTENT_INSTRUCTION),
   };
+}
+
+export async function buildUsdcTransferInstructions(params: {
+  sender: Address;
+  recipient: Address;
+  mint: Address;
+  atomicAmount: bigint;
+  decimals: number;
+}): Promise<SplInstruction[]> {
+  const [sourceAta, destinationAta] = await Promise.all([
+    findAssociatedTokenAddress(params.sender, params.mint),
+    findAssociatedTokenAddress(params.recipient, params.mint),
+  ]);
+  return [
+    buildCreateAssociatedTokenAccountIdempotentInstruction({
+      payer: params.sender,
+      ata: destinationAta,
+      owner: params.recipient,
+      mint: params.mint,
+    }),
+    buildTransferCheckedInstruction({
+      sourceAta,
+      mint: params.mint,
+      destinationAta,
+      authority: params.sender,
+      atomicAmount: params.atomicAmount,
+      decimals: params.decimals,
+    }),
+  ];
 }

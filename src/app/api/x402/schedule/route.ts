@@ -10,7 +10,8 @@ import {
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
 import {
   PostBodyBaseSchema,
-  withMediaPathRule,
+  SchedulePostOptionsSchema,
+  withPostTypeRules,
 } from "@/lib/x402/middleware/postBodySchema";
 import {
   preflightSchedulePost,
@@ -22,22 +23,7 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const PostOptionsSchema = z.object({
-  link: z.string().url().max(2048).optional(),
-  board: z.string().max(128).optional(),
-  boardName: z.string().max(200).optional(),
-  visibility: z.string().max(32).optional(),
-  disableComment: z.boolean().optional(),
-  disableDuet: z.boolean().optional(),
-  disableStitch: z.boolean().optional(),
-  brandContentToggle: z.boolean().optional(),
-  yourBrand: z.boolean().optional(),
-  brandedContent: z.boolean().optional(),
-  isAigc: z.boolean().optional(),
-  privacyStatus: z.enum(["public", "unlisted", "private"]).optional(),
-});
-
-const ScheduleBodySchema = withMediaPathRule(
+const ScheduleBodySchema = withPostTypeRules(
   PostBodyBaseSchema.extend({
     scheduled_at: z.string().refine(
       (value) => {
@@ -46,13 +32,11 @@ const ScheduleBodySchema = withMediaPathRule(
       },
       { message: "scheduled_at must be a valid ISO 8601 date in the future." }
     ),
-    post_options: PostOptionsSchema.nullable().optional(),
+    post_options: SchedulePostOptionsSchema.nullable().optional(),
   })
 );
 
 type ScheduleBody = z.infer<typeof ScheduleBodySchema>;
-
-const PREFLIGHT_PLACEHOLDER_BATCH_ID = "preflight";
 
 type ScheduleResult = {
   batchId: string;
@@ -60,7 +44,7 @@ type ScheduleResult = {
   inserted: number;
 };
 
-function toSchedulePostData(body: ScheduleBody, batchId: string): SchedulePostData {
+function toScheduleCandidate(body: ScheduleBody): Omit<SchedulePostData, "batch_id"> {
   const hasPinterestFields =
     body.pinterest_board_id !== undefined ||
     body.pinterest_board_name !== undefined ||
@@ -84,7 +68,6 @@ function toSchedulePostData(body: ScheduleBody, batchId: string): SchedulePostDa
     mediaStoragePath: body.media_storage_path ?? "",
     title: body.title ?? undefined,
     coverTimestamp: body.cover_timestamp,
-    batch_id: batchId,
     postOptions,
     idempotency_key: body.idempotency_key,
   };
@@ -132,12 +115,11 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
     return { success: true, action: result.action };
   },
 
-  precheck: ({ body, principal }) =>
-    preflightSchedulePost(toSchedulePostData(body, PREFLIGHT_PLACEHOLDER_BATCH_ID), principal.principalId),
+  precheck: ({ body, principal }) => preflightSchedulePost(toScheduleCandidate(body), principal.principalId),
 
   handler: async ({ body, principal, requestId }) => {
     const scheduleResult = await schedulePostBatch(
-      [toSchedulePostData(body, generateBatchId())],
+      [{ ...toScheduleCandidate(body), batch_id: generateBatchId() }],
       principal.principalId,
       "x402",
       requestId,

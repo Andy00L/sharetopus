@@ -16,7 +16,8 @@ export type MappedVerifyError =
   | { kind: "verify_authorization_expired"; message: string }
   | { kind: "verify_replay_detected"; message: string }
   | { kind: "verify_kyt_sanctioned"; message: string }
-  | { kind: "verify_facilitator_error"; message: string };
+  | { kind: "verify_facilitator_error"; message: string }
+  | { kind: "verify_invalid_amount"; message: string };
 
 export type MappedSettleError =
   | { kind: "settle_not_verified"; message: string }
@@ -65,6 +66,8 @@ export function mapVerifyPaymentError(
       };
     case "facilitator_error":
       return { kind: "verify_facilitator_error", message: error.message };
+    case "invalid_amount":
+      return { kind: "verify_invalid_amount", message: error.message };
   }
 }
 

@@ -12,6 +12,7 @@ import {
   type ShareLinkRefusal,
 } from "@/actions/server/share-link/validateShareToken";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
+import { runWriteWithOneRetry } from "@/lib/x402/db/runWriteWithOneRetry";
 import {
   buildSocialAccountValues,
   connectPlatformAccounts,
@@ -53,10 +54,15 @@ export type OAuthCallbackResult =
         | { kind: "temporarily_unavailable"; message: string };
     };
 
-export type CallbackErrorKind = Extract<
-  OAuthCallbackResult,
-  { ok: false }
->["error"]["kind"];
+type CallbackError = Extract<OAuthCallbackResult, { ok: false }>["error"];
+
+export type CallbackErrorKind = CallbackError["kind"];
+
+type PendingConnectionTransition = {
+  status: "expired" | "failed";
+  error_code?: string;
+  error_message?: string;
+};
 
 const TEMPORARILY_UNAVAILABLE_MESSAGE =
   "Could not finish connecting right now. Refresh this page to try again.";
@@ -137,17 +143,11 @@ export async function handleOAuthCallback(
   }
 
   if (new Date(connection.expires_at) < new Date()) {
-    await transitionPendingTo(connection.id, {
-      status: "expired",
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "state_expired",
-        message: "OAuth connection has expired.",
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "expired" },
+      { kind: "state_expired", message: "OAuth connection has expired." },
+    );
   }
 
   if (connection.platform !== input.platform) {
@@ -173,21 +173,17 @@ export async function handleOAuthCallback(
         };
       }
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: errorKind,
-        error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: {
-          kind: errorKind,
-          message: `Share link is no longer valid: ${shareLinkValidation.reason}.`,
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: errorKind,
+          error_message: `Share link validation failed: ${shareLinkValidation.reason}`,
         },
-      };
+        { kind: errorKind, message: `Share link is no longer valid: ${shareLinkValidation.reason}.` },
+      );
     }
 
     const ownerCapacity = await checkShareLinkOwnerCapacity(
@@ -209,36 +205,30 @@ export async function handleOAuthCallback(
           ? "The link owner's subscription is not active. The connection cannot be completed."
           : "The link owner has reached their account limit. The connection cannot be completed.";
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: ownerCapacity.reason,
-        error_message: ownerRefusalMessage,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: { kind: ownerCapacity.reason, message: ownerRefusalMessage },
-      };
+      return failPendingConnection(
+        connection.id,
+        { status: "failed", error_code: ownerCapacity.reason, error_message: ownerRefusalMessage },
+        { kind: ownerCapacity.reason, message: ownerRefusalMessage },
+      );
     }
   }
 
   if (input.errorCode) {
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: input.errorCode,
-      error_message: input.errorDescription ?? input.errorCode,
-    });
-
-    return {
-      ok: false,
-      error: {
+    return failPendingConnection(
+      connection.id,
+      {
+        status: "failed",
+        error_code: input.errorCode,
+        error_message: input.errorDescription ?? input.errorCode,
+      },
+      {
         kind: "provider_error",
         code: input.errorCode,
         message: input.errorDescription ?? "OAuth provider returned an error.",
       },
-    };
+    );
   }
 
   const connectResult = await connectPlatformAccounts(input.platform, {
@@ -253,19 +243,11 @@ export async function handleOAuthCallback(
     const failureMessage = connectResult.success
       ? `No ${input.platform} account found to connect.`
       : connectResult.message;
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "exchange_failed",
-      error_message: failureMessage,
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "token_exchange_failed",
-        message: failureMessage,
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "failed", error_code: "exchange_failed", error_message: failureMessage },
+      { kind: "token_exchange_failed", message: failureMessage },
+    );
   }
   if (otherAccounts.length > 0) {
     console.warn(
@@ -285,19 +267,19 @@ export async function handleOAuthCallback(
       console.error(
         `[handleOAuthCallback] consume_share_link failed: ${consumeError.message}`,
       );
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: "db_update_failed",
-        error_message: "Could not record the share link use.",
-      });
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
-      return {
-        ok: false,
-        error: {
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: "db_update_failed",
+          error_message: "Could not record the share link use.",
+        },
+        {
           kind: "db_update_failed",
           message: "Could not record the share link use. Please open the link again.",
         },
-      };
+      );
     }
 
     if (consumeResult?.success !== true) {
@@ -309,21 +291,17 @@ export async function handleOAuthCallback(
         `[handleOAuthCallback] consume_share_link refused: ${refusal}`,
       );
 
-      await transitionPendingTo(connection.id, {
-        status: "failed",
-        error_code: errorKind,
-        error_message: `Share link consumption failed: ${refusal}`,
-      });
-
       logShareLinkAudit(input.platform, "share_link.use_failed", "error");
 
-      return {
-        ok: false,
-        error: {
-          kind: errorKind,
-          message: `Share link could not be used: ${refusal}.`,
+      return failPendingConnection(
+        connection.id,
+        {
+          status: "failed",
+          error_code: errorKind,
+          error_message: `Share link consumption failed: ${refusal}`,
         },
-      };
+        { kind: errorKind, message: `Share link could not be used: ${refusal}.` },
+      );
     }
   }
 
@@ -353,19 +331,15 @@ export async function handleOAuthCallback(
   const socialAccount = upsertedAccounts?.[0];
   if (upsertError || !socialAccount) {
     console.error(`[handleOAuthCallback] Failed to upsert social_accounts: ${upsertError?.message}`);
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "db_upsert_failed",
-      error_message: upsertError?.message ?? "Failed to save account.",
-    });
-
-    return {
-      ok: false,
-      error: {
-        kind: "db_update_failed",
-        message: "Failed to save social account.",
+    return failPendingConnection(
+      connection.id,
+      {
+        status: "failed",
+        error_code: "db_upsert_failed",
+        error_message: upsertError?.message ?? "Failed to save account.",
       },
-    };
+      { kind: "db_update_failed", message: "Failed to save social account." },
+    );
   }
 
   const { data: connectedRows, error: connectError } = await runQuery(
@@ -384,18 +358,11 @@ export async function handleOAuthCallback(
 
   if (connectError) {
     console.error(`[handleOAuthCallback] Failed to update social_connections: ${connectError.message}`);
-    await transitionPendingTo(connection.id, {
-      status: "failed",
-      error_code: "db_update_failed",
-      error_message: connectError.message,
-    });
-    return {
-      ok: false,
-      error: {
-        kind: "db_update_failed",
-        message: "Failed to update connection status.",
-      },
-    };
+    return failPendingConnection(
+      connection.id,
+      { status: "failed", error_code: "db_update_failed", error_message: connectError.message },
+      { kind: "db_update_failed", message: "Failed to update connection status." },
+    );
   }
 
   if (connectedRows.length === 0) {
@@ -435,14 +402,24 @@ export async function handleOAuthCallback(
   };
 }
 
+async function failPendingConnection(
+  connectionId: string,
+  transition: PendingConnectionTransition,
+  callbackError: CallbackError,
+): Promise<OAuthCallbackResult> {
+  const transitionWrite = await transitionPendingTo(connectionId, transition);
+  if (!transitionWrite.ok) {
+    console.error(
+      `[failPendingConnection] CONNECTION LEFT PENDING: connection ${connectionId} could not move to ${transition.status} after a retry (${transitionWrite.message}); its status poll reports expired once expires_at passes.`,
+    );
+  }
+  return { ok: false, error: callbackError };
+}
+
 async function transitionPendingTo(
   connectionId: string,
-  fields: {
-    status: "expired" | "failed";
-    error_code?: string;
-    error_message?: string;
-  }
-): Promise<void> {
+  fields: PendingConnectionTransition,
+): Promise<{ ok: true } | { ok: false; message: string }> {
   const updateFields: {
     status: "expired" | "failed";
     updated_at: string;
@@ -465,18 +442,13 @@ async function transitionPendingTo(
     updateFields.error_message = fields.error_message;
   }
 
-  const { error } = await runQuery(
+  const { error } = await runWriteWithOneRetry(() =>
     db
       .update(social_connections)
       .set(updateFields)
-      .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending")))
+      .where(and(eq(social_connections.id, connectionId), eq(social_connections.status, "pending"))),
   );
-
-  if (error) {
-    console.error(
-      `[handleOAuthCallback] Transition to ${fields.status} failed for connection ${connectionId}: ${error.message}`
-    );
-  }
+  return error ? { ok: false, message: error.message } : { ok: true };
 }
 
 function logShareLinkAudit(

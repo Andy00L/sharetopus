@@ -254,6 +254,7 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
 
     case "db_error":
     case "server_misconfiguration":
+    case "verify_invalid_amount":
       return NextResponse.json({ error: "internal", message: error.message }, { status: 500 });
 
     case "settlement_unrecorded":

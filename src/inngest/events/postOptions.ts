@@ -53,7 +53,7 @@ export const PlatformOptionsSchema = z.object({
   youtube: z.object({ privacyStatus: YouTubePrivacyStatusSchema.optional() }).optional(),
 }) satisfies z.ZodType<PlatformOptions>;
 
-const StoredPostOptionsSchema = z.object({
+export const StoredPostOptionsSchema = z.object({
   link: z.string().nullish(),
   board: z.string().nullish(),
   boardName: z.string().nullish(),

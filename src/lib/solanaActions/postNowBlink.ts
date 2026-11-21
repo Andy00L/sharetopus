@@ -8,6 +8,8 @@ import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
+import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
+import { PLATFORM_LABELS, platformSupportsMediaType } from "@/lib/platforms/capabilities";
 import { resolveExistingWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import { refundCharge, updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
@@ -28,8 +30,6 @@ import { buildUsdcPaymentTransaction } from "./buildUsdcPaymentTransaction";
 import { verifyUsdcPayment, type VerifyUsdcPaymentResult } from "./verifyUsdcPayment";
 
 const BLINK_ACTION = `${POST_ACTION_PREFIX}text`;
-
-const MAX_POST_TEXT_LENGTH = 3000;
 
 const DIRECT_SOLANA_FACILITATOR = "solana_direct";
 
@@ -95,23 +95,55 @@ export function parseBlinkText(
   if (text.length === 0) {
     return { ok: false, httpStatus: 400, message: "text is required." };
   }
-  if (text.length > MAX_POST_TEXT_LENGTH) {
+  return { ok: true, text };
+}
+
+export function checkBlinkTextFitsPlatform(
+  platform: Platform,
+  text: string,
+): { ok: true } | BlinkFailure {
+  const platformRefusal = checkPlatformTakesTextPosts(platform);
+  if (!platformRefusal.ok) return platformRefusal;
+  const textLimit = resolvePlatformTextLimit(platform);
+  if (text.length > textLimit) {
     return {
       ok: false,
       httpStatus: 400,
-      message: `text is ${text.length} characters; the limit is ${MAX_POST_TEXT_LENGTH}.`,
+      message: `text is ${text.length} characters; ${PLATFORM_LABELS[platform]} allows ${textLimit}.`,
     };
   }
-  return { ok: true, text };
+  return { ok: true };
+}
+
+function checkPlatformTakesTextPosts(platform: Platform): { ok: true } | BlinkFailure {
+  if (platformSupportsMediaType(platform, "text")) return { ok: true };
+  return {
+    ok: false,
+    httpStatus: 400,
+    message: `${PLATFORM_LABELS[platform]} does not accept text-only posts, so this Blink cannot post there.`,
+  };
 }
 
 export async function describePostNowAction(
   target: PostNowBlinkTarget,
 ): Promise<PostNowActionCard> {
-  const priceResult = await readActionPrice(BLINK_ACTION);
   const iconUrl = `${getBaseUrl()}/logo.png`;
   const title = `Post to ${target.platform} with Sharetopus`;
 
+  const platformRefusal = checkPlatformTakesTextPosts(target.platform);
+  if (!platformRefusal.ok) {
+    return {
+      type: "action",
+      icon: iconUrl,
+      title,
+      description: platformRefusal.message,
+      label: "Unavailable",
+      disabled: true,
+      error: { message: platformRefusal.message },
+    };
+  }
+
+  const priceResult = await readActionPrice(BLINK_ACTION);
   if (!priceResult.ok) {
     return {
       type: "action",
@@ -144,7 +176,7 @@ export async function describePostNowAction(
               name: "text",
               label: "What to post",
               required: true,
-              max: MAX_POST_TEXT_LENGTH,
+              max: resolvePlatformTextLimit(target.platform),
             },
           ],
         },
@@ -165,6 +197,9 @@ export async function preparePostNowPayment(params: {
   if (!isAddress(params.payerAddressRaw)) {
     return { ok: false, httpStatus: 400, message: "account is not a valid Solana address." };
   }
+
+  const textCheck = checkBlinkTextFitsPlatform(params.target.platform, params.text);
+  if (!textCheck.ok) return textCheck;
 
   const walletResult = await resolveWalletForBlink(params.payerAddressRaw);
   if (!walletResult.ok) return walletResult;
@@ -190,6 +225,10 @@ export async function preparePostNowPayment(params: {
     network: SOLANA_NETWORK,
   });
   if (!transactionResult.ok) {
+    if (transactionResult.reason === "invalid_amount") {
+      console.error(`[preparePostNowPayment] Refusing to charge: ${transactionResult.message}`);
+      return { ok: false, httpStatus: 500, message: "Pricing for this action is misconfigured." };
+    }
     return { ok: false, httpStatus: 503, message: "Could not reach Solana to prepare the payment. Try again." };
   }
 
@@ -224,15 +263,18 @@ export async function confirmPostNowPayment(params: {
     console.error("[confirmPostNowPayment] X402_RECIPIENT_SOLANA is not set.");
     return { ok: false, httpStatus: 500, message: "Solana payments are not configured." };
   }
+  const minimumAtomicAmount = usdcToAtomic(priceResult.usdcPrice, SOLANA_NETWORK.usdcDecimals);
+  if (!minimumAtomicAmount.ok) {
+    console.error(`[confirmPostNowPayment] Refusing to confirm: ${minimumAtomicAmount.message}`);
+    return { ok: false, httpStatus: 503, message: "Pricing is unavailable right now." };
+  }
 
   const verification = await verifyUsdcPayment({
     txSignatureRaw: params.txSignatureRaw,
     expectedPayerAddress: params.payerAddressRaw,
     recipientAddress,
     usdcMint: SOLANA_NETWORK.usdcAddress,
-    minimumAtomicAmount: BigInt(
-      usdcToAtomic(priceResult.usdcPrice, SOLANA_NETWORK.usdcDecimals),
-    ),
+    minimumAtomicAmount: minimumAtomicAmount.atomicAmount,
     network: SOLANA_NETWORK,
   });
   if (!verification.ok) {
@@ -323,6 +365,19 @@ export async function confirmPostNowPayment(params: {
     });
   }
 
+  const textCheck = checkBlinkTextFitsPlatform(params.target.platform, params.text);
+  if (!textCheck.ok) {
+    return refundAndFail({
+      chargeId,
+      txSignature: verification.txSignature,
+      payerAddress: verification.payerAddress,
+      amountUsdc: priceResult.usdcPrice,
+      principalId: principal.principalId,
+      httpStatus: textCheck.httpStatus,
+      reason: textCheck.message,
+    });
+  }
+
   const directPost: DirectPostData = {
     socialAccountId: params.target.accountId,
     platform: params.target.platform,
@@ -354,7 +409,12 @@ export async function confirmPostNowPayment(params: {
     });
   }
 
-  await updateChargeRecord(chargeId, { metadata: { batch_id: batchResult.batchId } });
+  const recordWrite = await updateChargeRecord(chargeId, { metadata: { batch_id: batchResult.batchId } });
+  if (!recordWrite.ok) {
+    console.error(
+      `[confirmPostNowPayment] CHARGE RECORD INCOMPLETE: charge ${chargeId} dispatched batch ${batchResult.batchId} but the batch link was not saved after a retry (${recordWrite.message}); /proof shows no post for it.`,
+    );
+  }
 
   return {
     ok: true,

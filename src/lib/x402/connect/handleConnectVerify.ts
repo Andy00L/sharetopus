@@ -39,7 +39,6 @@ import {
   type MappedVerifyError,
 } from "@/lib/x402/payment/errorMaps";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
-import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildOAuthUrl } from "./buildOAuthUrl";
 import type { ConnectNetworkContext, ConnectSuccessPayload } from "./types";
 
@@ -242,7 +241,13 @@ export async function handleConnectVerify(
   if (!chargeResult.ok) {
     switch (chargeResult.reason) {
       case "replay":
-        return respondToConnectReplay(chargeResult.replay, wallet, verifyResult.payerAddress, context, connectPrice);
+        return respondToConnectReplay(
+          chargeResult.replay,
+          wallet,
+          verifyResult.payerAddress,
+          context,
+          verifyResult.requirements.amount,
+        );
       case "charge_insert_failed":
         return {
           ok: false,
@@ -333,10 +338,15 @@ export async function handleConnectVerify(
     expiresAt,
     isReconnect: false,
   };
-  await updateChargeRecord(chargeId, {
+  const recordWrite = await updateChargeRecord(chargeId, {
     socialConnectionId: connectionId,
     metadata: { result: payload },
   });
+  if (!recordWrite.ok) {
+    console.error(
+      `[handleConnectVerify] CHARGE RECORD INCOMPLETE: charge ${chargeId} created connection ${connectionId} but the link and replay payload were not saved after a retry (${recordWrite.message}); a replay of this payment answers 409.`,
+    );
+  }
 
   return {
     ok: true,
@@ -345,7 +355,7 @@ export async function handleConnectVerify(
       payerAddress: verifyResult.payerAddress,
       txHash,
       network: context.network,
-      amountUsdc: connectPrice,
+      amountAtomic: verifyResult.requirements.amount,
     }),
     principal: wallet,
     chargeId,
@@ -390,14 +400,14 @@ function buildSettleResponseHeader(params: {
   payerAddress: string;
   txHash: string;
   network: NetworkConfig;
-  amountUsdc: number;
+  amountAtomic: string;
 }): string {
   const settleResponse: SettleResponse = {
     success: true,
     payer: params.payerAddress,
     transaction: params.txHash,
     network: params.network.caipNetwork,
-    amount: usdcToAtomic(params.amountUsdc, params.network.usdcDecimals),
+    amount: params.amountAtomic,
   };
   return encodePaymentResponseHeader(settleResponse);
 }
@@ -407,7 +417,7 @@ function respondToConnectReplay(
   wallet: WalletPrincipal,
   payerAddress: string,
   context: ConnectNetworkContext,
-  connectPrice: number,
+  amountAtomic: string,
 ): ConnectVerifyResult {
   switch (replay.state) {
     case "in_progress":
@@ -447,7 +457,7 @@ function respondToConnectReplay(
           payerAddress,
           txHash: replay.txHash,
           network: context.network,
-          amountUsdc: connectPrice,
+          amountAtomic,
         }),
         principal: wallet,
         chargeId: replay.chargeId,

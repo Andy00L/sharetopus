@@ -72,7 +72,7 @@ mock.module("@/lib/x402/charges/insertPendingX402Charge", () => ({
   }),
 }));
 
-const { refundCharge, settleCharge } = await import("./chargeLifecycle");
+const { refundCharge, settleCharge, updateChargeRecord } = await import("./chargeLifecycle");
 const { getNetworkConfig } = await import("@/lib/x402/networks");
 
 function requireNetwork(networkName: string): NetworkConfig {
@@ -275,5 +275,32 @@ describe("a replayed payment", () => {
     const result = await replayStoredPayment();
 
     expect(result).toEqual({ ok: false, reason: "replay", replay: { state: "closed", chargeId: CHARGE_ID } });
+  });
+});
+
+describe("updateChargeRecord", () => {
+  const countUpdates = () => issuedStatements.filter((statement) => statement.sql.startsWith("update")).length;
+
+  test("a write that fails once is retried and reported as saved", async () => {
+    failingUpdateCount = 1;
+
+    const recordWrite = await updateChargeRecord(CHARGE_ID, { scheduledPostId: CHARGE_ID });
+
+    expect(recordWrite).toEqual({ ok: true });
+    expect(countUpdates()).toBe(2);
+  });
+
+  test("a write that fails twice returns the database message instead of only logging it", async () => {
+    failingUpdateCount = 2;
+
+    const recordWrite = await updateChargeRecord(CHARGE_ID, { metadata: { batch_id: "batch-1" } });
+
+    expect(recordWrite).toEqual({ ok: false, message: "connection reset" });
+    expect(countUpdates()).toBe(2);
+  });
+
+  test("no fields means no write", async () => {
+    expect(await updateChargeRecord(CHARGE_ID, {})).toEqual({ ok: true });
+    expect(countUpdates()).toBe(0);
   });
 });

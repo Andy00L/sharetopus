@@ -15,6 +15,7 @@ import {
 } from "@/lib/x402/charges/chargeTransitions";
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
 import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
+import { runWriteWithOneRetry } from "@/lib/x402/db/runWriteWithOneRetry";
 import {
   refundPayment,
   settlePayment,
@@ -78,7 +79,7 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
     return { ok: false, reason: "charge_insert_failed", message: chargeResult.message };
   }
   const chargeId = chargeResult.chargeId;
-  const amountAtomic = usdcToAtomic(input.amountUsdc, input.network.usdcDecimals);
+  const amountAtomic = input.verified.requirements.amount;
 
   const settleResult = await settlePayment({
     paymentHeader: input.paymentHeader,
@@ -217,10 +218,12 @@ export interface ChargeRecordFields {
   socialConnectionId?: string;
 }
 
+export type ChargeRecordWriteResult = { ok: true } | { ok: false; message: string };
+
 export async function updateChargeRecord(
   chargeId: string,
   fields: ChargeRecordFields,
-): Promise<void> {
+): Promise<ChargeRecordWriteResult> {
   const chargeUpdate = {
     ...(fields.metadata === undefined ? {} : { metadata: fields.metadata }),
     ...(fields.scheduledPostId === undefined ? {} : { scheduled_post_id: fields.scheduledPostId }),
@@ -228,14 +231,12 @@ export async function updateChargeRecord(
       ? {}
       : { social_connection_id: fields.socialConnectionId }),
   };
-  if (Object.keys(chargeUpdate).length === 0) return;
+  if (Object.keys(chargeUpdate).length === 0) return { ok: true };
 
-  const { error } = await runQuery(
+  const { error } = await runWriteWithOneRetry(() =>
     db.update(x402_charges).set(chargeUpdate).where(eq(x402_charges.id, chargeId)),
   );
-  if (error) {
-    console.error(`[updateChargeRecord] Failed to update charge ${chargeId}: ${error.message}`);
-  }
+  return error ? { ok: false, message: error.message } : { ok: true };
 }
 
 export interface RefundChargeInput {
@@ -254,11 +255,12 @@ export interface RefundChargeOutcome {
 }
 
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
+  const refundAtomicAmount = usdcToAtomic(input.amountUsdc, input.network.usdcDecimals);
   const reconciliationBase = {
     chargeId: input.chargeId,
     network: input.network.name,
     payerAddress: input.payerAddress,
-    amountAtomic: usdcToAtomic(input.amountUsdc, input.network.usdcDecimals),
+    amountAtomic: refundAtomicAmount.ok ? refundAtomicAmount.atomicAmount.toString() : null,
   };
 
   const markerWrite = await writeActionFailedMarker({

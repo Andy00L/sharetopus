@@ -10,7 +10,7 @@ import {
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
 import {
   PostBodyBaseSchema,
-  withMediaPathRule,
+  withPostTypeRules,
 } from "@/lib/x402/middleware/postBodySchema";
 import {
   directPostBatch,
@@ -21,7 +21,7 @@ import type { DirectPostData } from "@/actions/server/directPostActions/directPo
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const PostNowBodySchema = withMediaPathRule(PostBodyBaseSchema);
+const PostNowBodySchema = withPostTypeRules(PostBodyBaseSchema);
 
 type PostNowBody = z.infer<typeof PostNowBodySchema>;
 

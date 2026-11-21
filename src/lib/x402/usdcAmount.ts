@@ -1,12 +1,17 @@
 import "server-only";
 
-export function usdcToAtomic(amountUsdc: number, decimals: number): string {
+export type UsdcToAtomicResult = { ok: true; atomicAmount: bigint } | { ok: false; message: string };
+
+export function usdcToAtomic(amountUsdc: number, decimals: number): UsdcToAtomicResult {
   // Number.prototype.toFixed returns exponential notation from 1e21 (ECMA-262), which BigInt cannot parse.
-  if (!Number.isFinite(amountUsdc) || amountUsdc < 0 || amountUsdc >= 1e21) {
-    console.error(`[usdcToAtomic] Rejecting out-of-range amount: ${amountUsdc}`);
-    return "0";
+  if (!Number.isFinite(amountUsdc) || amountUsdc <= 0 || amountUsdc >= 1e21) {
+    return { ok: false, message: `${amountUsdc} is not a positive USDC amount.` };
   }
   const fixed = amountUsdc.toFixed(decimals);
   const [wholePart, fractionPart = ""] = fixed.split(".");
-  return BigInt(`${wholePart}${fractionPart.padEnd(decimals, "0")}`).toString();
+  const atomicAmount = BigInt(`${wholePart}${fractionPart.padEnd(decimals, "0")}`);
+  if (atomicAmount <= BigInt(0)) {
+    return { ok: false, message: `${amountUsdc} USDC rounds to zero at ${decimals} decimals.` };
+  }
+  return { ok: true, atomicAmount };
 }
