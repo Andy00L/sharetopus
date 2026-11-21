@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { popupCallbackNames } from "@/lib/api/oauth/web/popupCallbackNames";
-import { PLATFORM_LABELS, type PostingPlatform } from "@/lib/platforms/capabilities";
+import { PLATFORM_LABELS, type AdapterPlatform } from "@/lib/platforms/capabilities";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
@@ -25,7 +25,7 @@ declare global {
 }
 
 interface ConnectPlatformButtonProps {
-  readonly platform: PostingPlatform;
+  readonly platform: AdapterPlatform;
   readonly canConnect: boolean;
   readonly currentCount: number;
   readonly maxAllowed: number;

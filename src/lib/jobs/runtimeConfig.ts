@@ -1,7 +1,7 @@
 import {
   DEFAULT_UPLOAD_LIMITS,
   TIER_UPLOAD_LIMITS,
-} from "@/components/core/create/constants/uploadLimits";
+} from "@/lib/storage/uploadLimits";
 
 const MAX_VIDEO_MB = Math.max(
   ...Object.values(TIER_UPLOAD_LIMITS).map((tierLimits) => tierLimits.video),

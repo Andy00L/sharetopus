@@ -1,9 +1,9 @@
-import type { PrivacyLevel, TikTokOptions } from "@/lib/types/dbTypes";
+import type { TikTokOptions, TikTokPrivacyLevel } from "@/lib/types/dbTypes";
 
-const ENDPOINT_PRIVACY_LEVEL: PrivacyLevel = "PUBLIC_TO_EVERYONE";
+const ENDPOINT_PRIVACY_LEVEL: TikTokPrivacyLevel = "PUBLIC_TO_EVERYONE";
 
 export function resolveTikTokPrivacyLevel(
   tikTokOptions: TikTokOptions | undefined,
-): PrivacyLevel {
+): TikTokPrivacyLevel {
   return tikTokOptions?.privacyLevel ?? ENDPOINT_PRIVACY_LEVEL;
 }

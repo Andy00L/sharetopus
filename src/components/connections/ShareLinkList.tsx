@@ -12,8 +12,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { copyShareLinkToClipboard } from "./copyShareLinkToClipboard";
 import { RevokeShareLinkButton } from "./RevokeShareLinkButton";
-import { toast } from "sonner";
 
 function formatRelativeTime(isoDate: string): string {
   const date = new Date(isoDate);
@@ -43,10 +43,8 @@ export function ShareLinkList({ links }: { links: ShareLinkSummary[] | null }) {
   const [revokedLinkIds, setRevokedLinkIds] = useState<ReadonlySet<string>>(new Set());
   const visibleLinks = (links ?? []).filter((link) => !revokedLinkIds.has(link.id));
 
-  function handleCopyLink(token: string) {
-    const url = `${window.location.origin}/share/tiktok/${token}`;
-    navigator.clipboard.writeText(url);
-    toast.success("Link copied to clipboard");
+  async function handleCopyLink(token: string) {
+    await copyShareLinkToClipboard(`${window.location.origin}/share/tiktok/${token}`);
   }
 
   function handleRevoked(linkId: string) {

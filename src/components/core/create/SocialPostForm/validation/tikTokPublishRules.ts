@@ -1,8 +1,8 @@
 import type { MediaType } from "@/db/schema";
 import type {
   ClientSocialAccount,
-  PrivacyLevel,
   TikTokOptions,
+  TikTokPrivacyLevel,
 } from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 
@@ -21,7 +21,7 @@ export const TIKTOK_BRANDED_CONTENT_NOT_PRIVATE =
   "Branded content visibility cannot be set to private.";
 
 export type TikTokCapabilities = {
-  privacyOptions: PrivacyLevel[];
+  privacyOptions: TikTokPrivacyLevel[];
   commentDisabled: boolean;
   duetDisabled: boolean;
   stitchDisabled: boolean;

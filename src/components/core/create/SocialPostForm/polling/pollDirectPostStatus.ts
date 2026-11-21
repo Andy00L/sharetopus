@@ -1,34 +1,17 @@
 "use client";
 
 import { toast } from "sonner";
-import * as z from "zod/mini";
-import type {
-  PostStatusJob,
-  PostStatusResponse,
+import {
+  isJobTerminal,
+  PostStatusResponseSchema,
+  type PostStatusJob,
 } from "@/lib/types/postStatus";
-import { isJobTerminal } from "@/lib/types/postStatus";
 
 const FAST_PHASE_ATTEMPTS = 60;
 const FAST_PHASE_INTERVAL_MS = 1000;
 const SLOW_PHASE_ATTEMPTS = 60;
 const SLOW_PHASE_INTERVAL_MS = 2000;
 const STATUS_REQUEST_TIMEOUT_MS = 10_000;
-
-const PostStatusResponseSchema: z.ZodMiniType<PostStatusResponse> = z.discriminatedUnion("success", [
-  z.object({
-    success: z.literal(true),
-    jobs: z.array(
-      z.object({
-        event_id: z.string(),
-        status: z.enum(["pending", "success", "failed"]),
-        platform: z.string(),
-        error_message: z.nullable(z.string()),
-      }),
-    ),
-    allTerminal: z.boolean(),
-  }),
-  z.object({ success: z.literal(false), message: z.string() }),
-]);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

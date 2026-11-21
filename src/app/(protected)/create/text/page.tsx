@@ -34,12 +34,12 @@ async function SocialPostFormWithData({
     redirect("/create");
   }
   if (!accounts.success) {
-    return <AccountsLoadError rateLimitResetIn={accounts.resetIn} />;
+    return <AccountsLoadError failure={accounts} />;
   }
 
   return (
     <SocialPostForm
-      accounts={(accounts.data ?? []).map(toClientSocialAccount)}
+      accounts={accounts.data.map(toClientSocialAccount)}
       userId={userId}
       postType="text"
       initialSchedule={initialSchedule}

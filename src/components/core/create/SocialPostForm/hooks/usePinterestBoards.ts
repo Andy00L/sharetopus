@@ -7,17 +7,15 @@ import {
 } from "@/lib/api/pinterest/data/pinterestBoardsForAccount";
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { toast } from "sonner";
-
-export type BoardEntry = {
-  boardID: string;
-  boardName: string;
-  accountId: string;
-  isSelected: boolean;
-};
+import {
+  listBoardEntries,
+  selectAccountBoard,
+  toAccountBoards,
+  type BoardsByAccount,
+} from "../state/accountBoards";
 
 export function usePinterestBoards(userId: string | null) {
-  const [boards, setBoards] = useState<BoardEntry[]>([]);
-  const [checkedAccountIds, setCheckedAccountIds] = useState<string[]>([]);
+  const [boardsByAccount, setBoardsByAccount] = useState<BoardsByAccount>({});
   const [newBoardName, setNewBoardName] = useState("");
   const [isCreatingBoard, setIsCreatingBoard] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState(false);
@@ -27,35 +25,20 @@ export function usePinterestBoards(userId: string | null) {
 
     setIsLoadingBoards(true);
     try {
-      const result = await getPinterestBoardsForAccount(account.id);
-
-      if (result.success && result.boards.length > 0) {
-        const formatted: BoardEntry[] = result.boards.map((board) => ({
-          boardID: board.id,
-          boardName: board.name,
-          accountId: account.id,
-          isSelected: false,
-        }));
-
-        setBoards((prev) => [
-          ...prev.filter((entry) => entry.accountId !== account.id),
-          ...formatted,
-        ]);
-      } else {
-        setBoards((prev) => [
-          ...prev.filter((entry) => entry.accountId !== account.id),
-          {
-            boardID: `no-boards-${account.id}`,
-            boardName: "no-boards",
-            accountId: account.id,
-            isSelected: false,
-          },
-        ]);
-      }
-
-      setCheckedAccountIds((prev) =>
-        prev.includes(account.id) ? prev : [...prev, account.id]
+      const response = await getPinterestBoardsForAccount(account.id);
+      setBoardsByAccount((previous) => ({
+        ...previous,
+        [account.id]: toAccountBoards(account.id, response),
+      }));
+    } catch (fetchError) {
+      console.error(
+        "[usePinterestBoards] Board fetch failed:",
+        fetchError instanceof Error ? fetchError.message : fetchError,
       );
+      setBoardsByAccount((previous) => ({
+        ...previous,
+        [account.id]: toAccountBoards(account.id, { success: false, failure: "unavailable" }),
+      }));
     } finally {
       setIsLoadingBoards(false);
     }
@@ -63,27 +46,21 @@ export function usePinterestBoards(userId: string | null) {
 
   async function loadBoardsForAccount(account: ClientSocialAccount) {
     if (!userId) return;
-    if (checkedAccountIds.includes(account.id)) return;
-    if (boards.some((entry) => entry.accountId === account.id)) return;
+    if (boardsByAccount[account.id]?.status === "loaded") return;
 
     await fetchAndSetBoards(account);
   }
 
   function unloadBoardsForAccount(accountId: string) {
-    setBoards((prev) => prev.filter((entry) => entry.accountId !== accountId));
-    setCheckedAccountIds((prev) => prev.filter((id) => id !== accountId));
+    setBoardsByAccount((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(([loadedAccountId]) => loadedAccountId !== accountId),
+      ),
+    );
   }
 
   function selectBoard(accountId: string, boardId: string) {
-    setBoards((prev) =>
-      prev.map((board) => ({
-        ...board,
-        isSelected:
-          board.accountId === accountId
-            ? board.boardID === boardId
-            : board.isSelected,
-      }))
-    );
+    setBoardsByAccount((previous) => selectAccountBoard(previous, accountId, boardId));
   }
 
   async function handleCreateBoard(
@@ -123,15 +100,15 @@ export function usePinterestBoards(userId: string | null) {
   }
 
   function resetBoards() {
-    setBoards([]);
-    setCheckedAccountIds([]);
+    setBoardsByAccount({});
     setNewBoardName("");
     setIsCreatingBoard(false);
     setIsLoadingBoards(false);
   }
 
   return {
-    boards,
+    boards: listBoardEntries(boardsByAccount),
+    boardsByAccount,
     isLoadingBoards,
     newBoardName,
     setNewBoardName,

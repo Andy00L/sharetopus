@@ -33,7 +33,7 @@ interface PinterestDirectPostConfig {
   batchId: string;
   mediaType: string;
   postType: MediaType;
-  mediaUrl: string;
+  mediaUrl: string | null;
   scheduledPostId?: string;
   createdVia: CreatedVia;
 }

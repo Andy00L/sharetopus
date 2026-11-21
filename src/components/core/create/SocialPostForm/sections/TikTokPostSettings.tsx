@@ -16,8 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import type { MediaType } from "@/db/schema";
 import type {
   ClientSocialAccount,
-  PrivacyLevel,
   TikTokOptions,
+  TikTokPrivacyLevel,
 } from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 import {
@@ -43,13 +43,11 @@ interface TikTokPostSettingsProps {
   readonly videoDurationSec: number | null;
 }
 
-const PRIVACY_LEVEL_LABELS: Record<PrivacyLevel, string> = {
+const PRIVACY_LEVEL_LABELS: Record<TikTokPrivacyLevel, string> = {
   PUBLIC_TO_EVERYONE: "Public",
   MUTUAL_FOLLOW_FRIENDS: "Friends",
   FOLLOWER_OF_CREATOR: "Followers",
   SELF_ONLY: "Only me",
-  PUBLIC: "Public",
-  PROTECTED: "Protected",
 };
 
 export default function TikTokPostSettings({

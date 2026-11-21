@@ -19,7 +19,7 @@ import { AccountsLoadError } from "@/components/AccountsLoadError";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import AccountsPageSkeleton from "@/components/suspense/account/Placeholders";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
-import { PLATFORM_LABELS, type PostingPlatform } from "@/lib/platforms/capabilities";
+import { PLATFORM_LABELS, type AdapterPlatform } from "@/lib/platforms/capabilities";
 import { tierMeets } from "@/lib/types/plans";
 import { toClientSocialAccount } from "@/lib/utils/toClientSocialAccount";
 import { auth } from "@clerk/nextjs/server";
@@ -27,7 +27,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense, type ComponentType } from "react";
 
-const CONNECT_SECTIONS: readonly { platform: PostingPlatform; Icon: ComponentType }[] = [
+const CONNECT_SECTIONS: readonly { platform: AdapterPlatform; Icon: ComponentType }[] = [
   { platform: "tiktok", Icon: TiktokSVGIcon },
   { platform: "instagram", Icon: InstagramSVGIcon },
   { platform: "pinterest", Icon: PinterestSVGIcon },
@@ -50,14 +50,14 @@ const AccountsPageWithData = async () => {
     return <InactiveSubscriptionNotice status={subscriptionCheck.status} />;
   }
   if (!fetchResult.success) {
-    return <AccountsLoadError rateLimitResetIn={fetchResult.resetIn} />;
+    return <AccountsLoadError failure={fetchResult} />;
   }
 
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
   const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
 
-  const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);
+  const accounts = fetchResult.data.map(toClientSocialAccount);
 
   const shareLinksResult = isCreatorOrHigher ? await listShareLinks() : null;
   const shareLinks = shareLinksResult?.success ? shareLinksResult.data : null;

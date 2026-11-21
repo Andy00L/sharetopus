@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
 import type { PostStatus } from "@/db/schema";
+import { POST_CHANGE_ELIGIBLE_STATUSES } from "@/lib/types/postBatch";
 
 type StoredPost = { id: string; principal_id: string; status: PostStatus };
 
@@ -24,8 +25,9 @@ mock.module("@/db/client", () => ({
   runQuery: async () => ({ data: storedPosts, error: null }),
 }));
 
-const { checkPostChangeRules, POST_CHANGE_ELIGIBLE_STATUSES, preflightScheduledPostChange } =
-  await import("./preflightScheduledPostChange");
+const { checkPostChangeRules, preflightScheduledPostChange } = await import(
+  "./preflightScheduledPostChange"
+);
 
 const PRINCIPAL_ID = "principal-1";
 

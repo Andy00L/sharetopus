@@ -57,7 +57,7 @@ const devPlanPrices = [
 
   // Business plan
   {
-    title: "Pro ",
+    title: "Pro",
     monthlyPrice: 27,
     yearlyPrice: 194,
     monthlyYearlyprice: 16.17,
@@ -118,7 +118,7 @@ const prodPlanPrices = [
 
   // Business plan
   {
-    title: "Pro ",
+    title: "Pro",
     monthlyPrice: 27,
     yearlyPrice: 194,
     monthlyYearlyprice: 16.17,
@@ -181,9 +181,8 @@ function buildPriceIdToTierMap(): Record<string, PlanTier> {
   return map;
 }
 
-/** Plan title to tier; trim() absorbs the trailing space on "Pro " in planPrices. */
 function normalizePlanTitleToTier(title: string): PlanTier | null {
-  const normalizedTitle = title.trim().toLowerCase();
+  const normalizedTitle = title.toLowerCase();
   if (normalizedTitle === "starter") return "starter";
   if (normalizedTitle === "creator") return "creator";
   if (normalizedTitle === "pro") return "pro";

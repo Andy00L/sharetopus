@@ -5,16 +5,11 @@ import { inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
+import {
+  POST_CHANGE_ELIGIBLE_STATUSES,
+  type PostChangeAction,
+} from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
-
-export const POST_CHANGE_ELIGIBLE_STATUSES = {
-  cancel: ["scheduled"],
-  reschedule: ["scheduled", "cancelled"],
-  resume: ["cancelled"],
-  delete: null,
-} as const satisfies Record<string, readonly PostStatus[] | null>;
-
-export type PostChangeAction = keyof typeof POST_CHANGE_ELIGIBLE_STATUSES;
 
 export type PostChangeRuleResult<Post> =
   | { ok: true; eligiblePosts: Post[] }

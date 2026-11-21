@@ -9,13 +9,13 @@ import {
 import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 import { describeNetworkError } from "@/lib/net/describeNetworkError";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
-import type { PrivacyLevel } from "@/lib/types/dbTypes";
+import type { TikTokPrivacyLevel } from "@/lib/types/dbTypes";
 
 export type CreatorInfoData = {
   creator_avatar_url: string;
   creator_username: string;
   creator_nickname: string;
-  privacy_level_options: PrivacyLevel[];
+  privacy_level_options: TikTokPrivacyLevel[];
   comment_disabled: boolean;
   duet_disabled: boolean;
   stitch_disabled: boolean;

@@ -17,12 +17,6 @@ export const ADAPTER_PLATFORMS = [
 
 export type AdapterPlatform = (typeof ADAPTER_PLATFORMS)[number];
 
-/** @deprecated Use ADAPTER_PLATFORMS. */
-export const POSTING_PLATFORMS = ADAPTER_PLATFORMS;
-
-/** @deprecated Use AdapterPlatform. */
-export type PostingPlatform = AdapterPlatform;
-
 export const PLATFORM_LABELS: Record<AdapterPlatform, string> = {
   linkedin: "LinkedIn",
   tiktok: "TikTok",
@@ -54,9 +48,6 @@ const PLATFORM_MEDIA_SUPPORT: Record<AdapterPlatform, readonly MediaType[]> = {
 export function isAdapterPlatform(value: string): value is AdapterPlatform {
   return ADAPTER_PLATFORMS.some((platform) => platform === value);
 }
-
-/** @deprecated Use isAdapterPlatform. */
-export const isPostingPlatform = isAdapterPlatform;
 
 export const SCHEDULABLE_PLATFORMS = [
   ...ADAPTER_PLATFORMS,

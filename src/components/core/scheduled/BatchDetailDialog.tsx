@@ -32,6 +32,7 @@ import { deleteScheduledPostBatchAction } from "@/actions/server/scheduleActions
 import { updateScheduledTimeBatchAction } from "@/actions/server/scheduleActions/reschedule/updateScheduledTimeBatchAction";
 import { resumeScheduledPostBatchAction } from "@/actions/server/scheduleActions/resume/resumeScheduledPostBatchAction";
 import { ScheduledPostListItem } from "@/lib/types/dbTypes";
+import { isEligibleForPostChange } from "@/lib/types/postBatch";
 import PlatformContentDropdown from "./PlatformContentDropdown/PlatformContentDropdown";
 
 interface BatchDetailDialogProps {
@@ -57,9 +58,9 @@ export default function BatchDetailDialog({
   const scheduledDate = new Date(firstPost.scheduled_at);
   const formattedDate = format(scheduledDate, "MMM d, yyyy 'at' h:mm a");
 
-  const canCancel = posts.some((post) => post.status === "scheduled");
-  const canResume = posts.some((post) => post.status === "cancelled");
-  const canReschedule = canCancel || canResume;
+  const canCancel = posts.some((post) => isEligibleForPostChange("cancel", post.status));
+  const canResume = posts.some((post) => isEligibleForPostChange("resume", post.status));
+  const canReschedule = posts.some((post) => isEligibleForPostChange("reschedule", post.status));
 
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleTime, setRescheduleTime] = useState("");

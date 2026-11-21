@@ -85,6 +85,18 @@ describe("post options codec", () => {
     ).toEqual(decoded.decoded.platformOptions);
   });
 
+  test("a stored privacy level reaches only the platform that defines it", () => {
+    const tikTokRow = decodeStoredPostOptions({ privacyLevel: "SELF_ONLY" });
+    const pinterestRow = decodeStoredPostOptions({ privacyLevel: "PROTECTED" });
+    if (!tikTokRow.ok || !pinterestRow.ok) throw new Error("decode failed");
+    expect(tikTokRow.decoded.platformOptions.tiktok?.privacyLevel).toBe("SELF_ONLY");
+    expect(tikTokRow.decoded.platformOptions.pinterest?.privacyLevel).toBe(
+      PLATFORM_OPTION_DEFAULTS.pinterestPrivacyLevel,
+    );
+    expect(pinterestRow.decoded.platformOptions.pinterest?.privacyLevel).toBe("PROTECTED");
+    expect(pinterestRow.decoded.platformOptions.tiktok?.privacyLevel).toBeUndefined();
+  });
+
   test("decoded options satisfy the post.now event schema", () => {
     expect(PlatformOptionsSchema.safeParse(storeAndDecode("tiktok").platformOptions).success).toBe(
       true,

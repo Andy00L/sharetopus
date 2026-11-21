@@ -1,3 +1,4 @@
+import { encodeListCursor } from "@/lib/api/rest/pagination";
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 
 const QUICKSTART_CURL = `# Every request carries the API key as a Bearer token
@@ -12,12 +13,10 @@ const UNAUTHORIZED_401 = `{
   "request_id": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa"
 }`;
 
-const EXAMPLE_CURSOR = Buffer.from(
-  JSON.stringify([
-    "2026-07-01T09:30:00.123456+00:00",
-    "5b0f2a3e-8c4d-4e1f-9a7b-3c2d1e0f9a8b",
-  ]),
-).toString("base64url");
+const EXAMPLE_CURSOR = encodeListCursor({
+  sortKey: "2026-07-01T09:30:00.123456+00:00",
+  id: "5b0f2a3e-8c4d-4e1f-9a7b-3c2d1e0f9a8b",
+});
 
 const PAGINATED_PAGE_2 = `# First page
 curl "https://sharetopus.com/api/v1/posts?limit=20" \\
@@ -70,7 +69,7 @@ export const REST_CONVENTION_SECTIONS: DocsSection[] = [
     ],
     callouts: [
       {
-        tone: "blue",
+        tone: "note",
         text: "Every response carries an x-request-id header (echoed as request_id in error bodies). Include it when contacting support.",
       },
     ],

@@ -107,11 +107,11 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
     callouts: [
       {
-        tone: "blue",
+        tone: "note",
         text: "Each signed payment is single use. Presenting the same payment twice returns 409 replay. Sign a fresh payment for every call.",
       },
       {
-        tone: "amber",
+        tone: "warning",
         text: "Keep your wallet key offline. The API never needs the key, only one payment signature per paid call.",
       },
     ],
@@ -237,7 +237,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         ],
         callouts: [
           {
-            tone: "blue",
+            tone: "note",
             text: "Reconnecting an already-connected account returns oauthUrl null, does not start a new OAuth flow, and charges nothing.",
           },
         ],

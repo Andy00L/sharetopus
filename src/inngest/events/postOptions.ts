@@ -1,19 +1,33 @@
 import { z } from "zod";
 
 import type { AdapterPlatform } from "@/lib/platforms/capabilities";
-import type { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
+import type {
+  PinterestPrivacyLevel,
+  PlatformOptions,
+  TikTokPrivacyLevel,
+} from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 
-const PRIVACY_LEVELS = {
+const TIKTOK_PRIVACY_LEVELS = {
   PUBLIC_TO_EVERYONE: "PUBLIC_TO_EVERYONE",
   MUTUAL_FOLLOW_FRIENDS: "MUTUAL_FOLLOW_FRIENDS",
   FOLLOWER_OF_CREATOR: "FOLLOWER_OF_CREATOR",
   SELF_ONLY: "SELF_ONLY",
+} as const satisfies { [Level in TikTokPrivacyLevel]: Level };
+
+const PINTEREST_PRIVACY_LEVELS = {
   PUBLIC: "PUBLIC",
   PROTECTED: "PROTECTED",
-} as const satisfies { [Level in PrivacyLevel]: Level };
+} as const satisfies { [Level in PinterestPrivacyLevel]: Level };
 
-const PrivacyLevelSchema = z.enum(PRIVACY_LEVELS);
+const TikTokPrivacyLevelSchema = z.enum(TIKTOK_PRIVACY_LEVELS);
+
+const PinterestPrivacyLevelSchema = z.enum(PINTEREST_PRIVACY_LEVELS);
+
+const StoredPrivacyLevelSchema = z.enum({
+  ...TIKTOK_PRIVACY_LEVELS,
+  ...PINTEREST_PRIVACY_LEVELS,
+});
 
 const YouTubePrivacyStatusSchema = z.enum(["public", "unlisted", "private"]);
 
@@ -23,7 +37,7 @@ export const PLATFORM_OPTION_DEFAULTS = {
   youtubePrivacyStatus: "public",
   tiktokInteractionDisabled: false,
 } as const satisfies {
-  pinterestPrivacyLevel: PrivacyLevel;
+  pinterestPrivacyLevel: PinterestPrivacyLevel;
   linkedinVisibility: string;
   youtubePrivacyStatus: z.infer<typeof YouTubePrivacyStatusSchema>;
   tiktokInteractionDisabled: boolean;
@@ -32,7 +46,7 @@ export const PLATFORM_OPTION_DEFAULTS = {
 export const PlatformOptionsSchema = z.object({
   tiktok: z
     .object({
-      privacyLevel: PrivacyLevelSchema.optional(),
+      privacyLevel: TikTokPrivacyLevelSchema.optional(),
       disableComment: z.boolean().optional(),
       disableDuet: z.boolean().optional(),
       disableStitch: z.boolean().optional(),
@@ -44,7 +58,7 @@ export const PlatformOptionsSchema = z.object({
     .optional(),
   pinterest: z
     .object({
-      privacyLevel: PrivacyLevelSchema,
+      privacyLevel: PinterestPrivacyLevelSchema,
       board: z.string(),
       link: z.string(),
     })
@@ -57,7 +71,7 @@ export const StoredPostOptionsSchema = z.object({
   link: z.string().nullish(),
   board: z.string().nullish(),
   boardName: z.string().nullish(),
-  privacyLevel: PrivacyLevelSchema.nullish(),
+  privacyLevel: StoredPrivacyLevelSchema.nullish(),
   visibility: z.string().nullish(),
   disableComment: z.boolean().nullish(),
   disableDuet: z.boolean().nullish(),
@@ -84,9 +98,13 @@ export type DecodePostOptionsResult =
   | { ok: false; invalidKeys: string[] };
 
 function toPlatformOptions(options: StoredPostOptions): PlatformOptions {
+  const pinterestPrivacy = PinterestPrivacyLevelSchema.safeParse(options.privacyLevel);
+  const tikTokPrivacy = TikTokPrivacyLevelSchema.safeParse(options.privacyLevel);
   return {
     pinterest: {
-      privacyLevel: options.privacyLevel ?? PLATFORM_OPTION_DEFAULTS.pinterestPrivacyLevel,
+      privacyLevel: pinterestPrivacy.success
+        ? pinterestPrivacy.data
+        : PLATFORM_OPTION_DEFAULTS.pinterestPrivacyLevel,
       board: options.board ?? "",
       link: options.link ?? "",
     },
@@ -94,7 +112,7 @@ function toPlatformOptions(options: StoredPostOptions): PlatformOptions {
       visibility: options.visibility ?? PLATFORM_OPTION_DEFAULTS.linkedinVisibility,
     },
     tiktok: {
-      privacyLevel: options.privacyLevel ?? undefined,
+      privacyLevel: tikTokPrivacy.success ? tikTokPrivacy.data : undefined,
       disableComment: options.disableComment ?? PLATFORM_OPTION_DEFAULTS.tiktokInteractionDisabled,
       disableDuet: options.disableDuet ?? PLATFORM_OPTION_DEFAULTS.tiktokInteractionDisabled,
       disableStitch: options.disableStitch ?? PLATFORM_OPTION_DEFAULTS.tiktokInteractionDisabled,

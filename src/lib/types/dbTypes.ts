@@ -72,16 +72,16 @@ export type PendingTikTokPull = typeof pending_tiktok_pulls.$inferSelect;
 // Platform-specific option types
 // ─────────────────────────────────────────────────────────────────────
 
-export type PrivacyLevel =
+export type TikTokPrivacyLevel =
   | "PUBLIC_TO_EVERYONE"
   | "MUTUAL_FOLLOW_FRIENDS"
   | "FOLLOWER_OF_CREATOR"
-  | "SELF_ONLY"
-  | "PUBLIC"
-  | "PROTECTED";
+  | "SELF_ONLY";
+
+export type PinterestPrivacyLevel = "PUBLIC" | "PROTECTED";
 
 export interface TikTokOptions {
-  privacyLevel?: PrivacyLevel;
+  privacyLevel?: TikTokPrivacyLevel;
   disableComment?: boolean;
   disableDuet?: boolean;
   disableStitch?: boolean;
@@ -93,7 +93,7 @@ export interface TikTokOptions {
 }
 
 export interface PinterestOptions {
-  privacyLevel: PrivacyLevel;
+  privacyLevel: PinterestPrivacyLevel;
   board: string;
   link: string;
 }

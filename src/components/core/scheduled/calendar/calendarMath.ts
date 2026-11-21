@@ -11,8 +11,8 @@ import {
   type Day,
 } from "date-fns";
 
-import type { PostStatus } from "@/db/schema";
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
+import { isEligibleForPostChange } from "@/lib/types/postBatch";
 import { summarizeBatchStatus, type BatchStatus } from "../statusStyles";
 
 const MONDAY: Day = 1;
@@ -23,8 +23,6 @@ export type CalendarView = "month" | "week";
 const WEEKS_IN_MONTH_GRID = 6;
 const DAYS_PER_WEEK = 7;
 const MONTH_GRID_DAY_COUNT = WEEKS_IN_MONTH_GRID * DAYS_PER_WEEK;
-
-const RESCHEDULABLE_POST_STATUSES: readonly PostStatus[] = ["scheduled", "cancelled"];
 
 export const ALL_PLATFORMS = null;
 export type PlatformFilter = ReadonlySet<string> | typeof ALL_PLATFORMS;
@@ -121,9 +119,7 @@ export function buildWeekDays(anchor: Date): Date[] {
 }
 
 export function isBatchDraggable(batch: CalendarBatch): boolean {
-  return batch.posts.some((post) =>
-    RESCHEDULABLE_POST_STATUSES.includes(post.status),
-  );
+  return batch.posts.some((post) => isEligibleForPostChange("reschedule", post.status));
 }
 
 export function combineDayWithTimeOf(dayKey: string, timeSource: Date): Date {

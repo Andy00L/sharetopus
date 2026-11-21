@@ -138,7 +138,7 @@ export const REST_WEBHOOKS_SECTION: DocsSection = {
       ],
       callouts: [
         {
-          tone: "amber",
+          tone: "warning",
           text: "The secret field appears only in this response. Store it immediately; recovering it later requires creating a new subscription.",
         },
       ],

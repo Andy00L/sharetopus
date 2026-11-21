@@ -561,7 +561,7 @@ export default function SocialPostForm({
                 <TabsContent value="pinterest" className="mt-4">
                   <PinterestSettingsTab
                     selectedPinterestAccounts={selectedPinterestAccounts}
-                    boards={pinterestHook.boards}
+                    boardsByAccount={pinterestHook.boardsByAccount}
                     isLoadingBoards={pinterestHook.isLoadingBoards}
                     newBoardName={pinterestHook.newBoardName}
                     setNewBoardName={pinterestHook.setNewBoardName}

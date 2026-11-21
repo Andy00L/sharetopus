@@ -50,7 +50,7 @@ export const GET = x402PaidEndpoint<ConnectionsParams, ConnectionsResult>({
       };
     }
 
-    const safeAccounts = (fetchResult.data ?? []).map((account) => ({
+    const safeAccounts = fetchResult.data.map((account) => ({
       id: account.id,
       platform: account.platform,
       display_name: account.display_name,

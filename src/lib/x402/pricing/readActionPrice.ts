@@ -1,9 +1,32 @@
 import "server-only";
 
-import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, or, type SQL } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pricing_actions } from "@/db/schema";
+
+export const PURCHASABLE_X402_ACTIONS = [
+  "cancel",
+  "connect_account",
+  "delete",
+  "list_connections",
+  "list_history",
+  "list_posts",
+  "post.image",
+  "post.text",
+  "post.video",
+  "reschedule",
+  "upload_url",
+] as const;
+
+export type PurchasableX402Action = (typeof PURCHASABLE_X402_ACTIONS)[number];
+
+export function isPriceEffectiveAt(nowIso: string): SQL | undefined {
+  return and(
+    lte(pricing_actions.effective_from, nowIso),
+    or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso)),
+  );
+}
 
 const PRICE_CACHE_TTL_MS = 10 * 60_000;
 
@@ -13,10 +36,13 @@ export type ReadActionPriceResult =
   | { ok: true; usdcPrice: number }
   | { ok: false; message: string };
 
-const priceCacheByAction = new Map<string, { usdcPrice: number; expiresAtMs: number }>();
+const priceCacheByAction = new Map<
+  PurchasableX402Action,
+  { usdcPrice: number; expiresAtMs: number }
+>();
 
 export async function readActionPrice(
-  action: string,
+  action: PurchasableX402Action,
 ): Promise<ReadActionPriceResult> {
   const cachedPrice = priceCacheByAction.get(action);
   if (cachedPrice && cachedPrice.expiresAtMs > Date.now()) {
@@ -26,7 +52,7 @@ export async function readActionPrice(
 }
 
 export async function readFreshActionPrice(
-  action: string,
+  action: PurchasableX402Action,
 ): Promise<ReadActionPriceResult> {
   const nowIso = new Date().toISOString();
   const { data: pricingRows, error: pricingError } = await runQuery(
@@ -36,13 +62,7 @@ export async function readFreshActionPrice(
         effective_until: pricing_actions.effective_until,
       })
       .from(pricing_actions)
-      .where(
-        and(
-          eq(pricing_actions.action, action),
-          lte(pricing_actions.effective_from, nowIso),
-          or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso)),
-        ),
-      )
+      .where(and(eq(pricing_actions.action, action), isPriceEffectiveAt(nowIso)))
       .limit(1),
   );
 

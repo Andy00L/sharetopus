@@ -512,7 +512,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       ],
       callouts: [
         {
-          tone: "amber",
+          tone: "warning",
           text: "hard=true is not reversible and removes stored media that no other post references.",
         },
       ],

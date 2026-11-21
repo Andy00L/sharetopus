@@ -30,7 +30,10 @@ import { buildPaymentRequired, readPaymentHeader } from "@/lib/x402/http/payment
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
 import { resolveRequestNetwork } from "@/lib/x402/http/resolveRequestNetwork";
 import type { NetworkConfig } from "@/lib/x402/networks";
-import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import {
+  readActionPrice,
+  type PurchasableX402Action,
+} from "@/lib/x402/pricing/readActionPrice";
 import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
@@ -40,7 +43,7 @@ const RATE_LIMIT_WINDOW_SECONDS = 60;
 export type ActionResolver<TBody> = (
   body: TBody,
 ) =>
-  | { success: true; action: string }
+  | { success: true; action: PurchasableX402Action }
   | { success: false; httpStatus: number; errorKind: string; message: string };
 
 export type X402Precheck<TBody> = (params: {
@@ -69,7 +72,7 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
 
   resolveAction: ActionResolver<TBody>;
 
-  defaultAction: string;
+  defaultAction: PurchasableX402Action;
 
   parseBody: (req: NextRequest) => Promise<
     | { success: true; data: TBody }
@@ -154,7 +157,7 @@ type PreparedRequest =
 
 async function prepareRequest(params: {
   req: NextRequest;
-  action: string;
+  action: PurchasableX402Action;
   rateLimitScope: string;
   rateLimitPerMinute: number;
   context: RequestContext;
@@ -493,7 +496,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
 export interface X402ChallengeGetOptions {
   endpointPath: string;
 
-  action: string;
+  action: PurchasableX402Action;
 
   rateLimitScope: string;
 
@@ -521,7 +524,7 @@ async function parsePaidRequest<TBody, TResult>(
   req: NextRequest,
   options: X402PaidEndpointOptions<TBody, TResult>,
 ): Promise<
-  | { success: true; body: TBody; action: string }
+  | { success: true; body: TBody; action: PurchasableX402Action }
   | { success: false; httpStatus: number; errorKind: string; message: string }
 > {
   const bodyResult = await options.parseBody(req);

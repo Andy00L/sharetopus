@@ -1,7 +1,13 @@
+import { SOCIAL_PLATFORMS } from "@/db/schema";
 import type {
   DocsSection,
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
+
+const PLATFORM_LIST_FORMAT = new Intl.ListFormat("en", { type: "disjunction" });
+const ANY_PLATFORM_LIST = PLATFORM_LIST_FORMAT.format(SOCIAL_PLATFORMS);
+const OAUTH_PLATFORM_LIST = PLATFORM_LIST_FORMAT.format(ADAPTER_PLATFORMS);
 
 const CONNECTION_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (ConnectionDTO)",
@@ -16,8 +22,7 @@ const CONNECTION_DTO_FIELDS: ParamTableData = {
       name: "platform",
       type: "string",
       required: true,
-      description:
-        "linkedin, tiktok, pinterest, instagram, facebook, threads, youtube, or x.",
+      description: `${ANY_PLATFORM_LIST}.`,
     },
     {
       name: "account_identifier",
@@ -102,8 +107,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
               name: "platform",
               type: "string",
               required: false,
-              description:
-                "Any of linkedin, tiktok, pinterest, instagram, facebook, threads, youtube, x.",
+              description: `Any of ${ANY_PLATFORM_LIST}.`,
             },
             {
               name: "include_unavailable",
@@ -152,8 +156,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
               name: "platform",
               type: "string",
               required: true,
-              description:
-                "linkedin, tiktok, pinterest, instagram, youtube, x, or facebook.",
+              description: `${OAUTH_PLATFORM_LIST}.`,
             },
             {
               name: "redirect_url",
@@ -239,7 +242,7 @@ export const REST_CONNECTIONS_SECTION: DocsSection = {
       path: "/api/v1/connections/{id}/reauth",
       title: "Reauthorize a connection",
       description:
-        "For an account whose platform token expired (is_available false). Returns a fresh authorization URL to open in a browser, plus the current account snapshot.",
+        `For an account whose platform token expired (is_available false). Returns a fresh authorization URL to open in a browser, plus the current account snapshot. Only ${OAUTH_PLATFORM_LIST} connections have reauth links; any other platform answers 400 validation_error and is reconnected from the connections page.`,
       sourceRef: "src/app/api/v1/connections/[id]/reauth/route.ts",
       paramTables: [
         {

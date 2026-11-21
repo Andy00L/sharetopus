@@ -5,13 +5,13 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
-import type { PostChangeFailure } from "@/lib/types/postBatch";
+import {
+  POST_CHANGE_ELIGIBLE_STATUSES,
+  type PostChangeFailure,
+} from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import { CANCEL_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
-import {
-  checkPostChangeRules,
-  POST_CHANGE_ELIGIBLE_STATUSES,
-} from "../preflightScheduledPostChange";
+import { checkPostChangeRules } from "../preflightScheduledPostChange";
 
 export type CancelScheduledPostBatchResult = {
   message: string;

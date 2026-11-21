@@ -6,6 +6,10 @@ export type PagePosition = { sortKey: string; id: string };
 
 const CURSOR_ERROR = "cursor must be a next_cursor value from a previous page";
 
+export function encodeListCursor(position: PagePosition): string {
+  return Buffer.from(JSON.stringify([position.sortKey, position.id])).toString("base64url");
+}
+
 function decodeCursorJson(cursor: string): unknown {
   try {
     return JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
@@ -59,9 +63,7 @@ export function toListPage<Row extends { id: string }>(
   const lastRow = pageRows[pageRows.length - 1];
   const nextCursor =
     hasMore && lastRow
-      ? Buffer.from(JSON.stringify([readSortKey(lastRow), lastRow.id])).toString(
-          "base64url",
-        )
+      ? encodeListCursor({ sortKey: readSortKey(lastRow), id: lastRow.id })
       : null;
   return { pageRows, nextCursor, hasMore };
 }

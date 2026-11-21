@@ -1,3 +1,5 @@
+import type { PostStatus } from "@/db/schema";
+
 /**
  * Why one post in a batch was refused.
  * - invalid_input: a field rule (missing media, a media path outside the
@@ -62,3 +64,17 @@ export type PostChangeFailure =
   | "rate_limited"
   | "unavailable"
   | "internal";
+
+export const POST_CHANGE_ELIGIBLE_STATUSES = {
+  cancel: ["scheduled"],
+  reschedule: ["scheduled", "cancelled"],
+  resume: ["cancelled"],
+  delete: null,
+} as const satisfies Record<string, readonly PostStatus[] | null>;
+
+export type PostChangeAction = keyof typeof POST_CHANGE_ELIGIBLE_STATUSES;
+
+export function isEligibleForPostChange(action: PostChangeAction, status: PostStatus): boolean {
+  const eligibleStatuses: readonly PostStatus[] | null = POST_CHANGE_ELIGIBLE_STATUSES[action];
+  return eligibleStatuses === null || eligibleStatuses.includes(status);
+}

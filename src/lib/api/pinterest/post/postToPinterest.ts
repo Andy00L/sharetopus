@@ -41,7 +41,7 @@ export async function postToPinterest({
   fileName: string;
   coverTimestamp: number;
   postType: MediaType;
-  mediaUrl: string;
+  mediaUrl: string | null;
 }): Promise<PinterestPostResult> {
   if (!accessToken || !boardId) {
     console.error("[postToPinterest] Missing access token or board id");
@@ -49,6 +49,10 @@ export async function postToPinterest({
   }
 
   if (postType === "image") {
+    if (!mediaUrl) {
+      console.error("[postToPinterest] Image pin without media URL");
+      return buildInputFailure("Media URL is required for Pinterest image pins");
+    }
     return createImagePin({
       accessToken,
       boardId,

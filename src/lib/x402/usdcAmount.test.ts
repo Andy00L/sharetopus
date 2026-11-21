@@ -1,8 +1,6 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
-mock.module("server-only", () => ({}));
-
-const { usdcToAtomic } = await import("./usdcAmount");
+import { usdcToAtomic } from "./usdcAmount";
 
 describe("usdcToAtomic", () => {
   test("converts a price to atomic units at the token's decimals", () => {

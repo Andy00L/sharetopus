@@ -140,7 +140,7 @@ export default function PricingSection() {
               )}
 
               <div className="t-pricing-tier">
-                {plan.title.trim()}
+                {plan.title}
               </div>
 
               <p className="mt-2 text-sm text-muted-foreground leading-snug min-h-[40px]">

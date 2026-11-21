@@ -1,6 +1,6 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { fetchSocialAccounts } from "@/actions/server/data/fetchSocialAccounts";
-import { TIER_UPLOAD_LIMITS } from "@/components/core/create/constants/uploadLimits";
+import { TIER_UPLOAD_LIMITS } from "@/lib/storage/uploadLimits";
 import SocialPostForm from "@/components/core/create/SocialPostForm/SocialPostForm";
 import {
   parseSchedulePrefill,
@@ -35,14 +35,14 @@ async function SocialPostFormWithData({
     redirect("/create");
   }
   if (!accounts.success) {
-    return <AccountsLoadError rateLimitResetIn={accounts.resetIn} />;
+    return <AccountsLoadError failure={accounts} />;
   }
 
   const uploadLimits = TIER_UPLOAD_LIMITS[subscription.tier];
 
   return (
     <SocialPostForm
-      accounts={(accounts.data ?? []).map(toClientSocialAccount)}
+      accounts={accounts.data.map(toClientSocialAccount)}
       uploadLimits={uploadLimits}
       userId={userId}
       postType="video"

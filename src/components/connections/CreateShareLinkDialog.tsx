@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { copyShareLinkToClipboard } from "./copyShareLinkToClipboard";
 
 const EXPIRY_OPTIONS = [
   { value: "3600", label: "1 hour" },
@@ -84,10 +84,9 @@ export function CreateShareLinkDialog() {
     }
   }
 
-  function handleCopy() {
+  async function handleCopy() {
     if (!resultUrl) return;
-    navigator.clipboard.writeText(resultUrl);
-    toast.success("Link copied to clipboard");
+    await copyShareLinkToClipboard(resultUrl);
   }
 
   function handleOpenChange(nextOpen: boolean) {

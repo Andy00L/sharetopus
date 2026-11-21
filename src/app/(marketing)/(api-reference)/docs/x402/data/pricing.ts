@@ -1,24 +1,14 @@
 import "server-only";
 
-import { and, asc, gt, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pricing_actions } from "@/db/schema";
 import type { PricingRecurrence } from "@/db/schema";
-
-const PURCHASABLE_X402_ACTIONS = [
-  "cancel",
-  "connect_account",
-  "delete",
-  "list_connections",
-  "list_history",
-  "list_posts",
-  "post.image",
-  "post.text",
-  "post.video",
-  "reschedule",
-  "upload_url",
-] as const;
+import {
+  isPriceEffectiveAt,
+  PURCHASABLE_X402_ACTIONS,
+} from "@/lib/x402/pricing/readActionPrice";
 
 export interface PricingRow {
   action: string;
@@ -48,8 +38,7 @@ export async function fetchX402Pricing(): Promise<PricingResult> {
       .where(
         and(
           inArray(pricing_actions.action, [...PURCHASABLE_X402_ACTIONS]),
-          lte(pricing_actions.effective_from, nowIso),
-          or(isNull(pricing_actions.effective_until), gt(pricing_actions.effective_until, nowIso))
+          isPriceEffectiveAt(nowIso)
         )
       )
       .orderBy(asc(pricing_actions.action))

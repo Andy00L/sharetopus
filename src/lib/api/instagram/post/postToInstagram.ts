@@ -209,7 +209,7 @@ export async function postToInstagram(input: {
   accessToken: string;
   igUserId: string;
   caption: string;
-  mediaUrl: string;
+  mediaUrl: string | null;
   postType: "image" | "reel";
   altText?: string;
   shareToFeed?: boolean;
@@ -218,11 +218,12 @@ export async function postToInstagram(input: {
   if (!input.accessToken || !input.igUserId) {
     return buildInputFailure("Missing required parameters (accessToken and igUserId)");
   }
-  if (!input.mediaUrl) {
+  const { mediaUrl } = input;
+  if (!mediaUrl) {
     return buildInputFailure("Instagram requires media content. Please provide a public mediaUrl.");
   }
 
-  const container = await createMediaContainer(input);
+  const container = await createMediaContainer({ ...input, mediaUrl });
   if (!container.success) return container;
 
   const readiness = await waitForContainerReady(input.accessToken, container.containerId);

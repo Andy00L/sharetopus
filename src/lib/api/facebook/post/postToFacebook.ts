@@ -44,7 +44,7 @@ export async function postToFacebook({
   pageAccessToken: string;
   pageId: string;
   message: string;
-  mediaUrl?: string;
+  mediaUrl: string | null;
   postType: "text" | "image" | "video";
 }): Promise<FacebookPostResult> {
   if (!pageAccessToken || !pageId) {
@@ -53,29 +53,25 @@ export async function postToFacebook({
       "Missing required parameters (pageAccessToken and pageId)",
     );
   }
-  if (postType !== "text" && !mediaUrl) {
-    console.error("[postToFacebook] Media post without media URL");
-    return buildInputFailure("Media URL is required for image and video posts");
-  }
 
-  let endpoint: string;
-  let body: Record<string, string>;
+  const pageUrl = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}`;
+  let endpoint = `${pageUrl}/feed`;
+  let body: Record<string, string> = { message };
   let timeoutMs = PLATFORM_PUBLISH_TIMEOUT_MS;
 
-  switch (postType) {
-    case "text":
-      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/feed`;
-      body = { message };
-      break;
-    case "image":
-      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/photos`;
-      body = { url: mediaUrl ?? "", caption: message };
-      break;
-    case "video":
-      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/videos`;
-      body = { file_url: mediaUrl ?? "", description: message };
+  if (postType !== "text") {
+    if (!mediaUrl) {
+      console.error("[postToFacebook] Media post without media URL");
+      return buildInputFailure("Media URL is required for image and video posts");
+    }
+    if (postType === "image") {
+      endpoint = `${pageUrl}/photos`;
+      body = { url: mediaUrl, caption: message };
+    } else {
+      endpoint = `${pageUrl}/videos`;
+      body = { file_url: mediaUrl, description: message };
       timeoutMs = VIDEO_PUBLISH_TIMEOUT_MS;
-      break;
+    }
   }
 
   try {

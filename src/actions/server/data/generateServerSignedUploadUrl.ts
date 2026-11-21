@@ -8,7 +8,7 @@ import {
 import {
   TIER_UPLOAD_LIMITS,
   DEFAULT_UPLOAD_LIMITS,
-} from "@/components/core/create/constants/uploadLimits";
+} from "@/lib/storage/uploadLimits";
 import { enforceStorageQuota } from "@/lib/mcp/_shared/enforceStorageQuota";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import type { PlanTier } from "@/lib/types/plans";

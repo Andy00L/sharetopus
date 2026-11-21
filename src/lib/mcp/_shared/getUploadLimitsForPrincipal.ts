@@ -1,11 +1,10 @@
 import "server-only";
 import {
-  TIER_UPLOAD_LIMITS,
   DEFAULT_UPLOAD_LIMITS,
-} from "@/components/core/create/constants/uploadLimits";
+  TIER_UPLOAD_LIMITS,
+  type UploadLimits,
+} from "@/lib/storage/uploadLimits";
 import type { PlanTier } from "@/lib/types/plans";
-
-export type UploadLimits = { image: number; video: number };
 
 export function getUploadLimitsForPrincipal(
   tier: PlanTier | null,

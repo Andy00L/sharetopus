@@ -122,7 +122,7 @@ export default async function ProofPage() {
               Ledger
             </h2>
             {!ledgerResult.ok ? (
-              <Callout tone="amber">
+              <Callout tone="warning">
                 The ledger could not be read right now. Settlements still
                 verify on-chain; try again in a minute.
               </Callout>

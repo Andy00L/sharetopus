@@ -9,12 +9,10 @@ import {
   POST_DUE_TARGET_COLUMNS,
   sendPostDueEvents,
 } from "@/inngest/dispatch/sendPostDueEvents";
+import { POST_CHANGE_ELIGIBLE_STATUSES } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import { RESUME_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
-import {
-  checkPostChangeRules,
-  POST_CHANGE_ELIGIBLE_STATUSES,
-} from "../preflightScheduledPostChange";
+import { checkPostChangeRules } from "../preflightScheduledPostChange";
 import {
   buildResumeSchedule,
   countBumpedRows,

@@ -440,7 +440,7 @@ Checklist for implementing a new platform, matching how youtube/x/facebook were 
 9. UI: a section in the connections page using `ConnectPlatformButton`, and an icon in `allPlatformsIcons.tsx` / `SocialAvatarWrapper`.
 10. Docs: x402 reference strings in `src/app/(marketing)/(api-reference)/docs/x402/data/endpoints.ts`, this file, and `.env.example`.
 
-The zod platform enums derive from `src/lib/platforms/capabilities.ts`, so step 2 updates them automatically: the MCP posting tools, the REST post body and the content-history filters use `SCHEDULABLE_PLATFORMS` (the dedicated platforms plus every registry id); the x402 surface and the analytics filters use `ADAPTER_PLATFORMS` (`POSTING_PLATFORMS` is its deprecated alias).
+The zod platform enums derive from `src/lib/platforms/capabilities.ts`, so step 2 updates them automatically: the MCP posting tools, the REST post body and the content-history filters use `SCHEDULABLE_PLATFORMS` (the dedicated platforms plus every registry id); the x402 surface and the analytics filters use `ADAPTER_PLATFORMS`.
 
 Adding a registry provider instead takes three entries, and the compiler refuses any of them missing: the id in `REGISTRY_PLATFORM_IDS`, one entry in `REGISTRY_PROVIDER_CATALOG` (`src/lib/platforms/providers/catalog.ts`; a credentials entry must list `credentialFields`), and a behavior declared `satisfies ProviderBehavior` with the same `authKind` in `PROVIDER_BEHAVIORS` (`src/lib/platforms/providers/registry.ts`).
 

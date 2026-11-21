@@ -244,7 +244,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
             accountContent,
             fileName,
             mediaType: mimeType,
-            mediaUrl: media.urls.publicUrl ?? "",
+            mediaUrl: media.urls.publicUrl,
           }),
         );
       }
@@ -282,7 +282,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
             postType,
             coverTimestamp,
             accountContent,
-            mediaUrl: media.urls.publicUrl ?? "",
+            mediaUrl: media.urls.publicUrl,
           }),
         );
       }
@@ -311,7 +311,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
           await directPostForFacebookAccounts({
             ...sharedConfig,
             accountContent,
-            mediaUrl: media.urls.publicUrl ?? "",
+            mediaUrl: media.urls.publicUrl,
           }),
         );
       default:

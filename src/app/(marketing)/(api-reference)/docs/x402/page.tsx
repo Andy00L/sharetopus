@@ -45,7 +45,7 @@ export default async function X402ApiReferencePage() {
               </span>
             ))}
           </div>
-          <Callout tone="amber">{OVERVIEW.callout}</Callout>
+          <Callout tone="warning">{OVERVIEW.callout}</Callout>
         </>
       }
     >

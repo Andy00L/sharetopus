@@ -2,6 +2,8 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
+import { readTikTokClientCredentials } from "@/lib/api/tiktok/data/readTikTokClientCredentials";
 import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
 /** 48 random bytes base64url-encode to 64 chars, inside the RFC 7636 43-128 range. */
@@ -79,17 +81,13 @@ function buildLinkedInUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
 }
 
 function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
-  const clientKey =
-    process.env.NODE_ENV === "development"
-      ? process.env.TIKTOK_CLIENT_KEY_DEV
-      : process.env.TIKTOK_CLIENT_KEY;
-
-  if (!clientKey) {
-    console.error("[buildOAuthUrl] TIKTOK_CLIENT_KEY env var not set.");
+  const credentials = readTikTokClientCredentials();
+  if (!credentials) {
+    console.error("[buildOAuthUrl] TikTok client key or secret env var not set.");
     return {
       ok: false,
       error: "missing_client_id",
-      message: "TIKTOK_CLIENT_KEY is not configured.",
+      message: "TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET are not configured.",
     };
   }
 
@@ -97,7 +95,7 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
 
   const url =
     `https://www.tiktok.com/v2/auth/authorize/` +
-    `?client_key=${clientKey}` +
+    `?client_key=${credentials.clientKey}` +
     `&scope=${encodeURIComponent(scopes)}` +
     `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
     `&state=${input.state}` +
@@ -256,7 +254,7 @@ function buildFacebookUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
   ].join(",");
 
   const url =
-    `https://www.facebook.com/v23.0/dialog/oauth` +
+    `https://www.facebook.com/${META_GRAPH_API_VERSION}/dialog/oauth` +
     `?client_id=${clientId}` +
     `&redirect_uri=${encodeURIComponent(input.redirectUri)}` +
     `&response_type=code` +

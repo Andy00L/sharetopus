@@ -1,4 +1,4 @@
-import "server-only";
+export const USDC_DECIMALS = 6;
 
 export type UsdcToAtomicResult = { ok: true; atomicAmount: bigint } | { ok: false; message: string };
 

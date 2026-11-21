@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { WalletChain } from "@/db/schema";
+import { USDC_DECIMALS } from "@/lib/x402/usdcAmount";
 
 export type SettlementLane = "coinbase_cdp" | "celo" | "arc_local";
 
@@ -46,7 +47,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://mainnet.base.org",
     rpcUrlEnvVar: null,
     usdcAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     usdcEip712: { name: "USD Coin", version: "2" },
     settlement: "coinbase_cdp",
     recipientEnvVar: "X402_RECIPIENT_EVM",
@@ -60,7 +61,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://polygon-rpc.com",
     rpcUrlEnvVar: null,
     usdcAddress: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     usdcEip712: { name: "USD Coin", version: "2" },
     settlement: "coinbase_cdp",
     recipientEnvVar: "X402_RECIPIENT_EVM",
@@ -74,7 +75,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://arb1.arbitrum.io/rpc",
     rpcUrlEnvVar: null,
     usdcAddress: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     usdcEip712: { name: "USD Coin", version: "2" },
     settlement: "coinbase_cdp",
     recipientEnvVar: "X402_RECIPIENT_EVM",
@@ -89,7 +90,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://forno.celo.org",
     rpcUrlEnvVar: null,
     usdcAddress: "0xcebA9300f2b948710d2653dD7B07f33A8B32118C",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     usdcEip712: { name: "USDC", version: "2" },
     settlement: "celo",
     recipientEnvVar: "X402_RECIPIENT_CELO",
@@ -103,7 +104,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://rpc.mainnet.arc.io",
     rpcUrlEnvVar: "X402_ARC_RPC_URL",
     usdcAddress: "0x3600000000000000000000000000000000000000",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     usdcEip712: { name: "USDC", version: "2" },
     settlement: "arc_local",
     recipientEnvVar: "X402_RECIPIENT_ARC",
@@ -116,7 +117,7 @@ export const NETWORKS = Object.freeze({
     rpcUrl: "https://api.mainnet-beta.solana.com",
     rpcUrlEnvVar: "X402_SOLANA_RPC_URL",
     usdcAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-    usdcDecimals: 6,
+    usdcDecimals: USDC_DECIMALS,
     settlement: "coinbase_cdp",
     recipientEnvVar: "X402_RECIPIENT_SOLANA",
   },

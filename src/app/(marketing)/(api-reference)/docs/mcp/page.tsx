@@ -40,7 +40,7 @@ export default function McpReferencePage() {
               streamable http
             </span>
           </div>
-          <Callout tone="blue" className="mt-4">{MCP_OVERVIEW.planNote}</Callout>
+          <Callout tone="note" className="mt-4">{MCP_OVERVIEW.planNote}</Callout>
         </>
       }
     >

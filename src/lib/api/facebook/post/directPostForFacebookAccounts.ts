@@ -19,7 +19,7 @@ interface FacebookDirectPostConfig {
     description: string;
   };
   userId: string | null;
-  mediaUrl: string;
+  mediaUrl: string | null;
   batchId: string;
   postType: MediaType;
   scheduledPostId?: string;
@@ -70,7 +70,7 @@ export async function directPostForFacebookAccounts(
           pageAccessToken: accessToken,
           pageId: passthrough.config.account.account_identifier,
           message: passthrough.config.accountContent.description,
-          mediaUrl: passthrough.config.mediaUrl || undefined,
+          mediaUrl: passthrough.config.mediaUrl,
           postType: passthrough.config.postType,
         }),
       toHistoryFields: (postResult, _passthrough, adapterConfig) => ({

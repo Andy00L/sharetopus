@@ -22,7 +22,7 @@ interface InstagramDirectPostConfig {
     isCustomized: boolean;
   };
   userId: string | null;
-  mediaUrl: string;
+  mediaUrl: string | null;
   postType: "image" | "video";
   batchId: string;
   scheduledPostId?: string;

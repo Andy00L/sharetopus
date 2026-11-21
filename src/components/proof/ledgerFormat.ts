@@ -1,5 +1,6 @@
+import { USDC_DECIMALS } from "@/lib/x402/usdcAmount";
+
 const MIDDLE_ELLIPSIS = "\u2026";
-const USDC_DECIMALS = 6;
 const PRICE_MIN_FRACTION_DIGITS = 2;
 
 export function truncateMiddle(

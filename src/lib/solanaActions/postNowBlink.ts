@@ -23,13 +23,17 @@ import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/conf
 import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 import { NETWORKS } from "@/lib/x402/networks";
-import { readActionPrice, readFreshActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import {
+  readActionPrice,
+  readFreshActionPrice,
+  type PurchasableX402Action,
+} from "@/lib/x402/pricing/readActionPrice";
 import { buildKnownExplorerTxUrl } from "@/lib/x402/proof/explorer";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildUsdcPaymentTransaction } from "./buildUsdcPaymentTransaction";
 import { verifyUsdcPayment, type VerifyUsdcPaymentResult } from "./verifyUsdcPayment";
 
-const BLINK_ACTION = `${POST_ACTION_PREFIX}text`;
+const BLINK_ACTION: PurchasableX402Action = `${POST_ACTION_PREFIX}text`;
 
 const DIRECT_SOLANA_FACILITATOR = "solana_direct";
 

@@ -48,7 +48,7 @@ export default function RestApiReferencePage() {
               openapi.json
             </a>
           </div>
-          <Callout tone="blue" className="mt-4">{REST_OVERVIEW.note}</Callout>
+          <Callout tone="note" className="mt-4">{REST_OVERVIEW.note}</Callout>
         </>
       }
     >

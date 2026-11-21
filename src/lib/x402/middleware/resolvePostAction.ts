@@ -1,11 +1,12 @@
 import "server-only";
 
 import type { MediaType } from "@/db/schema";
+import type { PurchasableX402Action } from "@/lib/x402/pricing/readActionPrice";
 
 export const POST_ACTION_PREFIX = "post.";
 
 export function resolvePostAction(postType: string):
-  | { success: true; action: string; mediaType: MediaType }
+  | { success: true; action: PurchasableX402Action; mediaType: MediaType }
   | { success: false; httpStatus: number; errorKind: string; message: string } {
   switch (postType) {
     case "text":
