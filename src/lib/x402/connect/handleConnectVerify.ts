@@ -10,7 +10,7 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
 import type { Json } from "@/db/schema";
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
@@ -73,7 +73,7 @@ export type ConnectVerifyError =
 
 const ConnectSuccessPayloadSchema = z.object({
   connectionId: z.string(),
-  platform: z.enum(POSTING_PLATFORMS),
+  platform: z.enum(ADAPTER_PLATFORMS),
   oauthUrl: z.string().nullable(),
   connectionToken: z.string().nullable(),
   expiresAt: z.string(),

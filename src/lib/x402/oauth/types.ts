@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
 export interface ConnectionTokenPayload {
   connectionId: string;
@@ -13,5 +13,5 @@ export interface ConnectionTokenPayload {
 
   exp: number;
 
-  platform: Platform;
+  platform: AdapterPlatform;
 }

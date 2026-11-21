@@ -2,13 +2,13 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Platform } from "./types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
 /** 48 random bytes base64url-encode to 64 chars, inside the RFC 7636 43-128 range. */
 const PKCE_VERIFIER_RANDOM_BYTES = 48;
 
 export interface BuildOAuthUrlInput {
-  platform: Platform;
+  platform: AdapterPlatform;
   state: string;
   redirectUri: string;
 }

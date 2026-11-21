@@ -12,7 +12,7 @@ import { content_history, scheduled_posts, social_accounts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 import {
   PLATFORM_LABELS,
-  isPostingPlatform,
+  isAdapterPlatform,
   platformSupportsMediaType,
 } from "@/lib/platforms/capabilities";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
@@ -197,7 +197,7 @@ export function checkPlatformCompatibility(
   mediaType: ScheduledPost["media_type"],
 ): CompatibilityResult {
   if (!platformSupportsMediaType(platform, mediaType)) {
-    const platformLabel = isPostingPlatform(platform)
+    const platformLabel = isAdapterPlatform(platform)
       ? PLATFORM_LABELS[platform]
       : platform;
     return {

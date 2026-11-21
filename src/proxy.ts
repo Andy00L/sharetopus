@@ -2,6 +2,7 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import {
+  REFERRAL_CODE_PATTERN,
   REFERRAL_COOKIE_MAX_AGE_SECONDS,
   REFERRAL_COOKIE_NAME,
 } from "@/lib/referral/referralRules";
@@ -19,7 +20,6 @@ const isPublicRoute = createRouteMatcher([
   "/.well-known/oauth-authorization-server(.*)",
 ]);
 
-// Create a matcher for all protected routes
 const isProtectedRoute = createRouteMatcher([
   "/accounts(.*)",
   "/config(.*)",
@@ -37,19 +37,14 @@ const isProtectedRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  // --- Referral cookie: first-touch attribution ---
-  // On any non-protected request carrying a valid ?ref= code and no existing
-  // attribution cookie, stamp one. ensureUserExists reads it when the user is
-  // first created and records the referral.
-  // Protected routes are excluded because auth.protect() may redirect to
-  // the login page, losing the query param. The referral link targets the
-  // homepage: /?ref=CODE
+  // Clerk's auth.protect() redirects a signed-out visitor to sign-in and drops
+  // the query string, so a ?ref= code is read only on unprotected routes.
   const refCode = req.nextUrl.searchParams.get("ref");
   if (
     refCode &&
     !isProtectedRoute(req) &&
     !req.cookies.has(REFERRAL_COOKIE_NAME) &&
-    /^[A-Z0-9]{1,16}$/.test(refCode)
+    REFERRAL_CODE_PATTERN.test(refCode)
   ) {
     const response = NextResponse.next();
     response.cookies.set({

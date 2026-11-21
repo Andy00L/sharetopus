@@ -18,7 +18,7 @@ import { handleConnectChallenge } from "@/lib/x402/connect/handleConnectChalleng
 import { handleConnectVerify } from "@/lib/x402/connect/handleConnectVerify";
 import type { ConnectVerifyError } from "@/lib/x402/connect/handleConnectVerify";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 
 export const runtime = "nodejs";
@@ -129,7 +129,7 @@ async function createConnectAudit(): Promise<ConnectAudit> {
 
 async function respondUnpaidConnectChallenge(
   request: NextRequest,
-  platform: Platform,
+  platform: AdapterPlatform,
   audit: ConnectAudit,
 ): Promise<NextResponse> {
   const rateLimitResult = await checkRateLimit({

@@ -20,7 +20,7 @@ import {
   recordX402Reconciliation,
 } from "@/lib/x402/charges/recordReconciliation";
 import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/config";
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 import { NETWORKS } from "@/lib/x402/networks";
 import { readActionPrice, readFreshActionPrice } from "@/lib/x402/pricing/readActionPrice";
@@ -40,7 +40,7 @@ const SOLANA_NETWORK = NETWORKS.solana;
 
 export interface PostNowBlinkTarget {
   accountId: string;
-  platform: Platform;
+  platform: AdapterPlatform;
 }
 
 export type BlinkFailure = {
@@ -99,7 +99,7 @@ export function parseBlinkText(
 }
 
 export function checkBlinkTextFitsPlatform(
-  platform: Platform,
+  platform: AdapterPlatform,
   text: string,
 ): { ok: true } | BlinkFailure {
   const platformRefusal = checkPlatformTakesTextPosts(platform);
@@ -115,7 +115,7 @@ export function checkBlinkTextFitsPlatform(
   return { ok: true };
 }
 
-function checkPlatformTakesTextPosts(platform: Platform): { ok: true } | BlinkFailure {
+function checkPlatformTakesTextPosts(platform: AdapterPlatform): { ok: true } | BlinkFailure {
   if (platformSupportsMediaType(platform, "text")) return { ok: true };
   return {
     ok: false,

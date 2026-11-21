@@ -3,7 +3,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
 import type { ConnectionTokenPayload } from "./types";
 
 const TOKEN_VERSION = "v1";
@@ -14,7 +14,7 @@ const ConnectionTokenPayloadSchema = z.object({
   chargeId: z.string().nullable(),
   iat: z.number(),
   exp: z.number(),
-  platform: z.enum(POSTING_PLATFORMS),
+  platform: z.enum(ADAPTER_PLATFORMS),
 });
 
 export type ConnectionTokenSecretResult =

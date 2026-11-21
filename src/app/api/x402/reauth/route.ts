@@ -13,7 +13,7 @@ import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import {
   issueConnectionToken,
@@ -44,7 +44,7 @@ type ReauthResult = {
 };
 
 type ReauthTargetResult =
-  | { ok: true; platform: Platform; redirectUri: string }
+  | { ok: true; platform: AdapterPlatform; redirectUri: string }
   | Extract<PreflightResult, { ok: false }>;
 
 async function loadReauthTarget(

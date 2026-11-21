@@ -3,7 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { after } from "next/server";
 
-import type { Platform } from "@/lib/x402/connect/types";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
 import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
@@ -20,7 +20,7 @@ import {
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 
 export interface OAuthCallbackInput {
-  platform: Platform;
+  platform: AdapterPlatform;
   code: string;
   state: string;
   errorCode: string | null;
@@ -452,7 +452,7 @@ async function transitionPendingTo(
 }
 
 function logShareLinkAudit(
-  platform: Platform,
+  platform: AdapterPlatform,
   action: "share_link.use_failed" | "share_link.use_succeeded",
   resultStatus: "ok" | "error"
 ): void {

@@ -1,8 +1,7 @@
 import "server-only";
 
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import type { NetworkConfig } from "@/lib/x402/networks";
-import type { Platform } from "@/lib/x402/connect/types";
 
 export const DEFAULT_FACILITATOR_URL =
   "https://api.cdp.coinbase.com/platform/v2/x402";
@@ -27,7 +26,7 @@ export const X402_PLATFORMS = [
   "linkedin",
   "tiktok",
   "pinterest",
-] as const satisfies readonly PostingPlatform[];
+] as const satisfies readonly AdapterPlatform[];
 
 export type X402Platform = (typeof X402_PLATFORMS)[number];
 
@@ -82,7 +81,7 @@ export function getAppUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL ?? getBaseUrl();
 }
 
-export function getOAuthRedirectUri(platform: Platform): string | null {
+export function getOAuthRedirectUri(platform: AdapterPlatform): string | null {
   switch (platform) {
     case "linkedin":
       return process.env.X402_LINKEDIN_REDIRECT_URI ?? null;
