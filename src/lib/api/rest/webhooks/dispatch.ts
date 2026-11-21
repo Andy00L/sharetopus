@@ -8,45 +8,60 @@ import { and, arrayContains, eq } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { webhook_subscriptions } from "@/db/schema";
 import { inngest } from "@/inngest/client";
+import {
+  webhookDispatchEvent,
+  WebhookDispatchEventDataSchema,
+  type WebhookDispatchEventData,
+} from "@/inngest/events/webhookDispatch";
+
+export type WebhookPayload = WebhookDispatchEventData["payload"];
 
 export type WebhookDispatchSendResult =
   | { ok: true }
   | { ok: false; message: string };
 
-/**
- * Queues one delivery of one event to one subscription as a
- * webhook.dispatch.v1 Inngest event; the deliver-webhook worker signs,
- * sends, retries and records it. Deliveries of the same event share
- * eventId. Used by the replay endpoint, which must reach only the
- * subscription being replayed.
- */
-export async function sendWebhookDispatchEvent(
-  delivery: WebhookDelivery,
-): Promise<WebhookDispatchSendResult> {
-  return sendWebhookDispatchEvents([delivery]);
-}
-
 type WebhookDelivery = {
   subscriptionId: string;
   eventType: string;
   eventId: string;
-  payload: Record<string, unknown>;
+  payload: WebhookPayload;
 };
+
+type StoredWebhookDelivery = Omit<WebhookDelivery, "payload"> & { payload: unknown };
+
+/**
+ * Queues one delivery of one stored event to one subscription as a
+ * webhook.dispatch.v1 Inngest event; the deliver-webhook worker signs,
+ * sends, retries and records it. Deliveries of the same event share
+ * eventId. Used by the replay endpoint, which must reach only the
+ * subscription being replayed. The payload comes from a stored row, so it
+ * is parsed with the event schema here.
+ */
+export async function sendWebhookDispatchEvent(
+  storedDelivery: StoredWebhookDelivery,
+): Promise<WebhookDispatchSendResult> {
+  const parsedPayload = WebhookDispatchEventDataSchema.shape.payload.safeParse(
+    storedDelivery.payload,
+  );
+  if (!parsedPayload.success) {
+    return { ok: false, message: "Stored webhook payload is not a JSON object" };
+  }
+  return sendWebhookDispatchEvents([{ ...storedDelivery, payload: parsedPayload.data }]);
+}
 
 async function sendWebhookDispatchEvents(
   deliveries: WebhookDelivery[],
 ): Promise<WebhookDispatchSendResult> {
   try {
     await inngest.send(
-      deliveries.map((delivery) => ({
-        name: "webhook.dispatch.v1",
-        data: {
+      deliveries.map((delivery) =>
+        webhookDispatchEvent.create({
           subscription_id: delivery.subscriptionId,
           event_type: delivery.eventType,
           event_id: delivery.eventId,
           payload: delivery.payload,
-        },
-      })),
+        }),
+      ),
     );
     return { ok: true };
   } catch (sendError) {
@@ -60,7 +75,7 @@ async function sendWebhookDispatchEvents(
 export function dispatchWebhook(
   principalId: string,
   eventType: string,
-  payload: Record<string, unknown>,
+  payload: WebhookPayload,
 ): Promise<void> {
   return dispatchWebhooks(principalId, eventType, [payload]);
 }
@@ -78,7 +93,7 @@ export function dispatchWebhook(
 export function dispatchWebhooks(
   principalId: string,
   eventType: string,
-  payloads: Record<string, unknown>[],
+  payloads: WebhookPayload[],
 ): Promise<void> {
   const dispatchWork = queueWebhookDeliveries(principalId, eventType, payloads);
   waitUntil(dispatchWork);
@@ -88,7 +103,7 @@ export function dispatchWebhooks(
 async function queueWebhookDeliveries(
   principalId: string,
   eventType: string,
-  payloads: Record<string, unknown>[],
+  payloads: WebhookPayload[],
 ): Promise<void> {
   if (payloads.length === 0) return;
   try {

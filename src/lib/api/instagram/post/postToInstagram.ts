@@ -11,6 +11,7 @@ import {
 } from "@/lib/api/_shared/platformFailure";
 import {
   PLATFORM_API_TIMEOUT_MS,
+  PLATFORM_IMAGE_PULL_TIMEOUT_MS,
   PLATFORM_PUBLISH_TIMEOUT_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
@@ -83,7 +84,9 @@ async function createMediaContainer(input: {
         method: "POST",
         headers: buildAuthHeaders(input.accessToken),
         body: JSON.stringify(containerParams),
-        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
+        signal: AbortSignal.timeout(
+          isReel ? PLATFORM_API_TIMEOUT_MS : PLATFORM_IMAGE_PULL_TIMEOUT_MS,
+        ),
       },
     );
     const containerText = await containerResponse.text();

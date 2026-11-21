@@ -1,9 +1,9 @@
 import "server-only";
 import { insertPendingTikTokPull } from "@/actions/server/data/pendingTikTokPulls";
+import { inngest } from "@/inngest/client";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import type { TikTokPostResult } from "@/lib/api/tiktok/post/postToTikTok";
 import { resolveTikTokPrivacyLevel } from "@/lib/api/tiktok/post/tikTokPrivacy";
-import { dispatchTikTokPublishPollEvent } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
   buildDirectPostRefusal,
@@ -36,6 +36,35 @@ interface TikTokDirectPostConfig {
 type TikTokPassthrough = {
   config: TikTokDirectPostConfig;
 };
+
+/**
+ * Starts the publish-status poll for one TikTok post. Inngest drops a
+ * repeated event id for 24 hours, so a second send for the same publish_id
+ * starts no second poller: https://www.inngest.com/docs/guides/handling-idempotency
+ */
+async function sendTikTokPublishPollEvent(input: {
+  publishId: string;
+  contentHistoryId: string | null;
+  socialAccountId: string;
+}): Promise<{ success: true } | { success: false; message: string }> {
+  try {
+    await inngest.send({
+      id: `tiktok-poll-${input.publishId}`,
+      name: "tiktok.publish.poll",
+      data: {
+        publish_id: input.publishId,
+        content_history_id: input.contentHistoryId,
+        social_account_id: input.socialAccountId,
+      },
+    });
+    return { success: true };
+  } catch (sendError) {
+    return {
+      success: false,
+      message: sendError instanceof Error ? sendError.message : String(sendError),
+    };
+  }
+}
 
 /** Posts to one TikTok account now and starts polling TikTok for the publish result. */
 export async function directPostForTikTokAccounts(
@@ -96,37 +125,38 @@ export async function directPostForTikTokAccounts(
         },
       }),
       onPostSuccess: async ({ postResult, historyResult, config: genericConfig }, passthrough) => {
+        const contentHistoryId = historyResult.success
+          ? (historyResult.recordId ?? null)
+          : null;
         const pendingInsert = await insertPendingTikTokPull({
           publish_id: postResult.publishId,
           principal_id: genericConfig.userId,
           social_account_id: genericConfig.accountContent.accountId,
           scheduled_post_id: genericConfig.scheduledPostId,
-          content_history_id: historyResult.success
-            ? (historyResult.recordId ?? null)
-            : null,
+          content_history_id: contentHistoryId,
           media_storage_path: passthrough.config.mediaPath,
           creator_username: postResult.creator_username,
         });
         if (!pendingInsert.success) {
           console.error(
-            "[directPostForTikTokAccounts] Failed to insert pending pull:",
+            `[directPostForTikTokAccounts] No pending pull for live publish_id ${postResult.publishId}, so no poll starts:`,
             pendingInsert.message,
           );
-          return;
+          return [{ kind: "tiktok_pull_not_recorded", message: pendingInsert.message }];
         }
-        const dispatchResult = await dispatchTikTokPublishPollEvent({
-          publish_id: postResult.publishId,
-          content_history_id: historyResult.success
-            ? (historyResult.recordId ?? null)
-            : null,
-          social_account_id: genericConfig.accountContent.accountId,
+        const pollSend = await sendTikTokPublishPollEvent({
+          publishId: postResult.publishId,
+          contentHistoryId,
+          socialAccountId: genericConfig.accountContent.accountId,
         });
-        if (!dispatchResult.success) {
+        if (!pollSend.success) {
           console.error(
-            "[directPostForTikTokAccounts] Failed to dispatch poll event:",
-            dispatchResult.message,
+            `[directPostForTikTokAccounts] Poll event not sent for publish_id ${postResult.publishId}:`,
+            pollSend.message,
           );
+          return [{ kind: "tiktok_poll_not_sent", message: pollSend.message }];
         }
+        return [];
       },
     },
   );

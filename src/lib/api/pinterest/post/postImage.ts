@@ -7,12 +7,20 @@ import {
   buildNetworkFailure,
   buildUnreadableAnswerFailure,
 } from "@/lib/api/_shared/platformFailure";
-import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import {
+  PLATFORM_IMAGE_PULL_TIMEOUT_MS,
+  PLATFORM_PUBLISH_TIMEOUT_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { PinterestPostResult } from "./postToPinterest";
 
 /** POST /v5/pins answer: the pin id, the rest kept for the result's data. */
 const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
+
+const PIN_REQUEST_TIMEOUT_MS: Record<"image" | "video", number> = {
+  image: PLATFORM_IMAGE_PULL_TIMEOUT_MS,
+  video: PLATFORM_PUBLISH_TIMEOUT_MS,
+};
 
 /**
  * Sends one POST /v5/pins request and reads the created pin. Shared by the
@@ -37,7 +45,7 @@ export async function createPin({
         "Content-Type": "application/json",
       },
       body: JSON.stringify(pinBody),
-      signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(PIN_REQUEST_TIMEOUT_MS[pinLabel]),
     });
     const responseText = await response.text();
 

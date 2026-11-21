@@ -61,6 +61,22 @@ describe("classifyPlatformHttpFailure", () => {
     ).toBe("transient");
   });
 
+  test("Instagram's own media download timeout is retryable, not a bad input", () => {
+    expect(
+      classifyPlatformHttpFailure({
+        platform: "instagram",
+        httpStatus: 400,
+        responseText: JSON.stringify({
+          error: {
+            message: "It takes too long to download the media.",
+            code: -2,
+            error_subcode: 2207003,
+          },
+        }),
+      }).reason,
+    ).toBe("transient");
+  });
+
   test("TikTok's daily post cap is a rate limit even though it answers 403", () => {
     expect(
       classifyPlatformHttpFailure({

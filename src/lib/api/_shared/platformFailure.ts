@@ -36,6 +36,9 @@ const GRAPH_PERMISSION_CODES = new Set([10]);
 const GRAPH_POLICY_CODES = new Set([3, 368, 506]);
 const GRAPH_TRANSIENT_CODES = new Set([1, 2]);
 const GRAPH_PERMISSION_CODE_RANGE = { min: 200, max: 299 };
+// https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/error-codes
+// 2207003: Meta's own media download timed out, "Try again".
+const GRAPH_TRANSIENT_SUBCODES = new Set([2207003]);
 
 // https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 const TIKTOK_REASON_BY_CODE = new Map<string, PlatformFailureReason>([
@@ -63,6 +66,7 @@ const GraphErrorBodySchema = z.object({
   error: z.object({
     message: z.string().optional(),
     code: z.number().optional(),
+    error_subcode: z.number().optional(),
     is_transient: z.boolean().optional(),
   }),
 });
@@ -102,8 +106,15 @@ function classifyHttpStatus(httpStatus: number): PlatformFailureReason {
 
 function classifyGraphCode(graphError: {
   code?: number;
+  error_subcode?: number;
   is_transient?: boolean;
 }): PlatformFailureReason | null {
+  if (
+    graphError.error_subcode !== undefined &&
+    GRAPH_TRANSIENT_SUBCODES.has(graphError.error_subcode)
+  ) {
+    return "transient";
+  }
   const graphCode = graphError.code;
   if (graphCode !== undefined) {
     if (GRAPH_RATE_LIMIT_CODES.has(graphCode)) return "rate_limited";

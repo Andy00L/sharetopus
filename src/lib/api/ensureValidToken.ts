@@ -177,7 +177,7 @@ async function refreshAndStoreToken(
     return {
       success: false,
       error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
-      failureReason: "unknown",
+      failureReason: "transient",
     };
   }
 }
