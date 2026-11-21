@@ -118,6 +118,8 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
 
   idempotencyKey?: (body: TBody) => string | undefined;
 
+  requestDigest?: (body: TBody) => string;
+
   handler: X402Handler<TBody, TResult>;
 
   recoverReplayResult?: ReplayResultRecovery<TBody>;
@@ -334,7 +336,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
         message: parsedRequest.message,
       });
     }
-    const { body, action: actionKey } = parsedRequest;
+    const { body, action: actionKey, requestDigest } = parsedRequest;
 
     const prepared = await prepareRequest({
       req,
@@ -360,6 +362,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
           payment: presentedPayment,
           options,
           body,
+          requestDigest,
           actionKey,
           network,
           usdcPrice,
@@ -442,6 +445,7 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       req,
       options,
       body,
+      requestDigest,
       actionKey,
       principal,
       paymentHeader,
@@ -463,6 +467,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
   req: NextRequest;
   options: X402PaidEndpointOptions<TBody, TResult>;
   body: TBody;
+  requestDigest: string | undefined;
   actionKey: PurchasableX402Action;
   principal: WalletPrincipal;
   paymentHeader: string;
@@ -471,7 +476,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
   requestId: string;
   context: RequestContext;
 }): Promise<PaidCallOutcome> {
-  const { req, options, body, actionKey, principal, paymentHeader, verified, requestId, context } =
+  const { req, options, body, requestDigest, actionKey, principal, paymentHeader, verified, requestId, context } =
     params;
   const { network, recipientAddress, usdcPrice } = params.prepared;
 
@@ -483,6 +488,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
           findKeyedReplayBatch: options.findKeyedReplayBatch,
           options,
           body,
+          requestDigest,
           actionKey,
           principal,
           payerAddress: verified.payerAddress,
@@ -518,6 +524,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
     amountUsdc: usdcPrice,
     requestId,
     recipientAddress,
+    requestDigest,
   });
   if (!chargeResult.ok) {
     switch (chargeResult.reason) {
@@ -528,6 +535,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
             req,
             options,
             body,
+            requestDigest,
             principal,
             network,
             amountAtomic: verified.requirements.amount,
@@ -702,14 +710,19 @@ async function parsePaidRequest<TBody, TResult>(
   req: NextRequest,
   options: X402PaidEndpointOptions<TBody, TResult>,
 ): Promise<
-  | { success: true; body: TBody; action: PurchasableX402Action }
+  | { success: true; body: TBody; action: PurchasableX402Action; requestDigest: string | undefined }
   | { success: false; httpStatus: number; errorKind: string; message: string }
 > {
   const bodyResult = await options.parseBody(req);
   if (!bodyResult.success) return bodyResult;
   const actionResult = options.resolveAction(bodyResult.data);
   if (!actionResult.success) return actionResult;
-  return { success: true, body: bodyResult.data, action: actionResult.action };
+  return {
+    success: true,
+    body: bodyResult.data,
+    action: actionResult.action,
+    requestDigest: options.requestDigest?.(bodyResult.data),
+  };
 }
 
 async function runHandler<TBody, TResult>(
@@ -761,6 +774,7 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   req: NextRequest;
   options: X402PaidEndpointOptions<TBody, TResult>;
   body: TBody;
+  requestDigest: string | undefined;
   principal: WalletPrincipal;
   network: NetworkConfig;
   amountAtomic: string;
@@ -770,7 +784,10 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   context: RequestContext;
 }): Promise<Response> {
   const { context, principal, actionKey } = params;
-  const replay = scopeReplayToPrincipal(params.replay, principal.principalId);
+  const replay = scopeReplayToCaller(params.replay, {
+    principalId: principal.principalId,
+    requestDigest: params.requestDigest,
+  });
 
   switch (replay.state) {
     case "in_progress":
@@ -864,18 +881,23 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   }
 }
 
-function scopeReplayToPrincipal(replay: ChargeReplay, principalId: string): ChargeReplay {
+type ReplayCaller = { principalId: string; requestDigest: string | undefined };
+
+function scopeReplayToCaller(replay: ChargeReplay, caller: ReplayCaller): ChargeReplay {
   switch (replay.state) {
     case "settled":
     case "in_progress":
-    case "closed":
-      return replay.principalId === principalId ? replay : { state: "not_found" };
+    case "closed": {
+      const isCallersCharge = replay.principalId === caller.principalId;
+      const isOtherRequest = replay.requestDigest !== null && replay.requestDigest !== caller.requestDigest;
+      return isCallersCharge && !isOtherRequest ? replay : { state: "not_found" };
+    }
     case "not_found":
     case "lookup_failed":
       return replay;
     default: {
       const unhandledReplay: never = replay;
-      console.error(`[scopeReplayToPrincipal] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
+      console.error(`[scopeReplayToCaller] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
       return { state: "not_found" };
     }
   }
@@ -959,6 +981,7 @@ function readPossiblySpentPayment(error: VerifyPaymentError): PresentedPayment |
 type DurableReplayParams<TBody, TResult> = {
   options: X402PaidEndpointOptions<TBody, TResult>;
   body: TBody;
+  requestDigest: string | undefined;
   actionKey: string;
   network: NetworkConfig;
   usdcPrice: number;
@@ -994,7 +1017,10 @@ async function answerLandedPaymentReplay<TBody, TResult extends Json>(
     return failReplayLookup({ context, principal: null, actionKey, chargeId: null, message: walletResult.message });
   }
   const principal = walletResult.principal;
-  const ownReplay = scopeReplayToPrincipal(replay, principal.principalId);
+  const ownReplay = scopeReplayToCaller(replay, {
+    principalId: principal.principalId,
+    requestDigest: params.requestDigest,
+  });
 
   switch (ownReplay.state) {
     case "not_found":
@@ -1043,12 +1069,12 @@ async function answerKeyedDispatchReplay<TBody, TResult extends Json>(
     }
   }
 
-  const replay = scopeReplayToPrincipal(
+  const replay = scopeReplayToCaller(
     await loadChargeReplay({
       target: { kind: "batch", batchId: keyedBatch.batchId, principalId: principal.principalId },
       action: actionKey,
     }),
-    principal.principalId,
+    { principalId: principal.principalId, requestDigest: params.requestDigest },
   );
   if (replay.state === "lookup_failed") {
     return failReplayLookup({ context, principal, actionKey, chargeId: null, message: replay.message });

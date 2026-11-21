@@ -9,6 +9,7 @@ import {
   type KeyedReplayBatchLookup,
   type ReplayResultRecovery,
 } from "@/lib/x402/middleware/x402PaidEndpoint";
+import { digestRequestBody } from "@/lib/x402/charges/requestDigest";
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
 import {
   PostBodyBaseSchema,
@@ -135,6 +136,8 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
   },
 
   idempotencyKey: (body) => body.idempotency_key,
+
+  requestDigest: digestRequestBody,
 
   precheck: ({ body, principal }) =>
     preflightDirectPost(toDirectPostData(body), principal.principalId),

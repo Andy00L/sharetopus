@@ -20,6 +20,7 @@ const ledger = {
   isRefundConfirmed: false,
   actionRuns: 0,
   refundedChargeIds: [] as string[],
+  requestDigestByNonce: new Map<string, string | undefined>(),
 };
 
 beforeEach(() => {
@@ -34,6 +35,7 @@ beforeEach(() => {
   ledger.isRefundConfirmed = false;
   ledger.actionRuns = 0;
   ledger.refundedChargeIds = [];
+  ledger.requestDigestByNonce.clear();
 });
 
 function holdSettle(nonce: string): { arrived: Promise<void>; release: () => void } {
@@ -110,9 +112,10 @@ mock.module("@/lib/x402/facilitator", () => ({
   }),
 }));
 mock.module("@/lib/x402/charges/chargeLifecycle", () => ({
-  settleCharge: async (input: { verified: { nonce: string } }) => {
+  settleCharge: async (input: { verified: { nonce: string }; requestDigest?: string }) => {
     const nonce = input.verified.nonce;
     ledger.settleAttempts.push(nonce);
+    ledger.requestDigestByNonce.set(nonce, input.requestDigest);
     const held = ledger.heldSettles.get(nonce);
     if (held) {
       held.markArrived();
@@ -155,6 +158,7 @@ mock.module("@/lib/x402/charges/chargeLifecycle", () => ({
           state: "settled",
           chargeId: "charge-nonce-1",
           principalId: PRINCIPAL_ID,
+          requestDigest: ledger.requestDigestByNonce.get("nonce-1") ?? null,
           txHash: "tx-nonce-1",
           amountUsdc: 0.05,
           storedResult: { batchId: "batch-1", eventIds: ["dispatch-1"], dispatched: 1 },

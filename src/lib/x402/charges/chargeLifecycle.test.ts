@@ -18,6 +18,7 @@ type ChargeRow = {
   error_message: string | null;
   payer_address: string;
   metadata: Record<string, unknown>;
+  request_digest: string | null;
   created_at: string;
   has_refund_reconciliation: boolean;
 };
@@ -25,6 +26,7 @@ type ChargeRow = {
 const CHARGE_ID = "6f1f6a43-2b3c-4d5e-8f90-0a1b2c3d4e5f";
 const PAYER_ADDRESS = "0x00000000000000000000000000000000000000aa";
 const PRINCIPAL_ID = "wallet-1";
+const REQUEST_DIGEST = "9f2c3b1a5d4e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8";
 
 let issuedStatements: IssuedStatement[] = [];
 let storedCharge: ChargeRow | null = null;
@@ -33,6 +35,7 @@ let recordedReconciliations: Array<{ kind: string; txHash: string | null }> = []
 let failingUpdateCount = 0;
 let isChargeSettled = true;
 let refundSendCount = 0;
+let insertedChargeDigests: Array<string | undefined> = [];
 
 function answerStatement(statement: IssuedStatement): unknown[] {
   if (statement.sql.startsWith("update")) return isChargeSettled ? [{ id: CHARGE_ID }] : [];
@@ -68,11 +71,10 @@ mock.module("@/lib/x402/charges/recordReconciliation", () => ({
 }));
 
 mock.module("@/lib/x402/charges/insertPendingX402Charge", () => ({
-  insertPendingX402Charge: async () => ({
-    success: false,
-    message: "nonce already used",
-    conflictReason: "nonce_used",
-  }),
+  insertPendingX402Charge: async (params: { requestDigest?: string }) => {
+    insertedChargeDigests.push(params.requestDigest);
+    return { success: false, message: "nonce already used", conflictReason: "nonce_used" };
+  },
 }));
 
 const { refundCharge, settleCharge, updateChargeRecord } = await import("./chargeLifecycle");
@@ -102,7 +104,7 @@ function refundAfterFailedAction() {
   });
 }
 
-function replayStoredPayment() {
+function replayStoredPayment(requestDigest?: string) {
   return settleCharge({
     paymentHeader: "header",
     network: baseNetwork,
@@ -131,6 +133,7 @@ function replayStoredPayment() {
     amountUsdc: 0.01,
     requestId: "request-1",
     recipientAddress: "0x0000000000000000000000000000000000000001",
+    requestDigest,
   });
 }
 
@@ -141,6 +144,7 @@ beforeEach(() => {
   failingUpdateCount = 0;
   isChargeSettled = true;
   refundSendCount = 0;
+  insertedChargeDigests = [];
 });
 
 describe("refundCharge after the paid action failed", () => {
@@ -264,6 +268,7 @@ describe("a replayed payment", () => {
     error_message: null,
     payer_address: PAYER_ADDRESS,
     metadata: {},
+    request_digest: REQUEST_DIGEST,
     created_at: "2026-11-21T00:00:00.000Z",
     has_refund_reconciliation: false,
   };
@@ -276,6 +281,20 @@ describe("a replayed payment", () => {
     expect(result).toMatchObject({ ok: false, reason: "replay", replay: { state: "settled" } });
   });
 
+  test("hands its own request digest to the charge insert and reads back the digest the first charge stored", async () => {
+    storedCharge = settledCharge;
+    const replayedRequestDigest = "0".repeat(64);
+
+    const result = await replayStoredPayment(replayedRequestDigest);
+
+    expect(insertedChargeDigests).toEqual([replayedRequestDigest]);
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "replay",
+      replay: { state: "settled", requestDigest: REQUEST_DIGEST },
+    });
+  });
+
   test("is refused when its settled charge records a failed action", async () => {
     storedCharge = { ...settledCharge, error_message: "action_failed: Could not dispatch the post." };
 
@@ -284,7 +303,7 @@ describe("a replayed payment", () => {
     expect(result).toEqual({
       ok: false,
       reason: "replay",
-      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID },
+      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID, requestDigest: REQUEST_DIGEST },
     });
   });
 
@@ -296,7 +315,7 @@ describe("a replayed payment", () => {
     expect(result).toEqual({
       ok: false,
       reason: "replay",
-      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID },
+      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID, requestDigest: REQUEST_DIGEST },
     });
   });
 });

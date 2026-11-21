@@ -36,22 +36,23 @@ export interface SettleChargeInput {
   amountUsdc: number;
   requestId: string;
   recipientAddress: string;
+  requestDigest?: string;
 }
 
 export type ChargeMetadata = { [key: string]: Json | undefined };
 
+type ChargeIdentity = { chargeId: string; principalId: string; requestDigest: string | null };
+
 export type ChargeReplay =
-  | {
+  | (ChargeIdentity & {
       state: "settled";
-      chargeId: string;
-      principalId: string;
       txHash: string;
       amountUsdc: number;
       storedResult: Json | null;
       storedMetadata: ChargeMetadata;
-    }
-  | { state: "in_progress"; chargeId: string; principalId: string }
-  | { state: "closed"; chargeId: string; principalId: string }
+    })
+  | (ChargeIdentity & { state: "in_progress" })
+  | (ChargeIdentity & { state: "closed" })
   | { state: "not_found" }
   | { state: "lookup_failed"; message: string };
 
@@ -77,6 +78,7 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
     requestId: input.requestId,
     payerAddress: input.verified.payerAddress,
     recipientAddress: input.recipientAddress,
+    requestDigest: input.requestDigest,
   });
 
   if (!chargeResult.success) {
@@ -178,6 +180,7 @@ export async function loadChargeReplay(params: {
         error_message: x402_charges.error_message,
         payer_address: x402_charges.payer_address,
         metadata: x402_charges.metadata,
+        request_digest: x402_charges.request_digest,
         created_at: x402_charges.created_at,
         has_refund_reconciliation: sql<boolean>`${exists(
           db
@@ -219,7 +222,11 @@ export async function loadChargeReplay(params: {
   ) {
     return { state: "not_found" };
   }
-  const chargeIdentity = { chargeId: charge.id, principalId: charge.principal_id };
+  const chargeIdentity: ChargeIdentity = {
+    chargeId: charge.id,
+    principalId: charge.principal_id,
+    requestDigest: charge.request_digest,
+  };
   if (charge.action !== params.action) {
     return { state: "closed", ...chargeIdentity };
   }

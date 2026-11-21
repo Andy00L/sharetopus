@@ -18,6 +18,7 @@ export async function insertPendingX402Charge(params: {
   payerAddress: string;
   recipientAddress: string;
   facilitator?: string;
+  requestDigest?: string;
 }): Promise<
   | { success: true; chargeId: string }
   | { success: false; message: string; conflictReason?: "nonce_used" | "request_id_used" }
@@ -39,6 +40,7 @@ export async function insertPendingX402Charge(params: {
         recipient_address: params.recipientAddress,
         status: "pending",
         facilitator: params.facilitator ?? params.network.settlement,
+        request_digest: params.requestDigest ?? null,
       })
       .returning({ id: x402_charges.id }),
   );

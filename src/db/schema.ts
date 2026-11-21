@@ -765,6 +765,7 @@ export const x402_charges = pgTable("x402_charges", {
   metadata: jsonb().$type<Json>().default({}).notNull(),
   created_at: timestamptz().default(sql`now()`).notNull(),
   settled_at: timestamptz(),
+  request_digest: text(),
 }, (table): PgTableExtraConfigValue[] => [
   index("idx_x402_pending_aged").on(table.created_at).where(sql`(status = 'pending'::text)`),
   index("idx_x402_principal_time").on(table.principal_id, table.created_at.desc().nullsFirst()),
