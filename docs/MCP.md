@@ -168,7 +168,7 @@ Every tool handler is wrapped by `withMcpTool`, a higher-order function that cen
 5. **On deny:** emit audit row with status `denied` or `quota_exceeded`, return error to agent
 6. **On allow:** call the inner handler
 7. **On success or handler-returned isError:** emit audit row. Handler may override the result status via `auditStatus` (e.g., `rate_limited`) and the args via `auditArgs`
-8. **On thrown error:** emit an `error` audit row with the default audit args, then re-throw so the SDK surfaces a JSON-RPC error
+8. **On thrown error:** log the exception with the `[withMcpTool]` prefix, emit an `error` audit row with the default audit args, and return a generic tool error (`isError: true`, "<tool> failed with an internal error. Retry, or contact support if it persists."). The wrapper does not re-throw: the SDK's `tools/call` handler catches a throw and returns the raw exception message as the tool result, not a JSON-RPC error.
 
 ### McpToolContext
 
@@ -272,7 +272,7 @@ Registry options, shared with the REST post body (`src/lib/platforms/postTargetO
 
 Before anything is scheduled or dispatched, `publish_posts` rejects a post whose account is unknown, a post type the platform does not take (catalog `supportedMediaTypes`), a missing `title` on reddit, lemmy, devto, hashnode, medium, wordpress and dribbble (catalog `titleRequired`), a missing required option above, and a Pinterest post without `pinterest_board_id`. A rejected post lands in `rejected` with its reason; the other posts of the call still go out.
 
-TikTok posts made through MCP are always public (`PUBLIC_TO_EVERYONE`, `src/lib/platforms/tikTokPrivacy.ts`); there is no privacy argument.
+TikTok posts made through MCP are always public (`PUBLIC_TO_EVERYONE`, `src/lib/api/tiktok/post/tikTokPrivacy.ts`); there is no privacy argument.
 
 ---
 

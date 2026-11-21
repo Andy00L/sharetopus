@@ -105,7 +105,7 @@ Inngest crons handle cleanup:
 
 ### 10. SSRF Guard (safeUserFetch)
 
-Blocks 14 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, IPv4-mapped IPv6, multicast, reserved). Rejects non-http(s) schemes, blocks redirects, validates content-type, enforces a stream-based byte counter (Content-Length header untrusted). Rate limited at 10 requests per 60 seconds per principal.
+Blocks 15 IP ranges (loopback, link-local, RFC 1918, CGNAT, IPv6 ULA, NAT64, multicast, reserved; IPv4-mapped IPv6 is checked against the IPv4 rules). Rejects non-http(s) schemes, blocks redirects, validates content-type, enforces a stream-based byte counter (Content-Length header untrusted). Rate limited at 10 requests per 60 seconds per principal.
 
 ### 11. Storage Quota Enforcement (enforceStorageQuota)
 

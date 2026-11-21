@@ -67,7 +67,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 | GET | `/api/v1/connections` | List connected social accounts |
 | GET | `/api/v1/connections/:id` | Get a single connection |
 | POST | `/api/v1/connections/initiate` | Initiate OAuth connection flow |
-| POST | `/api/v1/connections/:id/reauth` | Get re-auth URL for expired token |
+| POST | `/api/v1/connections/:id/reauth` | Get re-auth URL for expired token (the 7 adapter platforms only; a registry connection answers 400 `validation_error`) |
 | GET | `/api/v1/connections/:id/boards` | List Pinterest boards for a connection |
 | GET | `/api/v1/connections/credentials` | List the providers connected by pasted credentials, with their fields |
 | POST | `/api/v1/connections/credentials` | Verify pasted credentials with the provider and store the connection |
@@ -239,7 +239,7 @@ The spec is public (no auth required) and cached.
 
 ### Interactive docs
 
-`/docs/api` renders the Scalar interactive API viewer via `@scalar/nextjs-api-reference@0.10.16`. Users can explore endpoints, see schemas, and try requests.
+`/docs/api` renders the Scalar interactive API viewer via `@scalar/nextjs-api-reference@0.10.16`. Users can explore endpoints, see schemas, and try requests. The route is `force-static` (`src/app/(marketing)/docs/api/route.ts`): the viewer page is built once, and it loads `/api/v1/openapi.json` in the browser.
 
 ### MDX documentation
 

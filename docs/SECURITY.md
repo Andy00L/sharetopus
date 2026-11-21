@@ -49,7 +49,7 @@ MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth 
 | # | Attack | Defense | Implementation |
 |---|--------|---------|----------------|
 | 1 | Duplicate posts from MCP retry | `idempotency_key` + DB UNIQUE constraint; worker publish guard on `content_history` | `schedulePostBatch.ts`, `pendingDirectPosts.ts` (`lockPendingDirectPosts`), `processSinglePost.ts`, `processDirectPost.ts` |
-| 2 | SSRF via `attach_media_from_url` (e.g. cloud metadata at 169.254.169.254) | `safeUserFetch` with 14 IP ranges blocked | `safeUserFetch.ts` |
+| 2 | SSRF via `attach_media_from_url` (e.g. cloud metadata at 169.254.169.254) | `safeUserFetch` with 15 IP ranges blocked | `safeUserFetch.ts` |
 | 3 | Oversized file with fake Content-Length | Stream-based byte counter (Content-Length never trusted) | `safeUserFetch.ts` |
 | 4 | Storage quota bypass | `enforceStorageQuota` via `get_user_storage_bytes` RPC | `enforceStorageQuota.ts` |
 | 5 | `attach_media_from_url` flood | 10/60s rate limit + monthly cap per tier | `attachMediaFromUrl.ts` |
@@ -235,7 +235,7 @@ flowchart TD
 
 ### Blocked IP ranges
 
-14 ranges covering IPv4 and IPv6. Unrecognized IP formats fail closed (treated as blocked).
+15 ranges covering IPv4 and IPv6 (`BLOCKED_SUBNETS` in `src/lib/net/ipBlocklist.ts`, checked through Node's `BlockList`). Unrecognized IP formats fail closed (treated as blocked).
 
 **IPv4:**
 
@@ -259,7 +259,10 @@ flowchart TD
 | `::/128` | Unspecified |
 | `fe80::/10` | Link-local |
 | `fc00::/7` | Unique Local Address (ULA) |
-| `::ffff:0:0/96` | IPv4-mapped (embedded IPv4 re-checked against IPv4 ranges) |
+| `64:ff9b::/96` | NAT64 well-known prefix (RFC 6052), which embeds an IPv4 address |
+| `64:ff9b:1::/48` | Local-use NAT64 prefix (RFC 8215) |
+
+IPv4-mapped addresses (`::ffff:a.b.c.d`) have no rule of their own: `BlockList` checks the embedded IPv4 address against the IPv4 rules.
 
 ### Additional guards
 
@@ -408,9 +411,9 @@ The trigger functions are listed in [DATABASE.md](./DATABASE.md#functions-and-tr
 | `stripe_invoices` | Payment records | Indefinite |
 | `stripe_webhook_events` | Stripe webhook idempotency | 90 days (cleanup cron) |
 | `tiktok_webhook_events` | TikTok webhook idempotency | 90 days (daily cron) |
-| `x402_access_log` | Access audit trail (x402, deferred) | 90 days (daily cron; its DELETE opts in through `app.allow_append_only_delete`) |
-| `x402_refunds` | Refund records (x402, deferred) | Indefinite |
-| `sanctions_screenings` | Wallet sanctions check results (x402, deferred) | Indefinite |
+| `x402_access_log` | Access audit trail of x402 calls | 90 days (daily cron; its DELETE opts in through `app.allow_append_only_delete`) |
+| `x402_refunds` | x402 refund records | Indefinite |
+| `sanctions_screenings` | Wallet sanctions check results, one per onboarded wallet | Indefinite |
 
 ### Argument redaction
 
@@ -494,9 +497,9 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 - **Append-only financial tables.** At the DB layer, `stripe_invoices` rows cannot be deleted. The only allowed updates are a failed invoice turning succeeded and `user_id` being nulled when its user is deleted.
 - **90-day log retention.** Daily crons delete `stripe_webhook_events`, `mcp_audit_log`, `x402_access_log` and `rest_audit_log` rows older than 90 days. The append-only trigger still refuses any other UPDATE or DELETE on its tables.
 
-### Deferred (until x402 ships)
+### Not built
 
-- **OFAC / FINTRAC / MiCA screening.** The `sanctions_screenings` table exists but no screening service is integrated.
+- **Own sanctions screening.** Sharetopus runs no screening service of its own. Screening comes from the facilitator during payment verification (Coinbase's CDP KYT, Celo's facilitator); Arc payments are not screened, and a wallet first seen on Arc is stored `unchecked` (see [AUTH.md](./AUTH.md#sanctions-gating)).
 - **Wallet KYC.** No identity verification for wallet-based access.
 - **USDC fair market value tracking.** Not built. The empty `usdc_fmv_daily` table planned for it was dropped on 2026-09-24.
 
@@ -504,13 +507,10 @@ These are acknowledged design decisions or low-severity issues, not bugs.
 
 | File | Role |
 |------|------|
-| `src/lib/mcp/tools/schedulePost.ts` | Schedule post with idempotency |
-| `src/lib/mcp/tools/postNow.ts` | Immediate post with idempotency |
-| `src/lib/mcp/tools/bulkPostNow.ts` | Bulk immediate post with derived idempotency keys |
-| `src/lib/mcp/tools/bulkSchedule.ts` | Bulk schedule with derived idempotency keys |
+| `src/lib/mcp/tools/publishPosts.ts` | Publish or schedule up to 30 posts; a `batch_id` derives each post's idempotency key |
 | `src/lib/mcp/tools/attachMediaFromUrl.ts` | URL-based media attach (rate limited, SSRF guarded) |
 | `src/lib/mcp/tools/requestUploadUrl.ts` | Signed upload URL generation (rate limited) |
-| `src/lib/mcp/tools/generatePostDraft.ts` | AI draft generation (monthly capped) |
+| `src/lib/net/ipBlocklist.ts` | Blocked IP ranges for outbound fetches |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF guard (IP blocklist, scheme, redirect, byte counter) |
 | `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement for all upload paths |
 | `src/lib/mcp/_shared/currentQuotaPeriod.ts` | Monthly quota period key generation |

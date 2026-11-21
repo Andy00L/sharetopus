@@ -247,7 +247,13 @@ The sidebar only reads referral progress; it no longer retries the grant. Banked
 
 ## x402 Pay-Per-Call
 
-AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`). No Stripe subscription required. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`). Auth is via X-PAYMENT header (signed wallet payment).
+AI agents access dedicated `/api/x402/*` routes and pay USDC per action on Base, Polygon, Arbitrum, Celo, Arc, or Solana (`src/lib/x402/networks.ts`). No Stripe subscription required. Posting is sold for LinkedIn, TikTok, and Pinterest only (`X402_PLATFORMS` in `src/lib/x402/config.ts`), and TikTok and Pinterest take image and video posts only (`PLATFORM_MEDIA_SUPPORT` in `src/lib/platforms/capabilities.ts`). Auth is the signed wallet payment in the `PAYMENT-SIGNATURE` header, or the older `X-PAYMENT` (`readPaymentHeader` in `src/lib/x402/http/paymentHttp.ts`); the paying wallet becomes the principal ([AUTH.md](./AUTH.md#x402-wallet-authentication)).
+
+### Facilitators
+
+Each network names its settlement lane (`settlement` in `networks.ts`): Coinbase's CDP facilitator settles Base, Polygon, Arbitrum and Solana, Celo's facilitator settles Celo, and Sharetopus settles Arc itself with the `X402_ARC_KEY` wallet. The Arc facilitator is public too (`src/lib/x402/arc/facilitatorApi.ts`): `GET /api/x402/facilitator/supported` lists the signer under the `eip155:*` key, the key `@x402/core`'s own facilitator uses for EVM schemes; `POST /api/x402/facilitator/verify` is open; `POST /api/x402/facilitator/settle` answers 403 while `X402_FACILITATOR_SETTLE_KEY` is unset and 401 without that key in the `x-api-key` header.
+
+On Arc and Celo, Sharetopus signs its own transactions (Arc settlements, Arc and Celo refunds) through `broadcastCall` (`src/lib/x402/chain/broadcastCall.ts`). A send that fails in transport is resent with the same signed bytes. When the node then reports the nonce as taken, the first bytes may have landed, so the result is `delivery_unknown` with the signed hash and nothing is signed again under a new nonce. A refund in that state gets a `refund_failed` reconciliation row with that hash.
 
 ### Pricing
 
@@ -269,8 +275,9 @@ Prices are stored in the `pricing_actions` table (this table matches it on 2026-
 
 ### Refund Policy
 
-- **Checked before settlement, nothing charged:** account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
-- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund. Before the send, the charge gets `error_message = 'action_failed: <reason>'`, so a function stopped mid-refund still leaves the money owed visible to the reconciliation sweep.
+- **Checked before settlement, nothing charged:** the post type (`withPostTypeRules` in `src/lib/x402/middleware/postBodySchema.ts`: a `text` post to TikTok or Pinterest answers 400 `validation_error`), account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
+- **Price that cannot be charged:** `usdcToAtomic` (`src/lib/x402/usdcAmount.ts`) refuses a price that is not positive or that rounds to zero atomic units (for example 0.0000001 USDC at 6 decimals). The 402 challenge then answers 500 `pricing_not_configured`, and a paid request answers 500 `invalid_amount` (500 `internal` on `/api/x402/connect`) before the facilitator is called.
+- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund. Before the send, the charge gets `error_message = 'action_failed: <reason>'`, so a function stopped mid-refund still leaves the money owed visible to the reconciliation sweep. A Solana refund recreates the payer's USDC token account when the payer closed it (`buildUsdcTransferInstructions` in `src/lib/x402/solana/splToken.ts`); the refund sender pays the rent, about 0.002 SOL, only when the account is missing.
 - **Non-refundable:** Publish failures at Inngest execute time (post.text, post.image, post.video). Pay-per-attempt model.
 - Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response. A refund whose send outcome is unknown (a timed-out send) is not sent again by the code: it gets a `refund_failed` reconciliation row, and when no refund tx hash is known, the sender wallet's outgoing transfers decide whether it went out.
 
@@ -291,6 +298,16 @@ stateDiagram-v2
 ```
 
 The hourly `sweep-x402-reconciliation` Inngest function (`:20`) reads the reconciliation rows, charges still `pending` 15 minutes after creation, and `settled` charges marked `action_failed` with neither a refund nor a reconciliation row (a function stopped between the marker and the row), over the last 30 days. It resolves what the chain confirms and ends the run with `NonRetriableError` listing every item still open, so open money items show as a failed run.
+
+The `settle_indeterminate` and `settle_unrecorded` rows, and the settle response header, carry the atomic amount the facilitator verified (`verified.requirements.amount`), not a second conversion of the price. A `refund_failed` row has a null `amount_atomic` when the price does not convert; the refund sender then refuses, and the row still records the owed refund.
+
+After a paid action succeeds, `updateChargeRecord` stores its result (served on a replay of the same payment) and its post or connection link, and runs the write a second time when the first attempt errors (`src/lib/x402/db/runWriteWithOneRetry.ts`). When both attempts fail, the request keeps its success answer and the server logs `CHARGE RECORD INCOMPLETE`: a replay of that payment then answers 409 ("its result is not stored for replay") and `/proof` shows no post for the charge. No reconciliation row is written for it.
+
+### Solana Blink
+
+The Blink (`src/lib/solanaActions/postNowBlink.ts`, routes under `/api/actions/post-now`) is a paid text post-now from a Solana wallet, priced as `post.text`. It checks the text against the platform's own rules before payment (`checkBlinkTextFitsPlatform`): the platform must take text posts, and the text must fit `resolvePlatformTextLimit` (LinkedIn 3,000 characters). TikTok and Pinterest take no text-only post, so their Blink cards are disabled and preparing a payment for them answers 400; LinkedIn is the one platform the Blink can post to.
+
+The payment transaction holds the same two instructions as a Solana refund (create the recipient's USDC account if missing, then the transfer), and its blockhash read times out after 5 s. Confirm refuses with 503 before verifying when the price does not convert to a positive atomic amount, so no transfer can pay for a post at a zero minimum. After the payment settles, confirm checks account ownership and the text rules again and refunds through `refundAndFail` when either fails, so a confirm URL built by hand, or prepared before a rule changed, gets its money back instead of a post that cannot publish.
 
 ### Storage
 
@@ -314,7 +331,10 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
 | `src/lib/mcp/entitlement.ts` | `MONTHLY_CAPS`, `ACTION_PLAN_GATE`, MCP tier gating |
 | `src/lib/mcp/_shared/currentQuotaPeriod.ts` | `currentQuotaPeriod()`, period format for usage tracking |
-| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware (enforces same plan gates) |
+| `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API middleware: the subscription gate through `resolveRestApiKey`, then the per-endpoint rate limit (no tier gate, no monthly quota) |
+| `src/lib/x402/middleware/x402PaidEndpoint.ts` | x402 paid route flow: parse the body, rate limit and price, verify, resolve the wallet, precheck, settle, run the handler, refund on failure |
+| `src/lib/x402/charges/chargeLifecycle.ts` | `settleCharge`, `refundCharge`, `updateChargeRecord` |
+| `src/lib/solanaActions/postNowBlink.ts` | Solana Blink: card, payment prepare, confirm |
 
 ---
 

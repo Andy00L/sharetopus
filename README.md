@@ -50,8 +50,8 @@ Sharetopus is a SaaS tool for scheduling and publishing social media posts acros
 |----------|-----------|---------|
 | Framework | Next.js (App Router, Turbopack) | 16.2.6 |
 | Language | TypeScript | 5.9.3 |
-| UI | React + Tailwind CSS + shadcn/ui | 19.2.0 / 4.2.4 |
-| Auth | Clerk (`@clerk/nextjs`) | 7.3.2 |
+| UI | React + Tailwind CSS + shadcn/ui | 19.2.8 / 4.2.4 |
+| Auth | Clerk (`@clerk/nextjs`) | 7.9.4 |
 | Database | Supabase Postgres via Drizzle ORM (`drizzle-orm` + `postgres`) | 0.45.3 / 3.4.9 |
 | Storage | Supabase Storage (`@supabase/supabase-js`) | 2.105.3 |
 | Payments | Stripe | 18.5.0 |
@@ -158,7 +158,7 @@ See [docs/BILLING.md](./docs/BILLING.md).
 | [docs/BILLING.md](./docs/BILLING.md) | Stripe subscriptions, plan gates, usage quotas |
 | [docs/DATABASE.md](./docs/DATABASE.md) | All 35 tables, schema changes with Drizzle, RLS posture |
 | [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) | Local setup, testing, deployment |
-| [docs/INNGEST.md](./docs/INNGEST.md) | 16 background functions, cron schedules, sweep jobs |
+| [docs/INNGEST.md](./docs/INNGEST.md) | 23 background functions, cron schedules, sweep jobs |
 | [docs/MCP.md](./docs/MCP.md) | MCP server: 10 tools, auth, withMcpTool HOF, usage examples |
 | [docs/REST.md](./docs/REST.md) | REST API: 32 handlers, withRestEndpoint HOF, validation, audit |
 | [docs/WEBHOOKS.md](./docs/WEBHOOKS.md) | Webhook subsystem: signing, retry, replay, auto-disable |
@@ -185,7 +185,7 @@ Key environment variables (see [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) for 
 
 ## 🔒 Security
 
-Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Two append-only audit logs: `mcp_audit_log` (MCP tool calls) and `rest_audit_log` (REST API requests), each kept 90 days; retention per table is in docs/SECURITY.md. SSRF protection blocks 14 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
+Authentication is split by surface: Clerk sessions for web, Clerk OAuth or API keys for MCP, Bearer tokens (`stp_rest_*`) for REST API. All surfaces resolve to a `principal_id` in the `principals` table. Rate limiting uses Upstash Redis sliding windows. Three append-only audit logs: `mcp_audit_log` (MCP tool calls), `rest_audit_log` (REST API requests) and `x402_access_log` (x402 calls), each kept 90 days; retention per table is in docs/SECURITY.md. SSRF protection blocks 15 private/reserved IP ranges on media downloads. HMAC-signed proxy URLs serve media to TikTok without exposing credentials. Outbound webhooks are HMAC-SHA256 signed per subscription secret. Stripe and TikTok inbound webhooks are verified via signatures with idempotency tables preventing replay.
 
 Full security architecture: [docs/SECURITY.md](./docs/SECURITY.md).
 
@@ -202,8 +202,8 @@ Full roadmap: [docs/ROADMAP.md](./docs/ROADMAP.md).
 - Instagram, YouTube, X, and Facebook have OAuth and publish code but are not yet verified in production, so x402 does not sell them.
 - i18n is declared (fr, en, es) but no translation files exist. UI is English only.
 - Studio/Analytics page shows "Coming Soon". The analytics_metrics table exists but has no data pipeline.
-- TikTok default privacy is SELF_ONLY (private). Users must select a public level.
-- `next.config.ts` sets `typescript.ignoreBuildErrors: true` for Vercel OOM mitigation. Type checking runs via `bunx tsc --noEmit` in CI/pre-commit instead.
+- TikTok privacy: the web composer makes the user choose a level and offers no default; API, MCP and x402 posts carry no privacy choice and go out public (`PUBLIC_TO_EVERYONE`, `src/lib/api/tiktok/post/tikTokPrivacy.ts`).
+- `next.config.ts` sets `typescript.ignoreBuildErrors: true` for Vercel OOM mitigation. The repo has no CI workflow or pre-commit hook, so type checking (`bunx tsc --noEmit`) is a manual step before pushing.
 
 ## 🤝 Contributing
 

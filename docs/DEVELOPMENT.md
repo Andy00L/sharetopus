@@ -337,8 +337,10 @@ Vercel function timeout is configured per route using Next.js route segment conf
 |---|---|
 | `src/app/api/mcp/mcp/route.ts` | 300s |
 | `src/app/api/inngest/route.ts` | 300s |
-| `src/app/api/x402/register/route.ts` | 60s |
-| `src/app/api/x402/connect/route.ts` | 60s |
+| `src/app/api/x402/*` paid routes (connect, reauth, post-now, schedule, reschedule, cancel, delete, connections, scheduled-posts, history, upload-url) and `facilitator/settle` | 60s |
+| `src/app/api/actions/post-now/confirm/route.ts` | 60s |
+| `src/app/api/actions/post-now/route.ts`, `src/app/api/x402/facilitator/verify/route.ts`, `src/app/api/oauth/callback/[platform]/route.ts`, `src/app/share/[platform]/[token]/initiate/route.ts` | 30s |
+| `src/app/api/x402/facilitator/supported/route.ts`, `src/app/api/x402/oauth/status/route.ts` | 10s |
 | All other routes | Vercel default |
 
 ### Dev/prod environment strategy

@@ -168,8 +168,11 @@ src/
       ensureUserExists.ts       # Creates the user and Stripe customer, sends referral.signup
     checkActiveSubscription.ts  # Access rule: single, batch, and the x402 exemption
   app/
-    (marketing)/                # Landing page, docs pages, Privacy Policy, ToS
+    (marketing)/                # Landing page, Privacy Policy, ToS, /proof (x402 payment ledger), /solana (Solana ledger, Blink link)
+      (api-reference)/docs/     # REST, MCP and x402 reference pages
+      docs/                     # Guides; docs/api serves the OpenAPI viewer (force-static)
     (protected)/                # Authenticated routes
+      error.tsx                 # One error boundary for every protected page
       connections/              # Social account management
       create/                   # Post creation (text/image/video)
       integrations/             # Integration status page
@@ -182,6 +185,9 @@ src/
       userProfile/              # Clerk user profile
     .well-known/
       oauth-protected-resource/ # RFC 9728 OAuth discovery for MCP clients
+    share/[platform]/           # Share-link pages: connect an account for the link's owner
+    actions.json/               # Solana Actions manifest for Blink clients (force-static)
+    llms.txt/                   # Docs index for LLM clients (force-static)
     api/
       actions/                  # Solana Blink (post now paid in USDC)
       auth/[clerk]/             # Clerk auth UI
@@ -460,7 +466,7 @@ Platform errors arrive typed: each adapter and registry provider returns `failur
 - **Retried**: `rate_limited`, `transient` (network timeouts, connection resets), only when `mayHavePublished` is false
 - **Final**: `auth_expired`, `policy_rejected` (platform policy violation), `invalid_input` (wrong post type, missing board), `unknown`, and any failure that may have published
 
-The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the request, it writes an audit row with status `denied` or `quota_exceeded` and returns a structured error to the agent. If the handler throws, the HOF writes an `error` audit row and re-throws for the SDK to surface as a JSON-RPC error.
+The `withMcpTool` HOF handles MCP-layer errors. If entitlement denies the request, it writes an audit row with status `denied` or `quota_exceeded` and returns a structured error to the agent. If the handler throws, the HOF logs the exception, writes an `error` audit row and returns a generic tool error ("<tool> failed with an internal error. Retry, or contact support if it persists."), so the raw exception text never reaches the agent.
 
 ## Design tradeoffs
 

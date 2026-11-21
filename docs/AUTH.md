@@ -15,7 +15,7 @@ Three auth systems: Clerk for web users, MCP API keys + Clerk OAuth for AI agent
 7. [OAuth client trust enforcement](#oauth-client-trust-enforcement)
 8. [Entitlement and plan gating](#entitlement-and-plan-gating)
 9. [IP hashing](#ip-hashing)
-10. [Future: wallet authentication (deferred)](#future-wallet-authentication-deferred)
+10. [x402 wallet authentication](#x402-wallet-authentication)
 11. [Source files referenced](#source-files-referenced)
 
 ---
@@ -201,7 +201,7 @@ The `plan` field starts as `null` and is populated by `applySubscriptionGate` fr
 
 REST keys work the same way through `resolveRestApiKey`, which answers 503 `service_unavailable`.
 
-`applySubscriptionGate` caches each completed subscription read for 60 seconds, a "no subscription" answer included. A read that fails (`checkActiveSubscription` status `unavailable`) is not cached, so a database blip denies one request instead of locking a paying user out for the whole window.
+`applySubscriptionGate` caches each completed subscription read for 60 seconds, a "no subscription" answer included. A read that fails (`checkActiveSubscription` status `unavailable`) is not cached, so a database blip denies one request instead of locking a paying user out for the whole window. The cache lives in each server instance's memory and holds at most 5,000 principals (`MAX_CACHED_SUBSCRIPTIONS` in `src/lib/mcp/auth/resolvers/subscriptionCache.ts`): a write first drops the oldest entries while the cache is full, and any expired entries at its front. An evicted principal costs one more subscription read on its next request.
 
 ---
 
@@ -359,37 +359,32 @@ openssl rand -base64 32
 
 ---
 
-## x402 Wallet Authentication (IMPLEMENTED)
+## x402 wallet authentication
 
-AI agents authenticate via the x402 payment protocol. No session, no API key, no Clerk. Identity is established through the payment signature itself.
+AI agents authenticate via the x402 payment protocol. No session, no API key, no Clerk. The wallet that pays becomes the principal; there is no registration step (the `register` action was retired on 2026-06-10, see [BILLING.md](./BILLING.md#pricing)).
 
-### Registration Flow (POST /api/x402/register)
+### Paid action flow
 
-1. Agent sends POST without X-PAYMENT header, receives 402 challenge + SIWE nonce.
-2. Agent signs SIWE message with their wallet (proves ownership of address).
-3. Agent signs a USDC payment authorization (EIP-3009 `transferWithAuthorization`).
-4. Agent sends both signatures in X-PAYMENT header + request body.
-5. Server verifies SIWE, verifies payment via Coinbase facilitator, settles on-chain.
-6. Atomic DB insert creates: `principals` (kind=wallet), `wallets`, `sanctions_screenings`, `x402_charges`, `wallet_credits`.
+Every paid route except `connect` goes through `x402PaidEndpoint` (`src/lib/x402/middleware/x402PaidEndpoint.ts`); `connect` runs the same steps in `src/lib/x402/connect/`.
 
-### Paid Action Flow (all other /api/x402/* routes)
+1. A request without a payment header gets a 402 challenge with the action's price. The header is `PAYMENT-SIGNATURE`, or the older `X-PAYMENT` (`readPaymentHeader` in `src/lib/x402/http/paymentHttp.ts`).
+2. With a payment: the body is parsed first (a bad body answers 400 and nothing is charged), then the rate limit and the price read, then the payment is verified off-chain by the network's facilitator.
+3. The wallet principal is resolved from the payer address the facilitator recovered, never from the request body.
+4. A sanctioned wallet is refused (403 `sanctioned`). The route's precheck runs, the charge is inserted as `pending`, the payment settles on-chain, and the handler runs.
+5. A handler failure after settlement sends an on-chain USDC refund ([BILLING.md](./BILLING.md#refund-policy)).
+6. A success carries the base64 settle response in `PAYMENT-RESPONSE` and `X-PAYMENT-RESPONSE`.
 
-1. Agent includes X-PAYMENT header with signed USDC payment for the action's price.
-2. `x402PaidEndpoint` middleware: verify payment (off-chain), resolve wallet principal from payer address, sanctions gate, settle on-chain, insert charge, execute business logic.
-3. If business logic fails and is refundable: automatic on-chain USDC refund.
-4. Success response includes X-PAYMENT-RESPONSE header (base64 SettleResponse).
+### Wallet principal resolution
 
-### Wallet Principal Resolution
+`resolveOrOnboardWalletPrincipal` (`src/lib/x402/auth/resolveOrOnboardWalletPrincipal.ts`) looks the payer address up in `wallets`, lowercased on EVM and kept as is on Solana (base58 is case-sensitive). An unknown address is onboarded in the same request: `onboard_wallet_atomic` creates a `principals` row of kind `wallet` (id `wallet_<32 hex>`) and its wallet rows in one transaction. A failed lookup answers 500 `wallet_resolution_failed`. The Solana Blink onboards no wallet: it serves only wallets that already paid through x402 (`resolveExistingWalletPrincipal`, 403 otherwise).
 
-Payer address is extracted from the payment signature (never from request body). Looked up via `resolveWalletPrincipal(address)` which queries `wallets` table case-insensitively. Wallet must be registered first (via /api/x402/register).
+### Sanctions gating
 
-### Sanctions Gating
-
-`applyWalletGate(walletId)` checks `wallets.sanctions_status`. Rejects "sanctioned", accepts "clean" and "unchecked". Fail-closed on DB errors. KYT screening also runs during payment verification via the Coinbase facilitator.
+A wallet whose `sanctions_status` is `sanctioned` is refused; `clean` and `unchecked` pass. Screening happens at the facilitator during verification, and a payer it flags fails with `kyt_sanctioned` (403): Coinbase's CDP KYT on Base, Polygon, Arbitrum and Solana, Celo's facilitator on Celo. Arc settles through Sharetopus itself with no screening, so a wallet first seen on Arc is stored `unchecked`.
 
 ### Networks
 
-EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Base mainnet. Override via `?network=base-sepolia` query param.
+Base, Polygon, Arbitrum, Celo and Arc (EVM) and Solana mainnet (`NETWORKS` in `src/lib/x402/networks.ts`). The `?network=` query parameter picks one; without it, `X402_DEFAULT_NETWORK` decides, and Base when that is unset or unknown. An unknown `?network=` answers 400 `unsupported_network`.
 
 ---
 
@@ -408,7 +403,7 @@ EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Ba
 | `src/lib/mcp/entitlement.ts` | `entitlementFor()`, tier gate, monthly quota |
 | `src/lib/mcp/apiKeyExpiry.ts` | `API_KEY_EXPIRY_DAYS_OPTIONS`, expiry validation |
 | `src/lib/mcp/ipHash.ts` | `hashClientIp()`, salt handling |
-| `src/lib/mcp/tokens.ts` | `isMcpApiKeyToken()`, `hashToken()`, `generateMcpApiKey()` |
+| `src/lib/api/tokens.ts` | `generateApiKey(kind)`, `isApiKeyToken(token, kind)`, `hashToken()` for MCP and REST keys |
 | `src/actions/server/api/apiKeys.ts` | `createApiKey`, `listApiKeys`, `revokeApiKey` server actions (MCP and REST keys) |
 | `src/lib/api/revokeApiKeyForPrincipal.ts` | Key revocation for both kinds, called by `revokeApiKey` |
 | `src/actions/server/data/demoteOauthClientsOnCancel.ts` | Demote verified clients on subscription cancel |
@@ -416,6 +411,10 @@ EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Ba
 | `src/app/.well-known/oauth-protected-resource/route.ts` | RFC 9728 OAuth discovery |
 | `src/lib/api/rest/middleware/withRestEndpoint.ts` | REST API auth middleware, rate limiting, audit logging |
 | `src/lib/api/rest/auth/` | REST API key resolver and auth types |
+| `src/lib/mcp/auth/resolvers/subscriptionCache.ts` | 60-second subscription cache, at most 5,000 principals |
+| `src/lib/x402/middleware/x402PaidEndpoint.ts` | x402 paid route flow: verify, wallet, sanctions, settle, refund |
+| `src/lib/x402/auth/resolveOrOnboardWalletPrincipal.ts` | Wallet principal lookup and first-payment onboarding |
+| `src/lib/x402/networks.ts` | x402 networks, settlement lanes, default network |
 
 ---
 
