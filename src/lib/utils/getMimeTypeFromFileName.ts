@@ -1,6 +1,6 @@
 type MediaMimeType =
   | "video/mp4"
-  | "video/mov"
+  | "video/quicktime"
   | "image/jpeg"
   | "image/png"
   | "image/gif"
@@ -32,7 +32,7 @@ export function getMimeTypeFromFileName(fileName?: string): MimeTypeResult {
 
   const mimeTypeMap: Record<string, MediaMimeType> = {
     mp4: "video/mp4",
-    mov: "video/mov",
+    mov: "video/quicktime",
     png: "image/png",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",

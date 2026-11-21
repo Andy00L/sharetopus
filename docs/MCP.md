@@ -390,7 +390,7 @@ A signed URL to upload a local file. PUT the bytes to `upload_url` with the file
 filename      string (min 1 char)  required
   With extension (e.g. photo.jpg, clip.mp4)
 content_type  string (min 1 char)  required
-  image/jpeg, image/png, video/mp4, video/mov, video/quicktime
+  image/jpeg, image/png, video/mp4, video/quicktime (video/mov is accepted as an alias)
 size_bytes    number (positive integer)  required
 ```
 

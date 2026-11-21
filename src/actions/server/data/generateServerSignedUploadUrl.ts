@@ -19,6 +19,10 @@ const ALLOWED_UPLOAD_TYPES: ReadonlyArray<string> = [
   ...ALLOWED_VIDEO_TYPES,
 ];
 
+const LEGACY_CONTENT_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  "video/mov": "video/quicktime",
+};
+
 export interface GenerateUploadUrlInput {
   principalId: string;
   tier: PlanTier | null;
@@ -48,7 +52,8 @@ export function checkUploadRequest(input: {
   fileSize: number;
   tier: PlanTier | null;
 }): UploadRequestCheck {
-  if (!ALLOWED_UPLOAD_TYPES.includes(input.contentType)) {
+  const contentType = LEGACY_CONTENT_TYPE_ALIASES[input.contentType] ?? input.contentType;
+  if (!ALLOWED_UPLOAD_TYPES.includes(contentType)) {
     return {
       ok: false,
       reason: "content_type_not_allowed",
@@ -56,7 +61,7 @@ export function checkUploadRequest(input: {
     };
   }
 
-  const mediaKind: "image" | "video" = input.contentType.startsWith("image/")
+  const mediaKind: "image" | "video" = contentType.startsWith("image/")
     ? "image"
     : "video";
   const limits = input.tier !== null

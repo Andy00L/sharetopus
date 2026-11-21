@@ -39,7 +39,7 @@ export function registerRequestUploadUrl(server: McpServer): void {
         content_type: z
           .string()
           .min(1)
-          .describe("image/jpeg, image/png, video/mp4, video/mov or video/quicktime."),
+          .describe("image/jpeg, image/png, video/mp4 or video/quicktime (.mov)."),
         size_bytes: z.number().int().positive(),
       }),
       outputSchema: RequestUploadUrlOutputSchema,

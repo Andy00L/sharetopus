@@ -214,7 +214,7 @@ The proxy mode works without additional infrastructure. The direct mode avoids t
 | Category | Web + MCP upload                            | attach_media_from_url additionally |
 | -------- | ------------------------------------------- | ---------------------------------- |
 | Image    | `image/jpeg`, `image/png`                   | `image/gif`, `image/webp`          |
-| Video    | `video/mp4`, `video/mov`, `video/quicktime` | `video/webm`                       |
+| Video    | `video/mp4`, `video/quicktime` (`video/mov` accepted as an alias) | `video/webm`                       |
 
 ### Per-file size limits
 

@@ -20,8 +20,14 @@ describe("checkUploadRequest content types", () => {
     ).toEqual({ ok: true });
   });
 
-  test("refuses the unregistered video/mov and names the accepted types", () => {
-    const refusal = checkUploadRequest({ contentType: "video/mov", fileSize: ONE_KILOBYTE, tier: null });
+  test("accepts video/mov, which API clients were told to send, as video/quicktime", () => {
+    expect(
+      checkUploadRequest({ contentType: "video/mov", fileSize: ONE_KILOBYTE, tier: null }),
+    ).toEqual({ ok: true });
+  });
+
+  test("refuses an unlisted type and names the accepted types", () => {
+    const refusal = checkUploadRequest({ contentType: "video/x-msvideo", fileSize: ONE_KILOBYTE, tier: null });
     expect(refusal.ok).toBe(false);
     if (refusal.ok) return;
     expect(refusal.reason).toBe("content_type_not_allowed");
