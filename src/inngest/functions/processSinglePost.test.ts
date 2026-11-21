@@ -55,8 +55,15 @@ type GateResult =
 
 const GATE_OPEN: GateResult = { success: true, isOpen: true };
 
+type FinalizeCall = { postId: string; failureMessage: string };
+
+type StatusReread = { success: true; status: string | null } | { success: false; message: string };
+
 type HelperState = {
   load: LoadResult;
+  statusReread: StatusReread;
+  recordFailure: string | null;
+  finalizeCalls: FinalizeCall[];
   gate: GateResult;
   gateCalls: ClaimInput[];
   claim: { success: true; claimed: boolean } | { success: false; message: string };
@@ -71,8 +78,13 @@ type HelperState = {
   stepLog: string[];
 };
 
+const STILL_PROCESSING: StatusReread = { success: true, status: "processing" };
+
 const helperState: HelperState = {
   load: { kind: "ready", post: POST },
+  statusReread: STILL_PROCESSING,
+  recordFailure: null,
+  finalizeCalls: [],
   gate: GATE_OPEN,
   gateCalls: [],
   claim: { success: true, claimed: true },
@@ -116,11 +128,18 @@ mock.module("./processSinglePostHelpers", () => ({
     return helperState.claim;
   },
   findPublishedContentHistory: async () => ({ success: true, isPublished: helperState.isPublished }),
+  readPostStatus: async () => helperState.statusReread,
   checkPlatformCompatibility: () => ({ compatible: true, reason: "" }),
   buildScheduledPublishRequest: () => ({ ok: true, request: {} }),
   recordPostStatus: async (input: { result: Outcome }) => {
+    if (helperState.recordFailure) return { success: false, message: helperState.recordFailure };
     helperState.recorded.push(input.result);
     return { success: true, updated: true };
+  },
+  finalizeProcessingPost: async (input: { post: PostRow; failureMessage: string }) => {
+    if (helperState.recordFailure) return { success: false, message: helperState.recordFailure };
+    helperState.finalizeCalls.push({ postId: input.post.id, failureMessage: input.failureMessage });
+    return { success: true, outcome: { ok: true, contentId: input.post.id }, updated: true };
   },
   cleanupMediaIfUnreferenced: async () => ({ success: true, deleted: false }),
 }));
@@ -178,6 +197,9 @@ function runOnFailure() {
 
 beforeEach(() => {
   helperState.load = { kind: "ready", post: POST };
+  helperState.statusReread = STILL_PROCESSING;
+  helperState.recordFailure = null;
+  helperState.finalizeCalls = [];
   helperState.gate = GATE_OPEN;
   helperState.gateCalls = [];
   helperState.claim = { success: true, claimed: true };
@@ -353,28 +375,68 @@ describe("processSinglePost", () => {
   });
 });
 
+describe("processSinglePost rereads the row before the platform call", () => {
+  test("a post deleted after its claim is not sent to the platform", async () => {
+    helperState.statusReread = { success: true, status: null };
+    const outcome = await runWorker();
+    expect(helperState.platformCalls).toBe(0);
+    expect(helperState.recorded).toEqual([]);
+    expect(outcome).toEqual({ skipped: true, reason: "post-deleted" });
+  });
+
+  test("a post settled while its publish step waited for a retry is not sent", async () => {
+    helperState.statusReread = { success: true, status: "failed" };
+    const outcome = await runWorker();
+    expect(helperState.platformCalls).toBe(0);
+    expect(helperState.recorded).toEqual([]);
+    expect(outcome).toEqual({ skipped: true, reason: "post-no-longer-processing" });
+  });
+
+  test("a reread that fails throws so Inngest retries the step, and nothing is sent", async () => {
+    helperState.statusReread = { success: false, message: "status reread failed: timeout" };
+    await expect(runWorker()).rejects.toThrow("status reread failed: timeout");
+    expect(helperState.platformCalls).toBe(0);
+  });
+});
+
 describe("processSinglePost onFailure", () => {
-  test("claims a still-queued row for its dispatched time and records it failed", async () => {
+  test("claims a still-queued row for its dispatched time and finalizes it", async () => {
     await runOnFailure();
     expect(helperState.claimCalls).toEqual([
       { scheduledPostId: POST.id, dispatchedScheduledAt: EVENT_DATA.scheduled_at },
     ]);
-    expect(helperState.recorded).toEqual([
-      { ok: false, reason: "transient", message: "Retries exhausted: boom", mayHavePublished: true },
+    expect(helperState.finalizeCalls).toEqual([
+      { postId: POST.id, failureMessage: "Retries exhausted: boom" },
     ]);
   });
 
-  test("records a published post as posted, not failed", async () => {
+  test("finalizes a processing row without claiming it again", async () => {
     helperState.load = { kind: "ready", post: { ...POST, status: "processing" } };
-    helperState.isPublished = true;
     await runOnFailure();
     expect(helperState.claimCalls).toEqual([]);
-    expect(helperState.recorded).toEqual([{ ok: true, contentId: POST.id }]);
+    expect(helperState.finalizeCalls.map((call) => call.postId)).toEqual([POST.id]);
   });
 
   test("leaves a row rescheduled since dispatch untouched", async () => {
     helperState.claim = { success: true, claimed: false };
     await runOnFailure();
+    expect(helperState.finalizeCalls).toEqual([]);
     expect(helperState.recorded).toEqual([]);
+  });
+
+  test("a post it cannot load throws, so Inngest retries the failure handler", async () => {
+    helperState.load = { kind: "lookup_failed", message: "connection refused" };
+    await expect(runOnFailure()).rejects.toThrow("connection refused");
+  });
+
+  test("a status it cannot record throws, so Inngest retries the failure handler", async () => {
+    helperState.load = { kind: "ready", post: { ...POST, status: "processing" } };
+    helperState.recordFailure = "mark-failed error: connection refused";
+    await expect(runOnFailure()).rejects.toThrow("connection refused");
+  });
+
+  test("a claim it cannot run throws instead of reading as rescheduled", async () => {
+    helperState.claim = { success: false, message: "claim error: timeout" };
+    await expect(runOnFailure()).rejects.toThrow("claim error: timeout");
   });
 });

@@ -15,9 +15,11 @@ import {
   checkPlatformCompatibility,
   claimPostForProcessing,
   cleanupMediaIfUnreferenced,
+  finalizeProcessingPost,
   findPublishedContentHistory,
   gatePostOnOwnerAccess,
   loadPostForProcessing,
+  readPostStatus,
   recordPostStatus,
 } from "./processSinglePostHelpers";
 import {
@@ -31,6 +33,8 @@ const EARLY_START_TOLERANCE_MS = 10_000;
 type RowClaim =
   | { claimed: true }
   | { claimed: false; skipReason: "claimed-by-another-worker" | "paused-without-access" };
+
+type PublishSkip = { skipped: true; reason: "post-deleted" | "post-no-longer-processing" };
 
 // A step that wants to be retried throws inside itself: Inngest stores
 // completed step results, so a throw placed after a step never re-runs it.
@@ -165,6 +169,16 @@ export const processSinglePost = inngest.createFunction(
       });
       if (!built.ok) return built;
 
+      const current = await readPostStatus(post.id);
+      if (!current.success) throw new Error(current.message);
+      if (current.status !== "processing") {
+        const skip: PublishSkip = {
+          skipped: true,
+          reason: current.status === null ? "post-deleted" : "post-no-longer-processing",
+        };
+        return skip;
+      }
+
       const publishResult = await publishToPlatform(built.request);
       if (!publishResult.ok && isSafeToRetryPost(publishResult)) {
         throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}`);
@@ -174,6 +188,8 @@ export const processSinglePost = inngest.createFunction(
         : publishResult;
       return outcome;
     });
+
+    if ("skipped" in result) return result;
 
     await recordOutcome("record-status", result);
 
@@ -197,6 +213,9 @@ export const processSinglePost = inngest.createFunction(
   },
 );
 
+// Inngest runs the failure handler as its own function with one retry, and
+// retries it only when it throws:
+// node_modules/inngest/components/InngestFunction.js:114-133
 async function finalizeExhaustedPost(
   failureEvent: FailureEventPayload,
   error: Error,
@@ -212,10 +231,9 @@ async function finalizeExhaustedPost(
 
   const loaded = await loadPostForProcessing(scheduledPostId);
   if (loaded.kind === "lookup_failed") {
-    console.error(
+    throw new Error(
       `[finalizeExhaustedPost] Could not load post ${scheduledPostId} to finalize it: ${loaded.message}`,
     );
-    return { finalized: false, reason: loaded.message };
   }
   if (loaded.kind === "terminal") {
     return { finalized: false, reason: "already-terminal" };
@@ -226,29 +244,24 @@ async function finalizeExhaustedPost(
       scheduledPostId,
       dispatchedScheduledAt: parsedEvent.data.scheduled_at,
     });
-    if (!claim.success || !claim.claimed) {
-      return { finalized: false, reason: "not-claimable" };
+    if (!claim.success) {
+      throw new Error(`[finalizeExhaustedPost] Post ${scheduledPostId}: ${claim.message}`);
     }
+    if (!claim.claimed) return { finalized: false, reason: "not-claimable" };
   }
 
-  const published = await findPublishedContentHistory(loaded.post);
-  const finalOutcome: PlatformPostOutcome =
-    published.success && published.isPublished
-      ? { ok: true, contentId: loaded.post.id }
-      : {
-          ok: false,
-          reason: "transient",
-          message: `Retries exhausted: ${error.message}`,
-          mayHavePublished: true,
-        };
-
-  const recorded = await recordPostStatus({ post: loaded.post, result: finalOutcome });
-  const isRecorded = recorded.success && recorded.updated;
+  const finalized = await finalizeProcessingPost({
+    post: loaded.post,
+    failureMessage: `Retries exhausted: ${error.message}`,
+  });
+  if (!finalized.success) {
+    throw new Error(`[finalizeExhaustedPost] Post ${scheduledPostId}: ${finalized.message}`);
+  }
 
   console.error(
     `[finalizeExhaustedPost] Post ${scheduledPostId} exhausted retries ` +
-      `(recorded=${isRecorded}, published=${finalOutcome.ok}). Last error: ${error.message}`,
+      `(recorded=${finalized.updated}, published=${finalized.outcome.ok}). Last error: ${error.message}`,
   );
 
-  return { finalized: isRecorded };
+  return { finalized: finalized.updated };
 }

@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 
+import type { scheduled_posts } from "@/db/schema";
+
 type StoredPost = {
   id: string;
   status: string;
   scheduled_at: string;
   cancelled_by_sub_at: string | null;
+  error_message: string | null;
 };
 
 type AccessRows = {
@@ -107,6 +110,9 @@ function runUpdate(sql: string, params: unknown[]): { id: string }[] {
         if (column === "cancelled_by_sub_at" && typeof assignedValue === "string") {
           updatedPost = { ...updatedPost, cancelled_by_sub_at: assignedValue };
         }
+        if (column === "error_message" && typeof assignedValue === "string") {
+          updatedPost = { ...updatedPost, error_message: assignedValue };
+        }
       }
       postStore.set(storedPost.id, updatedPost);
       return { id: storedPost.id };
@@ -125,10 +131,40 @@ mock.module("@/actions/server/data/storageFiles/deleteSupabaseFile", () => ({
   deleteSupabaseFile: async () => storageState.deleteResult,
 }));
 
+const historyState: { publishedPostIds: Set<string>; isReadFailing: boolean } = {
+  publishedPostIds: new Set(),
+  isReadFailing: false,
+};
+
+const failedPostRecords: { batch_id: string }[] = [];
+
+mock.module("@/actions/server/contentHistoryActions/storeFailedPost", () => ({
+  storeFailedPost: async (record: { batch_id: string }) => {
+    failedPostRecords.push(record);
+    return { success: true, message: "stored" };
+  },
+}));
+
+mock.module("@/lib/api/rest/webhooks/dispatch", () => ({
+  dispatchWebhook: () => undefined,
+}));
+
 mock.module("@/db/client", () => ({
   db: drizzle.mock(),
   runQuery: async (query: unknown) => {
     const { sql, params } = readSqlStatement(query);
+    if (sql.includes('from "content_history"')) {
+      if (historyState.isReadFailing) {
+        return { data: null, error: { message: "connection reset", code: "08006" } };
+      }
+      const scheduledPostId = params[1];
+      return {
+        data: typeof scheduledPostId === "string" && historyState.publishedPostIds.has(scheduledPostId)
+          ? [{ id: "history-1" }]
+          : [],
+        error: null,
+      };
+    }
     if (sql.includes('from "stripe_subscriptions"') || sql.includes('from "users"')) {
       if (accessRows.isReadFailing) {
         return { data: null, error: { message: "connection reset", code: "08006" } };
@@ -143,9 +179,12 @@ mock.module("@/db/client", () => ({
   },
 }));
 
-const { claimPostForProcessing, cleanupMediaIfUnreferenced, gatePostOnOwnerAccess } = await import(
-  "./processSinglePostHelpers"
-);
+const {
+  claimPostForProcessing,
+  cleanupMediaIfUnreferenced,
+  finalizeProcessingPost,
+  gatePostOnOwnerAccess,
+} = await import("./processSinglePostHelpers");
 
 function storePost(changes: Partial<StoredPost>): void {
   postStore.set(POST_ID, {
@@ -153,7 +192,44 @@ function storePost(changes: Partial<StoredPost>): void {
     status: "scheduled",
     scheduled_at: FIRST_TIME,
     cancelled_by_sub_at: null,
+    error_message: null,
     ...changes,
+  });
+}
+
+function buildScheduledPostRow(): typeof scheduled_posts.$inferSelect {
+  return {
+    id: POST_ID,
+    principal_id: "principal-1",
+    social_account_id: "account-1",
+    platform: "linkedin",
+    status: "processing",
+    scheduled_at: FIRST_TIME,
+    posted_at: null,
+    scheduled_at_date: null,
+    post_title: null,
+    post_description: "Hello",
+    post_options: {},
+    media_type: "text",
+    media_storage_path: "",
+    cover_image_timestamp: null,
+    batch_id: "batch-1",
+    error_message: null,
+    retry_count: 0,
+    created_via: "web",
+    idempotency_key: null,
+    x402_charge_id: null,
+    metadata: null,
+    created_at: FIRST_TIME,
+    updated_at: FIRST_TIME,
+    cancelled_by_sub_at: null,
+  };
+}
+
+function finalizeStuckPost() {
+  return finalizeProcessingPost({
+    post: buildScheduledPostRow(),
+    failureMessage: "Publishing stopped without a result; the post may have published",
   });
 }
 
@@ -175,6 +251,9 @@ async function claimForEventTime(eventScheduledAt: string): Promise<boolean> {
 
 beforeEach(() => {
   postStore.clear();
+  historyState.publishedPostIds = new Set();
+  historyState.isReadFailing = false;
+  failedPostRecords.length = 0;
   accessRows.subscriptions = [];
   accessRows.users = [];
   accessRows.isReadFailing = false;
@@ -276,5 +355,44 @@ describe("cleanupMediaIfUnreferenced", () => {
     storageState.deleteResult = { success: true, removed: true, message: "File deleted successfully." };
     const removed = await cleanupMediaIfUnreferenced("principal-1/clip.mp4", "principal-1");
     expect(removed.deleted).toBe(true);
+  });
+});
+
+describe("finalizeProcessingPost settles a post no run will settle", () => {
+  test("a post with a content_history row is recorded posted, not failed", async () => {
+    storePost({ status: "processing" });
+    historyState.publishedPostIds = new Set([POST_ID]);
+    const finalized = await finalizeStuckPost();
+    expect(finalized).toEqual({ success: true, outcome: { ok: true, contentId: POST_ID }, updated: true });
+    expect(postStore.get(POST_ID)?.status).toBe("posted");
+    expect(failedPostRecords).toEqual([]);
+  });
+
+  test("a post without one is recorded failed with a message that it may have published", async () => {
+    storePost({ status: "processing" });
+    const finalized = await finalizeStuckPost();
+    expect(finalized.success).toBe(true);
+    expect(postStore.get(POST_ID)?.status).toBe("failed");
+    expect(postStore.get(POST_ID)?.error_message).toContain("may have published");
+    expect(failedPostRecords.map((record) => record.batch_id)).toEqual(["batch-1"]);
+  });
+
+  test("a history read that fails changes nothing and reports the failure", async () => {
+    storePost({ status: "processing" });
+    historyState.isReadFailing = true;
+    const finalized = await finalizeStuckPost();
+    expect(finalized).toEqual({
+      success: false,
+      message: "content history lookup failed: connection reset",
+    });
+    expect(postStore.get(POST_ID)?.status).toBe("processing");
+  });
+
+  test("a post another writer settled first is left as it is", async () => {
+    storePost({ status: "posted" });
+    const finalized = await finalizeStuckPost();
+    expect(finalized).toMatchObject({ success: true, updated: false });
+    expect(postStore.get(POST_ID)?.status).toBe("posted");
+    expect(failedPostRecords).toEqual([]);
   });
 });

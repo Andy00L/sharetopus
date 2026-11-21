@@ -185,6 +185,24 @@ export async function findPublishedContentHistory(
   return { success: true, isPublished: data.length > 0 };
 }
 
+export type PostStatusReadResult =
+  | { success: true; status: PostStatus | null }
+  | { success: false; message: string };
+
+export async function readPostStatus(scheduledPostId: string): Promise<PostStatusReadResult> {
+  const { data, error } = await runQuery(
+    db
+      .select({ status: scheduled_posts.status })
+      .from(scheduled_posts)
+      .where(eq(scheduled_posts.id, scheduledPostId))
+      .limit(1),
+  );
+  if (error) {
+    return { success: false, message: `status reread failed: ${error.message}` };
+  }
+  return { success: true, status: data[0]?.status ?? null };
+}
+
 export type CompatibilityResult = {
   success: true;
   message: string;
@@ -366,6 +384,26 @@ export async function recordPostStatus(args: {
   }
 
   return { success: true, updated: true };
+}
+
+export type FinalizeProcessingResult =
+  | { success: true; outcome: PlatformPostOutcome; updated: boolean }
+  | { success: false; message: string };
+
+export async function finalizeProcessingPost(input: {
+  post: ScheduledPost;
+  failureMessage: string;
+}): Promise<FinalizeProcessingResult> {
+  const { post, failureMessage } = input;
+  const published = await findPublishedContentHistory(post);
+  if (!published.success) return { success: false, message: published.message };
+
+  const outcome: PlatformPostOutcome = published.isPublished
+    ? { ok: true, contentId: post.id }
+    : { ok: false, reason: "transient", message: failureMessage, mayHavePublished: true };
+  const recorded = await recordPostStatus({ post, result: outcome });
+  if (!recorded.success) return recorded;
+  return { success: true, outcome, updated: recorded.updated };
 }
 
 export type CleanupResult = {
