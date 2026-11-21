@@ -15,6 +15,12 @@ export interface RefundSendInput {
   network: NetworkConfig;
   /** Why the refund is owed. Logged for observability. */
   reason: string;
+  /**
+   * The charge id, sent as CDP's X-Idempotency-Key: the CDP SDK's axios-retry
+   * resends a POST after a network error, and CDP answers a repeated key with
+   * the first response instead of sending twice.
+   */
+  idempotencyKey: string;
 }
 
 export type RefundSendResult =

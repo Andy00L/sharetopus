@@ -29,6 +29,11 @@ import {
   DEFAULT_FACILITATOR_URL,
   getHostedFacilitatorUrl,
 } from "@/lib/x402/config";
+import { withTimeout } from "@/lib/x402/http/withTimeout";
+
+const FACILITATOR_VERIFY_TIMEOUT_MS = 15_000;
+const FACILITATOR_SETTLE_TIMEOUT_MS = 30_000;
+const FACILITATOR_SUPPORTED_TIMEOUT_MS = 10_000;
 
 /**
  * The two operations facilitator.ts asks of a facilitator, whether it is
@@ -103,20 +108,22 @@ function createFacilitatorClient(network: NetworkConfig): X402FacilitatorClient 
             "with the payTo wallet). Set it, or remove celo from the request.",
         );
       }
-      return new HTTPFacilitatorClient({
-        url: getHostedFacilitatorUrl("celo"),
-        createAuthHeaders: async () => ({
-          verify: {},
-          settle: { "X-API-Key": celoApiKey },
-          supported: {},
+      return withHostedFacilitatorLimits(
+        new HTTPFacilitatorClient({
+          url: getHostedFacilitatorUrl("celo"),
+          createAuthHeaders: async () => ({
+            verify: {},
+            settle: { "X-API-Key": celoApiKey },
+            supported: {},
+          }),
         }),
-      });
+      );
     }
 
     case "coinbase_cdp": {
       const facilitatorUrl = getHostedFacilitatorUrl("coinbase_cdp");
       if (facilitatorUrl !== DEFAULT_FACILITATOR_URL) {
-        return new HTTPFacilitatorClient({ url: facilitatorUrl });
+        return withHostedFacilitatorLimits(new HTTPFacilitatorClient({ url: facilitatorUrl }));
       }
       if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
         throw new Error(
@@ -125,8 +132,7 @@ function createFacilitatorClient(network: NetworkConfig): X402FacilitatorClient 
             "X402_FACILITATOR_URL at a facilitator that needs no auth.",
         );
       }
-      // createFacilitatorConfig returns { url: <CDP url>, createAuthHeaders }.
-      return new HTTPFacilitatorClient(createFacilitatorConfig());
+      return withHostedFacilitatorLimits(new HTTPFacilitatorClient(createFacilitatorConfig()));
     }
 
     default: {
@@ -134,4 +140,87 @@ function createFacilitatorClient(network: NetworkConfig): X402FacilitatorClient 
       throw new Error(`[getFacilitatorClient] Unhandled settlement lane: ${String(unhandledLane)}`);
     }
   }
+}
+
+/**
+ * HTTPFacilitatorClient fetches with no timeout, and on a non-2xx reply whose
+ * body is a VerifyResponse or SettleResponse it throws VerifyError or
+ * SettleError instead of returning the body. The SDK's own resource server
+ * turns SettleError back into a failed SettleResponse; this does the same.
+ * sourceRef: @x402/core 2.14.0 dist/esm/chunk-W4OPBTK7.mjs (HTTPFacilitatorClient, settle catch).
+ */
+function withHostedFacilitatorLimits(client: HTTPFacilitatorClient): X402FacilitatorClient {
+  return {
+    async verify(paymentPayload, paymentRequirements) {
+      try {
+        return await withTimeout(
+          client.verify(paymentPayload, paymentRequirements),
+          FACILITATOR_VERIFY_TIMEOUT_MS,
+          `Facilitator verify at ${client.url}`,
+        );
+      } catch (error) {
+        const rejection = readVerifyRejection(error);
+        if (rejection) return rejection;
+        throw error;
+      }
+    },
+
+    async settle(paymentPayload, paymentRequirements) {
+      try {
+        return await withTimeout(
+          client.settle(paymentPayload, paymentRequirements),
+          FACILITATOR_SETTLE_TIMEOUT_MS,
+          `Facilitator settle at ${client.url}`,
+        );
+      } catch (error) {
+        const rejection = readSettleRejection(error, paymentRequirements);
+        if (rejection) return rejection;
+        throw error;
+      }
+    },
+
+    getSupported() {
+      return withTimeout(
+        client.getSupported(),
+        FACILITATOR_SUPPORTED_TIMEOUT_MS,
+        `Facilitator /supported at ${client.url}`,
+      );
+    },
+  };
+}
+
+/**
+ * The VerifyResponse carried by a VerifyError. Matched by name and fields, not
+ * instanceof: the CJS build of @x402/core defines the class once per entry
+ * point, so the class this module could import is not always the one thrown.
+ */
+function readVerifyRejection(error: unknown): VerifyResponse | null {
+  if (!(error instanceof Error) || error.name !== "VerifyError") return null;
+  return {
+    isValid: false,
+    invalidReason:
+      "invalidReason" in error && typeof error.invalidReason === "string" ? error.invalidReason : undefined,
+    invalidMessage:
+      "invalidMessage" in error && typeof error.invalidMessage === "string" ? error.invalidMessage : undefined,
+    payer: "payer" in error && typeof error.payer === "string" ? error.payer : undefined,
+  };
+}
+
+/** The SettleResponse carried by a SettleError (same matching rule as readVerifyRejection). */
+function readSettleRejection(
+  error: unknown,
+  paymentRequirements: PaymentRequirements,
+): SettleResponse | null {
+  if (!(error instanceof Error) || error.name !== "SettleError") return null;
+  return {
+    success: false,
+    errorReason:
+      "errorReason" in error && typeof error.errorReason === "string" ? error.errorReason : undefined,
+    errorMessage:
+      "errorMessage" in error && typeof error.errorMessage === "string" ? error.errorMessage : undefined,
+    payer: "payer" in error && typeof error.payer === "string" ? error.payer : undefined,
+    transaction:
+      "transaction" in error && typeof error.transaction === "string" ? error.transaction : "",
+    network: paymentRequirements.network,
+  };
 }

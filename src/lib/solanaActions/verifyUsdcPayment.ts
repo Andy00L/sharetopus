@@ -3,6 +3,7 @@ import "server-only";
 import { createSolanaRpc, signature as toSignature } from "@solana/kit";
 import type { Signature } from "@solana/kit";
 
+import { pollUntilDeadline } from "@/lib/x402/chain/pollUntilDeadline";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
@@ -23,9 +24,12 @@ import type { NetworkConfig } from "@/lib/x402/networks";
  * Tables touched: none. Network: getTransaction on the pinned RPC.
  */
 
-/** Poll budget after a wallet reports its signature: 10 x 1.5s covers confirmation. */
-const CONFIRMATION_POLL_ATTEMPTS = 10;
-const CONFIRMATION_POLL_INTERVAL_MS = 1500;
+/** Poll budget after a wallet reports its signature; Solana confirms in about 1 to 2 s. */
+const CONFIRMATION_TIMEOUT_MS = 12_000;
+const CONFIRMATION_POLL_INTERVAL_MS = 1_500;
+
+/** One getTransaction call; the Solana HTTP transport sets no timeout of its own. */
+const RPC_REQUEST_TIMEOUT_MS = 4_000;
 
 export type VerifyUsdcPaymentResult =
   | {
@@ -69,25 +73,25 @@ export async function verifyUsdcPayment(params: {
   }
 
   const rpc = createSolanaRpc(getRpcUrl(params.network));
-  let transaction: Awaited<ReturnType<typeof fetchConfirmedTransaction>> = null;
-  for (let attempt = 0; attempt < CONFIRMATION_POLL_ATTEMPTS; attempt += 1) {
-    try {
-      transaction = await fetchConfirmedTransaction(rpc, txSignature);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "RPC read failed.";
+  const pollOutcome = await pollUntilDeadline({
+    timeoutMs: CONFIRMATION_TIMEOUT_MS,
+    intervalMs: CONFIRMATION_POLL_INTERVAL_MS,
+    requestTimeoutMs: RPC_REQUEST_TIMEOUT_MS,
+    readOnce: (abortSignal) => fetchConfirmedTransaction(rpc, txSignature, abortSignal),
+  });
+  if (pollOutcome.status === "timed_out") {
+    if (pollOutcome.lastError !== null) {
+      const message = pollOutcome.lastError instanceof Error ? pollOutcome.lastError.message : "RPC read failed.";
       console.error(`[verifyUsdcPayment] getTransaction failed: ${message}`);
       return { ok: false, reason: "rpc_error", message: "Could not read the transaction from the network." };
     }
-    if (transaction) break;
-    await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_INTERVAL_MS));
-  }
-  if (!transaction) {
     return {
       ok: false,
       reason: "not_found",
       message: "Transaction not confirmed yet. Wait a few seconds and try again.",
     };
   }
+  const transaction = pollOutcome.value;
 
   if (transaction.meta?.err) {
     return {
@@ -154,6 +158,7 @@ export async function verifyUsdcPayment(params: {
 async function fetchConfirmedTransaction(
   rpc: ReturnType<typeof createSolanaRpc>,
   txSignature: Signature,
+  abortSignal: AbortSignal,
 ) {
   return rpc
     .getTransaction(txSignature, {
@@ -161,5 +166,5 @@ async function fetchConfirmedTransaction(
       commitment: "confirmed",
       maxSupportedTransactionVersion: 0,
     })
-    .send();
+    .send({ abortSignal });
 }

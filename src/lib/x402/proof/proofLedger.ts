@@ -3,7 +3,7 @@ import "server-only";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { content_history, failed_posts, scheduled_posts, x402_charges } from "@/db/schema";
+import { content_history, pending_direct_posts, scheduled_posts, x402_charges } from "@/db/schema";
 import type { Json } from "@/db/schema";
 
 /**
@@ -21,14 +21,14 @@ import type { Json } from "@/db/schema";
  *     batch_id, and the adapters write content_history keyed by it
  *     (src/lib/api/_shared/directPostForAccountsGeneric.ts,
  *     src/lib/platforms/providers/publishViaRegistry.ts). A failed post-now
- *     is recorded in pending_direct_posts, not in failed_posts.
+ *     ends with pending_direct_posts.status = 'failed' for that batch_id.
  *   - schedule wires x402_charges.scheduled_post_id; scheduled_posts.status
  *     carries the outcome.
  *   - every other action (connect, upload_url, list_*) buys no post.
  *
  * Called by: src/app/(marketing)/proof/page.tsx (every network),
  *            src/app/(marketing)/solana/page.tsx (scoped to solana)
- * Tables touched: x402_charges, content_history, failed_posts,
+ * Tables touched: x402_charges, content_history, pending_direct_posts,
  *                 scheduled_posts (all read-only)
  */
 
@@ -97,6 +97,7 @@ export async function loadProofLedger(options?: {
         amount_usdc: x402_charges.amount_usdc,
         status: x402_charges.status,
         tx_hash: x402_charges.tx_hash,
+        error_message: x402_charges.error_message,
         payer_address: x402_charges.payer_address,
         settled_at: x402_charges.settled_at,
         created_at: x402_charges.created_at,
@@ -145,6 +146,7 @@ export async function loadProofLedger(options?: {
     if (charge.tx_hash === null) continue;
     const resolved = resolveOutcome({
       chargeStatus: charge.status,
+      hasActionFailed: charge.error_message !== null,
       action: charge.action,
       batchId: readBatchId(charge.metadata),
       scheduledPostId: charge.scheduled_post_id,
@@ -178,6 +180,7 @@ function readBatchId(metadata: Json): string | null {
 
 function resolveOutcome(params: {
   chargeStatus: "pending" | "settled" | "failed" | "refunded";
+  hasActionFailed: boolean;
   action: string;
   batchId: string | null;
   scheduledPostId: string | null;
@@ -188,7 +191,7 @@ function resolveOutcome(params: {
   if (params.chargeStatus === "refunded") {
     return { outcome: "refunded", platform: null };
   }
-  if (params.chargeStatus === "failed") {
+  if (params.chargeStatus === "failed" || params.hasActionFailed) {
     return { outcome: "failed", platform: null };
   }
   if (!params.action.startsWith(POST_ACTION_PREFIX)) {
@@ -272,18 +275,23 @@ async function fetchFailedPlatformsByBatch(
 
   const { data: failedRows, error } = await runQuery(
     db
-      .select({ batch_id: failed_posts.batch_id, platform: failed_posts.platform })
-      .from(failed_posts)
-      .where(inArray(failed_posts.batch_id, batchIds)),
+      .select({ batch_id: pending_direct_posts.batch_id, platform: pending_direct_posts.platform })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.batch_id, batchIds),
+          eq(pending_direct_posts.status, "failed"),
+        ),
+      ),
   );
   if (error) {
     console.error(
-      `[fetchFailedPlatformsByBatch] failed_posts read failed: ${error.message}`,
+      `[fetchFailedPlatformsByBatch] pending_direct_posts read failed: ${error.message}`,
     );
     return { ok: false };
   }
   for (const row of failedRows) {
-    if (row.batch_id !== null) platformByBatch.set(row.batch_id, row.platform);
+    platformByBatch.set(row.batch_id, row.platform);
   }
   return { ok: true, value: platformByBatch };
 }

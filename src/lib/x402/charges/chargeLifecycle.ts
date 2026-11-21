@@ -23,6 +23,7 @@ import { x402_charges } from "@/db/schema";
 import type { Json } from "@/db/schema";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
+  markChargeActionFailed,
   markChargeFailed,
   markChargeRefunded,
   markChargeSettled,
@@ -123,7 +124,6 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
       case "insufficient_funds":
         await markChargeFailed({
           chargeId,
-          fromStatus: "pending",
           errorMessage: `settle_failed: ${settleError.message}`,
         });
         break;
@@ -195,6 +195,7 @@ async function loadChargeReplay(params: {
         status: x402_charges.status,
         action: x402_charges.action,
         tx_hash: x402_charges.tx_hash,
+        error_message: x402_charges.error_message,
         payer_address: x402_charges.payer_address,
         metadata: x402_charges.metadata,
         created_at: x402_charges.created_at,
@@ -221,7 +222,8 @@ async function loadChargeReplay(params: {
       ? { state: "in_progress", chargeId: charge.id }
       : { state: "closed", chargeId: charge.id };
   }
-  if (charge.status === "settled" && charge.tx_hash) {
+  const hasActionFailed = charge.error_message !== null;
+  if (charge.status === "settled" && charge.tx_hash && !hasActionFailed) {
     return {
       state: "settled",
       chargeId: charge.id,
@@ -300,17 +302,24 @@ export interface RefundChargeOutcome {
 }
 
 /**
- * Refunds a settled charge after the paid action failed, and records the
- * outcome honestly: refunded only when confirmed; a sent but unconfirmed
- * refund stays settled with a reconciliation row the sweep resolves; a
- * failed refund marks the charge failed for manual follow-up.
+ * Refunds a settled charge after the paid action failed. The failure is
+ * written on the charge before the refund is sent, so a replay of the payment
+ * is refused from then on. Refunded only when the chain confirms it; a refund
+ * that is unconfirmed or could not be sent leaves the charge settled with a
+ * reconciliation row (a null tx hash means nothing was sent).
  */
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
+  await markChargeActionFailed({
+    chargeId: input.chargeId,
+    errorMessage: `action_failed: ${input.reason}`,
+  });
+
   const refundResult = await refundPayment({
     payerAddress: input.payerAddress,
     amountUsdc: input.amountUsdc,
     network: input.network,
     reason: input.reason,
+    idempotencyKey: input.chargeId,
   });
   const reconciliationBase = {
     chargeId: input.chargeId,
@@ -361,11 +370,6 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
         kind: "refund_failed",
         txHash: refundResult.refundTxHash,
         ...reconciliationBase,
-      });
-      await markChargeFailed({
-        chargeId: input.chargeId,
-        fromStatus: "settled",
-        errorMessage: `refund_failed: ${input.reason}`,
       });
       return { refundInitiated: false, refundTxHash: null };
     }

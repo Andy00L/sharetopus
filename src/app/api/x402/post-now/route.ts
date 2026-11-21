@@ -128,7 +128,6 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         success: false,
         errorKind: "execution_failed",
         message: batchResult.message,
-        refundable: true,
       };
     }
 
@@ -139,7 +138,6 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         success: false,
         errorKind: "duplicate_idempotency_key",
         message: "A post with this idempotency_key was already dispatched.",
-        refundable: true,
       };
     }
 
@@ -150,7 +148,7 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
         eventIds: batchResult.eventIds,
         dispatched: batchResult.details.dispatched,
       },
-      chargeMetadata: { batch_id: batchResult.batchId },
+      chargeRecord: { metadata: { batch_id: batchResult.batchId } },
     };
   },
 });

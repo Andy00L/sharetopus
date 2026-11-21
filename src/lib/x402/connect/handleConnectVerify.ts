@@ -43,6 +43,8 @@ import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildOAuthUrl } from "./buildOAuthUrl";
 import type { ConnectNetworkContext, ConnectSuccessPayload } from "./types";
 
+const CONNECT_VERIFY_RATE_LIMIT = { limit: 5, windowSeconds: 60 };
+
 // ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------
@@ -99,10 +101,11 @@ const ConnectSuccessPayloadSchema = z.object({
  * Full /connect verify flow. Called when a payment header is present.
  *
  * Flow:
- *   1. Rate limit check (x402_connect_verify, 5/min per IP)
+ *   1. Rate limit check (x402_connect_verify, 5/min per IP), with the
+ *      connect price read at the same time
  *   2. Fail fast on missing server config (HMAC secret, redirect URI) so
  *      nothing can fail AFTER the wallet has been charged
- *   3. Read connect pricing (verifyPayment needs the expected amount)
+ *   3. Check the connect price (verifyPayment needs the expected amount)
  *   4. verifyPayment (off-chain): proves the caller controls the paying key
  *   5. Resolve or onboard the wallet from the facilitator-recovered payer;
  *      sanctioned wallets are rejected, nothing has settled yet
@@ -126,8 +129,15 @@ export async function handleConnectVerify(
     chargeId: null,
   });
 
-  // -- 1. Rate limit
-  const rateLimitResult = await checkRateLimit("x402_connect_verify", null, 5, 60);
+  // -- 1. Rate limit, with the connect price read alongside it
+  const [rateLimitResult, priceResult] = await Promise.all([
+    checkRateLimit({
+      operation: "x402_connect_verify",
+      identifier: null,
+      rule: CONNECT_VERIFY_RATE_LIMIT,
+    }),
+    readActionPrice("connect_account"),
+  ]);
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     return failBeforeWallet(
@@ -160,7 +170,6 @@ export async function handleConnectVerify(
   }
 
   // -- 3. Connect pricing
-  const priceResult = await readActionPrice("connect_account");
   if (!priceResult.ok) {
     return failBeforeWallet({ kind: "db_error", message: "Unable to read connect pricing from database." });
   }

@@ -11,6 +11,9 @@ import "server-only";
 
 import { CdpClient } from "@coinbase/cdp-sdk";
 
+/** The SDK's axios client sets no timeout (@coinbase/cdp-sdk openapi-client/cdpApiClient.ts). */
+export const CDP_SEND_TIMEOUT_MS = 15_000;
+
 let cdpClientInstance: CdpClient | null = null;
 
 export type CdpClientResult =

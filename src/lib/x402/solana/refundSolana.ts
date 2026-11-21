@@ -25,14 +25,18 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from "@solana/kit";
 
-import { getCdpClient } from "@/lib/x402/cdp/cdpClient";
+import { CDP_SEND_TIMEOUT_MS, getCdpClient } from "@/lib/x402/cdp/cdpClient";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getRecipientAddress, getRpcUrl } from "@/lib/x402/config";
+import { withTimeout } from "@/lib/x402/http/withTimeout";
 import {
   buildTransferCheckedInstruction,
   findAssociatedTokenAddress,
 } from "@/lib/x402/solana/splToken";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+
+/** The Solana HTTP transport sets no timeout of its own. */
+const BLOCKHASH_REQUEST_TIMEOUT_MS = 5_000;
 
 export async function refundSolana(input: RefundSendInput): Promise<RefundSendResult> {
   // The Server Wallet that received the payment is the refund sender.
@@ -50,8 +54,9 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
   try {
     const rpc = createSolanaRpc(getRpcUrl(input.network));
 
-    // Get a recent blockhash for the transaction lifetime.
-    const { value: latestBlockhash } = await rpc.getLatestBlockhash().send();
+    const { value: latestBlockhash } = await rpc
+      .getLatestBlockhash()
+      .send({ abortSignal: AbortSignal.timeout(BLOCKHASH_REQUEST_TIMEOUT_MS) });
 
     const senderAddr = address(senderAddress);
     const recipientAddr = address(input.payerAddress);
@@ -94,10 +99,15 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
 
     // Sign and send via CDP. The CDP SDK's Solana network name matches the
     // WalletChain short name "solana"; the registry has no Solana testnet.
-    const result = await cdpResult.client.solana.sendTransaction({
-      network: "solana",
-      transaction: base64Tx,
-    });
+    const result = await withTimeout(
+      cdpResult.client.solana.sendTransaction({
+        network: "solana",
+        transaction: base64Tx,
+        idempotencyKey: input.idempotencyKey,
+      }),
+      CDP_SEND_TIMEOUT_MS,
+      "CDP refund send on Solana",
+    );
 
     console.log(
       `[refundSolana] Refund sent: ${result.signature}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,

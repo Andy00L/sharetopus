@@ -86,7 +86,6 @@ export const POST = x402PaidEndpoint<DeleteBody, DeleteResult>({
         success: false,
         errorKind: "execution_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

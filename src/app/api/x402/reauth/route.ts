@@ -12,7 +12,6 @@ import {
 import { db, runQuery } from "@/db/client";
 import { social_accounts, social_connections } from "@/db/schema";
 import type { PreflightResult } from "@/lib/types/preflight";
-import { updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
 import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import type { Platform } from "@/lib/x402/connect/types";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
@@ -199,7 +198,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
   handler: async ({ body, principal, chargeId }) => {
     const target = await loadReauthTarget(body.social_account_id, principal.principalId);
     if (!target.ok) {
-      return { success: false, errorKind: target.errorKind, message: target.message, refundable: true };
+      return { success: false, errorKind: target.errorKind, message: target.message };
     }
 
     const connectionId = randomUUID();
@@ -216,7 +215,6 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         success: false,
         errorKind: "oauth_url_build_failed",
         message: oauthResult.message,
-        refundable: true,
       };
     }
 
@@ -242,10 +240,8 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         success: false,
         errorKind: "db_insert_failed",
         message: "Failed to create re-auth connection record.",
-        refundable: true,
       };
     }
-    await updateChargeRecord(chargeId, { socialConnectionId: connectionId });
 
     const tokenResult = issueConnectionToken({
       connectionId,
@@ -260,7 +256,6 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         success: false,
         errorKind: "token_issue_failed",
         message: "Failed to issue the connection token.",
-        refundable: true,
       };
     }
 
@@ -273,6 +268,7 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
         connectionToken: tokenResult.token,
         expiresAt,
       },
+      chargeRecord: { socialConnectionId: connectionId },
     };
   },
 });

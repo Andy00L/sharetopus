@@ -4,6 +4,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { X402_CONNECT_CHALLENGE_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
 import { getBaseUrl, isX402Platform, X402_PLATFORMS } from "@/lib/x402/config";
 import {
@@ -172,7 +173,11 @@ async function respondUnpaidConnectChallenge(
   platform: Platform,
   audit: ConnectAudit,
 ): Promise<NextResponse> {
-  const rateLimitResult = await checkRateLimit("x402_connect_challenge", null, 10, 60);
+  const rateLimitResult = await checkRateLimit({
+    operation: "x402_connect_challenge",
+    identifier: null,
+    rule: X402_CONNECT_CHALLENGE_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     audit({ principal: null, chargeId: null, resultStatus: rejection.auditStatus });

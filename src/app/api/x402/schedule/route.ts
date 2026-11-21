@@ -16,7 +16,6 @@ import {
   preflightSchedulePost,
   schedulePostBatch,
 } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
-import { updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
@@ -149,7 +148,7 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
   precheck: ({ body, principal }) =>
     preflightSchedulePost(toSchedulePostData(body, "preflight"), principal.principalId),
 
-  handler: async ({ body, principal, chargeId, requestId }) => {
+  handler: async ({ body, principal, requestId }) => {
     const scheduleResult = await schedulePostBatch(
       [toSchedulePostData(body, generateBatchId())],
       principal.principalId,
@@ -162,7 +161,6 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
         success: false,
         errorKind: "execution_failed",
         message: scheduleResult.message,
-        refundable: true,
       };
     }
 
@@ -173,15 +171,10 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
         success: false,
         errorKind: "duplicate_idempotency_key",
         message: "A post with this idempotency_key is already scheduled.",
-        refundable: true,
       };
     }
 
     const scheduledPostId = scheduleResult.scheduleIds[0];
-    if (scheduledPostId) {
-      await updateChargeRecord(chargeId, { scheduledPostId });
-    }
-
     return {
       success: true,
       data: {
@@ -189,6 +182,7 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
         scheduleIds: scheduleResult.scheduleIds,
         inserted: scheduleResult.details.inserted,
       },
+      chargeRecord: scheduledPostId ? { scheduledPostId } : undefined,
     };
   },
 });

@@ -17,9 +17,9 @@ import {
   refundCharge,
   settleCharge,
   updateChargeRecord,
+  type ChargeRecordFields,
   type ChargeReplay,
 } from "@/lib/x402/charges/chargeLifecycle";
-import { markChargeFailed } from "@/lib/x402/charges/chargeTransitions";
 import { getBaseUrl } from "@/lib/x402/config";
 import {
   verifyPayment,
@@ -35,6 +35,8 @@ import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorRespon
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
+
+const RATE_LIMIT_WINDOW_SECONDS = 60;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,15 +68,15 @@ export type X402HandlerResult<TResult> =
   | {
       success: true;
       data: TResult;
-      /** Extra metadata stored on the charge (e.g. post-now's batch_id). */
-      chargeMetadata?: { [key: string]: Json | undefined };
+      /** Back-references stored on the charge with the replay copy, in one write. */
+      chargeRecord?: ChargeRecordFields;
     }
-  | { success: false; errorKind: string; message: string; refundable: boolean };
+  | { success: false; errorKind: string; message: string };
 
 /**
  * Business logic called AFTER payment is settled and the charge row reached
- * status="settled". Returns the response body on success, or a typed error
- * for the refund path.
+ * status="settled". Returns the response body on success, or a typed error;
+ * every error is refunded.
  */
 export type X402Handler<TBody, TResult> = (params: {
   body: TBody;
@@ -212,12 +214,14 @@ async function prepareRequest(params: {
 }): Promise<PreparedRequest> {
   const { context, action } = params;
 
-  const rateLimitResult = await checkRateLimit(
-    params.rateLimitScope,
-    null,
-    params.rateLimitPerMinute,
-    60,
-  );
+  const [rateLimitResult, priceResult] = await Promise.all([
+    checkRateLimit({
+      operation: params.rateLimitScope,
+      identifier: null,
+      rule: { limit: params.rateLimitPerMinute, windowSeconds: RATE_LIMIT_WINDOW_SECONDS },
+    }),
+    readActionPrice(action),
+  ]);
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     return {
@@ -252,7 +256,6 @@ async function prepareRequest(params: {
     };
   }
 
-  const priceResult = await readActionPrice(action);
   if (!priceResult.ok) {
     console.error(`[prepareRequest] Pricing lookup failed for "${action}": ${priceResult.message}`);
     // action: null because x402_access_log.action carries an FK to
@@ -335,9 +338,8 @@ async function buildChallengeResponse(params: {
  *  8. Settle through the charge lifecycle: pending row first (a replay of
  *     the same payment gets the stored result back), then settle, then
  *     pending -> settled.
- *  9. Run the handler. A refundable failure refunds on-chain and records
- *     "refunded" only once the chain confirms it; a non-refundable failure
- *     marks the charge failed.
+ *  9. Run the handler. A failure refunds on-chain and records "refunded"
+ *     only once the chain confirms it.
  * 10. Success: the result is stored on the charge for replay (write
  *     actions), and the response carries PAYMENT-RESPONSE.
  */
@@ -562,33 +564,14 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
 
     if (!handlerResult.success) {
-      if (handlerResult.refundable) {
-        const refundOutcome = await refundCharge({
-          chargeId,
-          settleTxHash: txHash,
-          payerAddress: verifyResult.payerAddress,
-          amountUsdc: usdcPrice,
-          network,
-          reason: handlerResult.message,
-          principalId: principal.principalId,
-        });
-        return context.fail({
-          principal,
-          action: actionKey,
-          chargeId,
-          resultStatus: "error",
-          httpStatus: 500,
-          errorKind: handlerResult.errorKind,
-          message: handlerResult.message,
-          refundInitiated: refundOutcome.refundInitiated,
-          refundTxHash: refundOutcome.refundTxHash,
-        });
-      }
-
-      await markChargeFailed({
+      const refundOutcome = await refundCharge({
         chargeId,
-        fromStatus: "settled",
-        errorMessage: handlerResult.message,
+        settleTxHash: txHash,
+        payerAddress: verifyResult.payerAddress,
+        amountUsdc: usdcPrice,
+        network,
+        reason: handlerResult.message,
+        principalId: principal.principalId,
       });
       return context.fail({
         principal,
@@ -598,18 +581,22 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
         httpStatus: 500,
         errorKind: handlerResult.errorKind,
         message: handlerResult.message,
+        refundInitiated: refundOutcome.refundInitiated,
+        refundTxHash: refundOutcome.refundTxHash,
       });
     }
 
     // Step 10: success. Write actions keep a replay copy of the result so a
     // client that lost this response can present the same payment again.
+    const chargeRecord = handlerResult.chargeRecord ?? {};
     const storedMetadata = {
-      ...(handlerResult.chargeMetadata ?? {}),
+      ...(chargeRecord.metadata ?? {}),
       ...(req.method === "GET" ? {} : { result: handlerResult.data }),
     };
-    if (Object.keys(storedMetadata).length > 0) {
-      await updateChargeRecord(chargeId, { metadata: storedMetadata });
-    }
+    await updateChargeRecord(chargeId, {
+      ...chargeRecord,
+      metadata: Object.keys(storedMetadata).length > 0 ? storedMetadata : undefined,
+    });
 
     context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
     return buildSettledResponse({
@@ -677,7 +664,7 @@ export function x402ChallengeGet(
 /**
  * Runs the handler. Handlers return errors as values, but money has already
  * settled when this runs, so an unexpected throw must not escape: it is
- * converted into a refundable failure.
+ * converted into a failure, which is refunded.
  */
 async function runHandler<TBody, TResult>(
   handler: X402Handler<TBody, TResult>,
@@ -694,7 +681,6 @@ async function runHandler<TBody, TResult>(
       success: false,
       errorKind: "internal_error",
       message: "Unexpected error while executing the paid action.",
-      refundable: true,
     };
   }
 }

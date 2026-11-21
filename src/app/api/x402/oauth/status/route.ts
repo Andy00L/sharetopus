@@ -4,6 +4,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { X402_OAUTH_STATUS_POLL_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import {
   buildRateLimitJsonResponse,
@@ -48,7 +49,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   };
 
   // Step 1: rate limit per IP.
-  const rateLimitResult = await checkRateLimit("x402_oauth_status_poll", null, 120, 60);
+  const rateLimitResult = await checkRateLimit({
+    operation: "x402_oauth_status_poll",
+    identifier: null,
+    rule: X402_OAUTH_STATUS_POLL_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     auditRejection(rejection.auditStatus);

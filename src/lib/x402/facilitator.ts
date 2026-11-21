@@ -35,6 +35,7 @@ import { confirmTransaction } from "@/lib/x402/chain/confirmTransaction";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getFacilitatorClient } from "@/lib/x402/facilitatorClient";
 import { buildPaymentRequirements } from "@/lib/x402/http/paymentHttp";
+import { TIMEOUT_ERROR_NAME } from "@/lib/x402/http/withTimeout";
 import { addressesMatch, type NetworkConfig } from "@/lib/x402/networks";
 import {
   extractNonceFromPayload,
@@ -262,7 +263,7 @@ export async function settlePayment(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown facilitator error during settle.";
     console.error(`[settlePayment] Facilitator settle threw: ${message}`);
-    const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+    const isTimeout = err instanceof Error && (err.name === TIMEOUT_ERROR_NAME || err.name === "AbortError");
     return {
       ok: false,
       error: isTimeout

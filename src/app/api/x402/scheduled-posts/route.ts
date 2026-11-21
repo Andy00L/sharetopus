@@ -123,7 +123,6 @@ export const GET = x402PaidEndpoint<ScheduledPostsParams, ScheduledPostsResult>(
         success: false,
         errorKind: "query_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

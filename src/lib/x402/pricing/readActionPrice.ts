@@ -13,9 +13,9 @@ import "server-only";
  * or implausibly large price fails closed instead of reaching usdcToAtomic,
  * where it would turn into a zero-amount requirement.
  *
- * Results are cached per instance for PRICE_CACHE_TTL_MS, so every paid call
- * and every unpaid 402 probe does not cost a database read. A price change
- * or a window boundary therefore takes effect up to that long late.
+ * Results are cached per instance for PRICE_CACHE_TTL_MS, and never past the
+ * row's effective_until, so an unpaid 402 probe usually needs no database
+ * connection. A price edited in place takes effect up to that long late.
  *
  * Called by: x402PaidEndpoint, connect/handleConnectChallenge,
  *            connect/handleConnectVerify, solanaActions/postNowBlink
@@ -27,8 +27,7 @@ import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { pricing_actions } from "@/db/schema";
 
-/** Per-instance price cache lifetime, in milliseconds. */
-const PRICE_CACHE_TTL_MS = 60_000;
+const PRICE_CACHE_TTL_MS = 10 * 60_000;
 
 /**
  * Upper bound on a sane per-call price, in USDC. The most expensive action
@@ -53,7 +52,10 @@ export async function readActionPrice(
   const nowIso = new Date().toISOString();
   const { data: pricingRows, error: pricingError } = await runQuery(
     db
-      .select({ usdc_price: pricing_actions.usdc_price })
+      .select({
+        usdc_price: pricing_actions.usdc_price,
+        effective_until: pricing_actions.effective_until,
+      })
       .from(pricing_actions)
       .where(
         and(
@@ -85,6 +87,15 @@ export async function readActionPrice(
     return { ok: false, message: `Pricing for action "${action}" is misconfigured.` };
   }
 
-  priceCacheByAction.set(action, { usdcPrice, expiresAtMs: Date.now() + PRICE_CACHE_TTL_MS });
+  priceCacheByAction.set(action, {
+    usdcPrice,
+    expiresAtMs: readCacheExpiryMs(pricingRow.effective_until),
+  });
   return { ok: true, usdcPrice };
+}
+
+function readCacheExpiryMs(effectiveUntil: string | null): number {
+  const ttlExpiryMs = Date.now() + PRICE_CACHE_TTL_MS;
+  if (effectiveUntil === null) return ttlExpiryMs;
+  return Math.min(ttlExpiryMs, new Date(effectiveUntil).getTime());
 }

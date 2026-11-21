@@ -85,7 +85,6 @@ export const POST = x402PaidEndpoint<CancelBody, CancelResult>({
         success: false,
         errorKind: "execution_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

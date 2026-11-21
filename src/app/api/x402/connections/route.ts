@@ -64,7 +64,6 @@ export const GET = x402PaidEndpoint<ConnectionsParams, ConnectionsResult>({
         success: false,
         errorKind: "query_failed",
         message: fetchResult.message,
-        refundable: true,
       };
     }
 

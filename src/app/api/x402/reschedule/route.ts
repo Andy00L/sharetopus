@@ -93,7 +93,6 @@ export const POST = x402PaidEndpoint<RescheduleBody, RescheduleResult>({
         success: false,
         errorKind: "execution_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

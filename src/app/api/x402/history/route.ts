@@ -103,7 +103,6 @@ export const GET = x402PaidEndpoint<HistoryParams, HistoryResult>({
         success: false,
         errorKind: "query_failed",
         message: result.message,
-        refundable: true,
       };
     }
 

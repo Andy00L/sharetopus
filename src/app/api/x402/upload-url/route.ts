@@ -124,7 +124,6 @@ export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
         success: false,
         errorKind: "quota_exceeded",
         message: quotaResult.message,
-        refundable: true,
       };
     }
 
@@ -143,7 +142,6 @@ export const POST = x402PaidEndpoint<UploadUrlBody, UploadUrlResult>({
         success: false,
         errorKind: "upload_url_mint_failed",
         message: uploadResult.message,
-        refundable: true,
       };
     }
 

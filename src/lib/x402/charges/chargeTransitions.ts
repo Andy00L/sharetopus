@@ -65,17 +65,16 @@ export async function markChargeSettled(params: {
   return { success: true };
 }
 
-/** pending|settled -> failed, with the failure cause persisted. */
+/** pending -> failed, with the failure cause persisted. */
 export async function markChargeFailed(params: {
   chargeId: string;
-  fromStatus: "pending" | "settled";
   errorMessage: string;
 }): Promise<ChargeTransitionResult> {
   const { data: updatedRows, error } = await runQuery(
     db
       .update(x402_charges)
       .set({ status: "failed", error_message: params.errorMessage })
-      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, params.fromStatus)))
+      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, "pending")))
       .returning({ id: x402_charges.id }),
   );
 
@@ -84,11 +83,43 @@ export async function markChargeFailed(params: {
     return { success: false, reason: "db_error", message: error.message };
   }
   if (updatedRows.length === 0) {
-    console.error(`[markChargeFailed] Charge ${params.chargeId} was not in status "${params.fromStatus}".`);
+    console.error(`[markChargeFailed] Charge ${params.chargeId} was not in status "pending".`);
     return {
       success: false,
       reason: "not_in_expected_status",
-      message: `Charge is not ${params.fromStatus}.`,
+      message: "Charge is not pending.",
+    };
+  }
+  return { success: true };
+}
+
+/**
+ * Records on a settled charge that its paid action failed. The status stays
+ * settled: the database trigger x402_status_guard lets a settled charge
+ * become refunded and nothing else.
+ */
+export async function markChargeActionFailed(params: {
+  chargeId: string;
+  errorMessage: string;
+}): Promise<ChargeTransitionResult> {
+  const { data: updatedRows, error } = await runQuery(
+    db
+      .update(x402_charges)
+      .set({ error_message: params.errorMessage })
+      .where(and(eq(x402_charges.id, params.chargeId), eq(x402_charges.status, "settled")))
+      .returning({ id: x402_charges.id }),
+  );
+
+  if (error) {
+    console.error(`[markChargeActionFailed] Update failed for charge ${params.chargeId}: ${error.message}`);
+    return { success: false, reason: "db_error", message: error.message };
+  }
+  if (updatedRows.length === 0) {
+    console.error(`[markChargeActionFailed] Charge ${params.chargeId} was not in status "settled".`);
+    return {
+      success: false,
+      reason: "not_in_expected_status",
+      message: "Charge is not settled.",
     };
   }
   return { success: true };
@@ -98,8 +129,7 @@ export async function markChargeFailed(params: {
  * settled -> refunded, plus the x402_refunds audit row.
  *
  * Call ONLY after the chain confirmed the refund; recording a refund that
- * never landed would permanently mark the payer as made whole. A failed
- * refund goes through markChargeFailed with a refund_failed message instead.
+ * never landed would permanently mark the payer as made whole.
  */
 export async function markChargeRefunded(params: {
   chargeId: string;
