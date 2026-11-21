@@ -16,6 +16,7 @@ type StoredAccountRow = StoredCredential & { is_available: boolean };
 let storedAccountRow: StoredAccountRow;
 let rowSavedAfterReread: StoredAccountRow | null = null;
 let flagWriteCount = 0;
+let selectCount = 0;
 
 type BuiltQuery = { toSQL: () => { sql: string; params: unknown[] } };
 
@@ -30,8 +31,10 @@ mock.module("@/db/client", () => ({
   runQuery: async (query: BuiltQuery) => {
     const builtSql = query.toSQL();
     if (builtSql.sql.startsWith("select")) {
+      selectCount += 1;
       const { access_token, refresh_token, token_expires_at } = storedAccountRow;
-      if (rowSavedAfterReread) storedAccountRow = rowSavedAfterReread;
+      const isRefusalReread = selectCount === 2;
+      if (rowSavedAfterReread && isRefusalReread) storedAccountRow = rowSavedAfterReread;
       return { data: [{ access_token, refresh_token, token_expires_at }], error: null };
     }
     const isFlagWrite =
@@ -50,13 +53,8 @@ mock.module("@/actions/server/contentHistoryActions/storeContentHistory", () => 
   storeContentHistory: async () => ({ success: true }),
 }));
 
-const realLock = await import("@/lib/api/refreshWithAccountLock");
-mock.module("@/lib/api/refreshWithAccountLock", () => ({
-  ...realLock,
-  refreshWithAccountLock: async (
-    _accountId: string,
-    refreshStoredCredential: (stored: StoredCredential) => Promise<unknown>,
-  ) => ({ kind: "refreshed", value: await refreshStoredCredential({ ...storedAccountRow }) }),
+mock.module("@/actions/api/upstash", () => ({
+  redis: { set: async () => "OK", eval: async () => 1 },
 }));
 
 let answerRefresh: () => ProviderRefreshResult;
@@ -66,7 +64,11 @@ mock.module("./registry", () => ({
   resolveConfiguredProvider: () => {
     const bluesky = realRegistry.getProvider("bluesky");
     if (!bluesky) throw new Error("bluesky is not registered");
-    const provider: ProviderDefinition = { ...bluesky, refresh: async () => answerRefresh() };
+    const provider: ProviderDefinition = {
+      ...bluesky,
+      refresh: async () => answerRefresh(),
+      refreshTokenRotation: "rotating",
+    };
     return { ok: true, provider };
   },
 }));
@@ -105,6 +107,7 @@ const REFUSED_REFRESH: ProviderRefreshResult = {
 
 beforeEach(() => {
   flagWriteCount = 0;
+  selectCount = 0;
   rowSavedAfterReread = null;
   storedAccountRow = {
     access_token: "old-access",

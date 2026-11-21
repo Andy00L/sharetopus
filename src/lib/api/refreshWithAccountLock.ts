@@ -2,7 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { redis } from "@/actions/api/upstash";
 import { db, runQuery } from "@/db/client";
@@ -11,6 +11,7 @@ import {
   TOKEN_REFRESH_LOCK_TTL_MS,
   TOKEN_REFRESH_WAIT_DEADLINE_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
+import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -18,6 +19,10 @@ const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const POLL_INITIAL_INTERVAL_MS = 500;
 const POLL_MAX_INTERVAL_MS = 4_000;
 const CREDENTIAL_WRITE_ATTEMPTS = 2;
+
+const ROTATING_REFRESH_LOCK_TTL_MS = RUNTIME.maxDurationS * 1000;
+const LEASE_LEFT_TO_START_REFRESH_MS = TOKEN_REFRESH_LOCK_TTL_MS;
+const STORE_DEADLINE_CLOCK_MARGIN_MS = 5_000;
 
 // Deletes the lock only while this run still owns it. A plain DEL could remove a
 // lock that another run took after ours expired:
@@ -30,22 +35,31 @@ export type StoredCredential = Pick<
   "access_token" | "refresh_token" | "token_expires_at"
 >;
 
-export type LockedRefreshOutcome<Refreshed> =
+type LockedRefreshOutcome<Refreshed> =
   | { kind: "stored_token_fresh"; accessToken: string }
   | { kind: "refreshed"; value: Refreshed }
   | { kind: "unavailable"; message: string };
 
 export type RefreshWindowOptions = { refreshIfExpiringWithinMs?: number };
 
-export type CredentialStoreOutcome =
+export type RefreshTokenRotation = "rotating" | "stable";
+
+type CredentialStoreOutcome =
   | { kind: "stored" }
   | { kind: "superseded"; accessToken: string }
   | { kind: "failed"; message: string };
 
-export type RefusedRefreshOutcome =
+export type LockedCredential = {
+  stored: StoredCredential;
+  storeCredential: (credential: StoredCredential) => Promise<CredentialStoreOutcome>;
+};
+
+type RefusedRefreshOutcome =
   | { kind: "refreshed_elsewhere"; accessToken: string }
   | { kind: "needs_reconnect" }
   | { kind: "retry_later" };
+
+type RefreshLease = { startRefreshByMs: number; storeByMs: number };
 
 type LockAttempt =
   | { kind: "acquired"; ownerId: string }
@@ -60,7 +74,7 @@ export function isTokenExpiring(
   return Date.now() + withinMs >= new Date(expiresAt).getTime();
 }
 
-export function selectFreshAccessToken(
+function selectFreshAccessToken(
   credential: StoredCredential,
   withinMs: number = TOKEN_EXPIRY_BUFFER_MS,
 ): string | null {
@@ -70,27 +84,44 @@ export function selectFreshAccessToken(
   return credential.access_token;
 }
 
-export async function refreshWithAccountLock<Refreshed>(
-  accountId: string,
-  refreshStoredCredential: (stored: StoredCredential) => Promise<Refreshed>,
-  options: RefreshWindowOptions = {},
-): Promise<LockedRefreshOutcome<Refreshed>> {
-  const withinMs = options.refreshIfExpiringWithinMs ?? TOKEN_EXPIRY_BUFFER_MS;
+export async function refreshWithAccountLock<Refreshed>(input: {
+  accountId: string;
+  refreshTokenRotation: RefreshTokenRotation;
+  refreshStoredCredential: (locked: LockedCredential) => Promise<Refreshed>;
+  refreshIfExpiringWithinMs?: number;
+}): Promise<LockedRefreshOutcome<Refreshed>> {
+  const { accountId, refreshStoredCredential } = input;
+  const isRotating = input.refreshTokenRotation === "rotating";
+  const lockTtlMs = isRotating ? ROTATING_REFRESH_LOCK_TTL_MS : TOKEN_REFRESH_LOCK_TTL_MS;
+  const withinMs = input.refreshIfExpiringWithinMs ?? TOKEN_EXPIRY_BUFFER_MS;
   const lockKey = `token_refresh_lock:${accountId}`;
   const deadline = Date.now() + TOKEN_REFRESH_WAIT_DEADLINE_MS;
   let pollIndex = 0;
 
   do {
-    const lock = await tryAcquireRefreshLock(lockKey);
+    const lockRequestedAtMs = Date.now();
+    const lock = await tryAcquireRefreshLock(lockKey, lockTtlMs);
+    if (lock.kind === "unavailable" && isRotating) {
+      console.warn(
+        `[refreshWithAccountLock] Lock unavailable, not refreshing account ${accountId}: its refresh token rotates. ${lock.message}`,
+      );
+      return { kind: "unavailable", message: lock.message };
+    }
     if (lock.kind === "unavailable") {
       console.warn(
         `[refreshWithAccountLock] Lock unavailable, refreshing account ${accountId} without it: ${lock.message}`,
       );
-      return refreshIfStillExpiring(accountId, withinMs, refreshStoredCredential);
+      return refreshIfStillExpiring({ accountId, withinMs, lease: null, refreshStoredCredential });
     }
     if (lock.kind === "acquired") {
+      const lease = isRotating
+        ? {
+            startRefreshByMs: lockRequestedAtMs + lockTtlMs - LEASE_LEFT_TO_START_REFRESH_MS,
+            storeByMs: lockRequestedAtMs + lockTtlMs - STORE_DEADLINE_CLOCK_MARGIN_MS,
+          }
+        : null;
       try {
-        return await refreshIfStillExpiring(accountId, withinMs, refreshStoredCredential);
+        return await refreshIfStillExpiring({ accountId, withinMs, lease, refreshStoredCredential });
       } finally {
         await releaseRefreshLock(lockKey, lock.ownerId);
       }
@@ -113,7 +144,7 @@ export async function refreshWithAccountLock<Refreshed>(
   };
 }
 
-export async function readStoredCredential(
+async function readStoredCredential(
   accountId: string,
 ): Promise<{ ok: true; credential: StoredCredential } | { ok: false; message: string }> {
   const { data: rows, error } = await runQuery(
@@ -184,10 +215,11 @@ export async function settleRefusedRefresh(input: {
   return { kind: "retry_later" };
 }
 
-export async function storeRefreshedCredential(input: {
+async function storeRefreshedCredential(input: {
   accountId: string;
   replacedExpiresAt: string | null;
   credential: StoredCredential;
+  storeByMs: number | null;
 }): Promise<CredentialStoreOutcome> {
   let lastErrorMessage = "";
   for (let attemptNumber = 1; attemptNumber <= CREDENTIAL_WRITE_ATTEMPTS; attemptNumber++) {
@@ -199,6 +231,7 @@ export async function storeRefreshedCredential(input: {
           and(
             eq(social_accounts.id, input.accountId),
             holdsTokenExpiry(input.replacedExpiresAt),
+            input.storeByMs === null ? undefined : isBeforeDatabaseTime(input.storeByMs),
           ),
         )
         .returning({ id: social_accounts.id }),
@@ -228,7 +261,10 @@ async function settleUnmatchedStore(input: {
     );
     return { kind: "superseded", accessToken: currentToken };
   }
-  return { kind: "failed", message: "The stored credential changed and holds no fresh token." };
+  return {
+    kind: "failed",
+    message: "The store matched no row (the row changed or the refresh lock lapsed) and the row holds no fresh token.",
+  };
 }
 
 function holdsTokenExpiry(expiresAt: string | null) {
@@ -237,22 +273,44 @@ function holdsTokenExpiry(expiresAt: string | null) {
     : eq(social_accounts.token_expires_at, expiresAt);
 }
 
-async function refreshIfStillExpiring<Refreshed>(
-  accountId: string,
-  withinMs: number,
-  refreshStoredCredential: (stored: StoredCredential) => Promise<Refreshed>,
-): Promise<LockedRefreshOutcome<Refreshed>> {
-  const stored = await readStoredCredential(accountId);
-  if (!stored.ok) return { kind: "unavailable", message: stored.message };
-  const freshToken = selectFreshAccessToken(stored.credential, withinMs);
-  if (freshToken) return { kind: "stored_token_fresh", accessToken: freshToken };
-  return { kind: "refreshed", value: await refreshStoredCredential(stored.credential) };
+function isBeforeDatabaseTime(deadlineMs: number) {
+  return sql`clock_timestamp() < ${new Date(deadlineMs).toISOString()}::timestamptz`;
 }
 
-async function tryAcquireRefreshLock(lockKey: string): Promise<LockAttempt> {
+async function refreshIfStillExpiring<Refreshed>(input: {
+  accountId: string;
+  withinMs: number;
+  lease: RefreshLease | null;
+  refreshStoredCredential: (locked: LockedCredential) => Promise<Refreshed>;
+}): Promise<LockedRefreshOutcome<Refreshed>> {
+  const { accountId, lease } = input;
+  const stored = await readStoredCredential(accountId);
+  if (!stored.ok) return { kind: "unavailable", message: stored.message };
+  const freshToken = selectFreshAccessToken(stored.credential, input.withinMs);
+  if (freshToken) return { kind: "stored_token_fresh", accessToken: freshToken };
+  if (lease && Date.now() > lease.startRefreshByMs) {
+    console.warn(
+      `[refreshIfStillExpiring] The refresh lock on account ${accountId} lapses too soon to start a refresh.`,
+    );
+    return { kind: "unavailable", message: "The refresh lock lapses too soon to start a refresh." };
+  }
+  const value = await input.refreshStoredCredential({
+    stored: stored.credential,
+    storeCredential: (credential) =>
+      storeRefreshedCredential({
+        accountId,
+        replacedExpiresAt: stored.credential.token_expires_at,
+        credential,
+        storeByMs: lease?.storeByMs ?? null,
+      }),
+  });
+  return { kind: "refreshed", value };
+}
+
+async function tryAcquireRefreshLock(lockKey: string, lockTtlMs: number): Promise<LockAttempt> {
   const ownerId = randomUUID();
   try {
-    const reply = await redis.set(lockKey, ownerId, { nx: true, px: TOKEN_REFRESH_LOCK_TTL_MS });
+    const reply = await redis.set(lockKey, ownerId, { nx: true, px: lockTtlMs });
     return reply === "OK" ? { kind: "acquired", ownerId } : { kind: "held" };
   } catch (error) {
     return {

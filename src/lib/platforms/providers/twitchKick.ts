@@ -176,6 +176,8 @@ export const twitchBehavior = {
   connect: twitchConnect,
   publish: twitchPublish,
   refresh: (input) => refreshOAuth2Credential(TWITCH_OAUTH, input),
+  // A refresh can return a new refresh token: https://dev.twitch.tv/docs/authentication/refresh-tokens/
+  refreshTokenRotation: "rotating",
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TWITCH_OAUTH, input),
 } satisfies ProviderBehavior;
 
@@ -279,5 +281,7 @@ export const kickBehavior = {
   connect: kickConnect,
   publish: kickPublish,
   refresh: (input) => refreshOAuth2Credential(KICK_OAUTH, input),
+  // A refresh returns a new refresh token: https://docs.kick.com/getting-started/generating-tokens-oauth2-flow
+  refreshTokenRotation: "rotating",
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(KICK_OAUTH, input),
 } satisfies ProviderBehavior;

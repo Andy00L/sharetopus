@@ -14,6 +14,7 @@ import type {
   ProviderDefinition,
   ProviderMetadata,
   ProviderOperations,
+  ProviderRefreshOperations,
 } from "./types";
 
 import { blueskyBehavior } from "./bluesky";
@@ -149,7 +150,7 @@ function guardProviderOperations(
   providerLabel: string,
   operations: ProviderOperations,
 ): ProviderOperations {
-  const { refresh, runTool } = operations;
+  const { runTool } = operations;
   return {
     publish: (input) =>
       settleThrown({
@@ -161,18 +162,7 @@ function guardProviderOperations(
           failure: { reason: "unknown", mayHavePublished: true },
         }),
       }),
-    ...(refresh && {
-      refresh: (input) =>
-        settleThrown({
-          operationLabel: `${providerLabel} refresh`,
-          runOperation: () => refresh(input),
-          buildFailure: (message) => ({
-            ok: false,
-            message: `${providerLabel} token refresh failed unexpectedly: ${message}`,
-            reason: "transient",
-          }),
-        }),
-    }),
+    ...guardRefreshOperations(providerLabel, operations),
     ...(runTool && {
       runTool: (input) =>
         settleThrown({
@@ -184,6 +174,27 @@ function guardProviderOperations(
           }),
         }),
     }),
+  };
+}
+
+function guardRefreshOperations(
+  providerLabel: string,
+  operations: ProviderRefreshOperations,
+): ProviderRefreshOperations {
+  if (!operations.refresh) return {};
+  const { refresh } = operations;
+  return {
+    refreshTokenRotation: operations.refreshTokenRotation,
+    refresh: (input) =>
+      settleThrown({
+        operationLabel: `${providerLabel} refresh`,
+        runOperation: () => refresh(input),
+        buildFailure: (message) => ({
+          ok: false,
+          message: `${providerLabel} token refresh failed unexpectedly: ${message}`,
+          reason: "transient",
+        }),
+      }),
   };
 }
 

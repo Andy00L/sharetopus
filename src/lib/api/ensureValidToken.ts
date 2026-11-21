@@ -4,10 +4,12 @@ import {
   isTokenExpiring,
   refreshWithAccountLock,
   settleRefusedRefresh,
-  storeRefreshedCredential,
+  type LockedCredential,
+  type RefreshTokenRotation,
   type RefreshWindowOptions,
 } from "@/lib/api/refreshWithAccountLock";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
+import type { RegistryPlatformId } from "@/lib/platforms/providers/catalog";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
 import refreshLinkedInToken from "./linkedin/data/refreshLinkedinToken";
@@ -26,6 +28,70 @@ type EnsureValidTokenResult =
       error: string;
       failureReason: TokenFailureReason;
     };
+
+type LegacyPlatform = Exclude<Platform, RegistryPlatformId>;
+
+type LegacyTokenRefresher = {
+  refreshTokenRotation: RefreshTokenRotation;
+  refreshStoredToken: (account: SocialAccount) => Promise<TokenRefreshResult>;
+};
+
+function refreshFromStoredRefreshToken(
+  refreshToken: (storedRefreshToken: string) => Promise<TokenRefreshResult>,
+): LegacyTokenRefresher["refreshStoredToken"] {
+  return async (account) =>
+    account.refresh_token
+      ? refreshToken(account.refresh_token)
+      : { kind: "rejected", message: "No refresh token stored." };
+}
+
+const LEGACY_TOKEN_REFRESHERS = {
+  x: {
+    refreshTokenRotation: "rotating",
+    refreshStoredToken: refreshFromStoredRefreshToken(refreshXToken),
+  },
+  // https://developers.tiktok.com/doc/oauth-user-access-token-management (Refresh token rotation)
+  tiktok: {
+    refreshTokenRotation: "rotating",
+    refreshStoredToken: refreshFromStoredRefreshToken(refreshTikTokToken),
+  },
+  // Every refresh returns a new continuous refresh token, and RFC 6749 section 6 lets
+  // the server revoke the old one: https://developers.pinterest.com/docs/getting-started/authentication-and-scopes/
+  pinterest: {
+    refreshTokenRotation: "rotating",
+    refreshStoredToken: refreshFromStoredRefreshToken(refreshPinterestToken),
+  },
+  // A refresh returns the same refresh token with its lifetime unchanged:
+  // https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens
+  linkedin: {
+    refreshTokenRotation: "stable",
+    refreshStoredToken: refreshFromStoredRefreshToken(refreshLinkedInToken),
+  },
+  // Google issues the refresh token once and it stays valid until revoked:
+  // https://developers.google.com/identity/protocols/oauth2/web-server (Refreshing an access token)
+  youtube: {
+    refreshTokenRotation: "stable",
+    refreshStoredToken: refreshFromStoredRefreshToken(refreshYouTubeToken),
+  },
+  instagram: {
+    refreshTokenRotation: "stable",
+    refreshStoredToken: async (account) =>
+      account.access_token
+        ? refreshInstagramToken(account.access_token)
+        : { kind: "rejected", message: "No access token stored." },
+  },
+  facebook: {
+    refreshTokenRotation: "stable",
+    refreshStoredToken: async () => ({
+      kind: "rejected",
+      message: "Facebook Page token expired or was revoked.",
+    }),
+  },
+} satisfies Record<LegacyPlatform, LegacyTokenRefresher>;
+
+function isLegacyPlatform(platform: Platform): platform is LegacyPlatform {
+  return Object.hasOwn(LEGACY_TOKEN_REFRESHERS, platform);
+}
 
 function buildReconnectResult(platform: Platform): EnsureValidTokenResult {
   return {
@@ -54,15 +120,23 @@ export async function ensureValidToken(
     };
   }
 
+  if (!isLegacyPlatform(account.platform)) {
+    console.error(`[ensureValidToken] No token refresh for ${account.platform}`);
+    return buildRetryLaterResult(account.platform);
+  }
+  const refresher = LEGACY_TOKEN_REFRESHERS[account.platform];
+
   console.log(
     `[ensureValidToken ${account.platform}] Token expired or close to expiry, refreshing...`,
   );
 
-  const outcome = await refreshWithAccountLock(
-    account.id,
-    (stored) => refreshAndStoreToken({ ...account, ...stored }),
-    options,
-  );
+  const outcome = await refreshWithAccountLock({
+    accountId: account.id,
+    refreshTokenRotation: refresher.refreshTokenRotation,
+    refreshIfExpiringWithinMs: options.refreshIfExpiringWithinMs,
+    refreshStoredCredential: ({ stored, storeCredential }) =>
+      refreshAndStoreToken({ ...account, ...stored }, refresher, storeCredential),
+  });
   switch (outcome.kind) {
     case "stored_token_fresh":
       return { success: true, token: outcome.accessToken };
@@ -75,9 +149,11 @@ export async function ensureValidToken(
 
 async function refreshAndStoreToken(
   account: SocialAccount,
+  refresher: LegacyTokenRefresher,
+  storeCredential: LockedCredential["storeCredential"],
 ): Promise<EnsureValidTokenResult> {
   try {
-    const refreshResult = await refreshTokenForPlatform(account);
+    const refreshResult = await refresher.refreshStoredToken(account);
     if (refreshResult.kind === "failed") {
       return buildRetryLaterResult(account.platform);
     }
@@ -86,14 +162,10 @@ async function refreshAndStoreToken(
     }
     const newTokens = refreshResult.tokens;
 
-    const storeOutcome = await storeRefreshedCredential({
-      accountId: account.id,
-      replacedExpiresAt: account.token_expires_at,
-      credential: {
-        access_token: newTokens.access_token,
-        refresh_token: newTokens.refresh_token || account.refresh_token,
-        token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
-      },
+    const storeOutcome = await storeCredential({
+      access_token: newTokens.access_token,
+      refresh_token: newTokens.refresh_token || account.refresh_token,
+      token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
     });
 
     switch (storeOutcome.kind) {
@@ -127,52 +199,6 @@ function buildRetryLaterResult(platform: Platform): EnsureValidTokenResult {
     error: `We could not refresh your ${platform} connection just now. Please try again in a few minutes.`,
     failureReason: "transient",
   };
-}
-
-async function refreshTokenForPlatform(
-  account: SocialAccount,
-): Promise<TokenRefreshResult> {
-  const missingRefreshToken: TokenRefreshResult = {
-    kind: "rejected",
-    message: "No refresh token stored.",
-  };
-
-  switch (account.platform) {
-    case "tiktok":
-      return account.refresh_token
-        ? refreshTikTokToken(account.refresh_token)
-        : missingRefreshToken;
-    case "pinterest":
-      return account.refresh_token
-        ? refreshPinterestToken(account.refresh_token)
-        : missingRefreshToken;
-    case "linkedin":
-      return account.refresh_token
-        ? refreshLinkedInToken(account.refresh_token)
-        : missingRefreshToken;
-    case "youtube":
-      return account.refresh_token
-        ? refreshYouTubeToken(account.refresh_token)
-        : missingRefreshToken;
-    case "x":
-      return account.refresh_token
-        ? refreshXToken(account.refresh_token)
-        : missingRefreshToken;
-    case "instagram":
-      return account.access_token
-        ? refreshInstagramToken(account.access_token)
-        : { kind: "rejected", message: "No access token stored." };
-    case "facebook":
-      return { kind: "rejected", message: "Facebook Page token expired or was revoked." };
-    default:
-      console.error(
-        `[refreshTokenForPlatform] Unsupported platform: ${account.platform}`,
-      );
-      return {
-        kind: "failed",
-        message: `No token refresh for ${account.platform}.`,
-      };
-  }
 }
 
 async function handleRejectedRefresh(

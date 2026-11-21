@@ -7,9 +7,8 @@ import {
   isTokenExpiring,
   refreshWithAccountLock,
   settleRefusedRefresh,
-  storeRefreshedCredential,
+  type LockedCredential,
   type RefreshWindowOptions,
-  type StoredCredential,
 } from "@/lib/api/refreshWithAccountLock";
 import { RegistryPublishOptionsSchema } from "@/lib/platforms/postTargetOptions";
 import type { SocialAccount } from "@/lib/types/dbTypes";
@@ -195,8 +194,7 @@ async function ensureFreshRegistryToken(
     return { success: true, accessToken: account.access_token, reconnectWarning: null };
   }
 
-  const refreshCredential = provider.refresh;
-  if (!refreshCredential) {
+  if (!provider.refresh) {
     return settleRegistryRefusal({
       providerLabel: provider.label,
       accountId: account.id,
@@ -205,21 +203,23 @@ async function ensureFreshRegistryToken(
       refusal: buildSessionExpiredResult(provider.label),
     });
   }
+  const refreshCredential = provider.refresh;
 
   const config = readAccountConfig(account.extra);
-  const outcome = await refreshWithAccountLock(
-    account.id,
-    (stored) =>
+  const outcome = await refreshWithAccountLock({
+    accountId: account.id,
+    refreshTokenRotation: provider.refreshTokenRotation,
+    refreshIfExpiringWithinMs: options.refreshIfExpiringWithinMs,
+    refreshStoredCredential: (locked) =>
       refreshAndStoreRegistryToken({
         providerLabel: provider.label,
         refreshCredential,
         accountId: account.id,
         platform: account.platform,
         config,
-        stored,
+        locked,
       }),
-    options,
-  );
+  });
   switch (outcome.kind) {
     case "stored_token_fresh":
       return { success: true, accessToken: outcome.accessToken, reconnectWarning: null };
@@ -236,9 +236,10 @@ async function refreshAndStoreRegistryToken(input: {
   accountId: string;
   platform: string;
   config: ProviderConfig;
-  stored: StoredCredential;
+  locked: LockedCredential;
 }): Promise<FreshTokenResult> {
-  const { providerLabel, stored } = input;
+  const { providerLabel } = input;
+  const { stored } = input.locked;
   const logPrefix = `[refreshAndStoreRegistryToken ${input.platform}]`;
 
   const refreshed = await input.refreshCredential({
@@ -262,17 +263,13 @@ async function refreshAndStoreRegistryToken(input: {
     });
   }
 
-  const storeOutcome = await storeRefreshedCredential({
-    accountId: input.accountId,
-    replacedExpiresAt: stored.token_expires_at,
-    credential: {
-      access_token: refreshed.accessToken,
-      refresh_token: refreshed.rotatedRefreshToken ?? stored.refresh_token,
-      token_expires_at:
-        refreshed.expiresIn === null
-          ? null
-          : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
-    },
+  const storeOutcome = await input.locked.storeCredential({
+    access_token: refreshed.accessToken,
+    refresh_token: refreshed.rotatedRefreshToken ?? stored.refresh_token,
+    token_expires_at:
+      refreshed.expiresIn === null
+        ? null
+        : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
   });
   if (storeOutcome.kind === "stored") {
     return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };

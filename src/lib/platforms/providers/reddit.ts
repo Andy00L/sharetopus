@@ -204,6 +204,9 @@ export const redditBehavior = {
   connect,
   publish,
   refresh: (input) => refreshOAuth2Credential(REDDIT_OAUTH, input),
+  // The refresh token from the first grant keeps working:
+  // https://github.com/reddit-archive/reddit/wiki/OAuth2 (Refreshing the token)
+  refreshTokenRotation: "stable",
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(REDDIT_OAUTH, input),
 } satisfies ProviderBehavior;

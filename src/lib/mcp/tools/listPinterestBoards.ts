@@ -75,10 +75,19 @@ const handleListPinterestBoards = withMcpTool(
     }
 
     const tokenRefreshResult = await ensureValidToken(pinterestAccount);
-    if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
-      return errorResult(
-        `This Pinterest account needs to be reconnected: ask the user to open ${reconnectUrl}.`,
-      );
+    if (!tokenRefreshResult.success) {
+      switch (tokenRefreshResult.failureReason) {
+        case "transient":
+          return errorResult("Could not refresh the Pinterest token right now. Retry in a moment.");
+        case "auth_expired":
+          return errorResult(
+            `This Pinterest account needs to be reconnected: ask the user to open ${reconnectUrl}.`,
+          );
+        default: {
+          const unhandledFailureReason: never = tokenRefreshResult.failureReason;
+          return errorResult(`Unexpected token failure ${String(unhandledFailureReason)}.`);
+        }
+      }
     }
 
     const boardsResult = await getPinterestBoards(

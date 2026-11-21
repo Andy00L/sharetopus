@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { drizzle } from "drizzle-orm/postgres-js";
 
-import type { StoredCredential } from "@/lib/api/refreshWithAccountLock";
+import type { RefreshTokenRotation, StoredCredential } from "@/lib/api/refreshWithAccountLock";
 import { createSocialAccountRowFake } from "@/lib/api/socialAccountRowFake";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
@@ -44,16 +44,22 @@ const STORED_CREDENTIAL: StoredCredential = {
   token_expires_at: "2026-11-20T00:00:00.000Z",
 };
 
-const realLock = await import("@/lib/api/refreshWithAccountLock");
-mock.module("@/lib/api/refreshWithAccountLock", () => ({
-  ...realLock,
-  refreshWithAccountLock: async (
-    _accountId: string,
-    refreshStoredCredential: (stored: StoredCredential) => Promise<unknown>,
-  ) => ({ kind: "refreshed", value: await refreshStoredCredential(STORED_CREDENTIAL) }),
+let isRedisReachable = true;
+const lockTtlsMs: number[] = [];
+mock.module("@/actions/api/upstash", () => ({
+  redis: {
+    set: async (_lockKey: string, _ownerId: string, lockOptions: { px: number }) => {
+      if (!isRedisReachable) throw new Error("fetch failed: Upstash timeout");
+      lockTtlsMs.push(lockOptions.px);
+      return "OK";
+    },
+    eval: async () => 1,
+  },
 }));
 
 const publishedInputs: ProviderPublishInput[] = [];
+let refreshCallCount = 0;
+let providerRotation: RefreshTokenRotation = "rotating";
 let refreshAnswer: ProviderRefreshResult = {
   ok: true,
   accessToken: "new-access",
@@ -68,7 +74,11 @@ mock.module("./registry", () => ({
     if (!bluesky) throw new Error("bluesky is not registered");
     const provider: ProviderDefinition = {
       ...bluesky,
-      refresh: async () => refreshAnswer,
+      refresh: async () => {
+        refreshCallCount += 1;
+        return refreshAnswer;
+      },
+      refreshTokenRotation: providerRotation,
       publish: async (publishInput) => {
         publishedInputs.push(publishInput);
         return { ok: true, postId: "at://post/1", postUrl: null };
@@ -104,6 +114,10 @@ const EXPIRED_ACCOUNT: SocialAccount = {
 
 beforeEach(() => {
   accountTable.reset({ id: "account-1", platform: "bluesky", is_available: true, ...STORED_CREDENTIAL });
+  isRedisReachable = true;
+  lockTtlsMs.length = 0;
+  refreshCallCount = 0;
+  providerRotation = "rotating";
   refreshAnswer = {
     ok: true,
     accessToken: "new-access",
@@ -199,6 +213,40 @@ describe("refreshRegistryAccountToken", () => {
       accessToken: "access-saved-by-other-refresh",
       reconnectWarning: null,
     });
+  });
+});
+
+describe("refreshRegistryAccountToken lock lease", () => {
+  test("a rotating provider holds its lock as long as a function can run, a stable one keeps the 45 s lock", async () => {
+    const { RUNTIME } = await import("@/lib/jobs/runtimeConfig");
+    const { TOKEN_REFRESH_LOCK_TTL_MS } = await import("@/lib/api/_shared/platformFetchTimeouts");
+    await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    accountTable.reset({ id: "account-1", platform: "bluesky", is_available: true, ...STORED_CREDENTIAL });
+    providerRotation = "stable";
+    await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    expect(lockTtlsMs).toEqual([RUNTIME.maxDurationS * 1000, TOKEN_REFRESH_LOCK_TTL_MS]);
+  });
+});
+
+describe("refreshRegistryAccountToken when Redis cannot answer", () => {
+  test("a provider whose refresh token rotates is not refreshed without the lock", async () => {
+    isRedisReachable = false;
+    const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    expect(tokenResult).toEqual({
+      success: false,
+      message: expect.stringContaining("try again in a few minutes"),
+      reason: "transient",
+    });
+    expect(refreshCallCount).toBe(0);
+    expect(accountTable.readRow()).toMatchObject(STORED_CREDENTIAL);
+  });
+
+  test("a provider whose refresh token does not rotate is still refreshed without the lock", async () => {
+    isRedisReachable = false;
+    providerRotation = "stable";
+    const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    expect(tokenResult).toEqual({ success: true, accessToken: "new-access", reconnectWarning: null });
+    expect(refreshCallCount).toBe(1);
   });
 });
 

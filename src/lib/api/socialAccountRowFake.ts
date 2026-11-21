@@ -62,6 +62,8 @@ function matchesWhereClause(statement: BuiltStatement, row: FakeAccountRow): boo
   return whereClause.split(" and ").every((condition) => {
     const isNullMatch = /^"social_accounts"\."(\w+)" is null$/.exec(condition);
     if (isNullMatch) return rowValues[isNullMatch[1]] === null;
+    const deadlineMatch = /^clock_timestamp\(\) < \$(\d+)::timestamptz$/.exec(condition);
+    if (deadlineMatch) return Date.now() < Date.parse(String(statement.params[Number(deadlineMatch[1]) - 1]));
     const equalsMatch = /^"social_accounts"\."(\w+)" = \$(\d+)$/.exec(condition);
     if (!equalsMatch) throw new Error(`[matchesWhereClause] Unexpected WHERE: ${condition}`);
     const boundValue = statement.params[Number(equalsMatch[2]) - 1];

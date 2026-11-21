@@ -462,6 +462,9 @@ export const gmbBehavior = {
   connect: gmbConnect,
   publish: gmbPublish,
   refresh: (input) => refreshOAuth2Credential(GMB_OAUTH, input),
+  // Google issues the refresh token once and it stays valid until revoked:
+  // https://developers.google.com/identity/protocols/oauth2/web-server (Refreshing an access token)
+  refreshTokenRotation: "stable",
   runTool: gmbRunTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(GMB_OAUTH, input),
 } satisfies ProviderBehavior;

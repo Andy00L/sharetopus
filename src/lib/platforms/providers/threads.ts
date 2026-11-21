@@ -366,5 +366,6 @@ export const threadsBehavior = {
   connect,
   publish,
   refresh,
+  refreshTokenRotation: "stable",
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(THREADS_OAUTH, input),
 } satisfies ProviderBehavior;

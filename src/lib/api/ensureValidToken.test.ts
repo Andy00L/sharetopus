@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, setSystemTime, test } from "bun:test";
 import { randomBytes } from "node:crypto";
 
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -16,6 +16,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 const SEVEN_DAYS_MS = 7 * DAY_MS;
 const X_ACCESS_TOKEN_LIFETIME_SECONDS = 2 * 60 * 60;
+const LINKEDIN_ACCESS_TOKEN_LIFETIME_SECONDS = 60 * 24 * 60 * 60;
 const EXPIRED_AT = "2026-11-21T08:00:00.000Z";
 
 const accountTable = createSocialAccountRowFake();
@@ -25,18 +26,24 @@ let lockCallCount: number;
 let acquireLock: (lockCallNumber: number) => Promise<"OK" | null>;
 let afterRefreshSpent: () => void;
 let beforeRefusal: () => void;
+let spentRefreshTokens: string[];
+let lockTtlsMs: number[];
 
 mock.module("@/db/client", () => ({ db: drizzle.mock(), runQuery: accountTable.runQuery }));
 
 mock.module("@/actions/api/upstash", () => ({
   redis: {
-    set: async () => acquireLock(++lockCallCount),
+    set: async (_lockKey: string, _ownerId: string, lockOptions: { px: number }) => {
+      lockTtlsMs.push(lockOptions.px);
+      return acquireLock(++lockCallCount);
+    },
     eval: async () => 1,
   },
 }));
 
 mock.module("@/lib/api/x/data/refreshXToken", () => ({
   default: async (refreshToken: string) => {
+    spentRefreshTokens.push(refreshToken);
     afterRefreshSpent();
     if (refreshToken !== validRefreshToken) {
       beforeRefusal();
@@ -55,13 +62,30 @@ mock.module("@/lib/api/x/data/refreshXToken", () => ({
   },
 }));
 
-const { ensureValidToken } = await import("./ensureValidToken");
+mock.module("@/lib/api/linkedin/data/refreshLinkedinToken", () => ({
+  default: async (refreshToken: string) => {
+    spentRefreshTokens.push(refreshToken);
+    return {
+      kind: "refreshed",
+      tokens: {
+        access_token: "linkedin-at-2",
+        refresh_token: refreshToken,
+        expires_in: LINKEDIN_ACCESS_TOKEN_LIFETIME_SECONDS,
+      },
+    };
+  },
+}));
 
-function buildAccount(tokenExpiresAt: string): SocialAccount {
+const { ensureValidToken } = await import("./ensureValidToken");
+const { TOKEN_REFRESH_LOCK_TTL_MS } = await import("@/lib/api/_shared/platformFetchTimeouts");
+const { RUNTIME } = await import("@/lib/jobs/runtimeConfig");
+const FUNCTION_MAX_DURATION_MS = RUNTIME.maxDurationS * 1000;
+
+function buildAccount(tokenExpiresAt: string, platform: SocialAccount["platform"] = "x"): SocialAccount {
   return {
     id: ACCOUNT_ID,
     principal_id: "principal-1",
-    platform: "x",
+    platform,
     account_identifier: "identifier-1",
     display_name: "Account One",
     username: "account_one",
@@ -87,10 +111,16 @@ function buildAccountRow(credential: Pick<FakeAccountRow, "access_token" | "refr
   return { id: ACCOUNT_ID, platform: "x", is_available: true, ...credential };
 }
 
-function failLockFromSecondCallAfter(firstSpend: Promise<void>): void {
+function loseLockAfter(firstSpend: Promise<void>): void {
   acquireLock = async (lockCallNumber) => {
     if (lockCallNumber === 1) return "OK";
     await firstSpend;
+    return "OK";
+  };
+}
+
+function failEveryLockCall(): void {
+  acquireLock = async () => {
     throw new Error("fetch failed: Upstash timeout");
   };
 }
@@ -101,7 +131,7 @@ function holdStoreUntilRefusedRunRereads(options: { failRereadAfterFlag: boolean
   const winnerStored = Promise.withResolvers<void>();
   let isRefused = false;
   let selectsAfterRefusal = 0;
-  failLockFromSecondCallAfter(firstSpend.promise);
+  loseLockAfter(firstSpend.promise);
   afterRefreshSpent = () => firstSpend.resolve();
   beforeRefusal = () => {
     isRefused = true;
@@ -132,6 +162,88 @@ beforeEach(() => {
   acquireLock = async () => "OK";
   afterRefreshSpent = () => undefined;
   beforeRefusal = () => undefined;
+  spentRefreshTokens = [];
+  lockTtlsMs = [];
+});
+
+afterEach(() => {
+  setSystemTime();
+});
+
+describe("ensureValidToken refresh lease", () => {
+  test("an X refresh holds its lock as long as a function can run, a LinkedIn refresh keeps the 45 s lock", async () => {
+    await ensureValidToken(buildAccount(EXPIRED_AT));
+    accountTable.reset(
+      buildAccountRow({ access_token: "at-1", refresh_token: "rt-1", token_expires_at: EXPIRED_AT }),
+    );
+    await ensureValidToken(buildAccount(EXPIRED_AT, "linkedin"));
+
+    expect(lockTtlsMs).toEqual([FUNCTION_MAX_DURATION_MS, TOKEN_REFRESH_LOCK_TTL_MS]);
+  });
+
+  test("an X holder whose read outlasts its lease does not start the refresh and asks to retry later", async () => {
+    accountTable.setHooks({
+      afterSelect: () => setSystemTime(Date.now() + FUNCTION_MAX_DURATION_MS),
+    });
+
+    const tokenResult = await ensureValidToken(buildAccount(EXPIRED_AT));
+
+    expect(tokenResult).toMatchObject({ success: false, failureReason: "transient" });
+    expect(spentRefreshTokens).toEqual([]);
+  });
+
+  test("a store the database runs after the lease ended never lands, so a reconnect answer means a dead token", async () => {
+    const postSpent = Promise.withResolvers<void>();
+    const cronAnswered = Promise.withResolvers<void>();
+    const leaseEndedAtMs = Date.now() + FUNCTION_MAX_DURATION_MS + 1_000;
+    afterRefreshSpent = () => postSpent.resolve();
+    accountTable.setHooks({
+      beforeStoreApplies: async () => {
+        await cronAnswered.promise;
+        return "commit";
+      },
+    });
+
+    const postRun = ensureValidToken(buildAccount(EXPIRED_AT));
+    await postSpent.promise;
+    setSystemTime(leaseEndedAtMs);
+    const cronResult = await ensureValidToken(buildAccount(EXPIRED_AT), {
+      refreshIfExpiringWithinMs: SEVEN_DAYS_MS,
+    });
+    cronAnswered.resolve();
+    const postResult = await postRun;
+
+    expect(spentRefreshTokens).toEqual(["rt-1", "rt-1"]);
+    expect(cronResult).toMatchObject({ success: false, failureReason: "auth_expired" });
+    expect(accountTable.readRow()?.refresh_token).not.toBe(validRefreshToken);
+    expect(postResult).toEqual({ success: true, token: "at-2" });
+  });
+});
+
+describe("ensureValidToken when Redis cannot answer", () => {
+  test("an X token is not refreshed without the lock, and the caller is asked to retry later", async () => {
+    failEveryLockCall();
+
+    const tokenResult = await ensureValidToken(buildAccount(EXPIRED_AT));
+
+    expect(tokenResult).toEqual({
+      success: false,
+      error: expect.stringContaining("try again in a few minutes"),
+      failureReason: "transient",
+    });
+    expect(spentRefreshTokens).toEqual([]);
+    expect(accountTable.readRow()).toMatchObject({ refresh_token: "rt-1", is_available: true });
+  });
+
+  test("a LinkedIn token, whose refresh token does not rotate, is still refreshed without the lock", async () => {
+    failEveryLockCall();
+
+    const tokenResult = await ensureValidToken(buildAccount(EXPIRED_AT, "linkedin"));
+
+    expect(tokenResult).toEqual({ success: true, token: "linkedin-at-2" });
+    expect(spentRefreshTokens).toEqual(["rt-1"]);
+    expect(accountTable.readRow()).toMatchObject({ access_token: "linkedin-at-2", refresh_token: "rt-1" });
+  });
 });
 
 describe("ensureValidToken after a refused refresh", () => {
@@ -171,7 +283,7 @@ describe("ensureValidToken after a refused refresh", () => {
     expect(accountTable.readRow()?.is_available).toBe(true);
   });
 
-  test("path F: a token saved after the refused run's reread is returned, not answered with a reconnect", async () => {
+  test("path F: after a lost lock, a token saved after the refused run's reread is returned, not answered with a reconnect", async () => {
     holdStoreUntilRefusedRunRereads({ failRereadAfterFlag: false });
 
     const [lockHolderResult, locklessResult] = await Promise.all([
@@ -202,10 +314,10 @@ describe("ensureValidToken after a refused refresh", () => {
 });
 
 describe("ensureValidToken storing a refreshed token", () => {
-  test("path G: a store retried after a lost reply keeps the newer token another refresh saved", async () => {
+  test("path G: after a lost lock, a store retried after a lost reply keeps the newer token another refresh saved", async () => {
     const postStoreCommitted = Promise.withResolvers<void>();
     const cronStored = Promise.withResolvers<void>();
-    failLockFromSecondCallAfter(postStoreCommitted.promise);
+    loseLockAfter(postStoreCommitted.promise);
     accountTable.setHooks({
       beforeStoreApplies: async (storeNumber) =>
         storeNumber === 1 ? "commit_and_lose_reply" : "commit",

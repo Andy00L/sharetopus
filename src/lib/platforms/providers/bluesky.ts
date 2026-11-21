@@ -304,4 +304,7 @@ export const blueskyBehavior = {
   connect,
   publish,
   refresh,
+  // refreshSession returns a new refresh JWT and revokes the old one after a grace period:
+  // https://github.com/bluesky-social/atproto/blob/main/packages/pds/src/account-manager/helpers/auth.ts
+  refreshTokenRotation: "rotating",
 } satisfies ProviderBehavior;

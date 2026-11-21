@@ -92,17 +92,36 @@ export const GET = withRestEndpoint({
     }
 
     const tokenRefreshResult = await ensureValidToken(pinterestAccount);
-    if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
-      const baseUrl =
-        process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
-      return restErrorResponse(
-        "unauthorized",
-        "Pinterest token expired and could not be refreshed",
-        ctx.requestId,
-        {
-          reauth_url: `${baseUrl}/api/v1/connections/${connectionId}/reauth`,
-        },
-      );
+    if (!tokenRefreshResult.success) {
+      switch (tokenRefreshResult.failureReason) {
+        case "transient":
+          return restErrorResponse(
+            "service_unavailable",
+            "Could not refresh the Pinterest token right now. Retry shortly.",
+            ctx.requestId,
+            { retry_after_seconds: SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS },
+          );
+        case "auth_expired": {
+          const baseUrl =
+            process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
+          return restErrorResponse(
+            "unauthorized",
+            "Pinterest token expired and could not be refreshed",
+            ctx.requestId,
+            {
+              reauth_url: `${baseUrl}/api/v1/connections/${connectionId}/reauth`,
+            },
+          );
+        }
+        default: {
+          const unhandledFailureReason: never = tokenRefreshResult.failureReason;
+          return restErrorResponse(
+            "internal_error",
+            `Unexpected token failure ${String(unhandledFailureReason)}`,
+            ctx.requestId,
+          );
+        }
+      }
     }
 
     const boardsResult = await getPinterestBoards(

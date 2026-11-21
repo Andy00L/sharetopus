@@ -69,16 +69,20 @@ Also in `_shared/`: `buildStreamingMultipartFormDataBody.ts`, which streams 64KB
 
 ### Token Refresh
 
-`ensureValidToken` (`src/lib/api/ensureValidToken.ts`) refreshes a token that expires within 5 minutes by default, and `publishViaRegistry` does the same for registry providers (`refreshRegistryAccountToken`). Both take an optional window: the daily worker `refresh-social-account-token` passes `{ refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS }` (7 days), so tokens that cannot be refreshed once expired (Instagram, Threads) are renewed a week ahead. Both run the refresh through `refreshWithAccountLock(accountId, refresh, options)` (`src/lib/api/refreshWithAccountLock.ts`), which applies the same window to the holder's re-read and the waiters' re-reads, so one run per account refreshes at a time:
+`ensureValidToken` (`src/lib/api/ensureValidToken.ts`) refreshes a token that expires within 5 minutes by default, and `publishViaRegistry` does the same for registry providers (`refreshRegistryAccountToken`). Both take an optional window: the daily worker `refresh-social-account-token` passes `{ refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS }` (7 days), so tokens that cannot be refreshed once expired (Instagram, Threads) are renewed a week ahead. Both run the refresh through `refreshWithAccountLock({ accountId, refreshTokenRotation, refreshStoredCredential, refreshIfExpiringWithinMs })` (`src/lib/api/refreshWithAccountLock.ts`), which applies the same window to the holder's re-read and the waiters' re-reads, so one run per account refreshes at a time.
 
-- The holder takes the Upstash key `token_refresh_lock:<account id>` with `SET NX` and a 45 s expiry (`TOKEN_REFRESH_LOCK_TTL_MS`), which outlasts the slowest refresh timeout (30 s). It releases the key with a script that deletes it only while the holder still owns it.
+Every platform states whether its refresh token rotates, as a typed fact next to its refresh call: `refreshTokenRotation` in `LEGACY_TOKEN_REFRESHERS` (`ensureValidToken.ts`) for the seven dedicated platforms, and next to `refresh` in each registry provider's behavior (the compiler refuses a `refresh` without it). `"rotating"` means a refresh can return a new refresh token and the platform does not promise the old one keeps working (RFC 6749 section 6 lets the server revoke it): X, TikTok, Pinterest, Bluesky, Tumblr, Twitch, Kick. `"stable"` means the platform documents that the refresh token is reused, or there is none: LinkedIn, YouTube, Google Business Profile, Reddit, Instagram, Threads, Facebook. Each entry cites its source.
+
+- The holder takes the Upstash key `token_refresh_lock:<account id>` with `SET NX`. A stable platform's key expires after 45 s (`TOKEN_REFRESH_LOCK_TTL_MS`), which outlasts the slowest refresh timeout (30 s). A rotating platform's key expires after 300 s (`RUNTIME.maxDurationS`), so no function that takes it outlives it. The holder releases the key with a script that deletes it only while the holder still owns it.
 - The holder re-reads the row before refreshing. If another run already saved a token that does not expire within the caller's window, it uses that token and skips the platform call. Otherwise it refreshes with the stored refresh token, which can be newer than the caller's copy.
-- Every other run polls the row, starting at 500 ms and doubling up to 4 s, and returns the token the holder saved. A lock left by a crashed run expires after 45 s and a waiter takes over; a waiter gives up after 50 s (`TOKEN_REFRESH_WAIT_DEADLINE_MS`) with a "try again" error.
-- When Redis is unreachable, the refresh runs without the lock and logs `[refreshWithAccountLock] Lock unavailable`.
+- On a rotating platform the holder works under a lease that ends with its key. It starts the platform call only while at least 45 s of the lease is left, else it answers "try again" (`[refreshIfStillExpiring] The refresh lock on account <id> lapses too soon to start a refresh.`). Its store carries the lease end: the UPDATE adds `clock_timestamp() < <lease end - 5 s>`, so Postgres refuses a store it runs after another run could hold the key.
+- The store (`storeRefreshedCredential`) writes only while the row still holds the `token_expires_at` this refresh read, and tries twice (`[storeRefreshedCredential] Write <n> of 2 failed for account <id>`). When it matches no row, `settleUnmatchedStore` re-reads: the row holding this refresh's access token means an earlier attempt committed; another fresh token means another run won (`[settleUnmatchedStore] Another refresh stored a newer token`), and the run uses it. Otherwise the new credential is lost: the dedicated path logs `[logLostTokenStore <platform>] RECONNECT REQUIRED` when the refresh token rotated, and the registry path returns a reconnect warning.
+- Every other run polls the row, starting at 500 ms and doubling up to 4 s, and returns the token the holder saved. A waiter gives up after 50 s (`TOKEN_REFRESH_WAIT_DEADLINE_MS`) with a "try again" error. A stable platform's lock left by a crashed run expires after 45 s and a waiter takes over; a rotating platform's stays up to 300 s, and waiters answer "try again" meanwhile.
+- When Redis is unreachable, a rotating platform does not refresh: the run answers "try again" (`failureReason: "transient"`, so a post step retries) and logs `[refreshWithAccountLock] Lock unavailable, not refreshing account <id>: its refresh token rotates.` A stable platform refreshes without the lock and logs `[refreshWithAccountLock] Lock unavailable, refreshing account <id> without it`.
 
-After a refused refresh, `settleRefusedRefresh` re-reads the row and uses the stored token only when its expiry differs from the one the refresh started from (another run saved it). Otherwise it flags the account `is_available = false` with an UPDATE guarded on that old expiry, so the account shows as needing a reconnect. Registry providers follow the same rule.
+After a refused refresh, `settleRefusedRefresh` re-reads the row and uses the stored token when its expiry differs from the one the refresh started from (another run saved it). Otherwise it flags the account `is_available = false` with an UPDATE guarded on that old expiry and answers "reconnect" only when the UPDATE matched the row. When it matched nothing, the credential changed after the refusal: it re-reads and uses the stored token when fresh, else answers "try again"; a flag that fails also answers "try again". Registry providers follow the same rule.
 
-X rotates its refresh token on every refresh. Before the lock, the second of two concurrent refreshes was refused, which failed that post and could flag a healthy account as needing a reconnect.
+X rotates its refresh token on every refresh, and the old one stops working. Before the lock, the second of two concurrent refreshes was refused, which failed that post and could flag a healthy account as needing a reconnect. The lock still depends on Redis keeping the key until it expires: a key lost earlier (eviction, failover) lets two runs refresh at once again.
 
 ---
 
@@ -100,7 +104,7 @@ X rotates its refresh token on every refresh. Before the lock, the second of two
 
 **API:** v2 (UGC Posts API)
 **Scopes:** `openid`, `profile`, `email`, `w_member_social`
-**Token refresh:** Yes, via refresh_token grant
+**Token refresh:** Yes, via refresh_token grant; LinkedIn returns the same refresh token, its 365-day lifetime unchanged (stable)
 **Member URN:** `urn:li:person:{account_identifier}`
 
 ### Posting Flow
@@ -139,7 +143,7 @@ Text-only posts skip media registration entirely and call the ugcPosts endpoint 
 
 **API:** v2
 **Scopes:** `user.info.basic`, `user.info.profile`, `video.publish`, `video.upload`, `user.info.stats`
-**Token refresh:** Yes, via refresh_token grant
+**Token refresh:** Yes, via refresh_token grant; TikTok returns a different refresh token on every refresh (rotating)
 **Dev/prod credentials:** Separate `TIKTOK_CLIENT_KEY_DEV` / `TIKTOK_CLIENT_SECRET_DEV` for development environments
 **Media types:** Image, Video (no text-only posts)
 
@@ -235,7 +239,7 @@ The segment is determined from the publish_id prefix:
 
 **API:** v5
 **Scopes:** `boards:read`, `boards:write`, `pins:read`, `pins:write`, `user_accounts:read`, `catalogs:read`, `catalogs:write`
-**Token refresh:** Yes, ~30 day tokens
+**Token refresh:** Yes, ~30 day tokens; every refresh returns a new continuous refresh token (treated as rotating)
 **Token exchange:** Basic Auth header with `base64(client_id:client_secret)`
 **Media types:** Image, Video (no text-only posts)
 
@@ -428,7 +432,7 @@ Checklist for implementing a new platform, matching how youtube/x/facebook were 
 3. Create `src/lib/api/{platform}/`:
    - `data/`: `exchange{Platform}Code.ts` (takes the redirect URI, sends the request through `requestCodeExchange`), `get{Platform}Profile.ts`, `refresh{Platform}Token.ts` (when the platform has one)
    - `post/`: `postTo{Platform}.ts`, `directPostFor{Platform}Accounts.ts` (a `DirectPostPlatformAdapter`)
-4. Wire the token lifecycle: a case in `refreshTokenForPlatform` inside `src/lib/api/ensureValidToken.ts`.
+4. Wire the token lifecycle: an entry in `LEGACY_TOKEN_REFRESHERS` inside `src/lib/api/ensureValidToken.ts`, with its refresh call and its `refreshTokenRotation`, citing the platform doc that says whether a refresh keeps the old refresh token working.
 5. Wire the connect: a case in `connectPlatformAccounts` (`src/lib/api/oauth/connectPlatformAccounts.ts`) that exchanges the code, reads the profile, and returns the account keyed on the platform's stable id. The web popup and the x402/REST callback both call it, so an account gets the same row whichever flow connected it.
 6. Web OAuth routes via the shared helpers (`initiateWebOAuth`, `completeWebOAuthConnect`), each a few lines of config:
    - `/api/social/{platform}/initiate`

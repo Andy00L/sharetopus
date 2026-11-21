@@ -3,6 +3,7 @@ import type {
   PlatformFailure,
   PlatformFailureReason,
 } from "@/lib/api/_shared/platformFailure";
+import type { RefreshTokenRotation } from "@/lib/api/refreshWithAccountLock";
 import type { RegistryPublishOptions } from "@/lib/platforms/postTargetOptions";
 
 import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
@@ -150,13 +151,19 @@ export type AuthorizeUrlResult = { ok: true; url: string } | { ok: false; messag
 
 type ConnectOperation<ConnectInput> = (input: ConnectInput) => Promise<ProviderConnectResult>;
 
+export type ProviderRefreshOperations =
+  | {
+      refresh: (input: ProviderRefreshInput) => Promise<ProviderRefreshResult>;
+      refreshTokenRotation: RefreshTokenRotation;
+    }
+  | { refresh?: undefined; refreshTokenRotation?: undefined };
+
 export type ProviderOperations = {
   /** Publishes one post. Errors as values; never throws across this boundary. */
   publish: (input: ProviderPublishInput) => Promise<ProviderPublishResult>;
 
-  refresh?: (input: ProviderRefreshInput) => Promise<ProviderRefreshResult>;
   runTool?: (input: ProviderToolInput) => Promise<ProviderToolResult>;
-};
+} & ProviderRefreshOperations;
 
 type AuthorizeUrlOperation = {
   buildAuthorizeUrl: (input: AuthorizeUrlInput) => AuthorizeUrlResult;

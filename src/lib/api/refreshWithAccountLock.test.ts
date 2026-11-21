@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
-import type { StoredCredential } from "./refreshWithAccountLock";
+import type { LockedCredential, StoredCredential } from "./refreshWithAccountLock";
 
 mock.module("server-only", () => ({}));
 
@@ -43,9 +43,18 @@ function buildCredential(accessToken: string, expiresInDays: number): StoredCred
 
 let refreshedFrom: StoredCredential[] = [];
 
-async function refreshStoredCredential(stored: StoredCredential): Promise<string> {
+async function refreshStoredCredential({ stored }: LockedCredential): Promise<string> {
   refreshedFrom.push(stored);
   return "new-token";
+}
+
+function buildLockInput(window: { refreshIfExpiringWithinMs?: number } = {}) {
+  return {
+    accountId: "account-1",
+    refreshTokenRotation: "stable" as const,
+    refreshStoredCredential,
+    ...window,
+  };
 }
 
 beforeEach(() => {
@@ -58,16 +67,14 @@ describe("refreshWithAccountLock refresh window", () => {
     const expiresInThreeDays = buildCredential("stored-token", 3);
     storedRows = [expiresInThreeDays];
 
-    expect(await refreshWithAccountLock("account-1", refreshStoredCredential)).toEqual({
+    expect(await refreshWithAccountLock(buildLockInput())).toEqual({
       kind: "stored_token_fresh",
       accessToken: "stored-token",
     });
     expect(refreshedFrom).toEqual([]);
 
     expect(
-      await refreshWithAccountLock("account-1", refreshStoredCredential, {
-        refreshIfExpiringWithinMs: SEVEN_DAYS_MS,
-      }),
+      await refreshWithAccountLock(buildLockInput({ refreshIfExpiringWithinMs: SEVEN_DAYS_MS })),
     ).toEqual({ kind: "refreshed", value: "new-token" });
     expect(refreshedFrom).toEqual([expiresInThreeDays]);
   });
@@ -77,9 +84,7 @@ describe("refreshWithAccountLock refresh window", () => {
     storedRows = [buildCredential("stored-token", 3)];
 
     expect(
-      await refreshWithAccountLock("account-1", refreshStoredCredential, {
-        refreshIfExpiringWithinMs: SEVEN_DAYS_MS,
-      }),
+      await refreshWithAccountLock(buildLockInput({ refreshIfExpiringWithinMs: SEVEN_DAYS_MS })),
     ).toEqual({ kind: "refreshed", value: "new-token" });
     expect(refreshedFrom).toHaveLength(1);
   });
@@ -89,9 +94,7 @@ describe("refreshWithAccountLock refresh window", () => {
     storedRows = [buildCredential("saved-by-other-run", 60)];
 
     expect(
-      await refreshWithAccountLock("account-1", refreshStoredCredential, {
-        refreshIfExpiringWithinMs: SEVEN_DAYS_MS,
-      }),
+      await refreshWithAccountLock(buildLockInput({ refreshIfExpiringWithinMs: SEVEN_DAYS_MS })),
     ).toEqual({ kind: "stored_token_fresh", accessToken: "saved-by-other-run" });
     expect(refreshedFrom).toEqual([]);
   });

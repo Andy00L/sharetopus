@@ -190,6 +190,9 @@ export const tumblrBehavior = {
   connect,
   publish,
   refresh: (input) => refreshOAuth2Credential(TUMBLR_OAUTH, input),
+  // A refresh returns a new access token and a new refresh token:
+  // https://github.com/tumblr/docs/blob/master/api.md (Refresh Token Grant Request)
+  refreshTokenRotation: "rotating",
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TUMBLR_OAUTH, input),
 } satisfies ProviderBehavior;
