@@ -16,7 +16,10 @@ import {
   platformSupportsMediaType,
 } from "@/lib/platforms/capabilities";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
-import { buildPostFailedFields } from "@/lib/api/rest/webhooks/postWebhookPayloads";
+import {
+  buildConnectionExpiredPayload,
+  buildPostFailedFields,
+} from "@/lib/api/rest/webhooks/postWebhookPayloads";
 import { decodeStoredPostOptions } from "@/inngest/events/postOptions";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import { toJsonObject } from "@/lib/utils/jsonObject";
@@ -444,11 +447,7 @@ async function writePostOutcome(args: {
     ...buildPostFailedFields(result),
   });
   if (result.reason === "auth_expired") {
-    dispatchWebhook(post.principal_id, "connection.expired", {
-      social_account_id: post.social_account_id,
-      platform: post.platform,
-      reason: "auth_expired",
-    });
+    dispatchWebhook(post.principal_id, "connection.expired", buildConnectionExpiredPayload(post));
   }
 
   return { success: true, updated: true };

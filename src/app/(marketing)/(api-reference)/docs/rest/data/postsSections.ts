@@ -93,7 +93,7 @@ const POST_DISPATCH_FIELDS: ParamTableData = {
       type: "string",
       required: true,
       description:
-        "Always processing: the post was handed to the publisher. Once published, it appears in GET /api/v1/content-history. Webhooks fire for scheduled posts only, and no REST read shows a publish-now that failed.",
+        "Always processing: the post was handed to the publisher. Once published, it appears in GET /api/v1/content-history. post.published or post.failed fires with the same dispatch_id once the dispatch is recorded.",
     },
     {
       name: "platform",
