@@ -10,19 +10,6 @@ import { preflightScheduledPostChange } from "@/actions/server/scheduleActions/p
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/reschedule
- *
- * Pays the reschedule action (price per pricing_actions). Changes the
- * scheduled_at of one post.
- * Steps:
- * 1. Parse body (post_id, new_scheduled_time).
- * 2. Before settlement, check the post belongs to the payer and is still
- *    scheduled or cancelled; a failure here costs nothing.
- * 3. x402 middleware handles payment and the charge.
- * 4. Call updateScheduledTimeBatch with createdVia="x402".
- */
-
 const RescheduleBodySchema = z.object({
   post_id: z.string().uuid(),
   new_scheduled_time: z.string().refine(

@@ -5,12 +5,12 @@ import { isAddress } from "@solana/kit";
 import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { social_accounts, x402_charges } from "@/db/schema";
+import { social_accounts } from "@/db/schema";
 import { directPostBatch } from "@/actions/server/directPostActions/directPostBatch";
 import type { DirectPostData } from "@/actions/server/directPostActions/directPostBatch";
 import { resolveExistingWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
-import { refundCharge } from "@/lib/x402/charges/chargeLifecycle";
+import { refundCharge, updateChargeRecord } from "@/lib/x402/charges/chargeLifecycle";
 import { markChargeSettled } from "@/lib/x402/charges/chargeTransitions";
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
 import {
@@ -19,6 +19,7 @@ import {
 } from "@/lib/x402/charges/recordReconciliation";
 import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/config";
 import type { Platform } from "@/lib/x402/connect/types";
+import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 import { NETWORKS } from "@/lib/x402/networks";
 import { readActionPrice, readFreshActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { buildKnownExplorerTxUrl } from "@/lib/x402/proof/explorer";
@@ -26,42 +27,12 @@ import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildUsdcPaymentTransaction } from "./buildUsdcPaymentTransaction";
 import { verifyUsdcPayment, type VerifyUsdcPaymentResult } from "./verifyUsdcPayment";
 
-/**
- * The post-now Blink: a Solana Action that publishes a text post to one of
- * the wallet's connected social accounts for the post.text price, paid in
- * USDC straight from the wallet.
- *
- * Three steps, one per route handler:
- *   describe  GET  /api/actions/post-now?account_id&platform
- *             The card a Blink client renders: price, one text field.
- *   prepare   POST /api/actions/post-now?account_id&platform&text  {account}
- *             Checks the wallet is known and owns the account, then returns
- *             the unsigned USDC payment for the wallet to sign and send.
- *   confirm   POST /api/actions/post-now/confirm?...  {account, signature}
- *             Verifies the payment on-chain, records the charge exactly like
- *             the x402 middleware (pending, settled, then the post), refunds
- *             on a post failure, and returns the explorer link.
- *
- * Why the wallet pays directly: a Blink client signs and broadcasts the
- * transaction itself, so the x402 facilitator (which co-signs as fee payer)
- * cannot sit in the middle. Verification therefore happens here against the
- * chain, and x402_charges.facilitator records "solana_direct".
- *
- * Called by: src/app/api/actions/post-now/route.ts, .../confirm/route.ts
- * Tables touched: social_accounts (read), x402_charges (insert, update),
- *                 x402_refunds, x402_reconciliation (via helpers)
- */
+const BLINK_ACTION = `${POST_ACTION_PREFIX}text`;
 
-/** Pricing action the Blink sells. sourceRef: middleware/resolvePostAction.ts */
-const BLINK_ACTION = "post.text";
-
-/** Post body ceiling. LinkedIn caps a post at 3000 characters, the tightest of the supported platforms. */
 const MAX_POST_TEXT_LENGTH = 3000;
 
-/** x402_charges.facilitator label: the wallet broadcast the payment itself. */
 const DIRECT_SOLANA_FACILITATOR = "solana_direct";
 
-/** social_accounts.id is a UUID; anything else is rejected before any query. */
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -79,7 +50,6 @@ export type BlinkFailure = {
   refundTxHash?: string | null;
 };
 
-/** The GET body per @solana/actions-spec v2.4.2 (Action with one linked action). */
 export interface PostNowActionCard {
   type: "action";
   icon: string;
@@ -255,7 +225,6 @@ export async function confirmPostNowPayment(params: {
     return { ok: false, httpStatus: 500, message: "Solana payments are not configured." };
   }
 
-  // Step 1: the chain is the source of truth for the payment.
   const verification = await verifyUsdcPayment({
     txSignatureRaw: params.txSignatureRaw,
     expectedPayerAddress: params.payerAddressRaw,
@@ -277,9 +246,6 @@ export async function confirmPostNowPayment(params: {
     };
   }
 
-  // Step 2: the payer must be a wallet Sharetopus already knows. Money has
-  // moved by now, so an unknown or sanctioned payer is recorded for manual
-  // reconciliation instead of being refunded blindly.
   const walletResult = await resolveWalletForBlink(verification.payerAddress);
   if (!walletResult.ok) {
     await recordUnchargedPayment({
@@ -292,12 +258,9 @@ export async function confirmPostNowPayment(params: {
   }
   const principal = walletResult.principal;
 
-  // Step 3: the charge row, nonce = signature, before anything else happens.
-  // A second confirm with the same signature loses the UNIQUE race here.
   const requestId = randomUUID();
   const chargeInsert = await insertPendingX402Charge({
     principalId: principal.principalId,
-    walletId: principal.walletId,
     action: BLINK_ACTION,
     amountUsdc: priceResult.usdcPrice,
     amountUsdAtReceipt: null,
@@ -320,7 +283,6 @@ export async function confirmPostNowPayment(params: {
   }
   const chargeId = chargeInsert.chargeId;
 
-  // Step 4: pending -> settled with the on-chain facts.
   const settledTransition = await markChargeSettled({
     chargeId,
     txHash: verification.txSignature,
@@ -348,7 +310,6 @@ export async function confirmPostNowPayment(params: {
     };
   }
 
-  // Step 5: the paid action. Any failure from here is refundable.
   const ownership = await checkAccountOwnership(principal, params.target);
   if (!ownership.ok) {
     return refundAndFail({
@@ -372,7 +333,6 @@ export async function confirmPostNowPayment(params: {
     coverTimestamp: undefined,
     pinterestBoardId: undefined,
     pinterestBoardName: undefined,
-    // One post per payment even if the client retries confirm.
     idempotency_key: `blink:${verification.txSignature}`,
   };
   const batchResult = await directPostBatch(
@@ -394,19 +354,7 @@ export async function confirmPostNowPayment(params: {
     });
   }
 
-  // Same link the x402 post-now route stores, so the proof ledger resolves
-  // this settlement's outcome the same way.
-  const { error: linkError } = await runQuery(
-    db
-      .update(x402_charges)
-      .set({ metadata: { batch_id: batchResult.batchId } })
-      .where(eq(x402_charges.id, chargeId)),
-  );
-  if (linkError) {
-    console.error(
-      `[confirmPostNowPayment] Failed to link charge ${chargeId} to batch ${batchResult.batchId}: ${linkError.message}`,
-    );
-  }
+  await updateChargeRecord(chargeId, { metadata: { batch_id: batchResult.batchId } });
 
   return {
     ok: true,
@@ -415,10 +363,6 @@ export async function confirmPostNowPayment(params: {
     batchId: batchResult.batchId,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 async function resolveWalletForBlink(
   payerAddress: string,
@@ -440,7 +384,6 @@ async function resolveWalletForBlink(
   }
 }
 
-/** The account must belong to the paying wallet's principal, on that platform, and not be deleted. */
 async function checkAccountOwnership(
   principal: WalletPrincipal,
   target: PostNowBlinkTarget,
@@ -473,12 +416,6 @@ async function checkAccountOwnership(
   return { ok: true };
 }
 
-/**
- * The x402 middleware's refundable-failure step, through the same charge
- * lifecycle: refund on-chain, record "refunded" only once the chain confirms
- * it, and leave a reconciliation row otherwise. Always resolves to the
- * failure the client should see.
- */
 async function refundAndFail(params: {
   chargeId: string;
   txSignature: string;
@@ -546,7 +483,6 @@ function mapVerificationStatus(
   }
 }
 
-/** Same-origin path with the target and text as query params (text may be the {text} template). */
 function buildActionPath(
   basePath: string,
   target: PostNowBlinkTarget,
@@ -556,7 +492,7 @@ function buildActionPath(
     account_id: target.accountId,
     platform: target.platform,
   });
-  // The spec's {text} placeholder must survive verbatim for the client to fill.
+  // Solana Actions fill {name} placeholders in a linked action href, so the template stays unencoded (actions-spec v2.4.2).
   const encodedText = text === "{text}" ? text : encodeURIComponent(text);
   return `${basePath}?${query.toString()}&text=${encodedText}`;
 }

@@ -17,12 +17,6 @@ export type BuildOAuthUrlResult =
   | {
       ok: true;
       url: string;
-      /**
-       * PKCE code_verifier for platforms that mandate PKCE (X). Callers
-       * that create the social_connections row must persist it in
-       * oauth_code_verifier so handleOAuthCallback can complete the
-       * exchange. Null for non-PKCE platforms.
-       */
       codeVerifier: string | null;
     }
   | {
@@ -31,16 +25,6 @@ export type BuildOAuthUrlResult =
       message: string;
     };
 
-/**
- * Builds the OAuth authorization URL for the given platform.
- *
- * Reads client ID from per-platform env vars. Auth URLs mirror the web
- * initiate routes. Scopes are the minimum the x402 flow uses, which is
- * narrower than the web routes on two platforms: LinkedIn skips "email"
- * (nothing reads it) and Pinterest skips "catalogs:*" (pins never touch a
- * merchant catalog). Every stored token is a posting credential, so a scope
- * nobody uses is only extra blast radius.
- */
 export function buildOAuthUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
   switch (input.platform) {
     case "linkedin":
@@ -79,7 +63,6 @@ function buildLinkedInUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  // openid + profile return the OpenID "sub" the account is keyed on.
   const scopes = ["openid", "profile", "w_member_social"].join(" ");
 
   const url =
@@ -110,10 +93,8 @@ function buildTikTokUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  // Direct Post needs video.publish only; video.upload is the inbox-draft flow this app never uses.
   const scopes = "user.info.basic,user.info.profile,video.publish,user.info.stats";
 
-  // disable_auto_auth=1 shows TikTok's authorization page on every connect (developers.tiktok.com/doc/login-kit-web).
   const url =
     `https://www.tiktok.com/v2/auth/authorize/` +
     `?client_key=${clientKey}` +
@@ -198,8 +179,8 @@ function buildYouTubeUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  // Mirrors /api/social/youtube/initiate: upload publishes, readonly reads
-  // the channel; offline+consent forces a refresh_token on every connect.
+  // Google returns a refresh token only on the first consent; prompt=consent asks again
+  // (developers.google.com/identity/protocols/oauth2/web-server).
   const scopes = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
@@ -229,15 +210,13 @@ function buildXUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  // X mandates PKCE; the verifier is returned so callers can persist it in
-  // social_connections.oauth_code_verifier for the callback exchange.
+  // X requires PKCE (docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code).
   const codeVerifier =
     randomBytes(PKCE_VERIFIER_RANDOM_BYTES).toString("base64url");
   const codeChallenge = createHash("sha256")
     .update(codeVerifier)
     .digest("base64url");
 
-  // Mirrors /api/social/x/initiate.
   const scopes = [
     "tweet.read",
     "tweet.write",
@@ -270,7 +249,6 @@ function buildFacebookUrl(input: BuildOAuthUrlInput): BuildOAuthUrlResult {
     };
   }
 
-  // Mirrors /api/social/facebook/initiate.
   const scopes = [
     "pages_show_list",
     "pages_manage_posts",

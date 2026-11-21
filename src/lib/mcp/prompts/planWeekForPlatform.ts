@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import { SCHEDULABLE_PLATFORMS } from "@/lib/platforms/capabilities";
 
-/** Prompt: plan 5 to 7 posts for one platform around a theme. */
 export function registerPlanWeekForPlatform(server: McpServer): void {
   server.registerPrompt(
     "plan_week_for_platform",

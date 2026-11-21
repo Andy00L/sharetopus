@@ -1,21 +1,5 @@
 import "server-only";
 
-/**
- * The money path every paid x402 action shares: record, settle, finalize,
- * refund, and replay. The paid middleware and /connect both run through it,
- * so the ordering rules live once:
- *   1. The pending row (with the UNIQUE nonce) exists before settle, so a
- *      replay loses the insert race and a crash leaves a row to reconcile.
- *   2. Only a definitive facilitator rejection marks the charge failed. An
- *      uncertain settle leaves it pending with a reconciliation row.
- *   3. "refunded" is recorded only after the chain confirms the refund.
- *
- * Called by: middleware/x402PaidEndpoint.ts, connect/handleConnectVerify.ts,
- *            solanaActions/postNowBlink.ts (refundCharge)
- * Tables touched: x402_charges (insert, read, update), x402_refunds (insert),
- *                 x402_reconciliation (insert, read)
- */
-
 import { and, eq, exists, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
@@ -40,17 +24,7 @@ import {
 import { addressesMatch, type NetworkConfig } from "@/lib/x402/networks";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
-/**
- * How long a pending charge can still belong to a live request, in ms. The
- * longest paid x402 route runs for 60 s (maxDuration in the app/api/x402
- * route files); past twice that, the request that inserted the charge has
- * ended and the charge waits on reconciliation instead.
- */
 const PENDING_IN_FLIGHT_MS = 120_000;
-
-// ---------------------------------------------------------------------------
-// Settle
-// ---------------------------------------------------------------------------
 
 export interface SettleChargeInput {
   paymentHeader: string;
@@ -63,10 +37,6 @@ export interface SettleChargeInput {
   recipientAddress: string;
 }
 
-/**
- * What a previously presented payment turned into, for a caller replaying
- * the same authorization (typically after losing the first response).
- */
 export type ChargeReplay =
   | { state: "settled"; chargeId: string; txHash: string; storedResult: Json | null }
   | { state: "in_progress"; chargeId: string }
@@ -82,7 +52,6 @@ export type SettleChargeResult =
 export async function settleCharge(input: SettleChargeInput): Promise<SettleChargeResult> {
   const chargeResult = await insertPendingX402Charge({
     principalId: input.principal.principalId,
-    walletId: input.principal.walletId,
     action: input.action,
     amountUsdc: input.amountUsdc,
     amountUsdAtReceipt: null,
@@ -94,7 +63,6 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
   });
 
   if (!chargeResult.success) {
-    // No settle has happened yet, so a failed insert costs nothing.
     if (chargeResult.conflictReason === "nonce_used") {
       return {
         ok: false,
@@ -156,8 +124,6 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
     settledAt: settleResult.settledAt,
   });
   if (!settledTransition.success) {
-    // Money moved but the row still says pending. Auto-refunding against an
-    // uncertain DB state risks paying twice, so this fails closed for review.
     console.error(
       `[settleCharge] CHARGE RECONCILIATION NEEDED: charge ${chargeId} settled on-chain (tx ${settleResult.txHash}) but could not transition to settled: ${settledTransition.message}`,
     );
@@ -175,14 +141,6 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
   return { ok: true, chargeId, txHash: settleResult.txHash };
 }
 
-/**
- * The charge a replayed nonce belongs to. The nonce is bound to the payer's
- * signature, so the stored payer must match the one verify just recovered,
- * and the replay must ask for the same action the payment bought: the same
- * payment presented on another endpoint gets nothing back. A pending charge
- * older than PENDING_IN_FLIGHT_MS is closed, not in progress, so a client
- * honoring Retry-After stops retrying a settlement that is under review.
- */
 async function loadChargeReplay(params: {
   nonce: string;
   payerAddress: string;
@@ -246,7 +204,6 @@ async function loadChargeReplay(params: {
   return { state: "closed", chargeId: charge.id };
 }
 
-/** metadata.result, the response body a settled write action returned. */
 function readStoredResult(metadata: Json): Json | null {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     return null;
@@ -254,22 +211,12 @@ function readStoredResult(metadata: Json): Json | null {
   return metadata.result ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// Charge record updates
-// ---------------------------------------------------------------------------
-
 export interface ChargeRecordFields {
-  /** Replay copy of the response and back-references (batch_id, ...). */
   metadata?: { [key: string]: Json | undefined };
   scheduledPostId?: string;
   socialConnectionId?: string;
 }
 
-/**
- * Best-effort update of a settled charge's non-money fields. The money
- * state is already final; a failure here only loses a back-reference or the
- * replay copy, so it is logged and never changes the caller's outcome.
- */
 export async function updateChargeRecord(
   chargeId: string,
   fields: ChargeRecordFields,
@@ -281,8 +228,6 @@ export async function updateChargeRecord(
       ? {}
       : { social_connection_id: fields.socialConnectionId }),
   };
-  // Drizzle throws on an empty SET before the query runs; with no field to
-  // write there is nothing to update.
   if (Object.keys(chargeUpdate).length === 0) return;
 
   const { error } = await runQuery(
@@ -292,10 +237,6 @@ export async function updateChargeRecord(
     console.error(`[updateChargeRecord] Failed to update charge ${chargeId}: ${error.message}`);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Refund
-// ---------------------------------------------------------------------------
 
 export interface RefundChargeInput {
   chargeId: string;
@@ -308,22 +249,10 @@ export interface RefundChargeInput {
 }
 
 export interface RefundChargeOutcome {
-  /** True once a refund transaction exists (confirmed, or sent and pending). */
   refundInitiated: boolean;
   refundTxHash: string | null;
 }
 
-/**
- * Refunds a settled charge after the paid action failed. The failure is
- * written on the charge before the refund is sent, so a replay of the payment
- * is refused from then on; when that write fails twice, a refund_failed
- * reconciliation row is written first instead, and replays read it the same
- * way. A charge that is no longer settled gets no refund, only that row.
- * Refunded only when the chain confirms it; any other outcome leaves the
- * charge settled with a reconciliation row. A null tx hash there means no
- * refund transaction is known: nothing was sent, or a CDP send timed out and
- * may still have gone out.
- */
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
   const reconciliationBase = {
     chargeId: input.chargeId,

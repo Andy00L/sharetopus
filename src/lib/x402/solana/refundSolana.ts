@@ -1,19 +1,5 @@
 import "server-only";
 
-/**
- * Sends a USDC SPL token refund on Solana.
- *
- * Builds an SPL Token TransferChecked instruction (solana/splToken.ts) from
- * the Server Wallet's associated token account (ATA) to the payer's ATA,
- * compiles it with @solana/kit, and hands the base64 wire transaction to
- * CDP for signing and sending (the CDP Server Wallet holds the key). The
- * owner is the only signer and CDP supplies that signature.
- *
- * Called by: facilitator.refundPayment (coinbase_cdp lane, Solana)
- * Env: X402_RECIPIENT_SOLANA (refund sender = original payment recipient),
- *      X402_SOLANA_RPC_URL (blockhash reads, resolved by config.getRpcUrl)
- */
-
 import {
   address,
   appendTransactionMessageInstructions,
@@ -38,7 +24,6 @@ import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 const BLOCKHASH_REQUEST_TIMEOUT_MS = 5_000;
 
 export async function refundSolana(input: RefundSendInput): Promise<RefundSendResult> {
-  // The Server Wallet that received the payment is the refund sender.
   const senderAddress = getRecipientAddress(input.network);
   if (!senderAddress) {
     return {
@@ -57,8 +42,6 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
     return { status: "not_sent", message: builtTransaction.message };
   }
 
-  // The CDP SDK's Solana network name matches the WalletChain short name
-  // "solana"; the registry has no Solana testnet.
   const sendResult = await sendThroughCdp({
     send: async () => {
       const sentTransaction = await cdpClient.solana.sendTransaction({
@@ -94,8 +77,6 @@ async function buildRefundTransaction(
     const usdcMint = address(input.network.usdcAddress);
 
     const sourceAta = await findAssociatedTokenAddress(senderAddr, usdcMint);
-    // The payer's ATA exists: the payment being refunded was sent FROM it,
-    // and SPL token accounts are not closed by outgoing transfers here.
     const destinationAta = await findAssociatedTokenAddress(recipientAddr, usdcMint);
 
     const atomicAmount = BigInt(

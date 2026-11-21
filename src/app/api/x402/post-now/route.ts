@@ -21,25 +21,6 @@ import type { DirectPostData } from "@/actions/server/directPostActions/directPo
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/post-now
- *
- * Pays post.text / post.image / post.video (price per pricing_actions).
- * Steps:
- * 1. Parse body (shared posting schema; media path required for image/video).
- * 2. Resolve pricing action from post_type.
- * 3. Before settlement, check the post would dispatch: fields, media path,
- *    account ownership, platform match, unused idempotency_key. A failure
- *    here costs nothing.
- * 4. On settle, call directPostBatch with createdVia="x402".
- * 5. The batch id is stored on the charge (metadata.batch_id), the only
- *    link between a settlement and the post it paid for.
- *
- * Publishing runs asynchronously after the dispatch. A dispatch failure is
- * refunded on-chain; a post the platform rejects later, at publish time, is
- * not refunded.
- */
-
 const PostNowBodySchema = withMediaPathRule(PostBodyBaseSchema);
 
 type PostNowBody = z.infer<typeof PostNowBodySchema>;
@@ -50,7 +31,6 @@ type PostNowResult = {
   dispatched: number;
 };
 
-/** The single post this request pays for, as directPostBatch takes it. */
 function toDirectPostData(body: PostNowBody): DirectPostData {
   return {
     socialAccountId: body.social_account_id,
@@ -67,8 +47,6 @@ function toDirectPostData(body: PostNowBody): DirectPostData {
   };
 }
 
-// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
-// the 402 challenge). post.text is the representative price for the probe.
 export const GET = x402ChallengeGet({
   endpointPath: "/api/x402/post-now",
   action: "post.text",
@@ -131,8 +109,6 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
       };
     }
 
-    // The precheck rejects a used idempotency_key, but a concurrent request
-    // can claim it in between; then nothing was dispatched for this payment.
     if (batchResult.details.dispatched === 0) {
       return {
         success: false,

@@ -14,19 +14,6 @@ import {
   describeRateLimitRejection,
 } from "@/lib/x402/http/rateLimitRejection";
 
-/**
- * POST /api/x402/facilitator/verify
- * Body: { x402Version, paymentPayload, paymentRequirements }
- *
- * Checks an EIP-3009 authorization against the caller's requirements: the
- * signature, the authorization nonce still being unused on-chain, the
- * validity window, and the payer's balance. Open, because verifying only
- * reads the chain and costs no gas.
- *
- * Logic lives in src/lib/x402/arc/facilitatorApi.ts and the scheme itself
- * in src/lib/x402/arc/arcFacilitator.ts.
- */
-
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
@@ -53,8 +40,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     networkResult.network,
   );
   if (!requestResult.ok) {
-    // The x402 client reads isValid off an error body, so the protocol's own
-    // failure shape goes back rather than a bare message it cannot parse.
+    // @x402/core's HTTPFacilitatorClient reads a VerifyResponse off a non-2xx body (dist/esm/chunk-W4OPBTK7.mjs).
     return NextResponse.json(
       {
         isValid: false,

@@ -9,46 +9,22 @@ import type { SanctionsStatus, WalletChain } from "@/db/schema";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import type { WalletPrincipal } from "./types";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export type ResolveOrOnboardWalletPrincipalResult =
   | { ok: true; principal: WalletPrincipal; isNewWallet: boolean }
   | {
       ok: false;
       reason: "sanctioned";
       message: string;
-      /** Identity of the denied wallet, for audit-log attribution. */
       principal: WalletPrincipal;
     }
   | { ok: false; reason: "db_error"; message: string };
 
-/**
- * Sanctions source recorded for wallets cleared by the CDP facilitator's
- * KYT check during payment verification (base/polygon/arbitrum/solana).
- * sourceRef: the deleted register flow (src/lib/x402/register/, June 2026)
- */
 const SANCTIONS_SOURCE_CDP_KYT = "cdp_kyt";
 
-/**
- * Source recorded when the clearing verify ran at the Celo facilitator
- * instead of CDP. Named after the facilitator so the screening trail stays
- * honest per network: whether x402.celo.org runs KYT is that facilitator's
- * behavior, and the row must not claim a CDP screen that never happened.
- */
 const SANCTIONS_SOURCE_CELO_FACILITATOR = "celo_facilitator";
 
-/**
- * Source recorded when nobody screened the payer: on the arc_local lane
- * Sharetopus verifies and settles the payment itself (arc/arcFacilitator.ts)
- * and no third party runs KYT along the way. The row says so instead of
- * borrowing CDP's name, and the wallet is left at sanctions_status
- * "unchecked".
- */
 const SANCTIONS_SOURCE_UNSCREENED = "unscreened";
 
-/** Screening source for the lane that verified this payment. */
 function sanctionsSourceForNetwork(network: NetworkConfig): string {
   switch (network.settlement) {
     case "coinbase_cdp":
@@ -60,48 +36,10 @@ function sanctionsSourceForNetwork(network: NetworkConfig): string {
   }
 }
 
-/**
- * Whether a third-party facilitator screened the payer during verify. Keyed
- * on the settlement lane, so the next self-settled lane inherits the honest
- * default instead of a borrowed claim.
- */
 function hasFacilitatorScreening(network: NetworkConfig): boolean {
   return network.settlement !== "arc_local";
 }
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Resolves the paying wallet to its principal, onboarding it on first contact.
- *
- * MUST be called with the facilitator-recovered payer address (the address
- * money actually moves from), never the unverified claim inside the payment
- * header, and only AFTER verifyPayment succeeded: the facilitator screens
- * the payer as part of verify (KYT on the CDP facilitator), so a payer that
- * reaches this function passed that facilitator's verify on this very call.
- * The recorded sanctions source names which facilitator cleared it, so the
- * screening trail stays honest per network.
- *
- * Sequence:
- *   1. Normalize the address (EVM lowercased, Solana base58 verbatim) and
- *      look it up by exact equality, never ILIKE: pattern matching on an
- *      attacker-supplied address would let % and _ act as SQL wildcards.
- *   2. A sanctioned wallet is rejected before any charge row exists.
- *   3. A missing wallet is onboarded through the onboard_wallet_atomic RPC,
- *      which owns all concurrency: adopt-by-address fast path, ON CONFLICT
- *      handling, and cleanup of its own orphaned principal on a lost race.
- *      Two concurrent first payments from one wallet both succeed; the RPC
- *      decides which call creates and which adopts (is_new in the result).
- *
- * Callers must order this between facilitator verify and the charge insert /
- * settle: screening and onboarding strictly precede any USDC movement.
- *
- * Called by: x402PaidEndpoint, handleConnectVerify
- * Tables touched: wallets (read); principals, wallets, sanctions_screenings,
- * wallet_credits (insert via the RPC; sanctions_screenings is append-only)
- */
 export async function resolveOrOnboardWalletPrincipal(params: {
   payerAddress: string;
   network: NetworkConfig;
@@ -120,8 +58,6 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     return buildDisposition(existingLookup.wallet, false);
   }
 
-  // First contact: onboard atomically. The RPC adopts by address when a
-  // concurrent call created the row between the lookup above and this call.
   const principalId = `wallet_${randomBytes(16).toString("hex")}`;
   const sanctionsSource = sanctionsSourceForNetwork(params.network);
   const { data: onboardRows, error: onboardError } = await runQuery(
@@ -157,13 +93,6 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     console.log(
       `[resolveOrOnboardWalletPrincipal] Onboarded wallet ${row.wallet_id} (${normalizedAddress}) on ${params.network.name}`
     );
-    // onboard_wallet_atomic marks a fresh wallet clean, which is only true
-    // where a facilitator screened it during verify. On a self-settled
-    // network it did not, so the row is corrected to "unchecked" rather
-    // than left claiming a check nobody ran. A failed correction is logged
-    // and the call still proceeds: the gate below only ever blocks
-    // "sanctioned", so an over-optimistic label changes no access decision,
-    // and failing the payment here would punish the agent for our bookkeeping.
     const screened = hasFacilitatorScreening(params.network);
     if (!screened) {
       const { error: unscreenedError } = await runQuery(
@@ -184,7 +113,6 @@ export async function resolveOrOnboardWalletPrincipal(params: {
       principal: {
         kind: "wallet",
         principalId: row.principal_id,
-        walletId: row.wallet_id,
         address: normalizedAddress,
         chain: params.network.name,
         sanctionsStatus: screened ? "clean" : "unchecked",
@@ -192,9 +120,6 @@ export async function resolveOrOnboardWalletPrincipal(params: {
     };
   }
 
-  // Adopted: a concurrent call created the row first. Re-read it so chain
-  // and sanctions status reflect the DB, and so a sanctioned row is still
-  // rejected on this path. Fail closed on a read error: nothing has settled.
   const adoptedLookup = await lookupWalletByAddress(normalizedAddress);
   if (!adoptedLookup.ok || !adoptedLookup.wallet) {
     return {
@@ -217,17 +142,6 @@ export type ResolveExistingWalletPrincipalResult =
     }
   | { ok: false; reason: "db_error"; message: string };
 
-/**
- * Lookup-only variant for flows where no facilitator screened the payer
- * (the post-now Blink: the wallet broadcasts its own payment). It never
- * onboards, so no sanctions_screenings row is written claiming a KYT check
- * that did not happen. A wallet must have paid through x402 at least once
- * (connect) before it can use those flows; the sanctions disposition from
- * that screening still applies here.
- *
- * Called by: solanaActions/postNowBlink.ts
- * Tables touched: wallets (read)
- */
 export async function resolveExistingWalletPrincipal(
   payerAddress: string
 ): Promise<ResolveExistingWalletPrincipalResult> {
@@ -244,10 +158,6 @@ export async function resolveExistingWalletPrincipal(
   }
   return disposition;
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 /** EVM addresses compare lowercased; Solana base58 is case-significant and kept verbatim. */
 function normalizeWalletAddress(walletAddress: string): string {
@@ -286,17 +196,12 @@ async function lookupWalletByAddress(
   return { ok: true, wallet: walletRows[0] ?? null };
 }
 
-/** The jsonb object onboard_wallet_atomic returns. sourceRef: docs/DATABASE.md (functions table) */
 interface OnboardWalletResult {
   principal_id: string;
   wallet_id: string;
   is_new: boolean;
 }
 
-/**
- * Validates the onboard_wallet_atomic result, which the driver hands back as
- * a parsed jsonb value. Null when a field is missing or has the wrong type.
- */
 function parseOnboardWalletResult(result: unknown): OnboardWalletResult | null {
   if (
     typeof result !== "object" ||
@@ -318,7 +223,6 @@ function parseOnboardWalletResult(result: unknown): OnboardWalletResult | null {
   return { principal_id: principalId, wallet_id: walletId, is_new: isNew };
 }
 
-/** Sanctioned wallets are rejected; clean and unchecked wallets pass. */
 function buildDisposition(
   wallet: WalletRow,
   isNewWallet: boolean
@@ -326,7 +230,6 @@ function buildDisposition(
   const principal: WalletPrincipal = {
     kind: "wallet",
     principalId: wallet.id,
-    walletId: wallet.id,
     address: wallet.address,
     chain: wallet.chain,
     sanctionsStatus: wallet.sanctions_status,
@@ -339,7 +242,6 @@ function buildDisposition(
     return {
       ok: false,
       reason: "sanctioned",
-      // sourceRef: src/lib/x402/sanctions/applyWalletGate.ts (deleted June 2026)
       message:
         "This wallet has been flagged by sanctions screening and cannot transact.",
       principal,

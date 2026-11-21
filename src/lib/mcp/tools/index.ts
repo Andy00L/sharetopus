@@ -11,7 +11,6 @@ import { registerPublishPosts } from "./publishPosts";
 import { registerRequestUploadUrl } from "./requestUploadUrl";
 import { registerUpdateScheduledPosts } from "./updateScheduledPosts";
 
-// A new tool also needs its name in toolNames.ts and an entry in entitlement.ts (the compiler enforces it).
 const TOOL_REGISTRARS: ReadonlyArray<(server: McpServer) => void> = [
   registerListConnections,
   registerListPinterestBoards,
@@ -25,7 +24,6 @@ const TOOL_REGISTRARS: ReadonlyArray<(server: McpServer) => void> = [
   registerDeleteScheduledPosts,
 ];
 
-/** Registers every MCP tool on the server. */
 export function registerTools(server: McpServer): void {
   for (const register of TOOL_REGISTRARS) {
     register(server);

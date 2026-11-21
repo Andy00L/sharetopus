@@ -1,23 +1,5 @@
 import "server-only";
 
-/**
- * The one broadcaster for wallets Sharetopus signs with itself: the Arc
- * operations wallet (settlements and refunds) and the Celo refund wallet.
- *
- * A call is signed once and its hash computed locally, so a send whose reply
- * is lost is resent as the same bytes (same hash, so it cannot move money a
- * second time), and a transaction that may have reached a node is always
- * reported with its hash. Transport retries are off on the send and lookup
- * path: viem would otherwise resend a timed-out eth_sendRawTransaction by
- * itself and surface the node's "already known" as a failure, and a retried
- * lookup inside the resend loop would stretch one broadcast past the paid
- * routes' 60 s budget.
- *
- * Called by: arc/arcChain.ts (Arc signer), arc/arcFacilitator.ts,
- *            arc/refundArc.ts, celo/refundCelo.ts
- * Tables touched: none
- */
-
 import {
   BaseError,
   HttpRequestError,
@@ -36,23 +18,14 @@ import {
 } from "viem";
 import type { PrivateKeyAccount } from "viem/accounts";
 
-/**
- * Attempts to claim a nonce. One EOA carries one sequential nonce, so two
- * broadcasts from two serverless instances at the same moment race for it;
- * the loser signs again with the next nonce.
- */
 const NONCE_CLAIM_ATTEMPTS = 3;
 
-/** Resends of the SAME signed bytes after a transport failure. */
 const RAW_RESEND_ATTEMPTS = 3;
 
-/** Linear backoff base between attempts, in milliseconds. */
 const BROADCAST_BACKOFF_MS = 200;
 
-/** Node replies meaning these exact bytes are already in the pool. */
 const ALREADY_KNOWN_MARKERS = ["already known", "already imported", "known transaction"] as const;
 
-/** Node replies meaning another transaction holds the nonce we signed with. */
 const NONCE_TAKEN_MARKERS = [
   "nonce too low",
   "nonce too high",
@@ -61,12 +34,6 @@ const NONCE_TAKEN_MARKERS = [
   "replacement transaction underpriced",
 ] as const;
 
-/**
- * An operator-held wallet and its clients on one chain.
- *
- * noRetryClient has transport retries turned off: broadcastCall alone
- * decides when signed bytes are resent or looked up.
- */
 export interface OperatorSigner {
   account: Account;
   chain: Chain;
@@ -86,44 +53,24 @@ export function buildOperatorSigner(params: {
     chain,
     publicClient: createPublicClient({ chain, transport: http(rpcUrl) }),
     walletClient: createWalletClient({ account, chain, transport: http(rpcUrl) }),
+    // viem's http transport retries 5xx, 408 and 429 replies three times by default (viem utils/buildRequest.ts shouldRetry).
     noRetryClient: createPublicClient({ chain, transport: http(rpcUrl, { retryCount: 0 }) }),
   };
 }
 
-/**
- * accepted: a node holds the transaction. delivery_unknown: the signed bytes
- * may have reached a node and may still land, so transactionHash is the one
- * to watch. rejected: no transaction for this call was sent.
- */
 export type BroadcastResult =
   | { status: "accepted"; transactionHash: Hex }
   | { status: "delivery_unknown"; transactionHash: Hex; message: string }
-  | { status: "rejected"; message: string };
+  | { status: "not_sent"; message: string };
 
 type SignedSendOutcome =
   | { status: "accepted" }
   | { status: "nonce_taken" }
   | { status: "delivery_unknown"; message: string }
-  | { status: "rejected"; message: string };
+  | { status: "not_sent"; message: string };
 
 type TransactionLookup = "found" | "not_found" | "lookup_failed";
 
-/**
- * Broadcasts one call from the operator wallet without ever sending it twice.
- *
- * Before anything is re-signed, the chain is asked whether the signed hash
- * already exists. A new nonce is only taken when the node says the nonce is
- * gone AND our transaction is unknown, which means another broadcast from
- * this wallet claimed it. When a send of the bytes failed in transport and
- * the chain cannot be asked, the bytes are never re-signed: the hash comes
- * back as delivery_unknown.
- *
- * Residual: if a node accepted our bytes but the node answering the lookup
- * has not seen them yet, the call can be signed again under a new nonce.
- * For an EIP-3009 settlement only one of the two transfers can succeed; the
- * other reverts and surfaces as an indeterminate settlement in
- * reconciliation.
- */
 export async function broadcastCall(
   signer: OperatorSigner,
   call: { to: Address; data: Hex; gas?: bigint },
@@ -135,7 +82,7 @@ export async function broadcastCall(
       console.error(
         `[broadcastCall] ${operationName} on ${signer.chain.name} could not be prepared, so nothing was sent: ${signedCall.message}`,
       );
-      return { status: "rejected", message: signedCall.message };
+      return { status: "not_sent", message: signedCall.message };
     }
 
     const { serializedTransaction, transactionHash } = signedCall;
@@ -148,8 +95,8 @@ export async function broadcastCall(
           `[broadcastCall] ${operationName} on ${signer.chain.name} may have been delivered as ${transactionHash}: ${outcome.message}`,
         );
         return { status: "delivery_unknown", transactionHash, message: outcome.message };
-      case "rejected":
-        return { status: "rejected", message: outcome.message };
+      case "not_sent":
+        return { status: "not_sent", message: outcome.message };
       case "nonce_taken":
         console.warn(
           `[broadcastCall] ${operationName} on ${signer.chain.name} lost its nonce to another broadcast on attempt ${attempt} of ${NONCE_CLAIM_ATTEMPTS}.`,
@@ -158,12 +105,12 @@ export async function broadcastCall(
         break;
       default: {
         const unhandledOutcome: never = outcome;
-        return { status: "rejected", message: `Unhandled send outcome ${JSON.stringify(unhandledOutcome)}.` };
+        return { status: "not_sent", message: `Unhandled send outcome ${JSON.stringify(unhandledOutcome)}.` };
       }
     }
   }
   return {
-    status: "rejected",
+    status: "not_sent",
     message: `${operationName} on ${signer.chain.name} could not claim a nonce after ${NONCE_CLAIM_ATTEMPTS} attempts.`,
   };
 }
@@ -214,9 +161,14 @@ async function sendSignedTransaction(
         };
       }
       if (NONCE_TAKEN_MARKERS.some((marker) => errorText.includes(marker))) {
-        return { status: "nonce_taken" };
+        return hasEarlierSendFailedInTransport
+          ? {
+              status: "delivery_unknown",
+              message: `An earlier send of these bytes failed in transport and the nonce is now taken, possibly by them (${describeBroadcastError(error)}).`,
+            }
+          : { status: "nonce_taken" };
       }
-      if (!isTransportError) return { status: "rejected", message: describeBroadcastError(error) };
+      if (!isTransportError) return { status: "not_sent", message: describeBroadcastError(error) };
 
       hasEarlierSendFailedInTransport = true;
       lastTransportFailure = describeBroadcastError(error);
@@ -243,7 +195,6 @@ async function lookUpTransaction(signer: OperatorSigner, transactionHash: Hex): 
   }
 }
 
-/** Timeouts and HTTP-level failures, where the node may or may not have the bytes. */
 function isTransportFailure(error: unknown): boolean {
   if (!(error instanceof BaseError)) return false;
   return (
@@ -257,7 +208,7 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** viem's short message and details only: its full message carries the RPC URL, which can hold an API key. */
+// viem's full error message carries the RPC URL with its path and query, which can hold an API key (viem errors/request.ts).
 function describeBroadcastError(error: unknown): string {
   if (!(error instanceof BaseError)) return describeError(error);
   return error.details && error.details !== error.shortMessage

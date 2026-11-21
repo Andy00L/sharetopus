@@ -18,15 +18,6 @@ type OAuthTrustResult =
 
 const MAX_VERIFIED_CLIENTS_PER_USER = 5;
 
-/**
- * New OAuth clients one user may bring, per minute and per day. A client
- * id is the URL of the client's metadata document (CIMD), so one user can
- * still point Sharetopus at many of them. Keyed on the user, not the IP:
- * hosted clients (Claude, ChatGPT) call this route from shared egress IPs,
- * so a per-IP limit refused every user of the same client after the first
- * few. The first-sight insert only runs after Clerk verified the token and
- * the subscription gate passed, so the user is always known here.
- */
 const NEW_CLIENTS_PER_USER_PER_MINUTE: RateLimitRule = { limit: 3, windowSeconds: 60 };
 const NEW_CLIENTS_PER_USER_PER_DAY: RateLimitRule = { limit: 10, windowSeconds: 86400 };
 
@@ -36,27 +27,6 @@ type OAuthClientHints = {
   softwareVersion?: string | null;
 };
 
-/**
- * Checks the trust state of an OAuth client and lazily populates
- * `mcp_oauth_clients` on first sight.
- *
- * Flow:
- *   1. Cache hit -> return based on cached trust_level + revoked_at
- *   2. Cache miss -> SELECT mcp_oauth_clients WHERE client_id = X
- *   3. Row exists -> cache it, refuse "revoked" or "blocked", else allow
- *   4. No row -> firstSightInsert(); a lost insert race reads the winning row
- *
- * Fails CLOSED on lookup errors. Clerk token verification and the
- * subscription gate have already passed; this trust check is the
- * admin override layer (blocked / revoked enforcement). A DB hiccup
- * briefly denying a legit client is acceptable; bypassing an admin
- * block is not.
- *
- * @param clientId   OAuth client ID from the Clerk-issued token
- * @param principalId User ID who is authenticating (consent giver)
- * @param hints      Optional client name the route read from the request
- *                   (2025-era initialize, or the 2026 _meta envelope)
- */
 export async function checkOAuthClientTrust(
   clientId: string,
   principalId: string,
@@ -143,12 +113,6 @@ function decideTrustFromRow(
   return { allowed: true };
 }
 
-/**
- * Handles first-sight INSERT: per-user new-client limits, count verified
- * clients for the registering user, decide trust_level, INSERT. The cache
- * and the answer follow the row the database kept: when a concurrent
- * request inserted the client first, its row is read back.
- */
 async function firstSightInsert(
   clientId: string,
   principalId: string,
@@ -165,9 +129,6 @@ async function firstSightInsert(
       console.warn(`[firstSightInsert] ${scope} limit hit for ${clientId}`);
       return { allowed: false, reason: "rate_limited" };
     }
-    // A limiter outage fails open: Clerk and the subscription gate
-    // already vetted this user, and a Redis incident should not stop
-    // paying users from connecting a new client.
     if (!limitResult.success) {
       console.warn(
         `[firstSightInsert] Rate limiter ${limitResult.reason} for ${scope}; continuing.`,
@@ -190,7 +151,6 @@ async function firstSightInsert(
       `[firstSightInsert] Verified-count query failed for ${principalId}:`,
       countErr.message,
     );
-    // Falls through to unverified: an unknown count grants no verified slot.
   }
 
   const trustLevel: "verified" | "unverified" =
@@ -240,10 +200,6 @@ async function firstSightInsert(
   return decideTrustFromRow(clientId, winningLookup.row);
 }
 
-/**
- * Logs a rate-limit event for forensic analysis, with the user who hit
- * the limit and the hashed IP they came from.
- */
 async function logRateLimitEvent(
   scope: string,
   principalId: string,

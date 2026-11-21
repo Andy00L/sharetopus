@@ -16,8 +16,8 @@ import { buildOAuthUrl } from "@/lib/x402/connect/buildOAuthUrl";
 import type { Platform } from "@/lib/x402/connect/types";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import {
-  hasConnectionTokenSecret,
   issueConnectionToken,
+  loadConnectionTokenSecret,
 } from "@/lib/x402/oauth/connectionToken";
 import {
   CONNECTION_TOKEN_GRACE_MS,
@@ -28,20 +28,6 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-/**
- * POST /api/x402/reauth
- *
- * Pays connect_account. Re-authenticates an expired social connection.
- * Steps:
- * 1. Parse body (social_account_id).
- * 2. Before settlement, check the account belongs to the paying wallet,
- *    needs re-authentication, is on an x402 platform, and that the OAuth
- *    configuration is complete; a failure here costs nothing.
- * 3. x402 middleware handles payment and the charge.
- * 4. Mint a new OAuth URL and insert a social_connections row.
- * 5. Return the OAuth URL plus a connection token for /oauth/status polling.
- */
 
 const ReauthBodySchema = z.object({
   social_account_id: z.string().uuid(),
@@ -61,11 +47,6 @@ type ReauthTargetResult =
   | { ok: true; platform: Platform; redirectUri: string }
   | Extract<PreflightResult, { ok: false }>;
 
-/**
- * The account to re-authenticate and its OAuth redirect, or why it cannot
- * be. Runs as the precheck and again inside the handler, since the account
- * can change between the two.
- */
 async function loadReauthTarget(
   socialAccountId: string,
   principalId: string,
@@ -107,7 +88,6 @@ async function loadReauthTarget(
     };
   }
 
-  // Only the x402 platforms have x402 OAuth redirect URIs.
   const platform = account.platform;
   if (!isX402Platform(platform)) {
     return {
@@ -131,14 +111,8 @@ async function loadReauthTarget(
   return { ok: true, platform, redirectUri };
 }
 
-/**
- * Everything that can fail on configuration or account state, checked
- * before settlement: the HMAC secret, the account, and a probe OAuth URL
- * build (buildOAuthUrl only reads env and pure inputs, so a missing client
- * id is caught here instead of after the charge).
- */
 const precheckReauth: X402Precheck<ReauthBody> = async ({ body, principal }) => {
-  if (!hasConnectionTokenSecret()) {
+  if (!loadConnectionTokenSecret().ok) {
     console.error("[precheckReauth] X402_HMAC_SECRET not set; refusing to charge.");
     return {
       ok: false,
@@ -196,6 +170,11 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
   precheck: precheckReauth,
 
   handler: async ({ body, principal, chargeId }) => {
+    const tokenSecretResult = loadConnectionTokenSecret();
+    if (!tokenSecretResult.ok) {
+      return { success: false, errorKind: "token_issue_failed", message: "Failed to issue the connection token." };
+    }
+
     const target = await loadReauthTarget(body.social_account_id, principal.principalId);
     if (!target.ok) {
       return { success: false, errorKind: target.errorKind, message: target.message };
@@ -218,8 +197,6 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    // The PKCE verifier (X) is written with the row, so no callback can
-    // arrive before it exists.
     const { error: insertError } = await runQuery(
       db.insert(social_connections).values({
         id: connectionId,
@@ -243,29 +220,20 @@ export const POST = x402PaidEndpoint<ReauthBody, ReauthResult>({
       };
     }
 
-    const tokenResult = issueConnectionToken({
-      connectionId,
-      walletAddress: principal.address,
-      chargeId,
-      iat: Date.now(),
-      exp: new Date(expiresAt).getTime() + CONNECTION_TOKEN_GRACE_MS,
-      platform: target.platform,
-    });
-    if (!tokenResult.ok) {
-      return {
-        success: false,
-        errorKind: "token_issue_failed",
-        message: "Failed to issue the connection token.",
-      };
-    }
-
     return {
       success: true,
       data: {
         connectionId,
         platform: target.platform,
         oauthUrl: oauthResult.url,
-        connectionToken: tokenResult.token,
+        connectionToken: issueConnectionToken(tokenSecretResult.secret, {
+          connectionId,
+          walletAddress: principal.address,
+          chargeId,
+          iat: Date.now(),
+          exp: new Date(expiresAt).getTime() + CONNECTION_TOKEN_GRACE_MS,
+          platform: target.platform,
+        }),
         expiresAt,
       },
       chargeRecord: { socialConnectionId: connectionId },

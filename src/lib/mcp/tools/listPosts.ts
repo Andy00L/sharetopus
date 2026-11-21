@@ -17,7 +17,6 @@ import { IsoDateTimeSchema } from "@/lib/mcp/_shared/isoDateTimeSchema";
 import { withMemoizedJsonSchema } from "../_shared/memoizedJsonSchema";
 import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-/** Characters of post text a concise row keeps. */
 const CONCISE_TEXT_CHARS = 140;
 
 const LIST_STATUSES = ["upcoming", "published", "failed", "cancelled"] as const;
@@ -167,7 +166,6 @@ const handleListPosts = withMcpTool("list_posts", async (ctx, args: ListPostsArg
     return errorResult("Could not load your posts. Retry in a moment.");
   }
 
-  // Status queries fetch one extra row to tell whether another page exists.
   const pageRows = args.batch_id ? rowsResult.rows : rowsResult.rows.slice(0, args.limit);
   const hasMore = !args.batch_id && rowsResult.rows.length > args.limit;
   return jsonResult({
@@ -177,7 +175,6 @@ const handleListPosts = withMcpTool("list_posts", async (ctx, args: ListPostsArg
   } satisfies z.infer<typeof ListPostsOutputSchema>);
 });
 
-/** Lists posts by status, or every post of one publish_posts batch, with account names on each row. */
 export function registerListPosts(server: McpServer): void {
   server.registerTool("list_posts", LIST_POSTS_TOOL, handleListPosts);
 }
@@ -261,7 +258,6 @@ async function loadStatusRows(principalId: string, args: ListPostsArgs): Promise
   }
 }
 
-/** Every post of one batch: scheduled rows plus the publish-now jobs and their outcome. */
 async function loadBatchRows(principalId: string, batchId: string): Promise<RowsResult> {
   const [scheduledRead, directRead] = await Promise.all([
     runQuery(

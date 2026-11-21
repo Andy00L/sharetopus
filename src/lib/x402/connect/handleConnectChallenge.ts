@@ -5,10 +5,6 @@ import type { ConnectNetworkContext } from "./types";
 import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { buildPaymentRequired } from "@/lib/x402/http/paymentHttp";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 export type ConnectChallengeResult =
   | { ok: true; challengeBody: PaymentRequired }
   | {
@@ -17,21 +13,6 @@ export type ConnectChallengeResult =
       message: string;
     };
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Builds the 402 Payment Required body for /connect.
- *
- * Reads the currently effective price for the 'connect_account' action. The
- * 402 carries no extensions: the wallet is identified by the payment
- * signature alone, and a first-time paying wallet is onboarded during
- * verify.
- *
- * Called by: POST /api/x402/connect (challenge path)
- * Tables touched: pricing_actions (read)
- */
 export async function handleConnectChallenge(
   context: ConnectNetworkContext
 ): Promise<ConnectChallengeResult> {
@@ -45,8 +26,6 @@ export async function handleConnectChallenge(
     };
   }
 
-  // On Solana this resolves the facilitator fee payer; failure means no
-  // payable 402 can be built.
   const challengeResult = await buildPaymentRequired({
     resourceUrl: context.resourceUrl,
     network: context.network,

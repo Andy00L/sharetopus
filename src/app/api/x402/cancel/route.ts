@@ -10,19 +10,6 @@ import { preflightScheduledPostChange } from "@/actions/server/scheduleActions/p
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * POST /api/x402/cancel
- *
- * Pays the cancel action (price per pricing_actions). Cancels 1-50
- * scheduled posts.
- * Steps:
- * 1. Parse body (post_ids array, 1-50 UUIDs).
- * 2. Before settlement, check the posts belong to the payer and at least one
- *    is still scheduled; a failure here costs nothing.
- * 3. x402 middleware handles payment and the charge.
- * 4. Call cancelScheduledPostBatch with createdVia="x402".
- */
-
 const CancelBodySchema = z.object({
   post_ids: z.array(z.string().uuid()).min(1).max(50),
 });

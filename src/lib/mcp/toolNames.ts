@@ -1,6 +1,5 @@
 import "server-only";
 
-/** Every MCP tool name; tool-keyed maps (entitlement.ts) must cover each one. */
 export const MCP_TOOL_NAMES = [
   "list_connections",
   "list_pinterest_boards",

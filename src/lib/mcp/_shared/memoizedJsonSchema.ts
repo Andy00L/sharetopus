@@ -4,13 +4,8 @@ type JsonSchemaConverter = StandardSchemaWithJSON["~standard"]["jsonSchema"];
 type JsonSchemaOptions = Parameters<JsonSchemaConverter["input"]>[0];
 type JsonSchemaDirection = keyof JsonSchemaConverter;
 
-/**
- * mcp-handler builds a new McpServer on every request, and the SDK converts
- * every tool schema at registration and again on tools/list.
- * sourceRef: node_modules/mcp-handler/dist/index.mjs (new McpServer per
- * request), node_modules/@modelcontextprotocol/server/dist/mcp-Dw2OlZ1f.mjs
- * (_createRegisteredTool, the tools/list handler).
- */
+// mcp-handler builds a new McpServer per request (mcp-handler/dist/index.mjs), and the SDK converts every tool
+// schema at registration and again on tools/list (@modelcontextprotocol/server/dist/mcp-Dw2OlZ1f.mjs).
 export function withMemoizedJsonSchema<Input, Output>(
   schema: StandardSchemaWithJSON<Input, Output>,
 ): StandardSchemaWithJSON<Input, Output> {

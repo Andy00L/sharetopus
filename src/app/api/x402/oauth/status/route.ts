@@ -10,25 +10,13 @@ import {
   buildRateLimitJsonResponse,
   describeRateLimitRejection,
 } from "@/lib/x402/http/rateLimitRejection";
-import { handleStatusQuery } from "@/lib/x402/oauth/status/handleStatusQuery";
+import { handleStatusQuery, type StatusQueryResult } from "@/lib/x402/oauth/status/handleStatusQuery";
 
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
 const ENDPOINT_PATH = "/api/x402/oauth/status";
 
-/**
- * GET /api/x402/oauth/status
- * Headers: Authorization: Bearer <connectionToken>
- *
- * Returns current state of an OAuth connection. Polled by agents during the
- * OAuth flow, so it is the busiest x402 route: a routine successful poll
- * writes only its poll counter, and audit rows are kept for rejections and
- * written after the response is sent.
- *
- * Auth: HMAC-signed connectionToken issued at /connect time.
- * Rate limit: 120/min per IP (x402_oauth_status_poll scope).
- */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const startMs = performance.now();
   const ipHash = await extractIpHash();
@@ -48,7 +36,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     after(() => logX402Call(auditEntry));
   };
 
-  // Step 1: rate limit per IP.
   const rateLimitResult = await checkRateLimit({
     operation: "x402_oauth_status_poll",
     identifier: null,
@@ -60,7 +47,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return buildRateLimitJsonResponse(rejection);
   }
 
-  // Step 2: bearer token.
   const authHeader = request.headers.get("authorization");
   const connectionToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
 
@@ -75,7 +61,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // Step 3: verify the token and read the connection.
   const result = await handleStatusQuery({ connectionToken }, ipHash);
 
   if (!result.ok) {
@@ -89,16 +74,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json(result.payload, { status: 200 });
 }
 
-/** Maps handleStatusQuery error kinds to HTTP status codes. */
 function mapStatusErrorToHttpStatus(
-  kind:
-    | "missing_token"
-    | "invalid_token"
-    | "token_expired"
-    | "server_misconfigured"
-    | "poll_limit_exceeded"
-    | "connection_not_found"
-    | "db_error"
+  kind: Extract<StatusQueryResult, { ok: false }>["error"]["kind"],
 ): number {
   switch (kind) {
     case "missing_token":

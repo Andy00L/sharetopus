@@ -1,19 +1,5 @@
 import "server-only";
 
-/**
- * On-chain confirmation for a transaction Sharetopus sent (refunds) or a
- * facilitator reported (settlements under reconciliation).
- *
- * "wait" blocks up to the timeout for the transaction to land; "check" reads
- * its current state once, for the reconciliation sweep. Every failure to
- * learn the outcome (timeout, RPC outage, unknown hash) reports "pending",
- * never "reverted": only the chain saying the transaction failed is a
- * definitive failure.
- *
- * Called by: facilitator.refundPayment, inngest/functions/sweepX402ReconciliationCron
- * Tables touched: none
- */
-
 import { createSolanaRpc, isSignature } from "@solana/kit";
 import {
   TransactionReceiptNotFoundError,
@@ -27,10 +13,8 @@ import { pollUntilDeadline } from "@/lib/x402/chain/pollUntilDeadline";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/** Ceiling for "wait" mode; every supported chain confirms well inside it. */
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 20_000;
 
-/** Solana signature-status polling cadence in "wait" mode. */
 const SVM_POLL_INTERVAL_MS = 1_000;
 
 /** One getSignatureStatuses call; the Solana HTTP transport sets no timeout of its own. */

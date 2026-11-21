@@ -18,7 +18,6 @@ import { entitlementFor } from "./entitlement";
 import { MCP_TOOL_CALL_RATE_LIMIT } from "./rateLimits";
 import type { McpToolName } from "./toolNames";
 
-/** Per-request context handed to every tool handler. */
 type McpToolContext = {
   principal: McpPrincipal;
   requestId: string | null;
@@ -29,10 +28,6 @@ type McpToolContext = {
 
 type AuditStatus = "ok" | "error" | "denied" | "rate_limited" | "quota_exceeded";
 
-/**
- * What a handler returns: the MCP result plus optional audit overrides.
- * auditStatus replaces the default ok/error; auditArgs replaces the logged args.
- */
 type McpHandlerResult = {
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
@@ -41,7 +36,6 @@ type McpHandlerResult = {
   auditArgs?: Record<string, unknown> | null;
 };
 
-/** Success result: compact JSON text plus the same object as structuredContent. */
 export function jsonResult<TValue extends Record<string, unknown>>(
   value: TValue,
   auditArgs?: Record<string, unknown> | null,
@@ -53,7 +47,6 @@ export function jsonResult<TValue extends Record<string, unknown>>(
   };
 }
 
-/** Error result the agent can act on; auditStatus defaults to "error". */
 export function errorResult(
   message: string,
   auditStatus: AuditStatus = "error",
@@ -66,14 +59,9 @@ export function errorResult(
 }
 
 type WithMcpToolOptions<TArgs> = {
-  /** Summarizes large or sensitive args before they reach mcp_audit_log. */
   auditArgsBuilder?: (args: TArgs) => Record<string, unknown> | null;
 };
 
-/**
- * Wraps a tool handler with the per-principal call budget, the plan and
- * quota gate, and one mcp_audit_log row per call (allow, deny or throw).
- */
 export function withMcpTool<TArgs>(
   toolName: McpToolName,
   handler: (ctx: McpToolContext, args: TArgs) => Promise<McpHandlerResult>,
@@ -85,7 +73,6 @@ export function withMcpTool<TArgs>(
       ? options.auditArgsBuilder(args)
       : rawArgsAsAuditPayload(args);
 
-    // A limiter outage fails open: the monthly quota still bounds usage.
     const principalLimit = await checkRateLimit({
       operation: "mcp_tool_call",
       identifier: ctx.principal.principalId,
@@ -138,8 +125,15 @@ export function withMcpTool<TArgs>(
         isError: result.isError,
       };
     } catch (err) {
+      console.error(
+        `[withMcpTool] ${toolName} threw for request ${ctx.requestId ?? "unknown"}:`,
+        err instanceof Error ? err.message : err,
+      );
       emitAudit(ctx, toolName, defaultAuditArgs, "error");
-      throw err; // The SDK turns the throw into a JSON-RPC error.
+      return {
+        content: [{ type: "text" as const, text: `${toolName} failed with an internal error. Retry, or contact support if it persists.` }],
+        isError: true,
+      };
     }
   };
 }
@@ -156,7 +150,6 @@ async function buildContext(
   };
 }
 
-/** Raw args as an audit payload; an empty object logs as null. */
 function rawArgsAsAuditPayload(
   rawArgs: unknown,
 ): Record<string, unknown> | null {

@@ -26,39 +26,13 @@ export const maxDuration = 60;
 
 const ENDPOINT_PATH = "/api/x402/connect";
 
-/**
- * Platform used to price the 402 challenge when an unpaid request omits
- * ?platform. connect_account has a single platform-independent price, so
- * any member of X402_PLATFORMS yields the same challenge; paid requests
- * still require an explicit valid ?platform.
- */
 const CHALLENGE_FALLBACK_PLATFORM = "linkedin" as const;
 
 type ConnectAuditStatus = X402AuditEntry["resultStatus"];
 
-/**
- * POST /api/x402/connect?platform=linkedin
- *
- * x402 paid OAuth initiation (connect_account pricing action).
- *
- * Flow (payment-first):
- *   - No payment header: return 402 challenge (PAYMENT-REQUIRED header +
- *     body). ?platform is optional here so A2MCP validation probes with a
- *     bare URL still get the standard challenge.
- *   - Payment header present: require valid ?platform, verify payment,
- *     settle through the shared charge lifecycle, create the pending
- *     connection, return OAuth URL + connection token.
- *
- * Query params:
- *   ?platform (required on paid requests; any X402_PLATFORMS member)
- *   ?network=polygon|arbitrum|celo|arc|solana (optional; default base;
- *   unknown values are 400)
- */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const audit = await createConnectAudit();
 
-  // Step 1: read the payment header before validating ?platform (x402 is
-  // payment-first).
   const paymentHeader = readPaymentHeader(request);
 
   const url = new URL(request.url);
@@ -78,12 +52,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const platform = requestedPlatform ?? CHALLENGE_FALLBACK_PLATFORM;
 
-  // Step 2: no payment header, answer with the challenge.
   if (!paymentHeader) {
     return respondUnpaidConnectChallenge(request, platform, audit);
   }
 
-  // Step 3: network and payout address.
   const networkResult = resolveRequestNetwork(request.url);
   if (!networkResult.ok) {
     audit({ principal: null, chargeId: null, resultStatus: "error" });
@@ -95,7 +67,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : NextResponse.json({ error: "internal", message: "Server misconfiguration." }, { status: 500 });
   }
 
-  // Step 4: verify, settle, create the connection.
   const result = await handleConnectVerify(paymentHeader, {
     network: networkResult.network,
     recipientAddress: networkResult.recipientAddress,
@@ -121,12 +92,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json(result.payload, { status: 200, headers });
 }
 
-/**
- * GET /api/x402/connect?platform=linkedin
- *
- * Challenge-only probe for A2MCP validators (curl -i / curl -I). Always
- * answers 402; paying still requires POST.
- */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const audit = await createConnectAudit();
   const platformParam = new URL(request.url).searchParams.get("platform");
@@ -137,17 +102,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   return respondUnpaidConnectChallenge(request, platform, audit);
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 type ConnectAudit = (entry: {
   principal: WalletPrincipal | null;
   chargeId: string | null;
   resultStatus: ConnectAuditStatus;
 }) => void;
 
-/** Audit rows for /connect are written after the response is sent. */
 async function createConnectAudit(): Promise<ConnectAudit> {
   const startMs = performance.now();
   const ipHash = await extractIpHash();
@@ -167,7 +127,6 @@ async function createConnectAudit(): Promise<ConnectAudit> {
   };
 }
 
-/** Shared 402 challenge for POST without payment and for GET probes. */
 async function respondUnpaidConnectChallenge(
   request: NextRequest,
   platform: Platform,
@@ -210,8 +169,6 @@ async function respondUnpaidConnectChallenge(
   if (!result.ok) {
     console.error(`[respondUnpaidConnectChallenge] Challenge build failed: ${result.message}`);
     audit({ principal: null, chargeId: null, resultStatus: "error" });
-    // A missing Solana fee payer is an upstream facilitator outage, not a
-    // server bug: 502 facilitator_unavailable, matching the verify paths.
     if (result.error === "fee_payer_unavailable") {
       return NextResponse.json(
         { error: "facilitator_unavailable", message: result.message },
@@ -224,10 +181,6 @@ async function respondUnpaidConnectChallenge(
   audit({ principal: null, chargeId: null, resultStatus: "402_required" });
   return buildPaymentRequiredResponse(result.challengeBody);
 }
-
-// ---------------------------------------------------------------------------
-// Error response builder for connect
-// ---------------------------------------------------------------------------
 
 function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
   switch (error.kind) {
@@ -303,14 +256,10 @@ function buildConnectErrorResponse(error: ConnectVerifyError): NextResponse {
     case "server_misconfiguration":
       return NextResponse.json({ error: "internal", message: error.message }, { status: 500 });
 
-    // Its own code: the payment settled, so the client must not present it
-    // again, unlike the failures above where nothing was charged.
     case "settlement_unrecorded":
       return NextResponse.json({ error: error.kind, message: error.message }, { status: 500 });
 
     case "db_insert_failed":
-      // refundInitiated is true once a refund transaction exists; false plus
-      // a null tx hash means the settled payment needs manual reconciliation.
       return NextResponse.json(
         {
           error: "internal",

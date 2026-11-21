@@ -64,7 +64,6 @@ const handleListBillingSummary = withMcpTool("list_billing_summary", async (ctx)
     plan: ctx.principal.plan ? tierLabel(ctx.principal.plan) : null,
     status: subscription.status,
     current_period_end: subscription.isActive ? subscription.currentPeriodEnd : null,
-    // The usage_quotas filter is the 1st of the month; agents read YYYY-MM.
     period: period.slice(0, 7),
     usage: Object.entries(caps).map(([toolName, cap]) => ({
       tool: toolName,
@@ -74,7 +73,6 @@ const handleListBillingSummary = withMcpTool("list_billing_summary", async (ctx)
   } satisfies z.infer<typeof ListBillingSummaryOutputSchema>);
 });
 
-/** The plan, its status, and this month's usage of each capped tool against its limit. */
 export function registerListBillingSummary(server: McpServer): void {
   server.registerTool("list_billing_summary", LIST_BILLING_SUMMARY_TOOL, handleListBillingSummary);
 }

@@ -1,6 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
-/** Prompt: audit the next 14 days of scheduled posts for gaps, clusters and platform balance. */
 export function registerAuditCalendar(server: McpServer): void {
   server.registerPrompt(
     "audit_calendar",

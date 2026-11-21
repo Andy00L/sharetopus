@@ -13,16 +13,6 @@ import {
   describeRateLimitRejection,
 } from "@/lib/x402/http/rateLimitRejection";
 
-/**
- * GET /api/x402/facilitator/supported
- *
- * What this facilitator will verify and settle: the exact scheme on Arc
- * mainnet, plus the address that broadcasts settlements. Open, because it
- * only reads configuration.
- *
- * Logic lives in src/lib/x402/arc/facilitatorApi.ts.
- */
-
 export const runtime = "nodejs";
 export const maxDuration = 10;
 

@@ -36,6 +36,10 @@ beforeEach(() => {
 const celoNetwork = getNetworkConfig("celo");
 if (!celoNetwork) throw new Error("[facilitatorClient.test] celo is missing from the network registry");
 
+const celoClientResult = getFacilitatorClient(celoNetwork);
+if (!celoClientResult.ok) throw new Error(`[facilitatorClient.test] ${celoClientResult.message}`);
+const celoClient = celoClientResult.client;
+
 const REQUIREMENTS: PaymentRequirements = {
   scheme: "exact",
   network: celoNetwork.caipNetwork,
@@ -65,7 +69,7 @@ describe("hosted facilitator client", () => {
       }),
     });
 
-    const settleResponse = await getFacilitatorClient(celoNetwork).settle(PAYLOAD, REQUIREMENTS);
+    const settleResponse = await celoClient.settle(PAYLOAD, REQUIREMENTS);
 
     expect(settleResponse.success).toBe(false);
     expect(settleResponse.errorReason).toBe("invalid_exact_evm_insufficient_balance");
@@ -78,7 +82,7 @@ describe("hosted facilitator client", () => {
       body: JSON.stringify({ isValid: false, invalidReason: "invalid_exact_evm_signature" }),
     });
 
-    const verifyResponse = await getFacilitatorClient(celoNetwork).verify(PAYLOAD, REQUIREMENTS);
+    const verifyResponse = await celoClient.verify(PAYLOAD, REQUIREMENTS);
 
     expect(verifyResponse.isValid).toBe(false);
     expect(verifyResponse.invalidReason).toBe("invalid_exact_evm_signature");
@@ -87,7 +91,7 @@ describe("hosted facilitator client", () => {
   test("a settle answered by an outage page still throws, so the settlement stays indeterminate", async () => {
     replyByPath.set("/settle", { status: 502, body: "<html>Bad Gateway</html>" });
 
-    const settleAttempt = getFacilitatorClient(celoNetwork).settle(PAYLOAD, REQUIREMENTS);
+    const settleAttempt = celoClient.settle(PAYLOAD, REQUIREMENTS);
 
     await expect(settleAttempt).rejects.toThrow("Facilitator settle failed (502)");
   });

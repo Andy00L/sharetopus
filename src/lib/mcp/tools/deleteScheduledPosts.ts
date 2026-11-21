@@ -51,7 +51,6 @@ const handleDeleteScheduledPosts = withMcpTool(
   },
 );
 
-/** Permanently deletes scheduled posts and the media no other post still uses. */
 export function registerDeleteScheduledPosts(server: McpServer): void {
   server.registerTool("delete_scheduled_posts", DELETE_SCHEDULED_POSTS_TOOL, handleDeleteScheduledPosts);
 }

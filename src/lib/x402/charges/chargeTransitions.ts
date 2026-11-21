@@ -6,31 +6,10 @@ import { db, runQuery } from "@/db/client";
 import { x402_charges, x402_refunds } from "@/db/schema";
 import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
 
-/**
- * Status-scoped transitions for x402_charges rows.
- *
- * Every transition includes the expected prior status in the WHERE clause
- * and checks the affected-row count, so two concurrent requests can never
- * both move the same charge (no double-settle marking, no refunded-over-
- * failed overwrites). A zero-row result means another request transitioned
- * the charge first; callers decide what that means for their flow.
- *
- * Called by: charges/chargeLifecycle.ts, solanaActions/postNowBlink.ts,
- *            inngest/functions/sweepX402ReconciliationCron.ts
- * Tables touched: x402_charges (update), x402_refunds (insert, refund path)
- *
- * All functions return errors as values. Never throw.
- */
-
 export type ChargeTransitionResult =
   | { success: true }
   | { success: false; reason: "not_in_expected_status" | "db_error"; message: string };
 
-/**
- * pending -> settled, recording the settlement transaction. Facilitator
- * settlements leave block number and fee null (no SettleResponse carries
- * them); the Blink path, which reads the chain itself, passes the slot.
- */
 export async function markChargeSettled(params: {
   chargeId: string;
   txHash: string;
@@ -65,7 +44,6 @@ export async function markChargeSettled(params: {
   return { success: true };
 }
 
-/** pending -> failed, with the failure cause persisted. */
 export async function markChargeFailed(params: {
   chargeId: string;
   errorMessage: string;
@@ -93,11 +71,6 @@ export async function markChargeFailed(params: {
   return { success: true };
 }
 
-/**
- * Records on a settled charge that its paid action failed. The status stays
- * settled: the database trigger x402_status_guard lets a settled charge
- * become refunded and nothing else.
- */
 export async function markChargeActionFailed(params: {
   chargeId: string;
   errorMessage: string;
@@ -125,12 +98,6 @@ export async function markChargeActionFailed(params: {
   return { success: true };
 }
 
-/**
- * settled -> refunded, plus the x402_refunds audit row.
- *
- * Call ONLY after the chain confirmed the refund; recording a refund that
- * never landed would permanently mark the payer as made whole.
- */
 export async function markChargeRefunded(params: {
   chargeId: string;
   reason: string;
@@ -170,9 +137,6 @@ export async function markChargeRefunded(params: {
   );
 
   if (refundInsertError) {
-    // The charge already says "refunded" and the refund landed; losing the
-    // x402_refunds row would lose the only copy of the refund tx hash, so it
-    // goes to reconciliation. Money-wise this is still a success.
     console.error(
       `[markChargeRefunded] x402_refunds insert failed for charge ${params.chargeId} (refund tx ${params.refundTxHash}): ${refundInsertError.message}`
     );

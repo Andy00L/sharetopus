@@ -120,7 +120,6 @@ function replayStoredPayment() {
     principal: {
       kind: "wallet",
       principalId: "principal-1",
-      walletId: "principal-1",
       address: PAYER_ADDRESS,
       chain: "base",
       sanctionsStatus: "clean",

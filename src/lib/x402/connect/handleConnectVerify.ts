@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { encodePaymentResponseHeader } from "@x402/core/http";
 import type { SettleResponse } from "@x402/core/types";
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
@@ -28,8 +28,8 @@ import { verifyPayment } from "@/lib/x402/facilitator";
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import {
-  hasConnectionTokenSecret,
   issueConnectionToken,
+  loadConnectionTokenSecret,
 } from "@/lib/x402/oauth/connectionToken";
 import { generateOAuthState } from "@/lib/x402/oauth/state";
 import {
@@ -45,27 +45,16 @@ import type { ConnectNetworkContext, ConnectSuccessPayload } from "./types";
 
 const CONNECT_VERIFY_RATE_LIMIT = { limit: 5, windowSeconds: 60 };
 
-// ---------------------------------------------------------------------------
-// Result types
-// ---------------------------------------------------------------------------
-
 export type ConnectVerifyResult =
   | {
       ok: true;
       payload: ConnectSuccessPayload;
       settleResponseHeader: string | null;
-      /** Resolved wallet, for the route's audit logging. */
       principal: WalletPrincipal;
-      /** Charge created by this call; null on idempotent reconnects. */
       chargeId: string | null;
     }
   | { ok: false; error: ConnectVerifyError; principal: WalletPrincipal | null; chargeId: string | null };
 
-/**
- * Every error variant the connect verify flow can produce. The verify and
- * settle members come from the shared facilitator error mapping in
- * payment/errorMaps.ts.
- */
 export type ConnectVerifyError =
   | { kind: "rate_limited"; retryAfterSeconds: number }
   | { kind: "rate_limiter_unavailable"; message: string; retryAfterSeconds: number }
@@ -83,7 +72,6 @@ export type ConnectVerifyError =
       refundTxHash: string | null;
     };
 
-/** Shape of a stored connect result, re-read on replay. */
 const ConnectSuccessPayloadSchema = z.object({
   connectionId: z.string(),
   platform: z.enum(POSTING_PLATFORMS),
@@ -93,31 +81,6 @@ const ConnectSuccessPayloadSchema = z.object({
   isReconnect: z.boolean(),
 });
 
-// ---------------------------------------------------------------------------
-// Implementation
-// ---------------------------------------------------------------------------
-
-/**
- * Full /connect verify flow. Called when a payment header is present.
- *
- * Flow:
- *   1. Rate limit check (x402_connect_verify, 5/min per IP), with the
- *      connect price read at the same time
- *   2. Fail fast on missing server config (HMAC secret, redirect URI) so
- *      nothing can fail AFTER the wallet has been charged
- *   3. Check the connect price (verifyPayment needs the expected amount)
- *   4. verifyPayment (off-chain): proves the caller controls the paying key
- *   5. Resolve or onboard the wallet from the facilitator-recovered payer;
- *      sanctioned wallets are rejected, nothing has settled yet
- *   6. Reconnect check: a healthy existing connection costs nothing (the
- *      verified payment is never settled; its authorization expires unclaimed)
- *   7. Build the OAuth URL (env-only and pure, so still before settle)
- *   8. settleCharge: pending charge row first, then settle, then settled.
- *      A replay of the same payment gets its stored result back.
- *   9. Insert the social_connections row (with the PKCE verifier); if that
- *      fails after settlement, refund through the charge lifecycle
- *  10. Issue the HMAC connection token and store the result for replay
- */
 export async function handleConnectVerify(
   paymentHeader: string,
   context: ConnectNetworkContext,
@@ -129,7 +92,6 @@ export async function handleConnectVerify(
     chargeId: null,
   });
 
-  // -- 1. Rate limit, with the connect price read alongside it
   const [rateLimitResult, priceResult] = await Promise.all([
     checkRateLimit({
       operation: "x402_connect_verify",
@@ -151,14 +113,15 @@ export async function handleConnectVerify(
     );
   }
 
-  // -- 2. Fail fast on server misconfiguration, BEFORE any charge
-  if (!hasConnectionTokenSecret()) {
+  const tokenSecretResult = loadConnectionTokenSecret();
+  if (!tokenSecretResult.ok) {
     console.error("[handleConnectVerify] X402_HMAC_SECRET not set; refusing to charge.");
     return failBeforeWallet({
       kind: "server_misconfiguration",
       message: "Connection tokens are not configured on the server.",
     });
   }
+  const tokenSecret = tokenSecretResult.secret;
 
   const redirectUri = getOAuthRedirectUri(context.platform);
   if (!redirectUri) {
@@ -169,13 +132,11 @@ export async function handleConnectVerify(
     });
   }
 
-  // -- 3. Connect pricing
   if (!priceResult.ok) {
     return failBeforeWallet({ kind: "db_error", message: "Unable to read connect pricing from database." });
   }
   const connectPrice = priceResult.usdcPrice;
 
-  // -- 4. Verify (off-chain)
   const verifyResult = await verifyPayment({
     paymentHeader,
     amountUsdc: connectPrice,
@@ -186,9 +147,6 @@ export async function handleConnectVerify(
     return failBeforeWallet(mapVerifyPaymentError(verifyResult.error));
   }
 
-  // -- 5. Resolve or onboard the wallet. Sanctioned wallets are rejected
-  //       before the reconnect check so a wallet flagged after onboarding
-  //       cannot keep using even the free path.
   const walletResult = await resolveOrOnboardWalletPrincipal({
     payerAddress: verifyResult.payerAddress,
     network: context.network,
@@ -206,11 +164,6 @@ export async function handleConnectVerify(
   }
   const wallet = walletResult.principal;
 
-  // -- 6. Reconnect check: healthy connection = no charge. Ordered and
-  //       limited so a wallet with several healthy accounts on the platform
-  //       deterministically reuses the freshest one. A null expiry means a
-  //       non-expiring token (Facebook Page tokens) and counts as healthy;
-  //       DESC ordering puts nulls first, so those win deterministically.
   const nowIso = new Date().toISOString();
   const { data: existingAccounts, error: existingError } = await runQuery(
     db
@@ -228,13 +181,11 @@ export async function handleConnectVerify(
           or(gt(social_accounts.token_expires_at, nowIso), isNull(social_accounts.token_expires_at)),
         ),
       )
-      .orderBy(desc(social_accounts.token_expires_at))
+      .orderBy(sql`${social_accounts.token_expires_at} desc nulls first`)
       .limit(1),
   );
 
   if (existingError) {
-    // Fail closed: charging a wallet that may own a healthy connection
-    // would be an accidental double-charge.
     console.error(`[handleConnectVerify] Reconnect lookup failed: ${existingError.message}`);
     return {
       ok: false,
@@ -251,15 +202,13 @@ export async function handleConnectVerify(
     );
     return {
       ok: true,
-      payload: buildReconnectPayload(existingAccount, wallet, context),
+      payload: buildReconnectPayload({ existingAccount, wallet, context, tokenSecret }),
       settleResponseHeader: null,
       principal: wallet,
       chargeId: null,
     };
   }
 
-  // -- 7. Connection details + OAuth URL, still before settle: a missing
-  //       platform client id rejects here with nothing charged.
   const connectionId = randomUUID();
   const oauthState = generateOAuthState();
   const expiresAt = new Date(Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000).toISOString();
@@ -279,7 +228,6 @@ export async function handleConnectVerify(
     };
   }
 
-  // -- 8. Record, settle, finalize.
   const chargeResult = await settleCharge({
     paymentHeader,
     network: context.network,
@@ -329,8 +277,6 @@ export async function handleConnectVerify(
   }
   const { chargeId, txHash } = chargeResult;
 
-  // -- 9. The connection row. The PKCE verifier (X) is written with it, so no
-  //       callback can arrive before it exists.
   const { error: insertError } = await runQuery(
     db.insert(social_connections).values({
       id: connectionId,
@@ -372,25 +318,18 @@ export async function handleConnectVerify(
     };
   }
 
-  // -- 10. Connection token. The secret was checked before any charge, so
-  //        this cannot fail here; the branch satisfies the result type.
-  const tokenResult = issueConnectionToken({
-    connectionId,
-    walletAddress: wallet.address,
-    chargeId,
-    iat: Date.now(),
-    exp: new Date(expiresAt).getTime() + CONNECTION_TOKEN_GRACE_MS,
-    platform: context.platform,
-  });
-  if (!tokenResult.ok) {
-    console.error("[handleConnectVerify] Token issuance failed after pre-check passed; connection is unpollable.");
-  }
-
   const payload: ConnectSuccessPayload = {
     connectionId,
     platform: context.platform,
     oauthUrl: oauthResult.url,
-    connectionToken: tokenResult.ok ? tokenResult.token : null,
+    connectionToken: issueConnectionToken(tokenSecret, {
+      connectionId,
+      walletAddress: wallet.address,
+      chargeId,
+      iat: Date.now(),
+      exp: new Date(expiresAt).getTime() + CONNECTION_TOKEN_GRACE_MS,
+      platform: context.platform,
+    }),
     expiresAt,
     isReconnect: false,
   };
@@ -413,35 +352,27 @@ export async function handleConnectVerify(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function buildReconnectPayload(
-  existingAccount: { id: string; token_expires_at: string | null; connection_id: string | null },
-  wallet: WalletPrincipal,
-  context: ConnectNetworkContext,
-): ConnectSuccessPayload {
-  // Non-expiring tokens (null expiry) get a synthetic expiry of now plus
-  // the grace period for the polling token and the payload field.
+function buildReconnectPayload(params: {
+  existingAccount: { id: string; token_expires_at: string | null; connection_id: string | null };
+  wallet: WalletPrincipal;
+  context: ConnectNetworkContext;
+  tokenSecret: string;
+}): ConnectSuccessPayload {
+  const { existingAccount, wallet, context, tokenSecret } = params;
   const effectiveExpiryMs = existingAccount.token_expires_at
     ? new Date(existingAccount.token_expires_at).getTime()
     : Date.now();
 
-  // Accounts created before connection tracking have no social_connections
-  // row, so there is nothing for /oauth/status to poll: no token then.
-  let reconnectToken: string | null = null;
-  if (existingAccount.connection_id) {
-    const tokenResult = issueConnectionToken({
-      connectionId: existingAccount.connection_id,
-      walletAddress: wallet.address,
-      chargeId: null,
-      iat: Date.now(),
-      exp: effectiveExpiryMs + CONNECTION_TOKEN_GRACE_MS,
-      platform: context.platform,
-    });
-    reconnectToken = tokenResult.ok ? tokenResult.token : null;
-  }
+  const reconnectToken = existingAccount.connection_id
+    ? issueConnectionToken(tokenSecret, {
+        connectionId: existingAccount.connection_id,
+        walletAddress: wallet.address,
+        chargeId: null,
+        iat: Date.now(),
+        exp: effectiveExpiryMs + CONNECTION_TOKEN_GRACE_MS,
+        platform: context.platform,
+      })
+    : null;
 
   return {
     connectionId: existingAccount.connection_id ?? existingAccount.id,
@@ -471,7 +402,6 @@ function buildSettleResponseHeader(params: {
   return encodePaymentResponseHeader(settleResponse);
 }
 
-/** Answers a connect payment that was already presented. Charges nothing. */
 function respondToConnectReplay(
   replay: ChargeReplay,
   wallet: WalletPrincipal,

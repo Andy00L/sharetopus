@@ -116,7 +116,6 @@ const handleListPinterestBoards = withMcpTool(
   },
 );
 
-/** Lists a Pinterest account's boards, one page at a time (bookmark cursor). */
 export function registerListPinterestBoards(server: McpServer): void {
   server.registerTool("list_pinterest_boards", LIST_PINTEREST_BOARDS_TOOL, handleListPinterestBoards);
 }

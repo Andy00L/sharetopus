@@ -22,14 +22,6 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// POST /api/x402/schedule: checks the post would schedule before settling
-// (a failure costs nothing), schedules it, and refunds a failure after settlement.
-// A post the platform rejects later, at publish time, is not refunded.
-
-/**
- * Options decodeStoredPostOptions reads (src/inngest/events/postOptions.ts).
- * Unknown keys are stripped, not rejected. No privacyLevel: TikTok posts from x402 are public.
- */
 const PostOptionsSchema = z.object({
   link: z.string().url().max(2048).optional(),
   board: z.string().max(128).optional(),
@@ -60,16 +52,15 @@ const ScheduleBodySchema = withMediaPathRule(
 
 type ScheduleBody = z.infer<typeof ScheduleBodySchema>;
 
+const PREFLIGHT_PLACEHOLDER_BATCH_ID = "preflight";
+
 type ScheduleResult = {
   batchId: string;
   scheduleIds: string[];
   inserted: number;
 };
 
-/** The single post this request pays for, as schedulePostBatch takes it. */
 function toSchedulePostData(body: ScheduleBody, batchId: string): SchedulePostData {
-  // Pinterest board fields can arrive with or without a post_options
-  // object; either way they must reach the scheduler.
   const hasPinterestFields =
     body.pinterest_board_id !== undefined ||
     body.pinterest_board_name !== undefined ||
@@ -99,8 +90,6 @@ function toSchedulePostData(body: ScheduleBody, batchId: string): SchedulePostDa
   };
 }
 
-// Challenge-only GET for A2MCP endpoint validation probes (curl -i expects
-// the 402 challenge). post.text is the representative price for the probe.
 export const GET = x402ChallengeGet({
   endpointPath: "/api/x402/schedule",
   action: "post.text",
@@ -143,10 +132,8 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
     return { success: true, action: result.action };
   },
 
-  // The batch id is irrelevant to the checks; a placeholder keeps the one
-  // conversion function shared with the handler.
   precheck: ({ body, principal }) =>
-    preflightSchedulePost(toSchedulePostData(body, "preflight"), principal.principalId),
+    preflightSchedulePost(toSchedulePostData(body, PREFLIGHT_PLACEHOLDER_BATCH_ID), principal.principalId),
 
   handler: async ({ body, principal, requestId }) => {
     const scheduleResult = await schedulePostBatch(
@@ -164,8 +151,6 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
       };
     }
 
-    // The precheck rejects a used idempotency_key, but a concurrent request
-    // can claim it in between; then nothing was scheduled for this payment.
     if (scheduleResult.details.inserted === 0) {
       return {
         success: false,

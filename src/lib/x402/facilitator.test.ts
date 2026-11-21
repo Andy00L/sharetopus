@@ -14,8 +14,11 @@ let confirmationCount = 0;
 
 mock.module("@/lib/x402/facilitatorClient", () => ({
   getFacilitatorClient: () => ({
-    verify: async () => ({ isValid: false, invalidReason: "unused" }),
-    settle: async () => settleReply,
+    ok: true,
+    client: {
+      verify: async () => ({ isValid: false, invalidReason: "unused" }),
+      settle: async () => settleReply,
+    },
   }),
 }));
 

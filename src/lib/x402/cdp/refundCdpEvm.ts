@@ -1,14 +1,6 @@
 import "server-only";
 
-/**
- * Sends a USDC refund from the CDP Server Wallet on base, polygon or
- * arbitrum. The wallet that received the payment (X402_RECIPIENT_EVM) is the
- * sender, and CDP holds its key.
- *
- * Called by: facilitator.refundPayment (coinbase_cdp lane, EVM networks)
- * Tables touched: none
- */
-
+import type { CdpClient } from "@coinbase/cdp-sdk";
 import { isAddress } from "viem";
 
 import { getCdpClient, sendThroughCdp } from "@/lib/x402/cdp/cdpClient";
@@ -17,8 +9,9 @@ import { buildUsdcTransferCall } from "@/lib/x402/chain/usdcTransfer";
 import { getRecipientAddress } from "@/lib/x402/config";
 import type { EvmNetworkConfig } from "@/lib/x402/networks";
 
-/** EVM networks the CDP SDK can send on. sourceRef: @coinbase/cdp-sdk evm.sendTransaction network union. */
-const CDP_EVM_NETWORK_NAMES = ["base", "polygon", "arbitrum"] as const;
+type CdpEvmSendNetwork = Parameters<CdpClient["evm"]["sendTransaction"]>[0]["network"];
+
+const CDP_EVM_NETWORK_NAMES = ["base", "polygon", "arbitrum"] as const satisfies readonly CdpEvmSendNetwork[];
 
 type CdpEvmNetworkName = (typeof CDP_EVM_NETWORK_NAMES)[number];
 

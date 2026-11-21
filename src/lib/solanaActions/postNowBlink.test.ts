@@ -74,6 +74,7 @@ mock.module("@/lib/x402/auth/resolveOrOnboardWalletPrincipal", () => ({
 
 mock.module("@/lib/x402/charges/chargeLifecycle", () => ({
   refundCharge: async () => ({ refundInitiated: false, refundTxHash: null }),
+  updateChargeRecord: async () => {},
 }));
 
 mock.module("@/lib/x402/charges/chargeTransitions", () => ({

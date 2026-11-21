@@ -5,38 +5,9 @@ import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { content_history, pending_direct_posts, scheduled_posts, x402_charges } from "@/db/schema";
 import type { Json } from "@/db/schema";
+import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
 
-/**
- * Public proof ledger behind /proof and the per-network pages.
- *
- * Reads the most recent x402 charges that reached a chain and resolves what
- * each payment bought and whether that post went live. Only values already
- * public on-chain (transaction hash, payer, amount) or harmless (network,
- * action, outcome, timestamp) leave this module. Principal ids, wallet ids,
- * nonces, request ids, error messages, and post content never do.
- *
- * Outcome resolution follows how each route records its work:
- *   - post-now stores metadata.batch_id on the charge. The post.now worker
- *     (src/inngest/functions/processDirectPost.ts) publishes with that
- *     batch_id, and the adapters write content_history keyed by it
- *     (src/lib/api/_shared/directPostForAccountsGeneric.ts,
- *     src/lib/platforms/providers/publishViaRegistry.ts). A failed post-now
- *     ends with pending_direct_posts.status = 'failed' for that batch_id.
- *   - schedule wires x402_charges.scheduled_post_id; scheduled_posts.status
- *     carries the outcome.
- *   - every other action (connect, upload_url, list_*) buys no post.
- *
- * Called by: src/app/(marketing)/proof/page.tsx (every network),
- *            src/app/(marketing)/solana/page.tsx (scoped to solana)
- * Tables touched: x402_charges, content_history, pending_direct_posts,
- *                 scheduled_posts (all read-only)
- */
-
-/** Rows on the public page: enough to prove the lane, one screen tall. */
 const LEDGER_LIMIT = 25;
-
-/** Prefix shared by the three post actions. sourceRef: middleware/resolvePostAction.ts */
-const POST_ACTION_PREFIX = "post.";
 
 export type LedgerOutcome =
   | "published"
@@ -49,7 +20,6 @@ export type LedgerOutcome =
   | "unlinked";
 
 export interface ProofLedgerEntry {
-  /** Registry slug of the network the payment settled on. */
   network: string;
   txHash: string;
   action: string;
@@ -57,7 +27,6 @@ export interface ProofLedgerEntry {
   payerAddress: string;
   outcome: LedgerOutcome;
   platform: string | null;
-  /** ISO timestamp of settlement, falling back to charge creation. */
   settledAt: string;
 }
 
@@ -82,10 +51,6 @@ type LookupResult<Value> =
   | { ok: true; value: Value }
   | { ok: false };
 
-/**
- * The ledger, newest first. Pass networkName to scope it to one lane;
- * omit it for the cross-network page.
- */
 export async function loadProofLedger(options?: {
   networkName?: string;
 }): Promise<ProofLedgerResult> {
@@ -134,15 +99,12 @@ export async function loadProofLedger(options?: {
     fetchFailedPlatformsByBatch(batchIds),
     fetchScheduledOutcomesById(scheduledPostIds),
   ]);
-  // A secondary read failing would mislabel real posts as still publishing;
-  // an honest error state beats a wrong ledger.
   if (!publishedLookup.ok || !failedLookup.ok || !scheduledLookup.ok) {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
   const entries: ProofLedgerEntry[] = [];
   for (const charge of charges) {
-    // Filtered server-side already; the narrow keeps the type honest.
     if (charge.tx_hash === null) continue;
     const resolved = resolveOutcome({
       chargeStatus: charge.status,
@@ -169,7 +131,6 @@ export async function loadProofLedger(options?: {
   return { ok: true, entries };
 }
 
-/** metadata.batch_id when post-now stored it; null for every other shape. */
 function readBatchId(metadata: Json): string | null {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
     return null;

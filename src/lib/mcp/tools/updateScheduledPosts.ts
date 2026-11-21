@@ -64,7 +64,6 @@ const handleUpdateScheduledPosts = withMcpTool(
   },
 );
 
-/** Cancels, resumes or reschedules up to 50 scheduled posts; every change can be undone. */
 export function registerUpdateScheduledPosts(server: McpServer): void {
   server.registerTool("update_scheduled_posts", UPDATE_SCHEDULED_POSTS_TOOL, handleUpdateScheduledPosts);
 }

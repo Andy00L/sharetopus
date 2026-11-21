@@ -1,14 +1,5 @@
 import "server-only";
 
-/**
- * Lazy CDP SDK client, shared by the refund senders that go through a CDP
- * Server Wallet (EVM on base/polygon/arbitrum, and Solana). Lives in its own
- * module so those senders do not import facilitator.ts, which imports them.
- *
- * Called by: cdp/refundCdpEvm.ts, solana/refundSolana.ts
- * Env: CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET (read by the SDK)
- */
-
 import { CdpClient } from "@coinbase/cdp-sdk";
 
 import type { RefundSendResult } from "@/lib/x402/chain/refundSender";
@@ -17,7 +8,6 @@ import { withTimeout } from "@/lib/x402/http/withTimeout";
 /** The SDK's axios client sets no timeout (@coinbase/cdp-sdk openapi-client/cdpApiClient.ts). */
 const CDP_SEND_TIMEOUT_MS = 15_000;
 
-/** sourceRef: @coinbase/cdp-sdk 1.51.0 openapi-client/generated ErrorType. */
 const CDP_IDEMPOTENCY_ERROR_TYPE = "idempotency_error";
 
 let cdpClientInstance: CdpClient | null = null;
@@ -48,10 +38,6 @@ export function getCdpClient(): CdpClientResult {
   return { ok: true, client: cdpClientInstance };
 }
 
-/**
- * A timed-out CDP request keeps running and may still broadcast, so only a
- * 4xx answer from CDP proves a send was refused.
- */
 export async function sendThroughCdp(params: {
   send: () => Promise<string>;
   operationName: string;
@@ -72,7 +58,8 @@ export async function sendThroughCdp(params: {
   }
 }
 
-/** sourceRef: @coinbase/cdp-sdk 1.51.0 openapi-client/errors.ts (APIError.statusCode is 0 when no response arrived). */
+// @coinbase/cdp-sdk exports no APIError class; its errors carry statusCode (0 when no response arrived) and errorType
+// (node_modules/@coinbase/cdp-sdk/src/openapi-client/errors.ts).
 function isRefusedByCdp(error: unknown): boolean {
   if (!(error instanceof Error) || !("statusCode" in error)) return false;
   const isClientError =

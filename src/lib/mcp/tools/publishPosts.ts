@@ -23,7 +23,6 @@ import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { withMemoizedJsonSchema } from "../_shared/memoizedJsonSchema";
 import { errorResult, jsonResult, withMcpTool } from "../withMcpTool";
 
-/** directPostBatch accepts at most 30 posts per call. */
 const MAX_POSTS_PER_CALL = 30;
 
 const PublishPostInputSchema = z.object({
@@ -250,7 +249,6 @@ const handlePublishPosts = withMcpTool(
   { auditArgsBuilder: (args) => ({ count: args.posts.length }) },
 );
 
-/** Publishes or schedules 1 to 30 posts in one call; list_posts with the batch_id shows the results. */
 export function registerPublishPosts(server: McpServer): void {
   server.registerTool("publish_posts", PUBLISH_POSTS_TOOL, handlePublishPosts);
 }

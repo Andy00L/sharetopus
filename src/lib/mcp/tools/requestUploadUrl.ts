@@ -18,7 +18,6 @@ const RequestUploadUrlInputSchema = z.object({
   size_bytes: z.number().int().positive(),
 });
 
-/** Signed upload URL valid 2 hours. */
 const UPLOAD_URL_TTL_SECONDS = 7200;
 
 const REQUEST_UPLOAD_URL_RATE_LIMIT: RateLimitRule = { limit: 20, windowSeconds: 60 };
@@ -85,10 +84,6 @@ const handleRequestUploadUrl = withMcpTool(
   },
 );
 
-/**
- * Signed upload URL so an agent PUTs the bytes straight to storage. An upload
- * no post ever uses is swept by the daily orphan cleanup after 24 h.
- */
 export function registerRequestUploadUrl(server: McpServer): void {
   server.registerTool("request_upload_url", REQUEST_UPLOAD_URL_TOOL, handleRequestUploadUrl);
 }

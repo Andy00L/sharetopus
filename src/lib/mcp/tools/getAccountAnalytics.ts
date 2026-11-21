@@ -86,7 +86,6 @@ const handleGetAccountAnalytics = withMcpTool(
   },
 );
 
-/** Stored per-day metrics for the user's content, newest first; refreshed daily, not on demand. */
 export function registerGetAccountAnalytics(server: McpServer): void {
   server.registerTool("get_account_analytics", GET_ACCOUNT_ANALYTICS_TOOL, handleGetAccountAnalytics);
 }

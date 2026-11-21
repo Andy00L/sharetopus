@@ -1,12 +1,5 @@
 import "server-only";
 
-/**
- * USDC transfer helpers shared by every EVM refund sender (CDP, Celo, Arc).
- *
- * Called by: cdp/refundCdpEvm.ts, celo/refundCelo.ts, arc/refundArc.ts
- * Tables touched: none
- */
-
 import {
   encodeFunctionData,
   erc20Abi,
@@ -22,13 +15,6 @@ export type UsdcTransferCallResult =
   | { ok: true; recipient: Address; usdcContract: Address; calldata: Hex }
   | { ok: false; message: string };
 
-/**
- * Builds the ERC-20 transfer(recipient, amount) call for a USDC refund.
- *
- * Addresses are checked for shape only (strict: false): a payer address
- * reported in lowercase is valid and must not block a refund on checksum
- * casing.
- */
 export function buildUsdcTransferCall(params: {
   network: EvmNetworkConfig;
   recipientAddress: string;

@@ -116,7 +116,6 @@ const handleAttachMediaFromUrl = withMcpTool(
       );
     }
 
-    // The key never includes the filename or the URL basename.
     const storagePath = buildAttachedMediaPath(
       ctx.principal.principalId,
       fetchResult.contentType,
@@ -154,10 +153,6 @@ const handleAttachMediaFromUrl = withMcpTool(
   { auditArgsBuilder: (args) => ({ url: args.url }) },
 );
 
-/**
- * Downloads a public image or video (SSRF-guarded, size-capped by plan) into
- * storage and returns the path publish_posts takes as media_storage_path.
- */
 export function registerAttachMediaFromUrl(server: McpServer): void {
   server.registerTool("attach_media_from_url", ATTACH_MEDIA_FROM_URL_TOOL, handleAttachMediaFromUrl);
 }

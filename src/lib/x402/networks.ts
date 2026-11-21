@@ -1,65 +1,41 @@
 import "server-only";
 
-// x402 network registry: the one place that decides how each network settles,
-// pays out and refunds. No other module compares network names.
-
 import type { WalletChain } from "@/db/schema";
 
-/**
- * Who settles a network, stored in x402_charges.facilitator: CDP (refunds via
- * the CDP SDK), Celo's facilitator (refunds signed with X402_CELO_REFUND_KEY),
- * or Sharetopus itself on Arc (refunds signed with X402_ARC_KEY).
- */
 export type SettlementLane = "coinbase_cdp" | "celo" | "arc_local";
 
-/** Env var holding the payout (payTo) address, which also sends refunds. */
 export type RecipientEnvVar =
   | "X402_RECIPIENT_EVM"
   | "X402_RECIPIENT_SOLANA"
   | "X402_RECIPIENT_CELO"
   | "X402_RECIPIENT_ARC";
 
-/** Env var that may point a network at a dedicated RPC provider. */
 export type RpcUrlEnvVar = "X402_ARC_RPC_URL" | "X402_SOLANA_RPC_URL";
 
 interface NetworkConfigBase {
-  /** Slug used in ?network= and stored in DB rows (matches WalletChain). */
   name: WalletChain;
-  /** CAIP-2 identifier the x402 wire protocol uses ("eip155:8453"). */
   caipNetwork: `${string}:${string}`;
-  /** Human-readable name for errors and logs. */
   displayName: string;
-  /** Public RPC endpoint, used when no override is configured. */
   rpcUrl: string;
-  /** Optional dedicated RPC override (config.getRpcUrl), null when none. */
   rpcUrlEnvVar: RpcUrlEnvVar | null;
-  /** USDC contract (EVM) or mint (Solana). */
   usdcAddress: string;
-  /** USDC decimals: 6 on every supported network (Circle policy). */
   usdcDecimals: number;
   settlement: SettlementLane;
   recipientEnvVar: RecipientEnvVar;
 }
 
-/** EVM network: exact-scheme clients sign EIP-3009 over usdcEip712. */
 export interface EvmNetworkConfig extends NetworkConfigBase {
   family: "evm";
   chainId: number;
-  /**
-   * EIP-712 domain of the USDC contract, carried in PaymentRequirements.extra
-   * (the official @x402/evm client refuses to sign without name/version).
-   */
   usdcEip712: { name: string; version: string };
 }
 
-/** Solana network: the facilitator co-signs as fee payer (extra.feePayer). */
 export interface SvmNetworkConfig extends NetworkConfigBase {
   family: "svm";
 }
 
 export type NetworkConfig = EvmNetworkConfig | SvmNetworkConfig;
 
-/** Supported mainnets; any other ?network value gets 400 unsupported_network. */
 export const NETWORKS = Object.freeze({
   base: {
     name: "base",
@@ -118,7 +94,6 @@ export const NETWORKS = Object.freeze({
     settlement: "celo",
     recipientEnvVar: "X402_RECIPIENT_CELO",
   },
-  // Gas on Arc is USDC; the settling operations wallet pays it (docs.arc.io).
   arc: {
     name: "arc",
     family: "evm",
@@ -154,7 +129,6 @@ function isSupportedNetworkName(name: string): name is SupportedNetworkName {
   return Object.hasOwn(NETWORKS, name);
 }
 
-/** Look up a network by its ?network slug. Null for anything unsupported. */
 export function getNetworkConfig(name: string): NetworkConfig | null {
   return isSupportedNetworkName(name) ? NETWORKS[name] : null;
 }
@@ -164,7 +138,6 @@ export function addressesMatch(network: NetworkConfig, left: string, right: stri
   return network.family === "evm" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-/** X402_DEFAULT_NETWORK, or Base when it is unset or unknown. */
 export function getDefaultNetwork(): NetworkConfig {
   const envName = process.env.X402_DEFAULT_NETWORK;
   if (envName) {

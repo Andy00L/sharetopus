@@ -12,21 +12,6 @@ import type { PrincipalResolution } from "@/lib/types/principal";
 
 import type { McpPrincipal } from "../types";
 
-/**
- * Resolves a `stp_mcp_` API key token to an authenticated MCP principal.
- *
- * "rejected" when:
- *   - The token hash does not match any row
- *   - The row is revoked (revoked_at not null)
- *   - The row has expired (expires_at in the past)
- *   - The principal row is missing or not kind='clerk'
- * "unavailable" when the lookup fails: the key may well be valid.
- *
- * Side effect: `last_used_at` and `last_used_ip` are updated after the
- * response (waitUntil), at most once per LAST_USED_WRITE_INTERVAL_MS per key.
- *
- * Called by: src/lib/mcp/auth/resolve.ts (when token starts with stp_mcp_)
- */
 export async function resolveApiKey(
   rawToken: string,
 ): Promise<PrincipalResolution<McpPrincipal>> {

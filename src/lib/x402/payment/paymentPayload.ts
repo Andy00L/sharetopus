@@ -12,13 +12,9 @@ import { readCachedSolanaSigners } from "@/lib/x402/solana/feePayer";
 // A Solana wire transaction caps at 1232 bytes (~1644 base64 chars); this bounds decoder work on hostile input.
 const MAX_SVM_TRANSACTION_BASE64_CHARS = 4096;
 
-/** Prefix that keeps Solana signature nonces apart from EVM hex nonces. */
 const SVM_NONCE_PREFIX = "svm:";
 
-/**
- * Replay nonce from the payment payload: the EIP-3009 or Permit2 nonce on EVM,
- * the payer's signature on Solana (ed25519 signatures are deterministic). Null when none.
- */
+// On Solana the payer's signature is the nonce: ed25519 signatures are deterministic (RFC 8032).
 export function extractNonceFromPayload(payload: PaymentPayload): string | null {
   const inner = readInnerPayload(payload);
   if (!inner) return null;
@@ -47,22 +43,17 @@ export function extractNonceFromPayload(payload: PaymentPayload): string | null 
   return null;
 }
 
-/** Replay key for payloads without a nonce: the SHA-256 of the raw payment header. */
 export function fallbackNonceFromHeader(paymentHeader: string): string {
   return createHash("sha256").update(paymentHeader).digest("hex");
 }
 
-/** payload.payload as a plain object, or null. */
 function readInnerPayload(payload: PaymentPayload): Record<string, unknown> | null {
   const inner: unknown = payload.payload;
   if (typeof inner !== "object" || inner === null || Array.isArray(inner)) return null;
   return Object.fromEntries(Object.entries(inner));
 }
 
-/**
- * Base58 signature of the one required signer that is not a facilitator fee
- * payer. With no recognized fee payer, the SVM exact scheme puts it at index 0.
- */
+// Solana's fee payer is the first required signer, static account index 0 (solana.com/docs/core/fees).
 function decodeSvmPayerSignature(transactionBase64: string): string | null {
   if (transactionBase64.length > MAX_SVM_TRANSACTION_BASE64_CHARS) {
     console.warn(

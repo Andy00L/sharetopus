@@ -2,22 +2,11 @@ import "server-only";
 
 import { NETWORKS } from "@/lib/x402/networks";
 
-/**
- * Response headers every Solana Actions route sends (actions.json and the
- * /api/actions/* handlers). Wide-open CORS is required by the spec so any
- * Blink client (dial.to, wallets) can call these routes; it is set here and
- * nowhere else on the site.
- *
- * sourceRef: @solana/actions v1.6.6 constants.js (ACTIONS_CORS_HEADERS),
- *            @solana/actions-spec v2.4.2
- */
-
-/** Spec version advertised in X-Action-Version. sourceRef: @solana/actions-spec package.json */
 const SOLANA_ACTIONS_SPEC_VERSION = "2.4.2";
 
-// The blockchain id comes from the registry, never a second literal.
 const SOLANA_BLOCKCHAIN_ID = NETWORKS.solana.caipNetwork;
 
+// The Solana Actions spec requires these CORS headers on every Actions route (@solana/actions ACTIONS_CORS_HEADERS, actions-spec v2.4.2).
 const ACTIONS_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
@@ -35,7 +24,6 @@ export function buildActionHeaders(): Record<string, string> {
   };
 }
 
-/** Preflight response shared by every Actions route. */
 export function buildActionsPreflightResponse(): Response {
   return new Response(null, { status: 204, headers: buildActionHeaders() });
 }

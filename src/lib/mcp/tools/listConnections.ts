@@ -95,7 +95,6 @@ const handleListConnections = withMcpTool(
   },
 );
 
-/** Lists every connected account; one in needs_reconnect status is fixed at reconnect_url. */
 export function registerListConnections(server: McpServer): void {
   server.registerTool("list_connections", LIST_CONNECTIONS_TOOL, handleListConnections);
 }

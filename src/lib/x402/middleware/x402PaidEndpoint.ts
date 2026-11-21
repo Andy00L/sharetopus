@@ -38,26 +38,12 @@ import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/**
- * Resolves the pricing_actions key for this request.
- * Most routes return a constant. post-now/schedule resolve from body.
- */
 export type ActionResolver<TBody> = (
   body: TBody,
 ) =>
   | { success: true; action: string }
   | { success: false; httpStatus: number; errorKind: string; message: string };
 
-/**
- * A business rule checked BEFORE any money moves: ownership, eligibility,
- * quotas, duplicate idempotency keys. A rejection here costs the caller
- * nothing and costs Sharetopus no settlement fee or refund gas. It runs
- * after verify, because the rule usually depends on who is paying.
- */
 export type X402Precheck<TBody> = (params: {
   body: TBody;
   principal: WalletPrincipal;
@@ -68,16 +54,10 @@ export type X402HandlerResult<TResult> =
   | {
       success: true;
       data: TResult;
-      /** Back-references stored on the charge with the replay copy, in one write. */
       chargeRecord?: ChargeRecordFields;
     }
   | { success: false; errorKind: string; message: string };
 
-/**
- * Business logic called AFTER payment is settled and the charge row reached
- * status="settled". Returns the response body on success, or a typed error;
- * every error is refunded.
- */
 export type X402Handler<TBody, TResult> = (params: {
   body: TBody;
   principal: WalletPrincipal;
@@ -86,48 +66,25 @@ export type X402Handler<TBody, TResult> = (params: {
 }) => Promise<X402HandlerResult<TResult>>;
 
 export interface X402PaidEndpointOptions<TBody, TResult> {
-  /** Endpoint path for logging and resource URL (e.g. "/api/x402/post-now"). */
   endpointPath: string;
 
-  /** Action resolver. Maps the parsed body to a pricing_actions key. */
   resolveAction: ActionResolver<TBody>;
 
-  /**
-   * pricing_actions key used to price the 402 challenge when an UNPAID
-   * request carries a body that does not parse or resolve. A2MCP
-   * marketplace validators (OKX) probe registered endpoints with empty
-   * bodies and expect the standard 402 challenge, not a 400; the x402
-   * ordering is payment-first. Paid requests keep strict validation: an
-   * invalid body with a payment header is still a 400 before any
-   * verify/settle, so nobody is charged for a request that cannot run.
-   */
   defaultAction: string;
 
-  /**
-   * Parse and validate the request body (POST: JSON, GET: query params).
-   * Returns typed body on success or an error tuple on validation failure.
-   */
   parseBody: (req: NextRequest) => Promise<
     | { success: true; data: TBody }
     | { success: false; httpStatus: number; errorKind: string; message: string }
   >;
 
-  /** Optional business-rule check that runs before settlement. */
   precheck?: X402Precheck<TBody>;
 
-  /** Business logic handler called after payment is settled. */
   handler: X402Handler<TBody, TResult>;
 
-  /** Rate limit scope identifier (e.g. "x402:post-now"). */
   rateLimitScope: string;
 
-  /** Max requests per minute per IP for this endpoint. */
   rateLimitPerMinute: number;
 }
-
-// ---------------------------------------------------------------------------
-// Request context (audit + error responses)
-// ---------------------------------------------------------------------------
 
 type AuditStatus = X402AuditEntry["resultStatus"];
 
@@ -155,11 +112,6 @@ interface RequestContext {
   fail: (params: FailureParams) => Response;
 }
 
-/**
- * Per-request audit and failure helpers. Audit rows are written after the
- * response is sent (next/server after()), so logging never adds a database
- * round trip to the paid path's latency.
- */
 async function createRequestContext(endpointPath: string): Promise<RequestContext> {
   const startMs = performance.now();
   const ipHash = await extractIpHash();
@@ -196,10 +148,6 @@ async function createRequestContext(endpointPath: string): Promise<RequestContex
 
   return { endpointPath, audit, fail };
 }
-
-// ---------------------------------------------------------------------------
-// Shared preparation: rate limit, network, price
-// ---------------------------------------------------------------------------
 
 type PreparedRequest =
   | { ok: true; network: NetworkConfig; recipientAddress: string; usdcPrice: number }
@@ -258,8 +206,6 @@ async function prepareRequest(params: {
 
   if (!priceResult.ok) {
     console.error(`[prepareRequest] Pricing lookup failed for "${action}": ${priceResult.message}`);
-    // action: null because x402_access_log.action carries an FK to
-    // pricing_actions and the row may not exist at all.
     return {
       ok: false,
       response: context.fail({
@@ -282,15 +228,12 @@ async function prepareRequest(params: {
   };
 }
 
-/** The 402 challenge for an unpaid request. */
 async function buildChallengeResponse(params: {
   action: string;
   prepared: Extract<PreparedRequest, { ok: true }>;
   context: RequestContext;
 }): Promise<Response> {
   const { action, prepared, context } = params;
-  // A Solana 402 without extra.feePayer is unpayable by spec-compliant
-  // clients, so a fee-payer outage returns 502 instead of an empty 402.
   const paymentRequiredResult = await buildPaymentRequired({
     resourceUrl: `${getBaseUrl()}${context.endpointPath}`,
     network: prepared.network,
@@ -313,36 +256,6 @@ async function buildChallengeResponse(params: {
   return buildPaymentRequiredResponse(paymentRequiredResult.paymentRequired);
 }
 
-// ---------------------------------------------------------------------------
-// HOF: x402PaidEndpoint
-// ---------------------------------------------------------------------------
-
-/**
- * Higher-order function wrapping the x402 verify/settle/refund flow shared
- * by every paid endpoint except connect (which keeps its own response
- * contract but runs the same charge lifecycle, charges/chargeLifecycle.ts).
- *
- * Steps:
- *  1. Read the payment header (payment-first: unpaid requests are answered
- *     with a 402 challenge even when their body is invalid; see
- *     options.defaultAction).
- *  2. Parse body and resolve the action key. Invalid body or action with a
- *     payment header present: 400 before any verify/settle.
- *  3. Rate limit per IP; resolve the network and payout address; read the
- *     price.
- *  4. No payment header: 402 with the v2 PaymentRequired header + body.
- *  5. Verify the payment (off-chain).
- *  6. Resolve or onboard the wallet principal from the facilitator-recovered
- *     payer. Sanctioned wallets are rejected before any charge row.
- *  7. Precheck the business rules; a rejection costs nothing.
- *  8. Settle through the charge lifecycle: pending row first (a replay of
- *     the same payment gets the stored result back), then settle, then
- *     pending -> settled.
- *  9. Run the handler. A failure refunds on-chain and records "refunded"
- *     only once the chain confirms it.
- * 10. Success: the result is stored on the charge for replay (write
- *     actions), and the response carries PAYMENT-RESPONSE.
- */
 export function x402PaidEndpoint<TBody, TResult extends Json>(
   options: X402PaidEndpointOptions<TBody, TResult>,
 ): (req: NextRequest) => Promise<Response> {
@@ -350,45 +263,35 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     const requestId = randomUUID();
     const context = await createRequestContext(options.endpointPath);
 
-    // Step 1: read the payment header before validating the body; x402 is
-    // payment-first and marketplace validators probe with empty bodies.
     const paymentHeader = readPaymentHeader(req);
+    const parsedRequest = await parsePaidRequest(req, options);
 
-    // Step 2: parse body and resolve action. Unpaid requests fall back to
-    // defaultAction for challenge pricing; the null parsedBody never
-    // survives past the 402 return.
-    let parsedBody: { data: TBody } | null = null;
-    let actionKey: string = options.defaultAction;
-    const bodyResult = await options.parseBody(req);
-    if (bodyResult.success) {
-      const actionResult = options.resolveAction(bodyResult.data);
-      if (actionResult.success) {
-        parsedBody = { data: bodyResult.data };
-        actionKey = actionResult.action;
-      } else if (paymentHeader) {
-        return context.fail({
-          principal: null,
-          action: null,
-          chargeId: null,
-          resultStatus: "error",
-          httpStatus: actionResult.httpStatus,
-          errorKind: actionResult.errorKind,
-          message: actionResult.message,
-        });
-      }
-    } else if (paymentHeader) {
+    if (!paymentHeader) {
+      const challengeAction = parsedRequest.success ? parsedRequest.action : options.defaultAction;
+      const challengePrepared = await prepareRequest({
+        req,
+        action: challengeAction,
+        rateLimitScope: options.rateLimitScope,
+        rateLimitPerMinute: options.rateLimitPerMinute,
+        context,
+      });
+      if (!challengePrepared.ok) return challengePrepared.response;
+      return buildChallengeResponse({ action: challengeAction, prepared: challengePrepared, context });
+    }
+
+    if (!parsedRequest.success) {
       return context.fail({
         principal: null,
         action: null,
         chargeId: null,
         resultStatus: "error",
-        httpStatus: bodyResult.httpStatus,
-        errorKind: bodyResult.errorKind,
-        message: bodyResult.message,
+        httpStatus: parsedRequest.httpStatus,
+        errorKind: parsedRequest.errorKind,
+        message: parsedRequest.message,
       });
     }
+    const { body, action: actionKey } = parsedRequest;
 
-    // Step 3: rate limit, network, price.
     const prepared = await prepareRequest({
       req,
       action: actionKey,
@@ -399,28 +302,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     if (!prepared.ok) return prepared.response;
     const { network, recipientAddress, usdcPrice } = prepared;
 
-    // Step 4: no payment header, answer with the challenge.
-    if (!paymentHeader) {
-      return buildChallengeResponse({ action: actionKey, prepared, context });
-    }
-
-    // A null parsedBody only exists on the unpaid path, which returned above;
-    // this guard is a fail-closed invariant check, not control flow.
-    if (parsedBody === null) {
-      console.error("[x402PaidEndpoint] Invariant violation: paid path reached without a parsed body.");
-      return context.fail({
-        principal: null,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: 500,
-        errorKind: "internal_error",
-        message: "Internal request-state error. No payment was taken.",
-      });
-    }
-    const body = parsedBody.data;
-
-    // Step 5: verify (off-chain).
     const verifyResult = await verifyPayment({
       paymentHeader,
       amountUsdc: usdcPrice,
@@ -440,7 +321,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       });
     }
 
-    // Step 6: resolve or onboard the wallet principal.
     const walletResult = await resolveOrOnboardWalletPrincipal({
       payerAddress: verifyResult.payerAddress,
       network,
@@ -469,7 +349,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     }
     const principal = walletResult.principal;
 
-    // Step 7: business rules, before any money moves.
     if (options.precheck) {
       const precheckResult = await options.precheck({ body, principal, network });
       if (!precheckResult.ok) {
@@ -485,7 +364,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       }
     }
 
-    // Step 8: record, settle, finalize.
     const chargeResult = await settleCharge({
       paymentHeader,
       network,
@@ -560,7 +438,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     }
     const { chargeId, txHash } = chargeResult;
 
-    // Step 9: the paid action.
     const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
 
     if (!handlerResult.success) {
@@ -586,8 +463,6 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
       });
     }
 
-    // Step 10: success. Write actions keep a replay copy of the result so a
-    // client that lost this response can present the same payment again.
     const chargeRecord = handlerResult.chargeRecord ?? {};
     const storedMetadata = {
       ...(chargeRecord.metadata ?? {}),
@@ -610,36 +485,16 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
   };
 }
 
-// ---------------------------------------------------------------------------
-// HOF: x402ChallengeGet
-// ---------------------------------------------------------------------------
-
 export interface X402ChallengeGetOptions {
-  /** Endpoint path for logging and resource URL (e.g. "/api/x402/post-now"). */
   endpointPath: string;
 
-  /** pricing_actions key used to price the challenge (the endpoint's representative action). */
   action: string;
 
-  /** Rate limit scope identifier (shared with the POST handler is fine). */
   rateLimitScope: string;
 
-  /** Max requests per minute per IP. */
   rateLimitPerMinute: number;
 }
 
-/**
- * Challenge-only GET handler for paid POST endpoints.
- *
- * A2MCP marketplace validators (OKX) probe registered endpoints with a bare
- * GET (curl -i) and require the standard x402 402 challenge
- * (PAYMENT-REQUIRED header, x402Version body). This handler always answers
- * 402 priced at options.action and never executes the paid action, even if
- * a payment header is sent: execution semantics live on POST only.
- *
- * Next.js derives HEAD from GET automatically, so curl -I probes are
- * covered by the same handler.
- */
 export function x402ChallengeGet(
   options: X402ChallengeGetOptions,
 ): (req: NextRequest) => Promise<Response> {
@@ -657,15 +512,20 @@ export function x402ChallengeGet(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+async function parsePaidRequest<TBody, TResult>(
+  req: NextRequest,
+  options: X402PaidEndpointOptions<TBody, TResult>,
+): Promise<
+  | { success: true; body: TBody; action: string }
+  | { success: false; httpStatus: number; errorKind: string; message: string }
+> {
+  const bodyResult = await options.parseBody(req);
+  if (!bodyResult.success) return bodyResult;
+  const actionResult = options.resolveAction(bodyResult.data);
+  if (!actionResult.success) return actionResult;
+  return { success: true, body: bodyResult.data, action: actionResult.action };
+}
 
-/**
- * Runs the handler. Handlers return errors as values, but money has already
- * settled when this runs, so an unexpected throw must not escape: it is
- * converted into a failure, which is refunded.
- */
 async function runHandler<TBody, TResult>(
   handler: X402Handler<TBody, TResult>,
   params: { body: TBody; principal: WalletPrincipal; chargeId: string; requestId: string },
@@ -685,7 +545,6 @@ async function runHandler<TBody, TResult>(
   }
 }
 
-/** Success response with the PAYMENT-RESPONSE header (both generations). */
 function buildSettledResponse(params: {
   data: Json;
   txHash: string;
@@ -711,12 +570,6 @@ function buildSettledResponse(params: {
   });
 }
 
-/**
- * Answers a payment that was already presented. A settled write action
- * returns its stored result; a settled read (GET) runs again, since reads
- * are safe to repeat and their results are not stored. Nothing here charges
- * or settles anything.
- */
 async function respondToReplay<TBody, TResult extends Json>(params: {
   replay: ChargeReplay;
   req: NextRequest;
@@ -816,7 +669,6 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   }
 }
 
-/** Human-readable detail for a verify rejection. */
 function describeVerifyError(error: VerifyPaymentError): string {
   switch (error.kind) {
     case "malformed_header":

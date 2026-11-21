@@ -1,29 +1,5 @@
 import "server-only";
 
-/**
- * Reads the currently effective USDC price for a pricing action.
- *
- * pricing_actions is keyed by action (primary key) and versioned in place
- * via effective_from / effective_until; a row outside its window means the
- * action is not currently purchasable, even though the row exists for FK
- * purposes. Every x402 pricing lookup goes through this one function so the
- * temporal-window rules cannot drift between flows.
- *
- * The price is validated here, once: a missing, non-numeric, zero, negative
- * or implausibly large price fails closed instead of reaching usdcToAtomic,
- * where it would turn into a zero-amount requirement.
- *
- * readActionPrice caches per instance for PRICE_CACHE_TTL_MS, and never past
- * the row's effective_until, so an unpaid 402 probe usually needs no database
- * connection. A price edited in place takes effect up to that long late.
- * readFreshActionPrice skips the cache: the Blink reads it because there the
- * wallet pays before the price is checked.
- *
- * Called by: x402PaidEndpoint, connect/handleConnectChallenge,
- *            connect/handleConnectVerify, solanaActions/postNowBlink
- * Tables touched: pricing_actions (read)
- */
-
 import { and, eq, gt, isNull, lte, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
@@ -31,10 +7,6 @@ import { pricing_actions } from "@/db/schema";
 
 const PRICE_CACHE_TTL_MS = 10 * 60_000;
 
-/**
- * Upper bound on a sane per-call price, in USDC. The most expensive action
- * today is post.video; anything above this is a data-entry error.
- */
 const MAX_ACTION_PRICE_USDC = 100;
 
 export type ReadActionPriceResult =

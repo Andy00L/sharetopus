@@ -42,18 +42,10 @@ type SafeFetchOptions = {
   totalTimeoutMs: number;
 };
 
-// ---------- main fetch ----------
-
-/**
- * Fetches a user-supplied URL with SSRF protection: http(s) only, DNS resolved
- * once and every IP checked, the socket pinned to the checked IP, no redirects,
- * a content-type allowlist, a streamed byte cap, and timeouts.
- */
 export async function safeUserFetch(
   rawUrl: string,
   opts: SafeFetchOptions,
 ): Promise<SafeFetchResult> {
-  // 1. Parse URL
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -61,7 +53,6 @@ export async function safeUserFetch(
     return { success: false, message: "Malformed URL.", reason: "invalid_url" };
   }
 
-  // 2. Scheme check
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return {
       success: false,
@@ -70,7 +61,6 @@ export async function safeUserFetch(
     };
   }
 
-  // 3. Resolve DNS once and validate every address against the blocklist.
   const resolution = await resolveHostToPublicAddresses(parsed.hostname);
   if (!resolution.ok) {
     if (resolution.reason === "blocked_host") {
@@ -90,8 +80,6 @@ export async function safeUserFetch(
     };
   }
 
-  // 4. Pin the connection to the validated IP (rebinding defense) and set
-  // up the abort/timeout timers.
   const dispatcher = acquirePinnedDispatcher(resolution.addresses);
   const controller = new AbortController();
   let abortedByTimeout = false;
@@ -109,7 +97,6 @@ export async function safeUserFetch(
   }, opts.connectTimeoutMs);
 
   try {
-    // 5. Fetch with redirects disabled, pinned to the validated IP.
     let response: UndiciResponse;
     try {
       response = await undiciFetch(rawUrl, {
@@ -131,7 +118,6 @@ export async function safeUserFetch(
       clearTimeout(connectTimer);
     }
 
-    // 6. Reject redirects (TOCTOU defense)
     if (response.status >= 300 && response.status < 400) {
       return {
         success: false,
@@ -148,7 +134,6 @@ export async function safeUserFetch(
       };
     }
 
-    // 7. Content-type validation
     const rawContentType = response.headers.get("content-type") ?? "";
     const contentType = rawContentType.split(";")[0].trim().toLowerCase();
 
@@ -174,7 +159,6 @@ export async function safeUserFetch(
       };
     }
 
-    // 8. Stream body with byte counting
     if (!response.body) {
       return { success: false, message: "Response has no body.", reason: "fetch_failed" };
     }
@@ -230,9 +214,8 @@ export async function safeUserFetch(
   } finally {
     clearTimeout(totalTimer);
     clearTimeout(connectTimer);
-    // undici: always consume or cancel the response body, or the pooled
-    // connection stays busy until garbage collection.
-    // sourceRef: node_modules/undici/README.md, "Garbage Collection".
+    // undici keeps a pooled connection busy until an unread response body is consumed or cancelled
+    // (node_modules/undici/README.md, "Garbage Collection").
     if (!isBodyFullyRead) controller.abort();
   }
 }

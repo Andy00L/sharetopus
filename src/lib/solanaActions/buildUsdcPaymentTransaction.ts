@@ -21,18 +21,6 @@ import {
 } from "@/lib/x402/solana/splToken";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
-/**
- * Unsigned USDC payment for a Blink. The payer's wallet is the fee payer and
- * the only signer, so the wallet signs and broadcasts it itself: a Blink
- * never routes through the x402 facilitator, which co-signs as fee payer.
- * Instructions: create the recipient's USDC account if it is missing
- * (idempotent, rent paid by the payer), then TransferChecked for the exact
- * price.
- *
- * Called by: solanaActions/postNowBlink.ts
- * Tables touched: none. Network: one blockhash read on the pinned RPC.
- */
-
 export type BuildUsdcPaymentTransactionResult =
   | { ok: true; transactionBase64: string; atomicAmount: string }
   | { ok: false; reason: "blockhash_unavailable"; message: string };

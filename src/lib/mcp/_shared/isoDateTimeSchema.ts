@@ -2,10 +2,7 @@ import { z } from "zod";
 
 const ISO_DATE_TIME_WITH_ZONE = z.iso.datetime({ offset: true });
 
-/**
- * An ISO 8601 time with a zone (Z or +02:00). Checked with a refine instead of
- * z.iso.datetime so the tool's JSON Schema skips the 400-character regex.
- */
+// zod's JSON Schema for z.iso.datetime carries a long pattern; a refine keeps it out of the tool's input schema.
 export const IsoDateTimeSchema = z
   .string()
   .refine((value) => ISO_DATE_TIME_WITH_ZONE.safeParse(value).success, {

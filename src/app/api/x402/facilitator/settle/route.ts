@@ -15,22 +15,7 @@ import {
   describeRateLimitRejection,
 } from "@/lib/x402/http/rateLimitRejection";
 
-/**
- * POST /api/x402/facilitator/settle
- * Body: { x402Version, paymentPayload, paymentRequirements }
- * Header: X-API-Key
- *
- * Broadcasts the payer's EIP-3009 authorization on Arc. Gas comes out of
- * this operator's own USDC, so unlike /verify this one is gated: a settle
- * key is issued by hand, and with none configured the endpoint is closed.
- * Anyone can run their own copy instead (src/lib/x402/arc).
- *
- * Logic lives in src/lib/x402/arc/facilitatorApi.ts and the scheme itself
- * in src/lib/x402/arc/arcFacilitator.ts.
- */
-
 export const runtime = "nodejs";
-// Settlement waits for a receipt; Arc confirms in seconds, 60 is the ceiling.
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -43,8 +28,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return buildRateLimitJsonResponse(describeRateLimitRejection(rateLimitResult));
   }
 
-  // Checked before the body is read: an unauthorized caller learns nothing
-  // about what this facilitator would have made of their payload.
   const accessResult = checkSettleAccess(request);
   if (!accessResult.ok) {
     return NextResponse.json(

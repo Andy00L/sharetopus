@@ -2,12 +2,7 @@ const DECIMAL_DIGITS = /^\d+$/;
 
 type HeaderReader = { get(headerName: string): string | null };
 
-/**
- * The body length the server declared, or null when it cannot be trusted:
- * missing, malformed, or describing an encoded body. fetch decodes
- * Content-Encoding, and Content-Length counts the encoded bytes
- * (RFC 9110 section 8.6).
- */
+// fetch decodes Content-Encoding, while Content-Length counts the encoded bytes (RFC 9110 section 8.6).
 export function readDeclaredBodyBytes(responseHeaders: HeaderReader): number | null {
   const contentEncoding = responseHeaders.get("content-encoding")?.trim().toLowerCase();
   if (contentEncoding && contentEncoding !== "identity") return null;

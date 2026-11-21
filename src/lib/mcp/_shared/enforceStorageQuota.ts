@@ -16,15 +16,6 @@ export type StorageQuotaErr = {
 
 export type StorageQuotaResult = StorageQuotaOk | StorageQuotaErr;
 
-/**
- * Checks whether adding `additionalBytes` to the principal's current
- * storage usage would exceed their plan's aggregate storage cap.
- *
- * Uses getUserStorageBytes (wraps the `get_user_storage_bytes` RPC)
- * so the result is accurate regardless of file count.
- *
- * Returns errors as values. Never throws across this boundary.
- */
 export async function enforceStorageQuota(
   principalId: string,
   tier: PlanTier | null,

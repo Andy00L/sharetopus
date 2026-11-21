@@ -1,16 +1,10 @@
 import { createHash } from "node:crypto";
 import "server-only";
 
-// Local-dev salt only; anyone with the source can reverse IPs hashed with it.
 const DEV_FALLBACK_SALT = "sharetopus-mcp-dev-only-do-not-use-in-prod";
 
 let warnedAboutDevFallback = false;
 
-/**
- * SHA-256(ip:salt) truncated to 32 hex chars, so raw IPs never reach the
- * database. Throws in production when MCP_IP_HASH_SALT is unset: a known
- * salt would store reversible IPs. Null for an empty input.
- */
 export function hashClientIp(ip: string | null | undefined): string | null {
   if (!ip) return null;
 

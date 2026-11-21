@@ -153,6 +153,19 @@ describe("broadcastCall", () => {
     });
   });
 
+  test("a lost send followed by a taken nonce is not signed again even when the chain does not know the first bytes yet", async () => {
+    sendReplies = ["transport_failure", "nonce_too_low"];
+    lookupReplies = ["not_found", "not_found"];
+
+    const broadcast = await broadcastTransfer();
+
+    expect(signedTransactions).toHaveLength(1);
+    expect(broadcast).toMatchObject({
+      status: "delivery_unknown",
+      transactionHash: keccak256(signedTransactions[0] ?? "0x"),
+    });
+  });
+
   test("a nonce another transaction took, with our bytes unknown to the chain, is signed again and the new hash returned", async () => {
     sendReplies = ["nonce_too_low", "accept"];
 

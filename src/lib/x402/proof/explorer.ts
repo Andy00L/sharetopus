@@ -1,24 +1,5 @@
-/**
- * Block explorer links for the proof ledger, one builder per network. One
- * place, so every surface that shows a settlement points at the same
- * explorer. The demo client (demo/x402-demo.mjs) carries its own copy of
- * these templates because it is a separate package that cannot import from
- * src/.
- *
- * Pure URL builders, no secrets, safe to import from any component.
- */
-
 import type { WalletChain } from "@/db/schema";
 
-/**
- * Explorer roots and their path vocabulary. EVM explorers say /address and
- * /tx; Solana Explorer says /address and /tx as well but is a different
- * host per chain, so the mapping stays explicit rather than derived.
- * sourceRef: src/lib/x402/networks.ts for the network slugs.
- *
- * Both lookups are Maps read by raw slug, so a prototype key such as
- * "toString" finds nothing; `satisfies` keeps every key a WalletChain.
- */
 const EXPLORER_BASE_URL_BY_NETWORK: ReadonlyMap<string, string> = new Map(
   Object.entries({
     base: "https://basescan.org",
@@ -30,7 +11,6 @@ const EXPLORER_BASE_URL_BY_NETWORK: ReadonlyMap<string, string> = new Map(
   } satisfies Partial<Record<WalletChain, string>>),
 );
 
-/** Human label for a network, used in link titles and the ledger column. */
 const DISPLAY_NAME_BY_NETWORK: ReadonlyMap<string, string> = new Map(
   Object.entries({
     base: "Base",
@@ -42,18 +22,10 @@ const DISPLAY_NAME_BY_NETWORK: ReadonlyMap<string, string> = new Map(
   } satisfies Partial<Record<WalletChain, string>>),
 );
 
-/** Falls back to the raw slug so an unmapped network still renders. */
 export function networkDisplayName(networkName: string): string {
   return DISPLAY_NAME_BY_NETWORK.get(networkName) ?? networkName;
 }
 
-/**
- * Transaction link for a network the caller knows is in the registry above,
- * for the paths that must hand the agent a usable URL rather than decide
- * what to render when there is none. A network without an explorer is a
- * build-time omission here, not a runtime state, so the raw hash stands in
- * and the gap is logged instead of surfacing an empty string.
- */
 export function buildKnownExplorerTxUrl(
   networkName: string,
   txHash: string,
@@ -68,11 +40,6 @@ export function buildKnownExplorerTxUrl(
   return explorerUrl;
 }
 
-/**
- * Transaction link, or null when the network has no explorer on file. A
- * null tells the caller to print the identifier as plain text rather than a
- * link that goes nowhere.
- */
 export function buildExplorerTxUrl(
   networkName: string,
   txHash: string,
@@ -81,7 +48,6 @@ export function buildExplorerTxUrl(
   return baseUrl ? `${baseUrl}/tx/${encodeURIComponent(txHash)}` : null;
 }
 
-/** Address link, same contract as buildExplorerTxUrl. */
 export function buildExplorerAddressUrl(
   networkName: string,
   address: string,

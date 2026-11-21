@@ -7,24 +7,6 @@ import { pollUntilDeadline } from "@/lib/x402/chain/pollUntilDeadline";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
-/**
- * Verifies, from the chain itself, that a wallet-broadcast transaction paid
- * at least the expected USDC to the recipient. No facilitator is involved on
- * the Blink path, so this is the payment verification: the transaction must
- * be confirmed and successful, its fee payer (first signer) must be the
- * wallet that claims to have paid, and the recipient's USDC balance must
- * rise by at least the price. Balance deltas come from the RPC's pre and
- * post token balances, which hold for any wallet-injected instructions
- * (Lighthouse guards, compute budget) around the transfer.
- *
- * Replay protection is not here: the caller records the signature as the
- * charge nonce, and x402_charges.nonce is UNIQUE.
- *
- * Called by: solanaActions/postNowBlink.ts (confirm step)
- * Tables touched: none. Network: getTransaction on the pinned RPC.
- */
-
-/** Poll budget after a wallet reports its signature; Solana confirms in about 1 to 2 s. */
 const CONFIRMATION_TIMEOUT_MS = 12_000;
 const CONFIRMATION_POLL_INTERVAL_MS = 1_500;
 
@@ -108,9 +90,7 @@ export async function verifyUsdcPayment(params: {
     };
   }
 
-  // The fee payer is static account 0 and must sign; the Blink's payment is
-  // built with the wallet in that slot, so anything else is not that wallet's
-  // payment.
+  // Solana's fee payer is the first required signer, static account index 0 (solana.com/docs/core/fees).
   const feePayer = transaction.transaction.message.accountKeys[0];
   if (
     !feePayer ||
@@ -140,7 +120,7 @@ export async function verifyUsdcPayment(params: {
   const preBalance = (transaction.meta?.preTokenBalances ?? []).find(
     (balance) => balance.accountIndex === postBalance.accountIndex,
   );
-  // A freshly created recipient account has no pre entry: it started at zero.
+  // The RPC lists no preTokenBalances entry for a token account the transaction itself created.
   const atomicBefore = BigInt(preBalance?.uiTokenAmount.amount ?? "0");
   const atomicAfter = BigInt(postBalance.uiTokenAmount.amount);
   const atomicReceived = atomicAfter - atomicBefore;

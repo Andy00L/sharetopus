@@ -2,12 +2,6 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 
-/**
- * Generic error response builder for x402 paid endpoint middleware.
- *
- * Body shape: { success: false, error: errorKind, message, ...extras }
- * Supports optional refund metadata in the body.
- */
 export function buildGenericErrorResponse(params: {
   httpStatus: number;
   errorKind: string;

@@ -3,12 +3,6 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { paymentResponseHeaders } from "@/lib/x402/http/paymentHttp";
 
-/**
- * Generic 200 OK builder for x402 paid endpoint middleware.
- *
- * Body shape: { success: true, data, chargeId, network, txHash, payerAddress }
- * Sets PAYMENT-RESPONSE (and the v1 X-PAYMENT-RESPONSE alias) when provided.
- */
 export function buildGenericSuccessResponse(params: {
   data: unknown;
   txHash: string;
