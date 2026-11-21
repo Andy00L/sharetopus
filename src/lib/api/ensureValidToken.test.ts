@@ -171,14 +171,14 @@ afterEach(() => {
 });
 
 describe("ensureValidToken refresh lease", () => {
-  test("an X refresh holds its lock as long as a function can run, a LinkedIn refresh keeps the 45 s lock", async () => {
+  test("an X refresh and a LinkedIn refresh both take the 45 s lock", async () => {
     await ensureValidToken(buildAccount(EXPIRED_AT));
     accountTable.reset(
       buildAccountRow({ access_token: "at-1", refresh_token: "rt-1", token_expires_at: EXPIRED_AT }),
     );
     await ensureValidToken(buildAccount(EXPIRED_AT, "linkedin"));
 
-    expect(lockTtlsMs).toEqual([FUNCTION_MAX_DURATION_MS, TOKEN_REFRESH_LOCK_TTL_MS]);
+    expect(lockTtlsMs).toEqual([TOKEN_REFRESH_LOCK_TTL_MS, TOKEN_REFRESH_LOCK_TTL_MS]);
   });
 
   test("an X holder whose read outlasts its lease does not start the refresh and asks to retry later", async () => {

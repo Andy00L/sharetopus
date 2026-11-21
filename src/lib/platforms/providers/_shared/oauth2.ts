@@ -1,5 +1,7 @@
 import "server-only";
 
+import { REGISTRY_OAUTH_REQUEST_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+
 import type {
   AuthorizeUrlInput,
   AuthorizeUrlResult,
@@ -9,8 +11,6 @@ import type {
   TokenRefreshFailureReason,
 } from "../types";
 import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
-
-const OAUTH_TIMEOUT_MS = 20_000;
 
 const TOKEN_ERROR_DESCRIPTION_MAX_CHARS = 200;
 
@@ -159,7 +159,7 @@ async function requestToken(
     method: "POST",
     headers,
     body: body.toString(),
-    timeoutMs: OAUTH_TIMEOUT_MS,
+    timeoutMs: REGISTRY_OAUTH_REQUEST_TIMEOUT_MS,
   });
 
   if (!tokenResult.ok) {

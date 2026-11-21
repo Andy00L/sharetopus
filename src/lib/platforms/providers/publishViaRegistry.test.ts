@@ -217,14 +217,13 @@ describe("refreshRegistryAccountToken", () => {
 });
 
 describe("refreshRegistryAccountToken lock lease", () => {
-  test("a rotating provider holds its lock as long as a function can run, a stable one keeps the 45 s lock", async () => {
-    const { RUNTIME } = await import("@/lib/jobs/runtimeConfig");
+  test("a rotating provider and a stable one both take the 45 s lock", async () => {
     const { TOKEN_REFRESH_LOCK_TTL_MS } = await import("@/lib/api/_shared/platformFetchTimeouts");
     await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
     accountTable.reset({ id: "account-1", platform: "bluesky", is_available: true, ...STORED_CREDENTIAL });
     providerRotation = "stable";
     await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
-    expect(lockTtlsMs).toEqual([RUNTIME.maxDurationS * 1000, TOKEN_REFRESH_LOCK_TTL_MS]);
+    expect(lockTtlsMs).toEqual([TOKEN_REFRESH_LOCK_TTL_MS, TOKEN_REFRESH_LOCK_TTL_MS]);
   });
 });
 

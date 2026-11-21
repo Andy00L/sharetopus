@@ -5,6 +5,12 @@ export const PLATFORM_API_TIMEOUT_MS = 15_000;
 
 export const PLATFORM_PUBLISH_TIMEOUT_MS = 30_000;
 
+export const TOKEN_REFRESH_REQUEST_TIMEOUT_MS = 15_000;
+
+export const REGISTRY_OAUTH_REQUEST_TIMEOUT_MS = 20_000;
+
+export const BLUESKY_REQUEST_TIMEOUT_MS = 20_000;
+
 // Pinterest (image_url pin) and Instagram (image container) download the image
 // from our URL before they answer, and neither states a time limit. Instagram
 // caps images at 8 MB and answers subcode 2207003 when its own download is too slow:

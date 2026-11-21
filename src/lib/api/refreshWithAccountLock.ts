@@ -8,7 +8,10 @@ import { redis } from "@/actions/api/upstash";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import {
+  BLUESKY_REQUEST_TIMEOUT_MS,
+  REGISTRY_OAUTH_REQUEST_TIMEOUT_MS,
   TOKEN_REFRESH_LOCK_TTL_MS,
+  TOKEN_REFRESH_REQUEST_TIMEOUT_MS,
   TOKEN_REFRESH_WAIT_DEADLINE_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
@@ -20,15 +23,24 @@ const POLL_INITIAL_INTERVAL_MS = 500;
 const POLL_MAX_INTERVAL_MS = 4_000;
 const CREDENTIAL_WRITE_ATTEMPTS = 2;
 
-const ROTATING_REFRESH_LOCK_TTL_MS = RUNTIME.maxDurationS * 1000;
-const LEASE_LEFT_TO_START_REFRESH_MS = TOKEN_REFRESH_LOCK_TTL_MS;
+const LEASE_RENEW_INTERVAL_MS = TOKEN_REFRESH_LOCK_TTL_MS / 3;
+const LOCK_HOLD_LIMIT_MS = RUNTIME.maxDurationS * 1000;
+const SLOWEST_ROTATING_REFRESH_CALL_MS = Math.max(
+  TOKEN_REFRESH_REQUEST_TIMEOUT_MS,
+  REGISTRY_OAUTH_REQUEST_TIMEOUT_MS,
+  BLUESKY_REQUEST_TIMEOUT_MS,
+);
 const STORE_DEADLINE_CLOCK_MARGIN_MS = 5_000;
+const LEASE_LEFT_TO_START_REFRESH_MS =
+  SLOWEST_ROTATING_REFRESH_CALL_MS + STORE_DEADLINE_CLOCK_MARGIN_MS;
 
-// Deletes the lock only while this run still owns it. A plain DEL could remove a
-// lock that another run took after ours expired:
+// Both scripts act only while this run still owns the lock. A plain DEL or PEXPIRE
+// could act on a lock that another run took after ours expired:
 // https://redis.io/docs/latest/commands/set/ (section "Patterns")
 const RELEASE_LOCK_SCRIPT =
   'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
+const EXTEND_LOCK_SCRIPT =
+  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end';
 
 export type StoredCredential = Pick<
   SocialAccount,
@@ -59,11 +71,20 @@ type RefusedRefreshOutcome =
   | { kind: "needs_reconnect" }
   | { kind: "retry_later" };
 
-type RefreshLease = { startRefreshByMs: number; storeByMs: number };
+type RefreshLease = { readConfirmedEndMs: () => number };
+
+type RenewedRefreshLease = RefreshLease & { stopRenewing: () => void };
+
+type HeldLock = { lockKey: string; ownerId: string; requestedAtMs: number };
 
 type LockAttempt =
   | { kind: "acquired"; ownerId: string }
   | { kind: "held" }
+  | { kind: "unavailable"; message: string };
+
+type LockRenewal =
+  | { kind: "extended" }
+  | { kind: "lost" }
   | { kind: "unavailable"; message: string };
 
 export function isTokenExpiring(
@@ -91,8 +112,6 @@ export async function refreshWithAccountLock<Refreshed>(input: {
   refreshIfExpiringWithinMs?: number;
 }): Promise<LockedRefreshOutcome<Refreshed>> {
   const { accountId, refreshStoredCredential } = input;
-  const isRotating = input.refreshTokenRotation === "rotating";
-  const lockTtlMs = isRotating ? ROTATING_REFRESH_LOCK_TTL_MS : TOKEN_REFRESH_LOCK_TTL_MS;
   const withinMs = input.refreshIfExpiringWithinMs ?? TOKEN_EXPIRY_BUFFER_MS;
   const lockKey = `token_refresh_lock:${accountId}`;
   const deadline = Date.now() + TOKEN_REFRESH_WAIT_DEADLINE_MS;
@@ -100,8 +119,8 @@ export async function refreshWithAccountLock<Refreshed>(input: {
 
   do {
     const lockRequestedAtMs = Date.now();
-    const lock = await tryAcquireRefreshLock(lockKey, lockTtlMs);
-    if (lock.kind === "unavailable" && isRotating) {
+    const lock = await tryAcquireRefreshLock(lockKey);
+    if (lock.kind === "unavailable" && input.refreshTokenRotation === "rotating") {
       console.warn(
         `[refreshWithAccountLock] Lock unavailable, not refreshing account ${accountId}: its refresh token rotates. ${lock.message}`,
       );
@@ -114,15 +133,11 @@ export async function refreshWithAccountLock<Refreshed>(input: {
       return refreshIfStillExpiring({ accountId, withinMs, lease: null, refreshStoredCredential });
     }
     if (lock.kind === "acquired") {
-      const lease = isRotating
-        ? {
-            startRefreshByMs: lockRequestedAtMs + lockTtlMs - LEASE_LEFT_TO_START_REFRESH_MS,
-            storeByMs: lockRequestedAtMs + lockTtlMs - STORE_DEADLINE_CLOCK_MARGIN_MS,
-          }
-        : null;
+      const lease = holdRenewedLease({ lockKey, ownerId: lock.ownerId, requestedAtMs: lockRequestedAtMs });
       try {
         return await refreshIfStillExpiring({ accountId, withinMs, lease, refreshStoredCredential });
       } finally {
+        lease.stopRenewing();
         await releaseRefreshLock(lockKey, lock.ownerId);
       }
     }
@@ -219,7 +234,7 @@ async function storeRefreshedCredential(input: {
   accountId: string;
   replacedExpiresAt: string | null;
   credential: StoredCredential;
-  storeByMs: number | null;
+  lease: RefreshLease | null;
 }): Promise<CredentialStoreOutcome> {
   let lastErrorMessage = "";
   for (let attemptNumber = 1; attemptNumber <= CREDENTIAL_WRITE_ATTEMPTS; attemptNumber++) {
@@ -231,7 +246,9 @@ async function storeRefreshedCredential(input: {
           and(
             eq(social_accounts.id, input.accountId),
             holdsTokenExpiry(input.replacedExpiresAt),
-            input.storeByMs === null ? undefined : isBeforeDatabaseTime(input.storeByMs),
+            input.lease === null
+              ? undefined
+              : isBeforeDatabaseTime(input.lease.readConfirmedEndMs() - STORE_DEADLINE_CLOCK_MARGIN_MS),
           ),
         )
         .returning({ id: social_accounts.id }),
@@ -288,7 +305,7 @@ async function refreshIfStillExpiring<Refreshed>(input: {
   if (!stored.ok) return { kind: "unavailable", message: stored.message };
   const freshToken = selectFreshAccessToken(stored.credential, input.withinMs);
   if (freshToken) return { kind: "stored_token_fresh", accessToken: freshToken };
-  if (lease && Date.now() > lease.startRefreshByMs) {
+  if (lease && Date.now() + LEASE_LEFT_TO_START_REFRESH_MS > lease.readConfirmedEndMs()) {
     console.warn(
       `[refreshIfStillExpiring] The refresh lock on account ${accountId} lapses too soon to start a refresh.`,
     );
@@ -301,16 +318,82 @@ async function refreshIfStillExpiring<Refreshed>(input: {
         accountId,
         replacedExpiresAt: stored.credential.token_expires_at,
         credential,
-        storeByMs: lease?.storeByMs ?? null,
+        lease,
       }),
   });
   return { kind: "refreshed", value };
 }
 
-async function tryAcquireRefreshLock(lockKey: string, lockTtlMs: number): Promise<LockAttempt> {
+function holdRenewedLease(lock: HeldLock): RenewedRefreshLease {
+  const renewal = new AbortController();
+  const lease = { confirmedEndMs: lock.requestedAtMs + TOKEN_REFRESH_LOCK_TTL_MS };
+  void renewLeaseUntilStopped({ lock, lease, signal: renewal.signal });
+  return {
+    readConfirmedEndMs: () => lease.confirmedEndMs,
+    stopRenewing: () => renewal.abort(),
+  };
+}
+
+async function renewLeaseUntilStopped(input: {
+  lock: HeldLock;
+  lease: { confirmedEndMs: number };
+  signal: AbortSignal;
+}): Promise<void> {
+  const { lock, lease, signal } = input;
+  const lastRenewalByMs = lock.requestedAtMs + LOCK_HOLD_LIMIT_MS - TOKEN_REFRESH_LOCK_TTL_MS;
+  while (await waitForNextRenewal(signal)) {
+    const renewRequestedAtMs = Date.now();
+    if (renewRequestedAtMs > lastRenewalByMs) {
+      console.warn(
+        `[renewLeaseUntilStopped] Stopped renewing ${lock.lockKey}: the holder has run as long as a function can.`,
+      );
+      return;
+    }
+    const renewal = await extendRefreshLock(lock);
+    if (signal.aborted) return;
+    switch (renewal.kind) {
+      case "extended":
+        lease.confirmedEndMs = renewRequestedAtMs + TOKEN_REFRESH_LOCK_TTL_MS;
+        break;
+      case "lost":
+        lease.confirmedEndMs = Math.min(lease.confirmedEndMs, renewRequestedAtMs);
+        console.warn(
+          `[renewLeaseUntilStopped] ${lock.lockKey} is no longer held by this run; it will not store a refreshed token.`,
+        );
+        return;
+      case "unavailable":
+        console.warn(
+          `[renewLeaseUntilStopped] Could not renew ${lock.lockKey}; its lease still ends at ${new Date(lease.confirmedEndMs).toISOString()}. ${renewal.message}`,
+        );
+        break;
+    }
+  }
+}
+
+function waitForNextRenewal(signal: AbortSignal): Promise<boolean> {
+  return sleep(LEASE_RENEW_INTERVAL_MS, true, { signal }).catch(() => false);
+}
+
+async function extendRefreshLock(lock: HeldLock): Promise<LockRenewal> {
+  try {
+    const extendedCount = await redis.eval(
+      EXTEND_LOCK_SCRIPT,
+      [lock.lockKey],
+      [lock.ownerId, String(TOKEN_REFRESH_LOCK_TTL_MS)],
+    );
+    return extendedCount === 1 ? { kind: "extended" } : { kind: "lost" };
+  } catch (error) {
+    return {
+      kind: "unavailable",
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function tryAcquireRefreshLock(lockKey: string): Promise<LockAttempt> {
   const ownerId = randomUUID();
   try {
-    const reply = await redis.set(lockKey, ownerId, { nx: true, px: lockTtlMs });
+    const reply = await redis.set(lockKey, ownerId, { nx: true, px: TOKEN_REFRESH_LOCK_TTL_MS });
     return reply === "OK" ? { kind: "acquired", ownerId } : { kind: "held" };
   } catch (error) {
     return {

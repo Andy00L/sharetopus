@@ -1,5 +1,7 @@
 import "server-only";
 
+import { BLUESKY_REQUEST_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+
 import type {
   CredentialsConnectInput,
   ProviderBehavior,
@@ -32,7 +34,6 @@ const DEFAULT_BLUESKY_SERVICE = "https://bsky.social";
 
 const BLUESKY_SESSION_TTL_SECONDS = 60 * 60;
 
-const BLUESKY_TIMEOUT_MS = 20_000;
 
 // bluesky-social/bsky lexicons/app/bsky/embed/images.json: the image blob
 // "May be up to 2 MB, formerly limited to 1 MB", "maxSize": 2000000.
@@ -63,7 +64,7 @@ async function connect(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier, password: appPassword }),
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
@@ -119,7 +120,7 @@ async function refresh(input: ProviderRefreshInput): Promise<ProviderRefreshResu
     {
       method: "POST",
       headers: { Authorization: `Bearer ${input.refreshToken}` },
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
@@ -204,7 +205,7 @@ async function publish(
         collection: "app.bsky.feed.post",
         record,
       }),
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 
@@ -267,7 +268,7 @@ async function uploadImageBlob(
         Authorization: `Bearer ${accessToken}`,
       },
       body: storedImage.media,
-      timeoutMs: BLUESKY_TIMEOUT_MS,
+      timeoutMs: BLUESKY_REQUEST_TIMEOUT_MS,
     },
   );
 

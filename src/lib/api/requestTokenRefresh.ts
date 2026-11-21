@@ -2,14 +2,13 @@ import "server-only";
 
 import { z } from "zod";
 
+import { TOKEN_REFRESH_REQUEST_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 import {
   ERROR_BODY_LOG_LIMIT_CHARS,
   parseJsonBody,
   readOAuthError,
 } from "@/lib/api/oauth/readOAuthAnswer";
 import type { TokenExchangeResponse } from "@/lib/types/dbTypes";
-
-const REFRESH_TIMEOUT_MS = 15_000;
 
 export type TokenRefreshResult =
   | { kind: "refreshed"; tokens: TokenExchangeResponse }
@@ -43,7 +42,7 @@ export async function requestTokenRefresh(request: {
       method: request.method,
       headers: request.headers,
       body: request.body?.toString(),
-      signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(TOKEN_REFRESH_REQUEST_TIMEOUT_MS),
     });
     status = response.status;
     isOk = response.ok;
