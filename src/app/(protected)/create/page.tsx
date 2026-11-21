@@ -11,16 +11,12 @@ export default async function CreatePostPage({
 }: {
   readonly searchParams: Promise<{ date?: string; time?: string }>;
 }) {
-  // Calendar quick-create links may land here first; forward the picked
-  // slot into whichever post type the user chooses.
   const { date, time } = await searchParams;
   const schedulePrefill = parseSchedulePrefill(date, time);
   const scheduleLinkSuffix = schedulePrefill
     ? `?date=${schedulePrefill.date}&time=${schedulePrefill.time}`
     : "";
 
-  // Post types with their supported platforms, read from the shared
-  // capability registry (src/lib/platforms/capabilities.ts).
   const postTypes = [
     {
       title: "Text Post",
@@ -59,17 +55,14 @@ export default async function CreatePostPage({
             hover:-translate-y-1
           "
             >
-              {/* Icon section */}
               <div className="mb-6 transition-transform duration-200 group-hover:scale-110">
                 <type.icon className="h-16 w-16  text-muted-foreground transition-colors duration-200 group-hover:text-primary " />
               </div>
 
-              {/* Title section */}
               <h2 className="text-xl font-semibold mb-8  transition-colors duration-200 group-hover:text-primary">
                 {type.title}
               </h2>
 
-              {/* Platform icons section */}
               <div className="mt-auto w-full">
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   {type.platforms.map((platform) => (
@@ -87,7 +80,6 @@ export default async function CreatePostPage({
         ))}
       </div>
 
-      {/* Footer section remains the same */}
       <div className="text-center">
         <Link
           href="/connections"

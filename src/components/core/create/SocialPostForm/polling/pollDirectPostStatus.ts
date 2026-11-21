@@ -8,14 +8,12 @@ import type {
 } from "@/lib/types/postStatus";
 import { isJobTerminal } from "@/lib/types/postStatus";
 
-// 60 polls at 1 s, then 60 at 2 s for slow video processing: 180 s worst case.
 const FAST_PHASE_ATTEMPTS = 60;
 const FAST_PHASE_INTERVAL_MS = 1000;
 const SLOW_PHASE_ATTEMPTS = 60;
 const SLOW_PHASE_INTERVAL_MS = 2000;
 const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 
-/** Runtime mirror of PostStatusResponse; the annotation keeps it in step with the shared type. */
 const PostStatusResponseSchema: z.ZodMiniType<PostStatusResponse> = z.discriminatedUnion("success", [
   z.object({
     success: z.literal(true),
@@ -47,15 +45,14 @@ function platformDisplay(platform: string): string {
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
-/** Toasts a job once, when it first reaches a terminal state. */
 function emitToastForJob(job: PostStatusJob, toasted: Set<string>): void {
   if (toasted.has(job.event_id)) return;
   if (!isJobTerminal(job.status)) return;
 
   const name = platformDisplay(job.platform);
   if (job.status === "success" && job.platform === "tiktok") {
-    // Success here means TikTok accepted the post; it then processes it.
-    // The Content Sharing Guidelines require telling the user so.
+    // TikTok Content Sharing Guidelines, Required UX Implementation 5d: tell the
+    // user the post may take a few minutes to process and show on the profile.
     toast.success(
       "Sent to TikTok. It may take a few minutes for your post to process and be visible on your profile.",
     );
@@ -68,7 +65,6 @@ function emitToastForJob(job: PostStatusJob, toasted: Set<string>): void {
   toasted.add(job.event_id);
 }
 
-/** Summary toast once every job is terminal; skipped for single-job runs. */
 function emitSummaryToast(jobs: PostStatusJob[]): void {
   if (jobs.length <= 1) return;
   const succeeded = jobs.filter((job) => job.status === "success").length;
@@ -83,7 +79,6 @@ function emitSummaryToast(jobs: PostStatusJob[]): void {
   }
 }
 
-/** Polls /api/posts/status until every event is terminal or 180 s pass, toasting each result. */
 export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
   if (eventIds.length === 0) return;
 

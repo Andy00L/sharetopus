@@ -32,21 +32,6 @@ export function NavCreate() {
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {/* 
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              className={
-                pathname === "/studio" ? "bg-[#FF4A20] text-white" : ""
-              }
-            >
-              <Link href="/studio">
-                <LayoutDashboard className="h-4 w-4" />
-                <span>Studio</span>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          */}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>

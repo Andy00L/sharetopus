@@ -7,7 +7,6 @@ import { WebhookForm } from "./WebhookForm";
 import { Button } from "@/components/ui/button";
 import type { WebhookSubscriptionDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
-/** Webhook management UI, backed by the same-origin /api/v1/webhooks routes. */
 export function WebhooksClient({
   initialSubscriptions = [],
 }: {

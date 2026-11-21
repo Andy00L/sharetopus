@@ -3,12 +3,6 @@ import type {
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Connections resource of the /docs/rest reference. Field lists mirror
- * src/lib/api/rest/validation/connectionSchemas.ts (read in full) and the
- * ConnectionDTO factory.
- */
-
 const CONNECTION_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (ConnectionDTO)",
   rows: [

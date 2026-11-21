@@ -21,6 +21,7 @@ import { updateScheduledTimeBatchAction } from "@/actions/server/scheduleActions
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import BatchDetailDialog from "../BatchDetailDialog";
 import {
+  ALL_PLATFORMS,
   applyOptimisticMoves,
   combineDayWithHour,
   combineDayWithTimeOf,
@@ -30,46 +31,30 @@ import {
   parseDroppableId,
   type CalendarBatch,
   type CalendarView,
+  type PlatformFilter,
 } from "./calendarMath";
 import { BatchChipContent } from "./CalendarBatchChip";
 import CalendarMonthGrid from "./CalendarMonthGrid";
 import CalendarToolbar from "./CalendarToolbar";
 import CalendarWeekGrid from "./CalendarWeekGrid";
 
-/** Pixels a pointer must travel before a drag starts (clicks stay clicks). */
 const DRAG_ACTIVATION_DISTANCE_PX = 6;
 
 interface ScheduleCalendarProps {
   readonly posts: ScheduledPostListItem[];
   readonly userId: string;
-  /**
-   * Dependency seam for the reschedule call. Production omits it (the
-   * real server action is the default); harnesses inject a stub to
-   * exercise the optimistic flow without a signed-in session.
-   */
-  readonly rescheduleAction?: typeof updateScheduledTimeBatchAction;
 }
 
-/**
- * The drag-and-drop schedule calendar: month and week views over every
- * batch (including posted ones, shown in place). Dropping a chip calls the
- * same reschedule action the batch dialog uses, with the move applied
- * optimistically and reverted on failure. Data arrives from the server
- * page; after a successful move the RSC tree refreshes, and settled
- * optimistic entries are pruned against the fresh server rows.
- */
 export default function ScheduleCalendar({
   posts,
   userId,
-  rescheduleAction = updateScheduledTimeBatchAction,
 }: ScheduleCalendarProps) {
   const router = useRouter();
 
   const [view, setView] = useState<CalendarView>("month");
   const [anchor, setAnchor] = useState<Date>(() => new Date());
-  const [selectedPlatforms, setSelectedPlatforms] = useState<Set<string> | null>(
-    null,
-  );
+  const [selectedPlatforms, setSelectedPlatforms] =
+    useState<PlatformFilter>(ALL_PLATFORMS);
   const [optimisticMoves, setOptimisticMoves] = useState<
     Record<string, string>
   >({});
@@ -88,16 +73,13 @@ export default function ScheduleCalendar({
     useSensor(KeyboardSensor),
   );
 
-  // Server truth, ungrouped by any filter: the pruning below must see every
-  // batch even when a platform filter hides it from the grid.
-  const serverBatches = groupPostsIntoBatches(posts);
+  const unfilteredServerBatches = groupPostsIntoBatches(posts);
 
-  // Prune optimistic entries the server has caught up with (or whose batch
-  // vanished), during render: the React "adjust state from props" pattern,
-  // guarded so it only fires when something actually settled.
+  // State adjusted during render, guarded so it cannot loop (React rule:
+  // react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
   const settledBatchIds = Object.keys(optimisticMoves).filter((batchId) => {
     if (pendingBatchIds.has(batchId)) return false;
-    const serverBatch = serverBatches.find(
+    const serverBatch = unfilteredServerBatches.find(
       (batch) => batch.batchId === batchId,
     );
     if (!serverBatch) return true;
@@ -146,8 +128,7 @@ export default function ScheduleCalendar({
 
   function handleTogglePlatform(platform: string) {
     setSelectedPlatforms((currentSelection) => {
-      // No filter yet: checking one platform means "only this one".
-      if (currentSelection === null) {
+      if (currentSelection === ALL_PLATFORMS) {
         return new Set([platform]);
       }
       const nextSelection = new Set(currentSelection);
@@ -156,8 +137,7 @@ export default function ScheduleCalendar({
       } else {
         nextSelection.add(platform);
       }
-      // Empty selection would show nothing forever; treat it as "all".
-      return nextSelection.size === 0 ? null : nextSelection;
+      return nextSelection.size === 0 ? ALL_PLATFORMS : nextSelection;
     });
   }
 
@@ -166,13 +146,19 @@ export default function ScheduleCalendar({
     setView("week");
   }
 
-  // The chip's draggable id is its batchId (CalendarBatchChip), so the
-  // batch is looked up by id instead of read from untyped drag data.
   function handleDragStart(event: DragStartEvent) {
     const draggedBatch = visibleBatches.find(
       (batch) => batch.batchId === event.active.id,
     );
     setActiveDragBatch(draggedBatch ?? null);
+  }
+
+  function revertOptimisticMove(batchId: string) {
+    setOptimisticMoves((previousMoves) => {
+      const nextMoves = { ...previousMoves };
+      delete nextMoves[batchId];
+      return nextMoves;
+    });
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -212,19 +198,14 @@ export default function ScheduleCalendar({
     );
 
     const postIds = draggedBatch.posts.map((post) => post.id);
-    rescheduleAction(postIds, targetDate, userId)
+    updateScheduledTimeBatchAction(postIds, targetDate, userId)
       .then((result) => {
         if (result.success) {
           toast.success(result.message);
           router.refresh();
           return;
         }
-        // Revert the move so the chip snaps back to the server truth.
-        setOptimisticMoves((previousMoves) => {
-          const nextMoves = { ...previousMoves };
-          delete nextMoves[batchId];
-          return nextMoves;
-        });
+        revertOptimisticMove(batchId);
         if (result.resetIn) {
           toast.error(
             `${result.message} Please try again in ${result.resetIn} seconds.`,
@@ -234,11 +215,7 @@ export default function ScheduleCalendar({
         }
       })
       .catch(() => {
-        setOptimisticMoves((previousMoves) => {
-          const nextMoves = { ...previousMoves };
-          delete nextMoves[batchId];
-          return nextMoves;
-        });
+        revertOptimisticMove(batchId);
         toast.error("Unexpected error rescheduling. Please try again.");
       })
       .finally(() => {
@@ -260,7 +237,7 @@ export default function ScheduleCalendar({
         onViewChange={setView}
         onNavigate={handleNavigate}
         onTogglePlatform={handleTogglePlatform}
-        onClearPlatformFilter={() => setSelectedPlatforms(null)}
+        onClearPlatformFilter={() => setSelectedPlatforms(ALL_PLATFORMS)}
       />
 
       {posts.length === 0 && (
@@ -298,7 +275,7 @@ export default function ScheduleCalendar({
 
         <DragOverlay dropAnimation={null}>
           {activeDragBatch && (
-            <BatchChipContent batch={activeDragBatch} lifted />
+            <BatchChipContent batch={activeDragBatch} isDragOverlay />
           )}
         </DragOverlay>
       </DndContext>

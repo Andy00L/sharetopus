@@ -46,7 +46,6 @@ export default function PinterestSettingsTab({
 }: PinterestSettingsTabProps) {
   return (
     <div className="space-y-4  ">
-      {/* Board selection for each Pinterest account */}
       {selectedPinterestAccounts.map((account) => (
         <div
           key={`pinterest-${account.id}`}
@@ -141,7 +140,6 @@ export default function PinterestSettingsTab({
             )}
         </div>
       ))}
-      {/* Single title field for all Pinterest accounts */}
       <div className="space-y-2 mb-4 ">
         <Label htmlFor="pinterest-title">Title (Optional)</Label>
         <Input
@@ -152,7 +150,6 @@ export default function PinterestSettingsTab({
           placeholder="Add a title for all Pinterest pins"
         />
       </div>
-      {/* Single link field for all Pinterest accounts */}
       <div className="space-y-2 ">
         <Label htmlFor="pinterest-link">Link (Optional)</Label>
         <Input

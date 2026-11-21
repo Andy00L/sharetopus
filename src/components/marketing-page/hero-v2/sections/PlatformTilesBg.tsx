@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 
-// Tile centers as percentages of the hero area, clear of the centered text.
 const PLATFORMS = [
   { id: "linkedin", src: "/linkedin.svg", leftPercent: 4, topPercent: 14, comingSoon: false },
   { id: "tiktok", src: "/tiktok.svg", leftPercent: 9, topPercent: 40, comingSoon: false },
@@ -23,7 +22,6 @@ function buildTileTransform(offsetX: number, offsetY: number): string {
 
 const RESTING_TILE_TRANSFORM = buildTileTransform(0, 0);
 
-// Window mousemove listener: the content layer above would swallow events on the container.
 function repelTilesFromCursor(tileLayer: HTMLDivElement | null) {
   if (!tileLayer) return;
 
@@ -76,7 +74,6 @@ function repelTilesFromCursor(tileLayer: HTMLDivElement | null) {
   };
 }
 
-/** Platform tiles behind the hero that drift away from the cursor; pointer-events-none so they never block clicks. */
 export function PlatformTilesBg() {
   return (
     <div

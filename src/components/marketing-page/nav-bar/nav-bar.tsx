@@ -21,7 +21,6 @@ const NAV_LINKS = [
 const CTA_BUTTON_CLASS =
   "gap-1.5 rounded-full bg-[#FF5A36] px-5 py-3 text-[15px] font-medium tracking-[-0.015em] text-white hover:bg-[#E84A26]";
 
-/** Landing page navbar with a full-screen mobile menu. */
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const { userId, isLoaded } = useAuth();
@@ -30,7 +29,6 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-[100] w-full border-b border-[#D6D5CF] bg-[#F3F4EF] px-4 py-3 md:px-6">
       <div className="relative mx-auto flex max-w-6xl items-center justify-between">
-        {/* Brand */}
         <Link href="/" className="flex items-center gap-2 md:flex-1">
           <Image
             src="/trans_logo%20(1).webp"
@@ -45,7 +43,6 @@ export default function Navbar() {
           </span>
         </Link>
 
-        {/* Desktop nav, centered */}
         <div className="absolute left-1/2 hidden -translate-x-1/2 transform items-center md:flex">
           {NAV_LINKS.map((link) => (
             <Link key={link.label} href={link.href} className={NAV_LINK_CLASS}>
@@ -54,7 +51,6 @@ export default function Navbar() {
           ))}
         </div>
 
-        {/* Right side */}
         <div className="flex items-center gap-3 md:flex-1 md:justify-end md:gap-4">
           {isLoaded && isSignedIn ? (
             <Button
@@ -86,7 +82,6 @@ export default function Navbar() {
             </>
           ) : null}
 
-          {/* Hamburger */}
           <button
             type="button"
             aria-label="Open menu"
@@ -98,7 +93,6 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Mobile full-screen menu. Opaque, full-screen, not Radix. */}
       {mobileOpen && (
         <div className="fixed inset-0 z-[200] flex flex-col bg-[#F3F4EF] md:hidden">
           <div className="flex items-center justify-between border-b border-[#D6D5CF] px-4 py-3">

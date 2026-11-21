@@ -15,12 +15,6 @@ export type BoardEntry = {
   isSelected: boolean;
 };
 
-/**
- * Board state for the Pinterest settings tab. All Pinterest API calls go
- * through the ForAccount server actions with an account id only; the
- * access token is resolved and refreshed server-side and never reaches
- * this hook.
- */
 export function usePinterestBoards(userId: string | null) {
   const [boards, setBoards] = useState<BoardEntry[]>([]);
   const [checkedAccountIds, setCheckedAccountIds] = useState<string[]>([]);
@@ -28,15 +22,6 @@ export function usePinterestBoards(userId: string | null) {
   const [isCreatingBoard, setIsCreatingBoard] = useState(false);
   const [isLoadingBoards, setIsLoadingBoards] = useState(false);
 
-  /**
-   * Private. Fetches boards for an account and rewrites the local
-   * `boards` state so this account's entries reflect the latest server
-   * response. Idempotent at the state level: existing rows for the
-   * account are replaced, not appended. Does not consult dedup guards;
-   * callers decide whether to dedupe.
-   *
-   * Uses functional setState everywhere to avoid stale closures.
-   */
   async function fetchAndSetBoards(account: ClientSocialAccount) {
     if (!userId) return;
 
@@ -76,11 +61,6 @@ export function usePinterestBoards(userId: string | null) {
     }
   }
 
-  /**
-   * Called from handleAccountToggle when a Pinterest account is checked.
-   * Idempotent on repeated toggles: skips if boards for this account
-   * are already loaded. First-time loads delegate to fetchAndSetBoards.
-   */
   async function loadBoardsForAccount(account: ClientSocialAccount) {
     if (!userId) return;
     if (checkedAccountIds.includes(account.id)) return;
@@ -89,13 +69,11 @@ export function usePinterestBoards(userId: string | null) {
     await fetchAndSetBoards(account);
   }
 
-  /** Called when a Pinterest account is unchecked. */
   function unloadBoardsForAccount(accountId: string) {
     setBoards((prev) => prev.filter((entry) => entry.accountId !== accountId));
     setCheckedAccountIds((prev) => prev.filter((id) => id !== accountId));
   }
 
-  /** Sets the isSelected flag for a specific board. */
   function selectBoard(accountId: string, boardId: string) {
     setBoards((prev) =>
       prev.map((board) => ({
@@ -108,12 +86,6 @@ export function usePinterestBoards(userId: string | null) {
     );
   }
 
-  /**
-   * Creates a new Pinterest board and forces a board refetch for the
-   * account. Calls fetchAndSetBoards directly, bypassing
-   * loadBoardsForAccount's dedup guards since we know the server data
-   * just changed.
-   */
   async function handleCreateBoard(
     accountId: string,
     accounts: ClientSocialAccount[]
@@ -150,7 +122,6 @@ export function usePinterestBoards(userId: string | null) {
     }
   }
 
-  /** Called from resetForm. */
   function resetBoards() {
     setBoards([]);
     setCheckedAccountIds([]);

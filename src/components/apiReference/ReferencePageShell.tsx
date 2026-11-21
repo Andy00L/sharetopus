@@ -5,12 +5,6 @@ import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 import { DocsSidebar } from "./DocsSidebar";
 import { MobileToc } from "./MobileToc";
 
-/**
- * Shared scaffolding for the API reference family (/docs/x402, /docs/rest,
- * /docs/mcp): breadcrumb, eyebrow + display title + subtitle header,
- * optional header extras (chip rows, callouts), the scroll-spy sidebar on
- * lg+ and the pill TOC below it. Pages supply sections as children.
- */
 export function ReferencePageShell({
   breadcrumbLabel,
   eyebrow,

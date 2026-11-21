@@ -1,10 +1,6 @@
 import { Fragment } from "react";
 import { ChevronRight } from "lucide-react";
 
-/**
- * Connection status pills: the happy path chained with chevrons, then the
- * terminal alternatives as destructive-tinted pills on a second row.
- */
 export function StatusFlow({
   steps,
   terminal,

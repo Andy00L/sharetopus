@@ -1,12 +1,7 @@
-// components/suspense/scheduled/ScheduleCalendarSkeleton.tsx
+const SKELETON_GRID_COLUMNS = 7;
+const SKELETON_GRID_ROWS = 5;
+const SKELETON_CELL_COUNT = SKELETON_GRID_COLUMNS * SKELETON_GRID_ROWS;
 
-/** Cells in the pulsing placeholder grid: 7 columns x 5 rows. */
-const SKELETON_CELL_COUNT = 35;
-
-/**
- * Loading placeholder mirroring the calendar layout (toolbar row + month
- * grid) so the resolve causes no layout shift.
- */
 export default function ScheduleCalendarSkeleton() {
   return (
     <div className="flex animate-pulse flex-col gap-4">

@@ -22,7 +22,6 @@ export async function fetchRecentDeliveriesOrEmpty(
   }
 }
 
-/** Last 20 deliveries of a webhook subscription, with status dots. Suspends until the deliveries load. */
 export function DeliveryLog({
   deliveriesPromise,
 }: {

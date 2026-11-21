@@ -17,12 +17,6 @@ export const metadata: Metadata = {
     "Schedule and publish social posts via REST: Bearer API keys, cursor pagination, webhooks, media uploads, and analytics.",
 };
 
-/**
- * Public REST API reference. Fully static: assembled from the per-resource
- * content modules in data/, which mirror the zod validation schemas and
- * route handlers. The interactive explorer at /docs/api renders the same
- * surface from the generated OpenAPI document.
- */
 export default function RestApiReferencePage() {
   return (
     <ReferencePageShell
@@ -54,7 +48,7 @@ export default function RestApiReferencePage() {
               openapi.json
             </a>
           </div>
-          <Callout tone="blue">{REST_OVERVIEW.note}</Callout>
+          <Callout tone="blue" className="mt-4">{REST_OVERVIEW.note}</Callout>
         </>
       }
     >

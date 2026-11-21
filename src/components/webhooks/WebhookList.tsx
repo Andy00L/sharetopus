@@ -13,7 +13,6 @@ type OpenDeliveryLog = {
   deliveriesPromise: Promise<WebhookDeliveryDTO[]>;
 };
 
-/** Webhook subscriptions, each with an expandable delivery log. */
 export function WebhookList({
   subscriptions,
   onDelete,

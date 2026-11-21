@@ -1,7 +1,5 @@
 import Link from "next/link";
 
-/* Dark Get-Started CTA band closing the landing page. */
-
 export default function Community() {
   return (
     <section

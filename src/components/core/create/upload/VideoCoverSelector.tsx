@@ -8,7 +8,6 @@ interface VideoCoverSelectorProps {
   readonly videoFile: File;
   readonly onCoverChange: (timestamp: number) => void;
   readonly onError?: (errorMessage: string) => void;
-  /** The video's length in seconds, once its metadata has loaded. */
   readonly onDurationLoaded?: (durationSec: number) => void;
 }
 
@@ -40,10 +39,12 @@ export function VideoCoverSelector({
     const context = canvas?.getContext("2d");
     if (!video || !canvas || !context) return;
 
-    video.currentTime = time;
-    await new Promise<void>((resolve) => {
-      video.onseeked = () => resolve();
-    });
+    if (video.currentTime !== time) {
+      video.currentTime = time;
+      await new Promise<void>((resolve) => {
+        video.onseeked = () => resolve();
+      });
+    }
 
     const previewScale = Math.min(
       1,
@@ -78,8 +79,6 @@ export function VideoCoverSelector({
 
     const initialTime = videoDuration * INITIAL_COVER_FRACTION;
     setCurrentTime(initialTime);
-    // No seek here: a seek to the time the video already shows fires no
-    // `seeked` event, which would leave generateThumbnail waiting forever.
     scheduleThumbnail(initialTime);
   };
 
@@ -92,7 +91,6 @@ export function VideoCoverSelector({
   return (
     <div className="space-y-4 border-2 border-dashed border-chart-1 bg-card rounded-lg p-12 text-center transition-colors hover:border-chart-1/80 hover:bg-accent">
       {" "}
-      {/* Hidden video element for thumbnail generation */}
       <video
         ref={videoRef}
         src={videoUrl ?? undefined}
@@ -100,9 +98,7 @@ export function VideoCoverSelector({
         preload="metadata"
         onLoadedMetadata={handleVideoLoaded}
       />
-      {/* Hidden canvas for thumbnail generation */}
       <canvas ref={canvasRef} className="hidden" />
-      {/* Cover Preview */}
       <div className="space-y-3">
         <h3 className="font-medium">Cover Image</h3>
 
@@ -118,7 +114,6 @@ export function VideoCoverSelector({
           </div>
         )}
       </div>
-      {/* Frame Selection Slider */}
       {duration > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium">Select Frame for Cover</label>

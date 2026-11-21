@@ -2,7 +2,6 @@ import { AnimatedTestimonial } from "../AnimatedTestimonial";
 import { HeroCta } from "./sections/HeroCta";
 import { PlatformTilesBg } from "./sections/PlatformTilesBg";
 
-/** Landing hero: headline, CTA and social proof over the floating platform tiles. */
 export default function HeroV2() {
   return (
     <section className="relative max-w-6xl mx-auto px-4 md:px-8 pt-12 md:pt-16 pb-8 text-center">

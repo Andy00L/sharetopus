@@ -1,24 +1,18 @@
-/*
- * Concept films: the screen tokens and a neutral player style. The engine reads the --film-* values
- * at the first scene; override them in the host page (after this file) to match its design system.
- * Colors must stay #rrggbb so the engine can blend them.
- */
+/* public/films/films.js (resolveTheme) reads the --film-* tokens once and blends colors: keep them #rrggbb. */
 :root {
-  /* the screen: a warm near-black, not the default slate of dark interfaces */
   --film-background: #141311;
-  --film-ink: #F2EEE6;       /* narration and formulas, 16:1 on the background */
-  --film-muted: #A9A396;     /* ticks, captions, braces, 7.4:1 */
-  --film-faint: #7A756B;     /* strokes and switched-off tiles, large text only, 4:1 */
-  --film-grid: #2A2824;      /* chart grid lines, the narration rule */
-  --film-rest: #3D3A35;      /* a tile at rest */
-  /* manim's hues, one fixed meaning each (sourceRef: manim/utils/color/manim_colors.py) */
-  --film-blue: #58C4DD;      /* the main object */
-  --film-teal: #5CD0B3;      /* what is already placed or sorted */
-  --film-green: #83C167;     /* true, holds, acquired */
-  --film-yellow: #F7D96F;    /* what we look at now, the result */
-  --film-gold: #F0AC5F;      /* the second object of a comparison */
-  --film-red: #FC6255;       /* false, broken, over the limit */
-  --film-purple: #9A72AC;    /* a sixth series, only when six are needed */
+  --film-ink: #F2EEE6;
+  --film-muted: #A9A396;
+  --film-faint: #7A756B;
+  --film-grid: #2A2824;
+  --film-rest: #3D3A35;
+  --film-blue: #58C4DD;
+  --film-teal: #5CD0B3;
+  --film-green: #83C167;
+  --film-yellow: #F7D96F;
+  --film-gold: #F0AC5F;
+  --film-red: #FC6255;
+  --film-purple: #9A72AC;
   --film-font-display: Georgia, 'Times New Roman', serif;
   --film-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --film-font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -38,7 +32,6 @@
   appearance: none; border: 0; border-radius: 7px; padding: 7px 12px; cursor: pointer;
   font: 500 13px/1 var(--film-font-sans); background: var(--film-rest); color: var(--film-ink);
 }
-/* a hover changes the tone, never the position */
 .concept-film-player button:hover,
 .concept-film-variants button:hover { filter: brightness(1.15); }
 .concept-film-player button:focus-visible,

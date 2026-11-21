@@ -2,11 +2,22 @@
 
 import { useCallback } from "react";
 
+const MAX_PUPIL_DILATION_GAIN = 0.35;
+
+function easeSmoothstep(progress: number): number {
+  return progress * progress * (3 - 2 * progress);
+}
+
+function restartCssAnimation(element: HTMLElement, animationClassName: string) {
+  element.classList.remove(animationClassName);
+  void element.offsetWidth;
+  element.classList.add(animationClassName);
+}
+
 function queryEyeParts(container: HTMLDivElement, selector: string): HTMLDivElement[] {
   return [...container.querySelectorAll<HTMLDivElement>(selector)];
 }
 
-/** Two cartoon eyes that follow the pointer, look at the CTA on hover, blink, and dilate near the CTA. */
 export function EyeTracker({
   cardId,
   ctaId,
@@ -161,8 +172,7 @@ export function EyeTracker({
         const gapX = Math.max(ctaBounds.left - mouse.clientX, 0, mouse.clientX - ctaBounds.right);
         const gapY = Math.max(ctaBounds.top - mouse.clientY, 0, mouse.clientY - ctaBounds.bottom);
         const proximity = 1 - Math.min(1, Math.hypot(gapX, gapY) / 260);
-        // Smoothstep easing: up to 35% larger pupils as the pointer nears the CTA.
-        targetDilation = 1 + proximity * proximity * (3 - 2 * proximity) * 0.35;
+        targetDilation = 1 + easeSmoothstep(proximity) * MAX_PUPIL_DILATION_GAIN;
       }
       dilation += (targetDilation - dilation) * 0.14;
 
@@ -221,9 +231,7 @@ export function EyeTracker({
     const blinkOnce = (eyeIndex: number) => {
       const lid = lids[eyeIndex];
       if (!lid) return;
-      lid.classList.remove("blink");
-      void lid.offsetWidth; // Forces a reflow so the CSS animation restarts.
-      lid.classList.add("blink");
+      restartCssAnimation(lid, "blink");
     };
 
     const scheduleBlink = () => {

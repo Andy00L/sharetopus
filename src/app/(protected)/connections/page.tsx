@@ -50,17 +50,15 @@ const AccountsPageWithData = async () => {
     return <InactiveSubscriptionNotice status={subscriptionCheck.status} />;
   }
   if (!fetchResult.success) {
-    return <AccountsLoadError resetIn={fetchResult.resetIn} />;
+    return <AccountsLoadError rateLimitResetIn={fetchResult.resetIn} />;
   }
 
   const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
   const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
   const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
 
-  // Client-safe projection: full rows would serialize token columns into the RSC payload.
   const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);
 
-  // Share links are a Creator feature; null tells the list the read failed.
   const shareLinksResult = isCreatorOrHigher ? await listShareLinks() : null;
   const shareLinks = shareLinksResult?.success ? shareLinksResult.data : null;
 

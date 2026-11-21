@@ -3,13 +3,6 @@ import type {
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Posts resource of the /docs/rest reference. Field lists mirror the zod
- * schemas verbatim (src/lib/api/rest/validation/schemas.ts and
- * postPatchSchemas.ts, read in full); response shapes mirror the DTO
- * factories. Amounts and ids in samples are illustrative.
- */
-
 const POST_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (PostDTO)",
   rows: [

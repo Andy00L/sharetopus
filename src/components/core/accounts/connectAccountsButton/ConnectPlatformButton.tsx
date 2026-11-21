@@ -11,7 +11,6 @@ import ConnectionLimitModal from "./ConnectionLimitModal";
 
 const POPUP_WIDTH_PX = 600;
 const POPUP_HEIGHT_PX = 700;
-/** Whole-flow inactivity timeout (10 minutes). */
 const AUTH_FLOW_TIMEOUT_MS = 600_000;
 const POPUP_POLL_INTERVAL_MS = 1_000;
 const INITIATE_REQUEST_TIMEOUT_MS = 15_000;
@@ -32,7 +31,6 @@ interface ConnectPlatformButtonProps {
   readonly maxAllowed: number;
 }
 
-/** Opens the platform's OAuth popup, or the limit modal when the plan is full. */
 export default function ConnectPlatformButton({
   platform,
   canConnect,
@@ -79,7 +77,6 @@ export default function ConnectPlatformButton({
     [cleanupAuthFlow],
   );
 
-  // The OAuth popup reports back through window.opener globals, which React does not own.
   const registerPopupCallbacks = () => {
     const callbackNames = popupCallbackNames(platform);
     window[callbackNames.success] = () => {
@@ -115,7 +112,8 @@ export default function ConnectPlatformButton({
     try {
       setIsConnecting(true);
 
-      // Open the popup inside the click so the browser does not block it, then navigate it.
+      // Popup blockers allow window.open only during transient user activation, which can expire
+      // before the fetch below returns (MDN: Glossary/Transient_activation), so open blank now.
       const popupLeft = window.screen.width / 2 - POPUP_WIDTH_PX / 2;
       const popupTop = window.screen.height / 2 - POPUP_HEIGHT_PX / 2;
       const popup = window.open(

@@ -7,16 +7,8 @@ import {
   buildActionsPreflightResponse,
 } from "@/lib/solanaActions/headers";
 
-/**
- * GET /actions.json
- *
- * Solana Actions discovery file: tells Blink clients which paths on this
- * origin serve Actions. The API routes map to themselves, so a Blink URL is
- * simply the API URL (for example
- * https://dial.to/?action=solana-action:https://sharetopus.com/api/actions/post-now?account_id=...).
- *
- * sourceRef: @solana/actions-spec v2.4.2 ActionsJson
- */
+// Solana Actions spec (@solana/actions-spec ActionsJson): Blink clients read
+// /actions.json at the origin root to learn which paths serve Actions.
 
 export const runtime = "nodejs";
 export const dynamic = "force-static";

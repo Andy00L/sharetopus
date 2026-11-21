@@ -8,8 +8,6 @@ import { PricingTable } from "@/components/apiReference/PricingTable";
 import { ReferencePageShell } from "@/components/apiReference/ReferencePageShell";
 import { SectionBlock } from "@/components/apiReference/SectionBlock";
 
-// Revalidate hourly so the live pricing table tracks pricing_actions without
-// a rebuild. Same value as the OpenAPI route (src/app/api/v1/openapi.json).
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
@@ -18,12 +16,6 @@ export const metadata: Metadata = {
     "Pay-per-action social posting API: USDC payments, wallet signatures, no account required.",
 };
 
-/**
- * Public x402 API reference. Server component: fetches the live pricing rows
- * and assembles the page from the static config in data/endpoints.ts. The
- * marketing layout already paints the cream field and DM Sans; components
- * read the token sheet (docs/UI_DESIGN_SYSTEM.md).
- */
 export default async function X402ApiReferencePage() {
   const pricingResult = await fetchX402Pricing();
 

@@ -5,11 +5,6 @@ import { CodeCard } from "./CodeCard";
 import { Callout } from "./Callout";
 import { CopyButton } from "./CopyButton";
 
-/**
- * One endpoint operation: left column carries the badge, copyable path,
- * description, param tables, and callouts; right column carries the code
- * cards. Collapses to one column below xl.
- */
 export function EndpointBlock({ op }: { op: EndpointOperation }) {
   return (
     <div
@@ -39,19 +34,11 @@ export function EndpointBlock({ op }: { op: EndpointOperation }) {
               <ParamTable key={table.heading} table={table} />
             ))}
           </div>
-          {op.callouts?.map((callout) =>
-            // Amber callouts bring no top margin of their own (the blue
-            // variant does), so they get a spacing wrapper here.
-            callout.tone === "amber" ? (
-              <div key={callout.text} className="mt-4">
-                <Callout tone="amber">{callout.text}</Callout>
-              </div>
-            ) : (
-              <Callout key={callout.text} tone="blue">
-                {callout.text}
-              </Callout>
-            )
-          )}
+          {op.callouts?.map((callout) => (
+            <Callout key={callout.text} tone={callout.tone} className="mt-4">
+              {callout.text}
+            </Callout>
+          ))}
         </div>
         <div className="space-y-4">
           {op.codeSamples.map((sample) => (

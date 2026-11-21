@@ -20,7 +20,6 @@ const readIsMobile = () => getMobileQueryList().matches
 
 const readIsMobileOnServer = () => false
 
-/** True below the md breakpoint; false on the server and during hydration. */
 export function useIsMobile(): boolean {
   return useSyncExternalStore(
     subscribeToMobileQuery,

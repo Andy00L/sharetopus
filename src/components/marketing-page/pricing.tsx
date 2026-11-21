@@ -14,9 +14,6 @@ import { type Plan, planPrices } from "@/lib/types/plans";
 import { checkOutSession } from "@/actions/server/stripe/checkOutSession";
 import { createCustomerPortal } from "@/actions/server/stripe/customerPortal";
 
-/* Renders feature text, handling **bold** wrapping used in planPrices.
-   Features like "**15 connected social accounts**" get bold styling.
-   Plain features render as-is. */
 function renderFeature(text: string): React.ReactNode {
   if (text.startsWith("**") && text.endsWith("**")) {
     return <strong>{text.slice(2, -2)}</strong>;
@@ -24,26 +21,17 @@ function renderFeature(text: string): React.ReactNode {
   return text;
 }
 
-/* Compute yearly savings percentage for a plan.
-   Formula: 1 - (yearlyPrice / (monthlyPrice * 12)).
-   Returns a rounded integer (e.g. 40 for ~40%). */
 function savingsPct(plan: Plan): number {
   const monthlyTotal = plan.monthlyPrice * 12;
   return Math.round((1 - plan.yearlyPrice / monthlyTotal) * 100);
 }
 
-/* Pricing section. Three tiers (Starter, Creator, Pro) with monthly/yearly toggle.
-   Creator (popular) gets a "Best deal" pill, ink border, and hard offset shadow.
-   All plan data comes from planPrices in plans.ts (single source of truth).
-   CTAs go through existing Stripe checkout and portal server actions. */
 export default function PricingSection() {
   const [isYearly, setIsYearly] = useState(false);
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const { isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
 
-  /* The SAVE badge displays the featured tier's savings percentage.
-     Creator = ~40%. Computed, not hardcoded. */
   const featuredPlan = planPrices.find((plan) => plan.popular);
   const badgePct = featuredPlan ? savingsPct(featuredPlan) : 40;
 
@@ -89,7 +77,6 @@ export default function PricingSection() {
       id="pricing"
       className="py-16 md:py-24 px-4 md:px-8 max-w-6xl mx-auto"
     >
-      {/* Section header: eyebrow, display heading, serif-italic subheading. */}
       <div className="text-center mb-8 md:mb-14">
         <div className="t-eyebrow mb-3">
           <span className="inline-block size-1.5 rounded-full bg-primary mr-2 align-middle" />
@@ -104,7 +91,6 @@ export default function PricingSection() {
         </p>
       </div>
 
-      {/* Billing toggle: Monthly | Switch | Yearly | SAVE badge. */}
       <div className="flex items-center justify-center gap-3.5">
         <span
           className={cn(
@@ -130,7 +116,6 @@ export default function PricingSection() {
         </Badge>
       </div>
 
-      {/* Plan cards grid: 1 column mobile, 3 columns desktop. */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5 mt-12 items-stretch">
         {planPrices.map((plan) => {
           const featured = !!plan.popular;
@@ -148,24 +133,20 @@ export default function PricingSection() {
                   "border-2 border-foreground shadow-[var(--shadow-hard)]"
               )}
             >
-              {/* "Best deal" pill for the featured (Creator) card. */}
               {featured && (
                 <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-3.5 py-1 t-chip rounded-full border-transparent">
                   Best deal
                 </Badge>
               )}
 
-              {/* Tier name (trim handles trailing space on "Pro "). */}
               <div className="t-pricing-tier">
                 {plan.title.trim()}
               </div>
 
-              {/* Short description. */}
               <p className="mt-2 text-sm text-muted-foreground leading-snug min-h-[40px]">
                 {plan.description}
               </p>
 
-              {/* Price display: big number + "/month" suffix. */}
               <div className="mt-5 flex items-baseline gap-1.5">
                 <span className="t-pricing-price">
                   ${displayPrice}
@@ -173,15 +154,10 @@ export default function PricingSection() {
                 <span className="t-pricing-per">/month</span>
               </div>
 
-              {/* Yearly billed line (visible only when yearly toggle is on).
-                  Non-breaking space preserves layout height when hidden. */}
               <div className="mt-1 text-xs text-muted-foreground min-h-[18px]">
-                {isYearly
-                  ? `$${plan.yearlyPrice}/year billed annually`
-                  : "\u00A0"}
+                {isYearly ? `$${plan.yearlyPrice}/year billed annually` : null}
               </div>
 
-              {/* Feature list with orange checkmarks. */}
               <ul className="mt-5 mb-6 flex flex-col gap-2.5 flex-1">
                 {plan.features.map((feature) => (
                   <li key={feature} className="flex gap-2 text-sm items-start">
@@ -194,7 +170,6 @@ export default function PricingSection() {
                 ))}
               </ul>
 
-              {/* CTA button. Featured card gets filled ink style, others get outline. */}
               <Button
                 className={cn(
                   "w-full justify-center rounded-full t-button py-3 gap-1.5 group cursor-pointer",

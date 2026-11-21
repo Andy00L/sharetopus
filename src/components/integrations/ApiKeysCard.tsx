@@ -81,7 +81,6 @@ function expiryLabel(expiresAtIso: string): string {
   return `Expires ${expiresAt.toLocaleDateString()}`;
 }
 
-/** Lists, creates (raw key shown once) and revokes the user's MCP or REST API keys. */
 export function ApiKeysCard({
   kind,
   initialKeys,

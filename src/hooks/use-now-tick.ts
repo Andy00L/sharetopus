@@ -16,10 +16,6 @@ function createTickingClock(intervalMs: number) {
   };
 }
 
-/**
- * The current time, refreshed every `intervalMs` while the component is
- * mounted, so time-anchored UI (the calendar's now line) stays current.
- */
 export function useNowTick(intervalMs: number): Date {
   const clock = useMemo(() => createTickingClock(intervalMs), [intervalMs]);
   return useSyncExternalStore(clock.subscribe, clock.getSnapshot, clock.getSnapshot);

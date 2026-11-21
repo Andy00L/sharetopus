@@ -7,20 +7,17 @@ import SocialAvatarWrapper from "@/components/SocialAvatarWrapper";
 import { POST_STATUS_STYLES } from "../statusStyles";
 import type { CalendarBatch } from "./calendarMath";
 
-/** Avatars shown on a chip before collapsing into a "+N" counter. */
 const MAX_CHIP_AVATARS = 3;
 
 interface BatchChipContentProps {
   readonly batch: CalendarBatch;
-  /** Lifted style for the drag overlay clone. */
-  readonly lifted?: boolean;
+  readonly isDragOverlay?: boolean;
 }
 
-/**
- * The visual body of a calendar chip, shared by the in-grid draggable and
- * the DragOverlay clone so the lifted copy matches pixel for pixel.
- */
-export function BatchChipContent({ batch, lifted = false }: BatchChipContentProps) {
+export function BatchChipContent({
+  batch,
+  isDragOverlay = false,
+}: BatchChipContentProps) {
   const statusStyle = POST_STATUS_STYLES[batch.status];
   const scheduledAt = new Date(batch.scheduledAtIso);
   const firstPost = batch.posts[0];
@@ -35,7 +32,7 @@ export function BatchChipContent({ batch, lifted = false }: BatchChipContentProp
   return (
     <div
       className={`w-full rounded-lg border bg-card px-1.5 py-1 text-left transition-shadow duration-150 ${
-        lifted ? "shadow-lg ring-1 ring-chart-1/40" : "shadow-sm"
+        isDragOverlay ? "shadow-lg ring-1 ring-chart-1/40" : "shadow-sm"
       }`}
     >
       <div className="flex items-center gap-1.5">
@@ -74,20 +71,14 @@ export function BatchChipContent({ batch, lifted = false }: BatchChipContentProp
 interface CalendarBatchChipProps {
   readonly batch: CalendarBatch;
   readonly draggable: boolean;
-  /** True while this batch's reschedule action is round-tripping. */
-  readonly pending: boolean;
+  readonly isReschedulePending: boolean;
   readonly onOpen: (batchId: string) => void;
 }
 
-/**
- * One scheduled batch on the calendar grid. Dragging it reschedules the
- * whole batch; a plain click opens the shared batch detail dialog (the
- * pointer sensor's distance constraint tells the two apart).
- */
 export default function CalendarBatchChip({
   batch,
   draggable,
-  pending,
+  isReschedulePending,
   onOpen,
 }: CalendarBatchChipProps) {
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
@@ -113,7 +104,7 @@ export default function CalendarBatchChip({
       }
       className={`block w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg ${
         draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-      } ${isDragging ? "opacity-40" : ""} ${pending ? "animate-pulse opacity-70" : ""}`}
+      } ${isDragging ? "opacity-40" : ""} ${isReschedulePending ? "animate-pulse opacity-70" : ""}`}
       {...listeners}
       {...attributes}
     >

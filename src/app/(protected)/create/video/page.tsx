@@ -35,7 +35,7 @@ async function SocialPostFormWithData({
     redirect("/create");
   }
   if (!accounts.success) {
-    return <AccountsLoadError resetIn={accounts.resetIn} />;
+    return <AccountsLoadError rateLimitResetIn={accounts.resetIn} />;
   }
 
   const uploadLimits = TIER_UPLOAD_LIMITS[subscription.tier];

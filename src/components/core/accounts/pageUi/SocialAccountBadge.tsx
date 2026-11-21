@@ -53,7 +53,6 @@ export default function SocialAccountBadge({ account }: Props) {
 
   return (
     <>
-      {/* Alert Dialog for confirmation */}
       <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -80,7 +79,6 @@ export default function SocialAccountBadge({ account }: Props) {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Account Badge */}
       <div
         className={`
   flex items-center gap-2 px-2 py-1 rounded-full 

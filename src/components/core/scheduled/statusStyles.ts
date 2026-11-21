@@ -1,22 +1,11 @@
 import type { PostStatus } from "@/db/schema";
 
-/**
- * One canonical style per post status, shared by the batch card badge, the
- * calendar chips, and the calendar legend so a status always reads as the
- * same color everywhere. "mixed" is the synthetic value a batch reports
- * when its posts disagree. Color values reuse the palette the status badge
- * already shipped with (BatchedPostCard), extended with "queued" which the
- * DB has but the badge never rendered.
- */
 export type BatchStatus = PostStatus | "mixed";
 
 export type PostStatusStyle = {
   label: string;
-  /** Badge text + icon color. */
   textClass: string;
-  /** Badge outline color. */
   borderClass: string;
-  /** Solid marker used by calendar chips and the legend. */
   dotClass: string;
 };
 
@@ -69,7 +58,6 @@ export function isKnownBatchStatus(value: string): value is BatchStatus {
   return value in POST_STATUS_STYLES;
 }
 
-/** A batch's single display status: its posts' shared status, or "mixed". */
 export function summarizeBatchStatus(statuses: readonly string[]): BatchStatus {
   const uniqueStatuses = [...new Set(statuses)];
   if (uniqueStatuses.length === 1 && isKnownBatchStatus(uniqueStatuses[0])) {

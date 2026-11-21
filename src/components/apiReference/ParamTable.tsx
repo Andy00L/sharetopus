@@ -1,13 +1,6 @@
 import type { ParamTableData } from "@/lib/docs/apiReferenceTypes";
+import { TABLE_HEAD_CELL_CLASS } from "./tableClasses";
 
-/**
- * Parameter table on the brand tokens: mono ink names (no second accent),
- * white/cream zebra, hairline borders. Required reads as bold ink,
- * optional as muted: the strongest scanning signal without adding a hue.
- * Rendered as a fragment so the heading's first:mt-0 works against the
- * parent flow: the first table in an endpoint block sits flush, later
- * ones get mt-5.
- */
 export function ParamTable({ table }: { table: ParamTableData }) {
   return (
     <>
@@ -18,16 +11,16 @@ export function ParamTable({ table }: { table: ParamTableData }) {
         <table className="table w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-[var(--cream-2)]/50">
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Parameter
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Type
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Required
               </th>
-              <th className="px-3 py-2 text-left font-semibold text-[var(--ink-2)]">
+              <th className={TABLE_HEAD_CELL_CLASS}>
                 Description
               </th>
             </tr>

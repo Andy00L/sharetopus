@@ -2,15 +2,6 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
 
-/**
- * Error page for share link failures.
- *
- * Displays a user-friendly error message based on the reason query param.
- * No technical jargon. Each reason maps to a clear explanation.
- *
- * Route: /share/[platform]/error?reason=<reason>
- */
-
 const REASON_MESSAGES: Record<string, string> = {
   not_found: "This share link does not exist or has been removed.",
   revoked: "This share link has been revoked by its creator.",
@@ -63,7 +54,6 @@ export default async function ShareErrorPage({
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center space-y-3">
-          {/* Error icon */}
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
             <svg
               xmlns="http://www.w3.org/2000/svg"

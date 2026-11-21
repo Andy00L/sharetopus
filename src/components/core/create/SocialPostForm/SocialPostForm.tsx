@@ -50,10 +50,6 @@ interface SocialPostFormProps {
   readonly userId: string | null;
   readonly postType: "text" | "image" | "video";
   readonly uploadLimits?: { image: number; video: number };
-  /**
-   * When set (calendar quick-create links), the form opens with
-   * scheduling on and this date/time filled in.
-   */
   readonly initialSchedule?: SchedulePrefill | null;
 }
 
@@ -67,7 +63,6 @@ export default function SocialPostForm({
   const MAX_IMAGE_SIZE_BYTES = (uploadLimits?.image ?? 8) * 1024 * 1024;
   const MAX_VIDEO_SIZE_BYTES = (uploadLimits?.video ?? 8) * 1024 * 1024;
 
-  // Core state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [coverTimestamp, setCoverTimestamp] = useState<number>(0);
   const [selectedAccounts, setSelectedAccounts] = useState<
@@ -92,12 +87,10 @@ export default function SocialPostForm({
   >({});
   const [openTab, setOpenTab] = useState<string | undefined>(undefined);
   const previewUrl = useObjectUrl(selectedFile);
-  // Length of the selected video in seconds, for TikTok's duration cap.
   const [videoDurationSec, setVideoDurationSec] = useState<number | null>(
     null,
   );
 
-  // Hooks (event-driven, no useEffect)
   const {
     accountContent,
     addAccountContent,
@@ -110,7 +103,6 @@ export default function SocialPostForm({
 
   const pinterestHook = usePinterestBoards(userId);
 
-  // Derived data
   const allSelectedAccounts = accounts.filter(
     (account) => selectedAccounts[account.id] === true,
   );
@@ -141,7 +133,6 @@ export default function SocialPostForm({
     photoTitle: textInputs.title,
   });
 
-  // Event handlers
   function handleAccountToggle(accountId: string) {
     const wasSelected = selectedAccounts[accountId];
     setSelectedAccounts((prev) => ({
@@ -155,7 +146,6 @@ export default function SocialPostForm({
     if (!account) return;
 
     if (!wasSelected) {
-      // Toggled ON
       addAccountContent(
         account,
         textInputs,
@@ -168,7 +158,6 @@ export default function SocialPostForm({
         tikTokCreatorHook.loadCreatorInfoForAccount(account.id);
       }
     } else {
-      // Toggled OFF
       removeAccountContent(accountId);
       if (account.platform === "pinterest") {
         pinterestHook.unloadBoardsForAccount(accountId);
@@ -191,15 +180,8 @@ export default function SocialPostForm({
     );
   }
 
-  /** The shared post title: Pinterest pins and TikTok photos both use it. */
   function handleTitleChange(title: string) {
-    const newInputs = { ...textInputs, title };
-    setTextInputs(newInputs);
-    updateDefaultText(
-      newInputs,
-      platformOptions.pinterest?.link || "",
-      selectedPinterestAccounts.map((pinterestAccount) => pinterestAccount.id),
-    );
+    handleTextInputChange("title", title);
   }
 
   function handlePinterestLinkChange(link: string) {
@@ -242,12 +224,21 @@ export default function SocialPostForm({
 
   async function handleSubmit() {
     const cleanupMediaOnError = async (path: string) => {
-      if (path && userId) {
-        try {
-          await deleteSupabaseFileAction(userId, path);
-        } catch {
-          // Cleanup failures should not disrupt the main flow
-        }
+      if (!path || !userId) return;
+      const cleanupResult = await deleteSupabaseFileAction(userId, path).catch(
+        (cleanupError: unknown) => ({
+          success: false as const,
+          message:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        }),
+      );
+      if (!cleanupResult.success) {
+        console.error(
+          "[SocialPostForm] Uploaded media cleanup failed:",
+          cleanupResult.message,
+        );
       }
     };
 
@@ -274,7 +265,6 @@ export default function SocialPostForm({
       return;
     }
 
-    // The button is disabled while this is set; this guards the handler too.
     if (tikTokPublishBlocker) {
       setError(tikTokPublishBlocker);
       toast.error(tikTokPublishBlocker);
@@ -348,12 +338,10 @@ export default function SocialPostForm({
         cleanupFiles: !isScheduled,
       });
 
-      // Direct posts with event_ids: poll for completion
       if (result.success && result.event_ids && result.event_ids.length > 0) {
         await pollDirectPostStatus(result.event_ids);
         resetForm();
       } else if (result.success) {
-        // Scheduled posts: immediate success
         toast.success(
           result.message ||
             `Successfully ${
@@ -401,7 +389,6 @@ export default function SocialPostForm({
     }
   }
 
-  // Render
   if (accounts.length === 0) {
     return <NoAccountAvailable />;
   }
@@ -418,7 +405,6 @@ export default function SocialPostForm({
           postType={postType}
         />
 
-        {/* Video upload / cover */}
         {postType === "video" && !selectedFile && (
           <MediaUpload
             kind="video"
@@ -449,7 +435,6 @@ export default function SocialPostForm({
           />
         )}
 
-        {/* Image upload */}
         {postType === "image" && !selectedFile && (
           <MediaUpload
             kind="image"
@@ -462,16 +447,12 @@ export default function SocialPostForm({
 
               let finalFile = file;
               if (file.type === "image/png") {
-                try {
-                  finalFile = await convertPngToJpeg(file);
-                } catch (conversionError) {
-                  const errorMessage =
-                    conversionError instanceof Error
-                      ? conversionError.message
-                      : "Failed to convert image";
-                  setError(`Image conversion failed: ${errorMessage}`);
+                const conversion = await convertPngToJpeg(file);
+                if (!conversion.ok) {
+                  setError(`Image conversion failed: ${conversion.reason}`);
                   return;
                 }
+                finalFile = conversion.file;
               }
 
               if (finalFile.size > MAX_IMAGE_SIZE_BYTES) {
@@ -486,7 +467,6 @@ export default function SocialPostForm({
           />
         )}
 
-        {/* Caption field */}
         <Label htmlFor="text-content">
           {postType === "text" ? "Content" : "Caption"}
         </Label>
@@ -513,8 +493,9 @@ export default function SocialPostForm({
           </div>
         </div>
 
-        {/* TikTok settings stay on the page, never behind a tab: TikTok's
-            review checks that the creator sees them before posting. */}
+        {/* TikTok's app review checks that these settings show on the upload
+            page (Content Sharing Guidelines, Required UX Implementation 1 to 4,
+            developers.tiktok.com/doc/content-sharing-guidelines): never put them in a tab. */}
         {selectedTikTokAccounts.length > 0 && (
           <TikTokPostSettings
             selectedTikTokAccounts={selectedTikTokAccounts}
@@ -531,7 +512,6 @@ export default function SocialPostForm({
           />
         )}
 
-        {/* Tabs (custom captions + Pinterest settings) */}
         {(postType === "video" || postType === "image") &&
           (selectedPinterestAccounts.length > 0 || selectedCount > 1) && (
             <Tabs

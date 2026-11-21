@@ -1,6 +1,5 @@
 "use client";
 
-/** Checkbox list for selecting webhook event types. */
 export function EventPicker({
   allEvents,
   selectedEvents,

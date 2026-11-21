@@ -1,15 +1,6 @@
 import { cn } from "@/lib/utils";
 import { CopyButton } from "./CopyButton";
 
-/**
- * Ink code card: the marketing dark-band recipe (--ink surface, cream
- * text) applied to code. Label examples: "Example Request",
- * "Response · 402" (the middle dot separates word and status, per the
- * design contract). The copy button fades in on hover over the card body.
- *
- * `featured` renders the page's single signature "ink stamp" (hard offset
- * shadow, docs/UI_DESIGN_SYSTEM.md): exactly one per reference page.
- */
 export function CodeCard({
   label,
   code,

@@ -34,7 +34,7 @@ async function SocialPostFormWithData({
     redirect("/create");
   }
   if (!accounts.success) {
-    return <AccountsLoadError resetIn={accounts.resetIn} />;
+    return <AccountsLoadError rateLimitResetIn={accounts.resetIn} />;
   }
 
   return (

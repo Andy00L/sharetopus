@@ -12,29 +12,21 @@ const CONFETTI_COLORS = [
   "#69F0AE",
 ];
 
-/** Number of confetti pieces dropped once when the page opens. */
 const CONFETTI_PARTICLE_COUNT = 150;
+const MIN_FALL_SECONDS = 2;
+const FALL_SECONDS_SPREAD = 6;
+const SPIN_SECONDS_PER_TURN = 3;
 
-/**
- * Deterministic value in [0, 1) for a particle index and a salt, rounded to
- * 4 decimals. Seeded instead of Math.random so the server render and the
- * client hydration produce identical particles.
- */
 function seededFraction(index: number, salt: number): number {
   const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
   return Math.round((value - Math.floor(value)) * 10_000) / 10_000;
 }
 
-/**
- * Computed once at module load. The fall and the spin run in CSS
- * (confetti-fall and confetti-spin in globals.css), so nothing re-renders
- * while the pieces move.
- */
 const CONFETTI_PARTICLES = Array.from(
   { length: CONFETTI_PARTICLE_COUNT },
   (_emptySlot, index) => {
-    // 2 to 8 seconds to fall the keyframe's 240vh.
-    const fallSeconds = 2 + seededFraction(index, 6) * 6;
+    const fallSeconds =
+      MIN_FALL_SECONDS + seededFraction(index, 6) * FALL_SECONDS_SPREAD;
     return {
       id: index,
       leftPercent: seededFraction(index, 1) * 100,
@@ -46,8 +38,7 @@ const CONFETTI_PARTICLES = Array.from(
         ],
       rotationDeg: seededFraction(index, 5) * 360,
       fallSeconds,
-      // One turn per 3 seconds; stop once the piece has left the screen.
-      spinTurns: Math.ceil(fallSeconds / 3),
+      spinTurns: Math.ceil(fallSeconds / SPIN_SECONDS_PER_TURN),
     };
   },
 );
@@ -70,7 +61,7 @@ export default function SimplePaymentSuccess() {
             transform: `rotate(${particle.rotationDeg}deg)`,
             zIndex: 10,
             opacity: 0.8,
-            animation: `confetti-fall ${particle.fallSeconds}s linear forwards, confetti-spin 3s linear ${particle.spinTurns}`,
+            animation: `confetti-fall ${particle.fallSeconds}s linear forwards, confetti-spin ${SPIN_SECONDS_PER_TURN}s linear ${particle.spinTurns}`,
           }}
         />
       ))}

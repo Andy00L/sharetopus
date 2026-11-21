@@ -11,7 +11,6 @@ type CreatorInfoOutcome =
   | { ok: true; data: CreatorInfoData }
   | { ok: false; message: string };
 
-/** One creator-info lookup, with a rejected server action reported as a failure. */
 async function fetchCreatorInfoOutcome(
   accountId: string,
 ): Promise<CreatorInfoOutcome> {
@@ -26,12 +25,6 @@ async function fetchCreatorInfoOutcome(
   }
 }
 
-/**
- * TikTok creator info (privacy levels, interaction toggles, duration cap)
- * for each selected TikTok account. The form calls
- * `loadCreatorInfoForAccount` when an account is selected; each account is
- * fetched once, and is loading until its outcome arrives.
- */
 export function useTikTokCreatorInfo(socialAccounts: ClientSocialAccount[]) {
   const [outcomes, setOutcomes] = useState<Record<string, CreatorInfoOutcome>>(
     {},

@@ -1,11 +1,5 @@
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Media resource of the /docs/rest reference. Field lists mirror
- * src/lib/api/rest/validation/mediaSchemas.ts (read in full); behavior
- * notes mirror the route handlers.
- */
-
 export const REST_MEDIA_SECTION: DocsSection = {
   id: "media",
   navLabel: "Media",

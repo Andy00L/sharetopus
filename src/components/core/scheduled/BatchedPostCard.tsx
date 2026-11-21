@@ -1,4 +1,3 @@
-// components/core/scheduled/BatchedPostCard.tsx
 "use client";
 
 import { format } from "date-fns";
@@ -19,7 +18,6 @@ interface BatchedPostCardProps {
   readonly userId: string;
 }
 
-/** Icon shown inside the status badge, per status family. */
 function StatusBadgeIcon({ status }: { readonly status: string }) {
   switch (status) {
     case "scheduled":
@@ -43,7 +41,6 @@ export default function BatchedPostCard({
 }: BatchedPostCardProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  // Use the first post for main display info
   const firstPost = posts[0];
   const scheduledDate = new Date(firstPost.scheduled_at);
   const formattedDate = format(scheduledDate, "MMM d, yyyy 'at' h:mm a");
@@ -51,12 +48,10 @@ export default function BatchedPostCard({
   const batchStatus = summarizeBatchStatus(posts.map((post) => post.status));
   const statusStyle = POST_STATUS_STYLES[batchStatus];
 
-  // Get media type
   const mediaType = firstPost.media_type;
 
   return (
     <>
-      {/* Main Card */}
       <Card
         className="overflow-hidden border shadow-sm h-full cursor-pointer transition-all duration-200 hover:shadow-md hover:bg-accent/50 "
         onClick={() => setIsOpen(true)}
@@ -82,7 +77,6 @@ export default function BatchedPostCard({
         </CardHeader>
 
         <CardFooter className="p-3 pt-0 mt-auto">
-          {/* Show avatars for all social accounts */}
           <div className="flex gap-2 pt-3 pl-3 items-center overflow-x-auto  w-full">
             {posts.map((post) => (
               <SocialAvatarWrapper

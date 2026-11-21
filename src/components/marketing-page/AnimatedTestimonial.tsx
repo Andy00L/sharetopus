@@ -18,7 +18,6 @@ const USER_TYPES = [
 
 const TAGLINE_ROTATION_MS = 3000;
 
-// First avatar on top; arbitrary z-index values because Tailwind ships only z-0 to z-50.
 const AVATARS = [
   { src: sharetopusLogo, zIndex: 50 },
   { src: user2, zIndex: 40 },
@@ -27,7 +26,6 @@ const AVATARS = [
   { src: user5, zIndex: 10 },
 ];
 
-/** Stacked avatars, five stars, and a tagline that rotates every 3 s (paused on hover). */
 export function AnimatedTestimonial() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);

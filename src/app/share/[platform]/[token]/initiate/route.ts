@@ -18,17 +18,8 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const OAUTH_EXPIRY_MINUTES = 15;
+const RATE_LIMIT_BY_CLIENT_IP = null;
 
-/**
- * POST /share/[platform]/[token]/initiate
- *
- * Triggered by the "Connect TikTok Account" button on the share landing page.
- * Creates a social_connections row with initiated_via='share_link', then
- * redirects the friend to TikTok's OAuth authorization page.
- *
- * No auth required. Rate limited to 5/min per IP to block bot abuse.
- * The friend does not need a Sharetopus account.
- */
 export async function POST(
   request: NextRequest,
   context: { params: Promise<{ platform: string; token: string }> },
@@ -38,16 +29,13 @@ export async function POST(
   const ipHash = await extractIpHash();
   const userAgent = await extractUserAgent();
 
-  // MVP: only TikTok
   if (platform !== "tiktok") {
     return redirectToError(platform, "unsupported_platform");
   }
 
-  // 1. Rate limit: 5/min per IP (userId=null falls back to IP). Only a limit
-  // hit is the friend's doing; a limiter that could not answer is ours.
   const rateLimitResult = await checkRateLimit({
     operation: "shareLink.use",
-    identifier: null,
+    identifier: RATE_LIMIT_BY_CLIENT_IP,
     rule: USE_SHARE_LINK_RATE_LIMIT,
   });
   if (!rateLimitResult.success) {
@@ -57,14 +45,12 @@ export async function POST(
     );
   }
 
-  // 2. Re-validate the token
   const validation = await validateShareToken(token);
   if (!validation.success) {
     return redirectToError(platform, validation.reason);
   }
   const shareLink = validation.data;
 
-  // 3. Re-check the owner's plan and account limit (defense against changes since landing)
   const ownerCapacity = await checkShareLinkOwnerCapacity(
     shareLink.owner_principal_id,
   );
@@ -72,10 +58,8 @@ export async function POST(
     return redirectToError(platform, ownerCapacity.reason);
   }
 
-  // 4. Generate OAuth state
   const oauthState = generateOAuthState();
 
-  // 5. Build the TikTok auth URL via shared builder
   const redirectUri = process.env.X402_TIKTOK_REDIRECT_URI;
   if (!redirectUri) {
     console.error("[share/initiate] X402_TIKTOK_REDIRECT_URI not set.");
@@ -94,7 +78,6 @@ export async function POST(
     return redirectToError(platform, "configuration_error");
   }
 
-  // 6. Insert social_connections row
   const connectionId = randomUUID();
   const expiresAt = new Date(
     Date.now() + OAUTH_EXPIRY_MINUTES * 60 * 1000,
@@ -127,7 +110,6 @@ export async function POST(
     return redirectToError(platform, "internal_error");
   }
 
-  // 7. Audit log
   const latencyMs = Math.round(performance.now() - startMs);
   after(() =>
     logX402Call({
@@ -142,11 +124,9 @@ export async function POST(
     }),
   );
 
-  // 8. Redirect to TikTok OAuth
   return NextResponse.redirect(oauthUrlResult.url, 302);
 }
 
-/** Redirects to the share error page with a reason query param */
 function redirectToError(platform: string, reason: string): NextResponse {
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ??

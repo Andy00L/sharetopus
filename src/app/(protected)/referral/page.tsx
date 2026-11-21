@@ -25,7 +25,6 @@ function ReferralPageShell({ children }: { readonly children?: React.ReactNode }
   );
 }
 
-/** /referral: the user's referral link, progress and earned weeks. */
 export default function ReferralPage() {
   return (
     <Suspense fallback={<ReferralPageShell />}>
@@ -65,7 +64,6 @@ async function ReferralSummaryForUser() {
 
   return (
     <ReferralPageShell>
-      {/* Share link */}
       <div className="rounded-lg border p-4 mb-6">
         <p className="text-sm font-medium mb-2">Your referral link</p>
         <div className="flex items-center gap-2">
@@ -76,7 +74,6 @@ async function ReferralSummaryForUser() {
         </div>
       </div>
 
-      {/* Progress */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div className="rounded-lg border p-4 text-center">
           <p className="text-3xl font-bold text-[#FF4A20]">
@@ -104,7 +101,6 @@ async function ReferralSummaryForUser() {
         </div>
       </div>
 
-      {/* Status messages */}
       {hasActiveReferralAccess && (
         <div className="rounded-lg border border-[#FF4A20]/30 bg-[#FF4A20]/5 p-4 mb-4">
           <p className="text-sm font-medium">

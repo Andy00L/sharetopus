@@ -12,11 +12,6 @@ async function NavReferralWithProgress() {
   return <NavReferralLink badge={badge} />;
 }
 
-/**
- * Sidebar entry for the referral program, with a progress badge (e.g.
- * "2/3") toward the next free week. The link streams in without the badge
- * and the badge follows once the progress loads; a failed load leaves it out.
- */
 export function NavReferral() {
   return (
     <Suspense fallback={<NavReferralLink badge={null} />}>

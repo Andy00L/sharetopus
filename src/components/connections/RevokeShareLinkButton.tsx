@@ -16,10 +16,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 
-/**
- * Revoke with an AlertDialog confirmation; the row hides once the server confirms, so a failed
- * revoke never hides a link that still works. Accounts already connected through it stay.
- */
 export function RevokeShareLinkButton({
   shareLinkId,
   onRevoked,

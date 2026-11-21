@@ -6,13 +6,8 @@ import type {
 } from "@/lib/types/dbTypes";
 import type { CreatorInfoData } from "../hooks/useTikTokCreatorInfo";
 
-/**
- * TikTok's Content Sharing Guidelines for Direct Post, as the rules the
- * composer enforces before anything is sent to TikTok. The panel
- * (TikTokPostSettings), the publish button and the submit handler all read
- * these, so a rule lives in one place. sourceRef:
- * developers.tiktok.com/doc/content-sharing-guidelines (read 2026-09-30).
- */
+// Rules from TikTok's Content Sharing Guidelines for Direct Post:
+// developers.tiktok.com/doc/content-sharing-guidelines (revision of 2026-08-04, read 2026-11-21).
 
 /** Photo post title cap, in UTF-16 units (content-posting-api-reference-photo-post). */
 export const TIKTOK_PHOTO_TITLE_MAX_LENGTH = 90;
@@ -25,22 +20,14 @@ export const TIKTOK_DISCLOSURE_CHOICE_REQUIRED =
 export const TIKTOK_BRANDED_CONTENT_NOT_PRIVATE =
   "Branded content visibility cannot be set to private.";
 
-/** What every selected TikTok account allows, combined into one set of controls. */
 export type TikTokCapabilities = {
-  /** Privacy options every account offers, in the first account's order. */
   privacyOptions: PrivacyLevel[];
   commentDisabled: boolean;
   duetDisabled: boolean;
   stitchDisabled: boolean;
-  /** The shortest video cap among the accounts, in seconds. */
   maxVideoDurationSec: number;
 };
 
-/**
- * Combines creator_info across accounts: a privacy option is offered only
- * when every account has it, and an interaction is off when any account
- * turned it off. Null until at least one account has loaded.
- */
 export function combineCreatorCapabilities(
   creatorInfos: CreatorInfoData[],
 ): TikTokCapabilities | null {
@@ -60,7 +47,6 @@ export function combineCreatorCapabilities(
   };
 }
 
-/** "m:ss" for a duration in seconds (125 -> "2:05"). */
 export function formatVideoDuration(totalSeconds: number): string {
   const wholeSeconds = Math.floor(totalSeconds);
   const minutes = Math.floor(wholeSeconds / 60);
@@ -68,7 +54,6 @@ export function formatVideoDuration(totalSeconds: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-/** The name a creator recognizes: the TikTok nickname, then stored names. */
 export function describeTikTokAccount(
   account: ClientSocialAccount,
   creatorInfo: CreatorInfoData | undefined,
@@ -81,10 +66,6 @@ export function describeTikTokAccount(
   );
 }
 
-/**
- * The reason the post cannot go to TikTok yet, or null when it can. The
- * publish button stays disabled and shows this text while it is set.
- */
 export function findTikTokPublishBlocker(params: {
   accounts: ClientSocialAccount[];
   creatorInfo: Record<string, CreatorInfoData>;
@@ -93,7 +74,6 @@ export function findTikTokPublishBlocker(params: {
   capabilities: TikTokCapabilities | null;
   postType: MediaType;
   options: TikTokOptions;
-  /** Null while the selected video's metadata has not loaded. */
   videoDurationSec: number | null;
   hasVideoFile: boolean;
   photoTitle: string;
@@ -102,8 +82,6 @@ export function findTikTokPublishBlocker(params: {
     params;
   if (accounts.length === 0) return null;
 
-  // creator_info must answer for every account before publishing: it
-  // carries the posting limit, the privacy options and the duration cap.
   for (const account of accounts) {
     const accountName = describeTikTokAccount(account, creatorInfo[account.id]);
     const accountError = errors[account.id];
@@ -154,10 +132,6 @@ export function findTikTokPublishBlocker(params: {
   return null;
 }
 
-/**
- * The options actually sent: an interaction the creator turned off in
- * TikTok stays off even if it was ticked before that account was added.
- */
 export function applyCreatorRestrictions(
   options: TikTokOptions,
   capabilities: TikTokCapabilities | null,

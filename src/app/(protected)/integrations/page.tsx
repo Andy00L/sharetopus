@@ -52,7 +52,6 @@ async function IntegrationsForSubscriber() {
   );
 }
 
-/** /integrations: MCP and REST API key management for subscribed users. */
 export default function IntegrationsPage() {
   return (
     <Suspense fallback={<IntegrationsPageShell />}>

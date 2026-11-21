@@ -14,7 +14,6 @@ import {
   buildMcpClientConfigJson,
 } from "@/lib/docs/mcpCatalog";
 
-/** How to connect Claude, Claude Code, Cursor and other MCP clients; steps shared with /docs/mcp. */
 export function McpDocsCard() {
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sharetopus.com";
   const mcpUrl = `${baseUrl}/api/mcp/mcp`;

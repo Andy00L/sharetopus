@@ -14,10 +14,6 @@ interface CalendarMonthGridProps {
   readonly onShowMore: (dayKey: string) => void;
 }
 
-/**
- * The month view: a hairline 7x6 grid of drop-target day cells. The grid
- * lines come from a 1px border-token gap, the app's one hairline material.
- */
 export default function CalendarMonthGrid({
   anchor,
   batchesByDay,

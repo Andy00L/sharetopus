@@ -1,34 +1,22 @@
-/**
- * Static content model for the public /docs/x402 reference page.
- *
- * Every literal in this file (header names, field names, enum values, status
- * codes, limits, addresses) was extracted from the x402 source, not from
- * docs/. Each section and operation carries a sourceRef naming the files it
- * was verified against; sourceRef is for maintainers only and is never
- * rendered. Amounts inside code samples are illustrative; the live 402
- * response always carries the current price from pricing_actions.
- */
 
 import type { DocsSection } from "@/lib/docs/apiReferenceTypes";
-
-// ---------------------------------------------------------------------------
-// Overview
-// ---------------------------------------------------------------------------
+import type { SupportedNetworkName } from "@/lib/x402/networks";
 
 export const OVERVIEW = {
   title: "x402 API Reference",
   subtitle:
     "Pay per action in USDC. No account and no API key: a wallet signature authorizes each request and settlement happens on-chain through the network's x402 facilitator.",
   baseUrl: "https://sharetopus.com/api/x402",
-  // sourceRef: src/lib/x402/networks.ts (mainnet-only registry)
-  networks: ["base", "polygon", "arbitrum", "celo", "solana"],
+  networks: [
+    "base",
+    "polygon",
+    "arbitrum",
+    "celo",
+    "solana",
+  ] satisfies readonly SupportedNetworkName[],
   callout:
     "All five networks are mainnet. Every paid call settles real USDC. There is no test mode on this surface; start with the cheapest actions (see Pricing) while integrating.",
 } as const;
-
-// ---------------------------------------------------------------------------
-// Shared code samples
-// ---------------------------------------------------------------------------
 
 const POST_NOW_402 = `{
   "x402Version": 2,
@@ -80,12 +68,7 @@ X-PAYMENT-RESPONSE: <base64>
   "amount": "750000"
 }`;
 
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
 export const DOCS_SECTIONS: DocsSection[] = [
-  // ── Payment flow ────────────────────────────────────────────────────────
   {
     id: "payment-flow",
     navLabel: "Payment flow",
@@ -117,8 +100,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
     ],
     flowCodeSamples: [
-      // featured: this page's single signature stamp card
-      // (placement rule in docs/UI_DESIGN_SYSTEM.md).
       { label: "Response · 402", code: POST_NOW_402, featured: true },
       { label: "Quickstart · cURL", code: QUICKSTART_CURL },
       { label: "Response · 200 · Envelope", code: ENVELOPE_200 },
@@ -136,7 +117,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Connect a social account ────────────────────────────────────────────
   {
     id: "connect",
     navLabel: "Connect account",
@@ -283,7 +263,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Poll connection status ──────────────────────────────────────────────
   {
     id: "status",
     navLabel: "Connection status",
@@ -409,7 +388,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Reauthorize a connection ────────────────────────────────────────────
   {
     id: "reauth",
     navLabel: "Reauthorize",
@@ -503,7 +481,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Post now ────────────────────────────────────────────────────────────
   {
     id: "post-now",
     navLabel: "Post now",
@@ -654,7 +631,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Schedule a post ─────────────────────────────────────────────────────
   {
     id: "schedule",
     navLabel: "Schedule post",
@@ -752,7 +728,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Upload media ────────────────────────────────────────────────────────
   {
     id: "upload",
     navLabel: "Upload media",
@@ -839,7 +814,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Manage scheduled posts ──────────────────────────────────────────────
   {
     id: "manage-posts",
     navLabel: "Manage posts",
@@ -1044,7 +1018,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Read endpoints ──────────────────────────────────────────────────────
   {
     id: "reads",
     navLabel: "Read endpoints",
@@ -1426,7 +1399,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Networks and assets ─────────────────────────────────────────────────
   {
     id: "networks",
     navLabel: "Networks",
@@ -1473,7 +1445,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       "Settlement runs through the Coinbase CDP facilitator on base, polygon, arbitrum, and solana, and through the Celo facilitator (x402.celo.org) on celo. Select a network per request with ?network=; unknown values return 400 unsupported_network. Default: base. Solana also has a public ledger of settlements at /solana and a post-now Blink (Solana Action) at /api/actions/post-now?account_id=&platform=, which pays from the wallet directly and records the charge with facilitator solana_direct.",
   },
 
-  // ── Pricing ─────────────────────────────────────────────────────────────
   {
     id: "pricing",
     navLabel: "Pricing",
@@ -1484,7 +1455,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
       "pricing_actions table via data/pricing.ts; runtime rule in src/lib/x402/pricing/readActionPrice.ts",
   },
 
-  // ── Error codes ─────────────────────────────────────────────────────────
   {
     id: "errors",
     navLabel: "Errors",
@@ -1650,7 +1620,6 @@ export const DOCS_SECTIONS: DocsSection[] = [
     ],
   },
 
-  // ── Rate limits ─────────────────────────────────────────────────────────
   {
     id: "rate-limits",
     navLabel: "Rate limits",
@@ -1701,10 +1670,6 @@ Retry-After: 42
     ],
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Sidebar
-// ---------------------------------------------------------------------------
 
 export const SIDEBAR_ITEMS = [
   { id: "overview", label: "Overview" },

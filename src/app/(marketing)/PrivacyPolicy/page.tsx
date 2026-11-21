@@ -3,7 +3,6 @@ import Link from "next/link";
 export default function page() {
   return (
     <div className="container mx-auto px-4 py-6">
-      {/* Back Button */}
       <Link
         href="/"
         className="inline-block mb-4 text-blue-500 hover:underline"

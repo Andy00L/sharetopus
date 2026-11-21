@@ -8,7 +8,6 @@ import { ModeToggle } from "./ModeToggle";
 export function SiteHeader() {
   const pathname = usePathname();
 
-  // Maps the first URL segment to a readable page name.
   const getPageName = (path: string) => {
     if (path === "/") return "Home";
 
@@ -23,7 +22,6 @@ export function SiteHeader() {
       posted: "Posted",
     };
 
-    // Use the custom name when one exists, otherwise capitalize the segment.
     return (
       pageNames[segments[0]] ||
       segments[0].charAt(0).toUpperCase() + segments[0].slice(1)

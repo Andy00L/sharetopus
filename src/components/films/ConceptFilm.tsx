@@ -7,7 +7,6 @@ import { useRef, useState } from "react";
 import "./films.css";
 import "./films-theme.css";
 
-/** Films with a script and a poster under public/films. */
 type FilmKey = "mcp-two-calls";
 
 type ConceptFilmsEngine = {
@@ -24,9 +23,9 @@ declare global {
   }
 }
 
-// Poster size in px, sourceRef: public/films/films.js FRAME.
-const POSTER_WIDTH = 800;
-const POSTER_HEIGHT = 450;
+// The engine renders every film at FRAME in public/films/films.js.
+const POSTER_WIDTH_PX = 800;
+const POSTER_HEIGHT_PX = 450;
 
 type ConceptFilmProps = {
   filmKey: FilmKey;
@@ -34,7 +33,6 @@ type ConceptFilmProps = {
   showCaption?: boolean;
 };
 
-/** A concept film from public/films; its poster shows until the engine mounts the live player. */
 export function ConceptFilm({ filmKey, posterAlt, showCaption = true }: ConceptFilmProps) {
   const filmContainerRef = useRef<HTMLDivElement>(null);
   const [isEngineReady, setIsEngineReady] = useState(false);
@@ -43,7 +41,8 @@ export function ConceptFilm({ filmKey, posterAlt, showCaption = true }: ConceptF
   const mountFilm = () => {
     const container = filmContainerRef.current;
     const engine = window.ConceptFilms;
-    // onReady also fires on remount; a filled container already holds the player.
+    // next/script fires onReady on every mount, not only after the first load
+    // (node_modules/next/dist/docs/01-app/02-guides/scripts.md): a filled container holds the player.
     if (!container || !engine || container.childElementCount > 0) return;
     if (engine.mount(filmKey, container, { caption: showCaption }) !== null) {
       setIsFilmMounted(true);
@@ -65,8 +64,8 @@ export function ConceptFilm({ filmKey, posterAlt, showCaption = true }: ConceptF
         <Image
           src={`/films/${filmKey}.png`}
           alt={posterAlt}
-          width={POSTER_WIDTH}
-          height={POSTER_HEIGHT}
+          width={POSTER_WIDTH_PX}
+          height={POSTER_HEIGHT_PX}
           className="h-auto w-full rounded-[10px]"
         />
       )}

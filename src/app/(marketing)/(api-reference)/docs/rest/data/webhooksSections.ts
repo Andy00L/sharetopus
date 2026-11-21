@@ -3,13 +3,6 @@ import type {
   ParamTableData,
 } from "@/lib/docs/apiReferenceTypes";
 
-/**
- * Webhooks resource of the /docs/rest reference. Field lists mirror
- * src/lib/api/rest/validation/webhookSchemas.ts (read in full); event
- * types mirror src/lib/api/rest/webhooks/eventTypes.ts; delivery and
- * signature details mirror the dispatch and signing modules.
- */
-
 const SUBSCRIPTION_DTO_FIELDS: ParamTableData = {
   heading: "Response Fields (WebhookSubscriptionDTO)",
   rows: [

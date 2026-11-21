@@ -1,9 +1,3 @@
-/**
- * Shell for the MDX guide pages (/docs/quickstart, /docs/authentication,
- * /docs/webhooks): the eyebrow + measure of the reference family around
- * MDX content styled by src/mdx-components.tsx. `slug` links the page's
- * markdown twin served at /docs/<slug>.md for agents and CLI tools.
- */
 export function GuideArticle({
   eyebrow,
   slug,

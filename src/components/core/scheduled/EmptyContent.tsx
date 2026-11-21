@@ -1,5 +1,3 @@
-// components/core/scheduled/EmptyContent.tsx
-
 import { Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";

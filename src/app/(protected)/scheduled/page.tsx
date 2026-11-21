@@ -1,4 +1,3 @@
-// app/(protected)/scheduled/page.tsx
 import { CalendarDays } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -16,10 +15,6 @@ import ScheduledPostsSkeleton from "@/components/suspense/scheduled/ScheduledPos
 import { Button } from "@/components/ui/button";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 
-/**
- * Calendar data path: unlike the list, it also loads posted rows so
- * published posts stay visible in place on the grid.
- */
 async function ScheduleCalendarWithData() {
   const { userId } = await auth();
   if (!userId) {

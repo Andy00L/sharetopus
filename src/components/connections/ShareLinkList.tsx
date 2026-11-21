@@ -39,11 +39,6 @@ function formatCreatedAt(isoDate: string): string {
   });
 }
 
-/**
- * The user's active share links with copy and revoke actions. The connections page loads them
- * on the server (null when that failed); CreateShareLinkDialog refreshes the page after a create,
- * so a new link shows without a reload.
- */
 export function ShareLinkList({ links }: { links: ShareLinkSummary[] | null }) {
   const [revokedLinkIds, setRevokedLinkIds] = useState<ReadonlySet<string>>(new Set());
   const visibleLinks = (links ?? []).filter((link) => !revokedLinkIds.has(link.id));

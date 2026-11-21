@@ -11,7 +11,6 @@ interface RateLimitErrorProps {
   readonly resetIn?: string | number;
 }
 
-/** Wait shown when resetIn is missing, zero, or not a number. */
 const DEFAULT_WAIT_SECONDS = 60;
 const COUNTDOWN_TICK_MS = 1000;
 const RETRY_LOADING_RESET_MS = 3000;

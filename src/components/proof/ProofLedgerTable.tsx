@@ -6,21 +6,9 @@ import {
 } from "@/lib/x402/proof/explorer";
 import { ExplorerLink } from "./ExplorerLink";
 import { OutcomeMark } from "./OutcomeMark";
+import { TABLE_HEAD_CELL_CLASS } from "@/components/apiReference/tableClasses";
 import { formatUsdc, formatUtcTimestamp, truncateMiddle } from "./ledgerFormat";
 
-/** Same head cell recipe as PricingTable (src/components/apiReference). */
-const HEAD_CELL_CLASS =
-  "px-3 py-2 text-left font-semibold text-[var(--ink-2)]";
-
-/**
- * The ledger: one row per settlement, newest first. Every transaction and
- * payer is a link to that network's explorer, so the proof is one click away
- * and never a screenshot. Payer collapses below sm so the transaction column
- * keeps its width on a phone.
- *
- * showNetwork is off on a page already scoped to one lane, where the column
- * would repeat the same word down every row.
- */
 export function ProofLedgerTable({
   entries,
   showNetwork = false,
@@ -33,15 +21,15 @@ export function ProofLedgerTable({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-[var(--cream-2)]/50">
-            <th className={HEAD_CELL_CLASS}>Settled</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Settled</th>
             {showNetwork ? (
-              <th className={HEAD_CELL_CLASS}>Network</th>
+              <th className={TABLE_HEAD_CELL_CLASS}>Network</th>
             ) : null}
-            <th className={HEAD_CELL_CLASS}>Action</th>
-            <th className={`${HEAD_CELL_CLASS} text-right`}>Amount</th>
-            <th className={`${HEAD_CELL_CLASS} hidden sm:table-cell`}>Payer</th>
-            <th className={HEAD_CELL_CLASS}>Post</th>
-            <th className={HEAD_CELL_CLASS}>Transaction</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Action</th>
+            <th className={`${TABLE_HEAD_CELL_CLASS} text-right`}>Amount</th>
+            <th className={`${TABLE_HEAD_CELL_CLASS} hidden sm:table-cell`}>Payer</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Post</th>
+            <th className={TABLE_HEAD_CELL_CLASS}>Transaction</th>
           </tr>
         </thead>
         <tbody>

@@ -1,28 +1,29 @@
 import { Info, TriangleAlert } from "lucide-react";
 
-/**
- * Two callout tones per docs/UI_DESIGN_SYSTEM.md. "amber" (warnings: real
- * money, key handling) renders on the orange accent at whisper opacity;
- * "blue" (notes: idempotent behaviors, hints) renders on the layered cream.
- * The tone keys keep their historical names so the section data files and
- * the markdown builders stay untouched.
- */
+import { cn } from "@/lib/utils";
+
 const TONE_CLASSES = {
   amber: "border-[var(--orange)]/25 bg-[var(--orange)]/8",
-  blue: "mt-4 border-border bg-[var(--cream-2)]/60",
+  blue: "border-border bg-[var(--cream-2)]/60",
 } as const;
 
 export function Callout({
   tone,
+  className,
   children,
 }: {
   tone: keyof typeof TONE_CLASSES;
+  className?: string;
   children: React.ReactNode;
 }) {
   const ToneIcon = tone === "amber" ? TriangleAlert : Info;
   return (
     <div
-      className={`flex gap-2.5 rounded-lg border p-3.5 text-sm text-[var(--ink-2)] ${TONE_CLASSES[tone]}`}
+      className={cn(
+        "flex gap-2.5 rounded-lg border p-3.5 text-sm text-[var(--ink-2)]",
+        TONE_CLASSES[tone],
+        className
+      )}
     >
       <ToneIcon
         aria-hidden

@@ -101,8 +101,6 @@ export function SubscriptionPrompt() {
   );
 }
 
-/* Static styles split out for clarity; server-rendered via dangerouslySetInnerHTML
-   so they ship in the initial HTML with zero hydration cost. */
 function SubscriptionPromptStyles() {
   return <style dangerouslySetInnerHTML={{ __html: SUBPROMPT_CSS }} />;
 }

@@ -6,22 +6,13 @@ import Image from "next/image";
 import { useState } from "react";
 
 interface Props {
-  /** Image URL (may be undefined or empty). */
   readonly src?: string | null;
-  /** Alt text for accessibility. */
   readonly alt: string;
-  /** Optional Tailwind classes applied to BOTH img & icon. */
   readonly className?: string;
-  /** Width / height in px. */
   readonly size?: number;
   readonly isSelected?: boolean;
 }
 
-/**
- * A round avatar that falls back to a person icon when the URL is missing or fails (expired
- * TikTok links answer 403). Unoptimized on purpose: avatars come from many CDNs, and one
- * direct URL stays cached across every size the app renders it at.
- */
 export default function AvatarWithFallback({
   src,
   alt,
@@ -29,7 +20,6 @@ export default function AvatarWithFallback({
   size = 40,
   isSelected = false,
 }: Props) {
-  // Remembering the failed URL, not a flag, lets the next account's src render without an effect.
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const frameClassName = clsx(
     "rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0",

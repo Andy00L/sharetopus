@@ -8,18 +8,12 @@ import { PlatformBrandIcon } from "@/components/icons/platformBrandIcons";
 import { getPlatformDisplayLabel } from "@/lib/platforms/capabilities";
 import type { MediaType, SocialAccount } from "@/lib/types/dbTypes";
 
-/**
- * The only account fields the preview reads. Full social_accounts rows
- * satisfy this structurally; narrowing keeps token columns out of the
- * preview's contract.
- */
 export type PreviewableAccount = Pick<
   SocialAccount,
   "id" | "platform" | "avatar_url" | "display_name" | "username"
 >;
 
-/** Platforms whose publish uses the separate title field. */
-const TITLE_PLATFORMS: readonly string[] = ["youtube", "pinterest"];
+const PLATFORMS_WITH_TITLE_FIELD: readonly string[] = ["youtube", "pinterest"];
 
 interface PlatformPostPreviewProps {
   readonly account: PreviewableAccount;
@@ -39,13 +33,6 @@ function formatLinkDomain(link: string): string {
   }
 }
 
-/**
- * How the post will read on the selected account: real avatar and names,
- * the caption that account will actually publish (including per-account
- * overrides), the attached media, and the platform-specific extras (title
- * for YouTube/Pinterest, destination link for Pinterest). One neutral
- * card frame on purpose: content accuracy over platform cosplay.
- */
 export default function PlatformPostPreview({
   account,
   caption,
@@ -57,13 +44,12 @@ export default function PlatformPostPreview({
 }: PlatformPostPreviewProps) {
   const platformLabel = getPlatformDisplayLabel(account.platform);
   const showTitle =
-    title.length > 0 && TITLE_PLATFORMS.includes(account.platform);
+    title.length > 0 && PLATFORMS_WITH_TITLE_FIELD.includes(account.platform);
   const showPinterestLink =
     account.platform === "pinterest" && pinterestLink.length > 0;
 
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
-      {/* Account header */}
       <div className="flex items-center gap-2.5 p-3">
         <AvatarWithFallback
           src={account.avatar_url}
@@ -87,7 +73,6 @@ export default function PlatformPostPreview({
         </span>
       </div>
 
-      {/* Text content */}
       <div className="space-y-1.5 px-3 pb-3">
         {showTitle && (
           <p className="text-sm font-semibold leading-snug break-words">
@@ -110,7 +95,6 @@ export default function PlatformPostPreview({
         )}
       </div>
 
-      {/* Media */}
       {postType !== "text" && (
         <div className="border-t">
           {selectedFile && previewUrl ? (

@@ -22,11 +22,6 @@ export function createObjectUrlStore(blob: Blob) {
   };
 }
 
-/**
- * A blob: URL for `blob` that lives exactly as long as the component shows
- * it: created after mount, revoked when the blob changes or on unmount.
- * Null on the server, on the first client render, and when `blob` is null.
- */
 export function useObjectUrl(blob: Blob | null): string | null {
   const store = useMemo(() => (blob ? createObjectUrlStore(blob) : null), [blob]);
   return useSyncExternalStore(
