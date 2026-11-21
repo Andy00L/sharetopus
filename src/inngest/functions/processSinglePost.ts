@@ -1,7 +1,6 @@
-import { z } from "zod";
-
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { inngest } from "@/inngest/client";
+import { postDueEvent, PostDueEventDataSchema } from "@/inngest/events/postDue";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
@@ -18,12 +17,6 @@ import {
   recordPostStatus,
 } from "./processSinglePostHelpers";
 
-const PostDueEventDataSchema = z.object({
-  scheduled_post_id: z.string(),
-  platform: z.string(),
-  scheduled_at: z.string(),
-});
-
 // A step that wants to be retried throws inside itself: Inngest stores
 // completed step results, so a throw placed after a step never re-runs it.
 // https://www.inngest.com/docs/learn/how-functions-are-executed
@@ -38,16 +31,11 @@ export const processSinglePost = inngest.createFunction(
       period: "1m",
       key: "event.data.social_account_id",
     },
-    triggers: [{ event: "post.due" }],
+    triggers: [postDueEvent],
     onFailure: async ({ event, error }) => finalizeExhaustedPost(event, error),
   },
   async ({ event, step }) => {
-    const parsedEvent = PostDueEventDataSchema.safeParse(event.data);
-    if (!parsedEvent.success) {
-      console.error("[processSinglePost] Event data is malformed; post not claimed");
-      return { skipped: true, reason: "invalid_event_data" };
-    }
-    const data = parsedEvent.data;
+    const data = event.data;
 
     const loaded = await step.run("load-post-for-processing", async () => {
       const loadResult = await loadPostForProcessing(data.scheduled_post_id);

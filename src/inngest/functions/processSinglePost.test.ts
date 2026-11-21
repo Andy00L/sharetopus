@@ -28,6 +28,8 @@ const POST: PostRow = {
 
 const EVENT_DATA = {
   scheduled_post_id: POST.id,
+  principal_id: POST.principal_id,
+  social_account_id: POST.social_account_id,
   platform: POST.platform,
   scheduled_at: "2026-11-19T10:00:00+00:00",
 };

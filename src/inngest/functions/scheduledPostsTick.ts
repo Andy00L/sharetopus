@@ -1,61 +1,45 @@
 import { inngest } from "@/inngest/client";
+import { planPostDueEvents, POST_DUE_LOOKAHEAD_MS } from "@/inngest/events/postDue";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
-import {
-  fetchDueScheduledPosts,
-  markPostsAsQueued,
-} from "./scheduledPostsTickHelpers";
+import { fetchUnclaimedPostsDueBy } from "./scheduledPostsTickHelpers";
 
-// Each step throws on failure so Inngest retries it; a read, a send
-// deduplicated by event id and a CAS-guarded update are safe to repeat.
+// Inngest retries a step only when it throws, and a completed step's result
+// is stored, so `nowMs` and the event ids stay the same on a retry.
+// https://www.inngest.com/docs/learn/how-functions-are-executed
 export const scheduledPostsTick = inngest.createFunction(
   {
     id: "scheduled-posts-tick",
-    name: "Scheduled posts dispatcher",
+    name: "Scheduled posts safety net",
     concurrency: { limit: 1 },
     retries: 2,
-    triggers: [{ cron: "*/5 * * * *" }],
+    triggers: [{ cron: "0 * * * *" }],
   },
   async ({ step }) => {
-    const duePosts = await step.run("read-due-posts", async () => {
-      const due = await fetchDueScheduledPosts(
-        new Date().toISOString(),
-        RUNTIME.dispatcherBatchSize,
+    const unclaimed = await step.run("read-unclaimed-posts", async () => {
+      const nowMs = Date.now();
+      const found = await fetchUnclaimedPostsDueBy({
+        dueByIso: new Date(nowMs + POST_DUE_LOOKAHEAD_MS).toISOString(),
+        limit: RUNTIME.dispatcherBatchSize,
+      });
+      if (!found.success) throw new Error(found.message);
+      return { nowMs, targets: found.targets };
+    });
+
+    const plannedEvents = planPostDueEvents(unclaimed);
+    if (plannedEvents.length === 0) return { sent: 0, late: 0 };
+
+    await step.sendEvent(
+      "send-post-due-events",
+      plannedEvents.map((planned) => planned.event),
+    );
+
+    const lateEvents = plannedEvents.filter((planned) => planned.timing === "late");
+    if (lateEvents.length > 0) {
+      console.warn(
+        `[scheduledPostsTick] Re-sent ${lateEvents.length} overdue post(s):`,
+        lateEvents.map((planned) => planned.event.data.scheduled_post_id).join(", "),
       );
-      if (!due.success) throw new Error(due.message);
-      return due.posts;
-    });
-
-    if (duePosts.length === 0) {
-      return { enqueued: 0, marked: 0, message: "no due posts" };
     }
-
-    // Inngest drops a repeated event id for 24 hours, so the id carries
-    // scheduled_at to give a rescheduled post a fresh event:
-    // https://www.inngest.com/docs/guides/handling-idempotency
-    const events = duePosts.map((post) => ({
-      name: "post.due" as const,
-      id: `post.due-${post.id}-${post.scheduled_at}`,
-      data: {
-        scheduled_post_id: post.id,
-        principal_id: post.principal_id,
-        social_account_id: post.social_account_id,
-        platform: post.platform,
-        scheduled_at: post.scheduled_at,
-      },
-    }));
-
-    await step.sendEvent("dispatch-due-posts", events);
-
-    const marked = await step.run("mark-queued", async () => {
-      const markResult = await markPostsAsQueued(duePosts);
-      if (!markResult.success) throw new Error(markResult.message);
-      return markResult;
-    });
-
-    return {
-      enqueued: events.length,
-      marked: marked.updated,
-      message: `Dispatched ${events.length}, marked ${marked.updated} queued`,
-    };
+    return { sent: plannedEvents.length, late: lateEvents.length };
   },
 );

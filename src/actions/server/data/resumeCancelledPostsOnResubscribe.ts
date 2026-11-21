@@ -8,6 +8,10 @@ import {
 } from "@/actions/server/scheduleActions/resume/_shared/bumpPastScheduleToFuture";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
 
 export type ResumeResult =
   | { success: true; resumed: number; bumped: number }
@@ -33,7 +37,7 @@ export async function resumeCancelledPostsOnResubscribe(
             isNotNull(scheduled_posts.cancelled_by_sub_at),
           ),
         )
-        .returning({ scheduled_at: scheduled_posts.scheduled_at }),
+        .returning(POST_DUE_TARGET_COLUMNS),
     );
 
     if (updateErr) {
@@ -42,6 +46,8 @@ export async function resumeCancelledPostsOnResubscribe(
         message: `[resumeCancelledPostsOnResubscribe] Resume failed: ${updateErr.message}`,
       };
     }
+
+    await sendPostDueEvents(resumedRows);
 
     const resumed = resumedRows.length;
     const bumped = countBumpedRows(resumedRows, resumeSchedule.bumpedAtIso);

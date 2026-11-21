@@ -5,6 +5,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import {
   buildResumeSchedule,
@@ -110,7 +114,7 @@ export async function resumeScheduledPostBatch(
             eq(scheduled_posts.status, "cancelled"),
           ),
         )
-        .returning({ scheduled_at: scheduled_posts.scheduled_at }),
+        .returning(POST_DUE_TARGET_COLUMNS),
     );
 
     if (updateError) {
@@ -126,6 +130,8 @@ export async function resumeScheduledPostBatch(
         message: "No posts are in a resumable (cancelled) state.",
       };
     }
+
+    await sendPostDueEvents(resumedRows);
 
     const timeUpdated = countBumpedRows(resumedRows, resumeSchedule.bumpedAtIso);
 

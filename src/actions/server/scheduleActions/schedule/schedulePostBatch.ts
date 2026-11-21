@@ -10,6 +10,10 @@ import { resolvePlatformTextLimit } from "@/components/core/create/constants/cap
 import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts } from "@/db/schema";
 import type { CreatedVia, PostStatus } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
@@ -223,7 +227,7 @@ export async function schedulePostBatch(
           ],
         })
         .returning({
-          id: scheduled_posts.id,
+          ...POST_DUE_TARGET_COLUMNS,
           idempotency_key: scheduled_posts.idempotency_key,
         }),
     );
@@ -301,6 +305,8 @@ export async function schedulePostBatch(
         if (id) scheduleIds.push(id);
       }
     }
+
+    await sendPostDueEvents(inserted);
 
     for (const insertedRow of inserted) {
       dispatchWebhook(principalId, "post.scheduled", {

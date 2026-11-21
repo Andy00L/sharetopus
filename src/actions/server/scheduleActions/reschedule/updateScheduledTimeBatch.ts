@@ -5,6 +5,10 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
+import {
+  POST_DUE_TARGET_COLUMNS,
+  sendPostDueEvents,
+} from "@/inngest/dispatch/sendPostDueEvents";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 
@@ -151,7 +155,7 @@ export async function updateScheduledTimeBatch(
             inArray(scheduled_posts.status, ["scheduled", "cancelled"]),
           ),
         )
-        .returning({ id: scheduled_posts.id }),
+        .returning(POST_DUE_TARGET_COLUMNS),
     );
 
     if (updateError) {
@@ -172,6 +176,8 @@ export async function updateScheduledTimeBatch(
         message: "Only scheduled or cancelled posts can be rescheduled.",
       };
     }
+
+    await sendPostDueEvents(movedRows);
 
     const resumedCount = movedRows.filter((movedRow) =>
       cancelledIds.has(movedRow.id),
