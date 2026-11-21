@@ -63,6 +63,10 @@ export type DirectPostBatchOutcomesResult =
   | { success: true; outcomes: DirectPostOutcome[] }
   | { success: false; message: string };
 
+export type KeyedDirectPostLookup =
+  | { success: true; batchId: string | null }
+  | { success: false; message: string };
+
 export async function directPostBatch(
   posts: DirectPostData[],
   principalId: string,
@@ -340,20 +344,12 @@ export async function preflightDirectPost(
   }
 
   if (post.idempotency_key) {
-    const { data: existingLocks, error: lockLookupError } = await runQuery(
-      db
-        .select({ event_id: pending_direct_posts.event_id })
-        .from(pending_direct_posts)
-        .where(
-          and(
-            eq(pending_direct_posts.principal_id, principalId),
-            eq(pending_direct_posts.idempotency_key, post.idempotency_key),
-          ),
-        )
-        .limit(1),
-    );
-    if (lockLookupError) {
-      console.error(`[preflightDirectPost] Idempotency lookup failed: ${lockLookupError.message}`);
+    const keyedDispatch = await readKeyedDirectPost({
+      principalId,
+      idempotencyKey: post.idempotency_key,
+    });
+    if (!keyedDispatch.success) {
+      console.error(`[preflightDirectPost] Idempotency lookup failed: ${keyedDispatch.message}`);
       return {
         ok: false,
         httpStatus: 500,
@@ -361,7 +357,7 @@ export async function preflightDirectPost(
         message: "Could not check the idempotency key.",
       };
     }
-    if (existingLocks.length > 0) {
+    if (keyedDispatch.batchId !== null) {
       return {
         ok: false,
         httpStatus: 409,
@@ -374,9 +370,30 @@ export async function preflightDirectPost(
   return { ok: true };
 }
 
+export async function readKeyedDirectPost(params: {
+  principalId: string;
+  idempotencyKey: string;
+}): Promise<KeyedDirectPostLookup> {
+  const { data: keyedRows, error } = await runQuery(
+    db
+      .select({ batch_id: pending_direct_posts.batch_id })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          eq(pending_direct_posts.principal_id, params.principalId),
+          eq(pending_direct_posts.idempotency_key, params.idempotencyKey),
+        ),
+      )
+      .limit(1),
+  );
+  if (error) return { success: false, message: error.message };
+  return { success: true, batchId: keyedRows[0]?.batch_id ?? null };
+}
+
 export async function readDirectPostBatchOutcomes(params: {
   batchId: string;
   principalId: string;
+  target: { socialAccountId: string; platform: Platform };
 }): Promise<DirectPostBatchOutcomesResult> {
   const [dispatchRead, historyRead] = await Promise.all([
     runQuery(
@@ -393,6 +410,8 @@ export async function readDirectPostBatchOutcomes(params: {
           and(
             eq(pending_direct_posts.batch_id, params.batchId),
             eq(pending_direct_posts.principal_id, params.principalId),
+            eq(pending_direct_posts.social_account_id, params.target.socialAccountId),
+            eq(pending_direct_posts.platform, params.target.platform),
           ),
         )
         .orderBy(asc(pending_direct_posts.created_at), asc(pending_direct_posts.event_id))
@@ -410,6 +429,8 @@ export async function readDirectPostBatchOutcomes(params: {
           and(
             eq(content_history.batch_id, params.batchId),
             eq(content_history.principal_id, params.principalId),
+            eq(content_history.social_account_id, params.target.socialAccountId),
+            eq(content_history.platform, params.target.platform),
             isNull(content_history.scheduled_post_id),
           ),
         )

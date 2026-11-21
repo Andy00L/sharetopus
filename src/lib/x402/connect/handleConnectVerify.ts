@@ -437,6 +437,14 @@ function respondToConnectReplay(
         principal: wallet,
         chargeId: replay.chargeId,
       };
+    case "not_found":
+    case "lookup_failed":
+      return {
+        ok: false,
+        error: { kind: "verify_replay_detected", message: "This payment has already been used." },
+        principal: wallet,
+        chargeId: null,
+      };
     case "settled": {
       const storedPayload = parseStoredPayload(replay.storedResult);
       if (!storedPayload) {

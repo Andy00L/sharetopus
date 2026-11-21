@@ -10,6 +10,8 @@ type IssuedStatement = { sql: string; params: unknown[] };
 type SqlProducer = { toSQL: () => IssuedStatement };
 type ChargeRow = {
   id: string;
+  principal_id: string;
+  amount_usdc: number;
   status: "pending" | "settled" | "failed" | "refunded";
   action: string;
   tx_hash: string | null;
@@ -22,6 +24,7 @@ type ChargeRow = {
 
 const CHARGE_ID = "6f1f6a43-2b3c-4d5e-8f90-0a1b2c3d4e5f";
 const PAYER_ADDRESS = "0x00000000000000000000000000000000000000aa";
+const PRINCIPAL_ID = "wallet-1";
 
 let issuedStatements: IssuedStatement[] = [];
 let storedCharge: ChargeRow | null = null;
@@ -253,6 +256,8 @@ describe("refundCharge when the failure cannot be written on the charge", () => 
 describe("a replayed payment", () => {
   const settledCharge: ChargeRow = {
     id: CHARGE_ID,
+    principal_id: PRINCIPAL_ID,
+    amount_usdc: 0.05,
     status: "settled",
     action: "list_connections",
     tx_hash: "0xsettle",
@@ -276,7 +281,11 @@ describe("a replayed payment", () => {
 
     const result = await replayStoredPayment();
 
-    expect(result).toEqual({ ok: false, reason: "replay", replay: { state: "closed", chargeId: CHARGE_ID } });
+    expect(result).toEqual({
+      ok: false,
+      reason: "replay",
+      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID },
+    });
   });
 
   test("is refused when its settled charge has a refund reconciliation row but no failure marker", async () => {
@@ -284,7 +293,11 @@ describe("a replayed payment", () => {
 
     const result = await replayStoredPayment();
 
-    expect(result).toEqual({ ok: false, reason: "replay", replay: { state: "closed", chargeId: CHARGE_ID } });
+    expect(result).toEqual({
+      ok: false,
+      reason: "replay",
+      replay: { state: "closed", chargeId: CHARGE_ID, principalId: PRINCIPAL_ID },
+    });
   });
 });
 

@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   x402PaidEndpoint,
   x402ChallengeGet,
+  type KeyedReplayBatchLookup,
   type ReplayResultRecovery,
 } from "@/lib/x402/middleware/x402PaidEndpoint";
 import { resolvePostAction } from "@/lib/x402/middleware/resolvePostAction";
@@ -17,6 +18,7 @@ import {
   directPostBatch,
   preflightDirectPost,
   readDirectPostBatchOutcomes,
+  readKeyedDirectPost,
 } from "@/actions/server/directPostActions/directPostBatch";
 import type {
   DirectPostData,
@@ -54,12 +56,18 @@ function toDirectPostData(body: PostNowBody): DirectPostData {
   };
 }
 
-const recoverPostNowReplay: ReplayResultRecovery = async ({ principal, chargeId, storedMetadata }) => {
+const recoverPostNowReplay: ReplayResultRecovery<PostNowBody> = async ({
+  principal,
+  chargeId,
+  storedMetadata,
+  body,
+}) => {
   const storedBatchId = storedMetadata.batch_id;
   const batchId = typeof storedBatchId === "string" ? storedBatchId : chargeId;
   const outcomeRead = await readDirectPostBatchOutcomes({
     batchId,
     principalId: principal.principalId,
+    target: { socialAccountId: body.social_account_id, platform: body.platform },
   });
   if (!outcomeRead.success) return { kind: "lookup_failed", message: outcomeRead.message };
   if (outcomeRead.outcomes.length === 0) return { kind: "not_found" };
@@ -70,6 +78,18 @@ const recoverPostNowReplay: ReplayResultRecovery = async ({ principal, chargeId,
     posts: outcomeRead.outcomes,
   } satisfies PostNowReplayResult;
   return { kind: "recovered", data: replayResult };
+};
+
+const findKeyedPostNowBatch: KeyedReplayBatchLookup<PostNowBody> = async ({ principal, body }) => {
+  if (!body.idempotency_key) return { kind: "not_found" };
+  const keyedDispatch = await readKeyedDirectPost({
+    principalId: principal.principalId,
+    idempotencyKey: body.idempotency_key,
+  });
+  if (!keyedDispatch.success) return { kind: "lookup_failed", message: keyedDispatch.message };
+  return keyedDispatch.batchId === null
+    ? { kind: "not_found" }
+    : { kind: "found", batchId: keyedDispatch.batchId };
 };
 
 export const GET = x402ChallengeGet({
@@ -156,4 +176,6 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
   },
 
   recoverReplayResult: recoverPostNowReplay,
+
+  findKeyedReplayBatch: findKeyedPostNowBatch,
 });

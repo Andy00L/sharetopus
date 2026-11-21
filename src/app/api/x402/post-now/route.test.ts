@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as nextServer from "next/server";
 
+import type { VerifyPaymentError } from "@/lib/x402/facilitator";
 import type { NetworkConfig } from "@/lib/x402/networks";
 
 type IssuedStatement = { sql: string; params: unknown[] };
 type ChargeRow = {
   id: string;
+  principal_id: string;
+  amount_usdc: number;
   nonce: string;
   status: "pending" | "settled" | "failed" | "refunded";
   action: string;
@@ -46,6 +49,10 @@ const LEGACY_CHARGE_ID = "charge-legacy";
 const LEGACY_BATCH_ID = "_R3gCjlNUG9KhdbMdt2tMXzCvrkdYPx2";
 
 const store = {
+  networkName: "base",
+  verifyRefusal: null as VerifyPaymentError | null,
+  walletPrincipalId: PRINCIPAL_ID,
+  walletResolutions: 0,
   charges: new Map<string, ChargeRow>(),
   dispatchRows: [] as DispatchRow[],
   historyRows: [] as HistoryRow[],
@@ -58,6 +65,10 @@ const store = {
 };
 
 beforeEach(() => {
+  store.networkName = "base";
+  store.verifyRefusal = null;
+  store.walletPrincipalId = PRINCIPAL_ID;
+  store.walletResolutions = 0;
   store.charges.clear();
   store.dispatchRows = [];
   store.historyRows = [];
@@ -141,11 +152,38 @@ function selectDispatchRows(statement: IssuedStatement): DispatchRow[] {
   const [firstParam, secondParam] = statement.params;
   if (whereSql.includes('"batch_id" = ')) {
     return store.dispatchRows.filter(
-      (dispatchRow) => dispatchRow.batch_id === firstParam && dispatchRow.principal_id === secondParam,
+      (dispatchRow) =>
+        dispatchRow.batch_id === firstParam &&
+        dispatchRow.principal_id === secondParam &&
+        matchesTargetParams(statement, dispatchRow),
     );
   }
   return store.dispatchRows.filter(
     (dispatchRow) => dispatchRow.principal_id === firstParam && dispatchRow.idempotency_key === secondParam,
+  );
+}
+
+function matchesTargetParams(
+  statement: IssuedStatement,
+  targetRow: { social_account_id: string; platform: string },
+): boolean {
+  if (!statement.sql.includes('"social_account_id" = ')) return true;
+  const [, , socialAccountIdParam, platformParam] = statement.params;
+  return targetRow.social_account_id === socialAccountIdParam && targetRow.platform === platformParam;
+}
+
+function selectCharges(statement: IssuedStatement): ChargeRow[] {
+  const storedCharges = [...store.charges.values()];
+  const [, ...lookupParams] = statement.params;
+  if (statement.sql.includes('"nonce" = ')) {
+    const [nonceParam] = lookupParams;
+    return storedCharges.filter((storedCharge) => storedCharge.nonce === nonceParam);
+  }
+  const [principalIdParam, batchIdParam] = lookupParams;
+  return storedCharges.filter(
+    (storedCharge) =>
+      storedCharge.principal_id === principalIdParam &&
+      (storedCharge.id === batchIdParam || storedCharge.metadata.batch_id === batchIdParam),
   );
 }
 
@@ -176,16 +214,16 @@ function answerStatement(statement: IssuedStatement): { data: unknown[] | null; 
     const [batchIdParam, principalIdParam] = params;
     return {
       data: store.historyRows.filter(
-        (historyRow) => historyRow.batch_id === batchIdParam && historyRow.principal_id === principalIdParam,
+        (historyRow) =>
+          historyRow.batch_id === batchIdParam &&
+          historyRow.principal_id === principalIdParam &&
+          matchesTargetParams(statement, historyRow),
       ),
       error: null,
     };
   }
   if (sql.startsWith("select") && sql.includes('from "x402_charges"')) {
-    const charge = params
-      .map((param) => (typeof param === "string" ? store.charges.get(param) : undefined))
-      .find((storedCharge) => storedCharge !== undefined);
-    return { data: charge ? [charge] : [], error: null };
+    return { data: selectCharges(statement), error: null };
   }
   if (sql.startsWith('update "x402_charges" set "metadata"')) {
     if (store.failingRecordWrites > 0) {
@@ -197,7 +235,7 @@ function answerStatement(statement: IssuedStatement): { data: unknown[] | null; 
   throw new Error(`Unexpected statement: ${sql}`);
 }
 
-let baseNetwork: NetworkConfig | null = null;
+const networksByName = new Map<string, NetworkConfig>();
 
 mock.module("server-only", () => ({}));
 mock.module("next/server", () => ({ ...nextServer, after: () => undefined }));
@@ -256,35 +294,53 @@ mock.module("@/lib/api/context", () => ({
 }));
 mock.module("@/lib/x402/audit/logX402Call", () => ({ logX402Call: async () => undefined }));
 mock.module("@/lib/x402/auth/resolveOrOnboardWalletPrincipal", () => ({
-  resolveOrOnboardWalletPrincipal: async () => ({ ok: true, principal: { principalId: PRINCIPAL_ID } }),
+  resolveOrOnboardWalletPrincipal: async () => {
+    store.walletResolutions += 1;
+    return { ok: true, principal: { principalId: store.walletPrincipalId } };
+  },
 }));
 mock.module("@/lib/x402/pricing/readActionPrice", () => ({
   readActionPrice: async () => ({ ok: true, usdcPrice: 0.05 }),
 }));
 mock.module("@/lib/x402/http/resolveRequestNetwork", () => ({
-  resolveRequestNetwork: () => ({ ok: true, network: baseNetwork, recipientAddress: "0xrecipient" }),
+  resolveRequestNetwork: () => ({
+    ok: true,
+    network: networksByName.get(store.networkName),
+    recipientAddress: "0xrecipient",
+  }),
 }));
 mock.module("@/lib/x402/facilitator", () => ({
-  verifyPayment: async (input: { paymentHeader: string }) => ({
-    ok: true,
-    payerAddress: PAYER_ADDRESS,
-    nonce: input.paymentHeader,
-    chargeAmountUsdc: 0.05,
-    requirements: { amount: "50000" },
-  }),
+  verifyPayment: async (input: { paymentHeader: string }) =>
+    store.verifyRefusal
+      ? { ok: false, error: store.verifyRefusal }
+      : {
+          ok: true,
+          payerAddress: PAYER_ADDRESS,
+          nonce: input.paymentHeader,
+          chargeAmountUsdc: 0.05,
+          requirements: { amount: "50000" },
+        },
   settlePayment: async () => ({ ok: true, txHash: "0xsettle", settledAt: new Date().toISOString() }),
   refundPayment: async () => {
     throw new Error("no refund is expected");
   },
 }));
 mock.module("@/lib/x402/charges/insertPendingX402Charge", () => ({
-  insertPendingX402Charge: async (params: { nonce: string; action: string; payerAddress: string }) => {
+  insertPendingX402Charge: async (params: {
+    nonce: string;
+    action: string;
+    payerAddress: string;
+    principalId: string;
+    amountUsdc: number;
+  }) => {
     if (store.charges.has(params.nonce)) {
       return { success: false, message: "Payment nonce already used.", conflictReason: "nonce_used" };
     }
     const chargeId = `charge-${params.nonce}`;
     store.charges.set(params.nonce, {
       id: chargeId,
+      principal_id: params.principalId,
+      amount_usdc: params.amountUsdc,
       nonce: params.nonce,
       status: "pending",
       action: params.action,
@@ -319,10 +375,16 @@ mock.module("@/lib/x402/charges/recordReconciliation", () => ({
 }));
 
 const { getNetworkConfig } = await import("@/lib/x402/networks");
-baseNetwork = getNetworkConfig("base") ?? null;
+for (const networkName of ["base", "arc", "celo", "solana"]) {
+  const network = getNetworkConfig(networkName);
+  if (network) networksByName.set(networkName, network);
+}
 const { POST } = await import("./route");
 
-function callPostNow(nonce: string): Promise<Response> {
+function callPostNow(
+  nonce: string,
+  bodyOverrides: { idempotency_key?: string; social_account_id?: string } = {},
+): Promise<Response> {
   return POST(
     new nextServer.NextRequest("https://sharetopus.test/api/x402/post-now", {
       method: "POST",
@@ -332,6 +394,7 @@ function callPostNow(nonce: string): Promise<Response> {
         platform: "linkedin",
         post_type: "text",
         description: "Launch day.",
+        ...bodyOverrides,
       }),
     }),
   );
@@ -340,6 +403,8 @@ function callPostNow(nonce: string): Promise<Response> {
 function seedSettledChargeWithBatchOnly(): void {
   store.charges.set(LEGACY_NONCE, {
     id: LEGACY_CHARGE_ID,
+    principal_id: PRINCIPAL_ID,
+    amount_usdc: 0.05,
     nonce: LEGACY_NONCE,
     status: "settled",
     action: "post.text",
@@ -498,5 +563,256 @@ describe("a paid post-now whose charge record write is lost after the dispatch",
     expect(firstBody.data).toMatchObject({ batchId: firstBody.chargeId, dispatched: 1 });
     expect(store.settledNonces).toEqual(["nonce-1"]);
     expect(store.sentEventIds).toHaveLength(1);
+  });
+});
+
+type SpentRefusalKind = "replay_detected" | "authorization_expired" | "invalid_payment";
+
+function refuseVerifyAsSpent(kind: SpentRefusalKind, nonce: string, payerAddress: string): void {
+  const payment = { nonce, payerAddress };
+  switch (kind) {
+    case "replay_detected":
+      store.verifyRefusal = { kind, nonce, payment };
+      return;
+    case "authorization_expired":
+      store.verifyRefusal = { kind, message: "Payment authorization is expired", payment };
+      return;
+    case "invalid_payment":
+      store.verifyRefusal = { kind, message: "invalid_payload", payment };
+      return;
+  }
+}
+
+const PRODUCTION_SHAPED_CHARGES = [
+  {
+    networkName: "solana",
+    facilitatorCode: "CDP invalid_payload",
+    refusalKind: "invalid_payment",
+    payerAddress: "CPzeSyntheticPayer1111111111111111111111111",
+    nonce: "svm:5yntheticSignatureOfTheLandedTransfer1111111111111111111111111",
+    chargeId: "d9ce3300-0000-4000-8000-000000000367",
+    batchId: "_R3gCjSyntheticBatchIdForSolana01",
+    eventId: "e1820400-0000-4000-8000-00000000574b",
+    contentId: "urn:li:share:1001",
+  },
+  {
+    networkName: "arc",
+    facilitatorCode: "@x402/evm invalid_exact_evm_payload_authorization_valid_before",
+    refusalKind: "authorization_expired",
+    payerAddress: "0xca61000000000000000000000000000000005415",
+    nonce: "0x21c3ec0000000000000000000000000000000000000000000000000000003189",
+    chargeId: "21c3ec00-0000-4000-8000-000000003189",
+    batchId: "8KpUkbSyntheticBatchIdForArc0001",
+    eventId: "87f39000-0000-4000-8000-00000000553f",
+    contentId: "urn:li:share:1002",
+  },
+  {
+    networkName: "celo",
+    facilitatorCode: "x402-rs invalid_payment_expired",
+    refusalKind: "authorization_expired",
+    payerAddress: "0xca61000000000000000000000000000000005415",
+    nonce: "0x7d7d300000000000000000000000000000000000000000000000000000000ba7b",
+    chargeId: "7d7d3000-0000-4000-8000-00000000ba7b",
+    batchId: "hN4EheSyntheticBatchIdForCelo001",
+    eventId: "8920d600-0000-4000-8000-00000000a89e",
+    contentId: "urn:li:share:1003",
+  },
+] as const;
+
+type ProductionShapedCharge = (typeof PRODUCTION_SHAPED_CHARGES)[number];
+
+function seedProductionShapedCharge(shape: ProductionShapedCharge): void {
+  store.networkName = shape.networkName;
+  store.charges.set(shape.nonce, {
+    id: shape.chargeId,
+    principal_id: PRINCIPAL_ID,
+    amount_usdc: 0.05,
+    nonce: shape.nonce,
+    status: "settled",
+    action: "post.text",
+    tx_hash: `tx-${shape.chargeId}`,
+    error_message: null,
+    payer_address: shape.payerAddress,
+    metadata: { batch_id: shape.batchId },
+    created_at: "2026-09-18T04:38:29.975Z",
+    has_refund_reconciliation: false,
+  });
+  seedDispatchRow({
+    status: "completed",
+    event_id: shape.eventId,
+    batch_id: shape.batchId,
+    idempotency_key: `key-${shape.networkName}`,
+  });
+  store.historyRows.push({
+    batch_id: shape.batchId,
+    principal_id: PRINCIPAL_ID,
+    social_account_id: SOCIAL_ACCOUNT_ID,
+    platform: "linkedin",
+    content_id: shape.contentId,
+  });
+}
+
+describe("a replay of a landed payment that the facilitator refuses at verify", () => {
+  for (const shape of PRODUCTION_SHAPED_CHARGES) {
+    test(`${shape.networkName}: refused with ${shape.facilitatorCode}, it answers 200 with the first call's dispatch and runs nothing`, async () => {
+      seedProductionShapedCharge(shape);
+      refuseVerifyAsSpent(shape.refusalKind, shape.nonce, shape.payerAddress);
+
+      const response = await callPostNow(shape.nonce, { idempotency_key: `key-${shape.networkName}` });
+
+      expect(response.status).toBe(200);
+      expect(await readBody(response)).toMatchObject({
+        success: true,
+        chargeId: shape.chargeId,
+        txHash: `tx-${shape.chargeId}`,
+        data: {
+          batchId: shape.batchId,
+          eventIds: [shape.eventId],
+          dispatched: 1,
+          posts: [{ eventId: shape.eventId, status: "published", contentId: shape.contentId }],
+        },
+      });
+      expect(store.settledNonces).toEqual([]);
+      expect(store.sentEventIds).toEqual([]);
+      expect(store.dispatchRows).toHaveLength(1);
+      expect(store.charges.size).toBe(1);
+    });
+  }
+
+  test("refused while the first call is still saving its result (the TLC path), it answers the first call's dispatch", async () => {
+    const recordWrite = holdRecordWrite();
+    const firstCall = callPostNow("nonce-1");
+    await recordWrite.arrived;
+    refuseVerifyAsSpent("replay_detected", "nonce-1", PAYER_ADDRESS);
+
+    const replayResponse = await callPostNow("nonce-1");
+    recordWrite.release();
+    const firstBody = await readBody(await firstCall);
+
+    expect(replayResponse.status).toBe(200);
+    expect(await readBody(replayResponse)).toMatchObject({
+      chargeId: firstBody.chargeId,
+      data: { ...toRecord(firstBody.data), posts: [{ status: "processing" }] },
+    });
+    expect(store.settledNonces).toEqual(["nonce-1"]);
+    expect(store.sentEventIds).toHaveLength(1);
+  });
+
+  test("a charge with a stored result answers that stored result", async () => {
+    const firstResponse = await callPostNow("nonce-1");
+    const firstBody = await readBody(firstResponse);
+    refuseVerifyAsSpent("replay_detected", "nonce-1", PAYER_ADDRESS);
+
+    const replayResponse = await callPostNow("nonce-1");
+
+    expect(replayResponse.status).toBe(200);
+    expect(await readBody(replayResponse)).toMatchObject({ chargeId: firstBody.chargeId, data: firstBody.data });
+    expect(store.settledNonces).toEqual(["nonce-1"]);
+    expect(store.sentEventIds).toHaveLength(1);
+  });
+
+  test("a refused payment we hold no charge for keeps the facilitator's refusal and resolves no wallet", async () => {
+    refuseVerifyAsSpent("replay_detected", "nonce-unknown", PAYER_ADDRESS);
+
+    const response = await callPostNow("nonce-unknown");
+
+    expect(response.status).toBe(409);
+    expect(await readBody(response)).toMatchObject({ error: "replay_detected" });
+    expect(store.walletResolutions).toBe(0);
+    expect(store.charges.size).toBe(0);
+  });
+
+  test("a replay that names another social account than the first call keeps the refusal and reveals nothing", async () => {
+    seedSettledChargeWithBatchOnly();
+    seedDispatchRow({ status: "completed" });
+    refuseVerifyAsSpent("authorization_expired", LEGACY_NONCE, PAYER_ADDRESS);
+
+    const response = await callPostNow(LEGACY_NONCE, {
+      social_account_id: "0f0e0d0c-0b0a-4908-8706-050403020100",
+    });
+
+    expect(response.status).toBe(402);
+    const body = await readBody(response);
+    expect(body).toMatchObject({ error: "authorization_expired" });
+    expect(body.data).toBeUndefined();
+  });
+
+  test("a charge that belongs to another principal keeps the refusal", async () => {
+    seedSettledChargeWithBatchOnly();
+    seedDispatchRow({ status: "completed" });
+    store.walletPrincipalId = OTHER_PRINCIPAL_ID;
+    refuseVerifyAsSpent("replay_detected", LEGACY_NONCE, PAYER_ADDRESS);
+
+    const response = await callPostNow(LEGACY_NONCE);
+
+    expect(response.status).toBe(409);
+    expect(await readBody(response)).toMatchObject({ error: "replay_detected" });
+  });
+
+  test("an outcome that cannot be read answers 503 with Retry-After, and runs nothing", async () => {
+    seedSettledChargeWithBatchOnly();
+    seedDispatchRow({ status: "completed" });
+    store.isDispatchReadFailing = true;
+    refuseVerifyAsSpent("invalid_payment", LEGACY_NONCE, PAYER_ADDRESS);
+
+    const response = await callPostNow(LEGACY_NONCE);
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("5");
+    expect(await readBody(response)).toMatchObject({ error: "replay_lookup_failed" });
+    expect(store.settledNonces).toEqual([]);
+  });
+});
+
+describe("a retry with a new payment and an idempotency_key that was already dispatched", () => {
+  test("the key of a production-shaped charge answers that charge's dispatch, and the new payment is never settled", async () => {
+    seedSettledChargeWithBatchOnly();
+    seedDispatchRow({ status: "completed" });
+    store.historyRows.push({
+      batch_id: LEGACY_BATCH_ID,
+      principal_id: PRINCIPAL_ID,
+      social_account_id: SOCIAL_ACCOUNT_ID,
+      platform: "linkedin",
+      content_id: "urn:li:share:7",
+    });
+
+    const response = await callPostNow("nonce-2", { idempotency_key: "key-legacy" });
+
+    expect(response.status).toBe(200);
+    expect(await readBody(response)).toMatchObject({
+      chargeId: LEGACY_CHARGE_ID,
+      txHash: "0xlegacy",
+      data: {
+        batchId: LEGACY_BATCH_ID,
+        eventIds: ["evt-legacy"],
+        dispatched: 1,
+        posts: [{ eventId: "evt-legacy", status: "published", contentId: "urn:li:share:7" }],
+      },
+    });
+    expect(store.settledNonces).toEqual([]);
+    expect(store.charges.has("nonce-2")).toBe(false);
+    expect(store.sentEventIds).toEqual([]);
+  });
+
+  test("the key of a first call made through this route answers that call's stored answer", async () => {
+    const firstResponse = await callPostNow("nonce-1", { idempotency_key: "key-1" });
+    const firstBody = await readBody(firstResponse);
+
+    const retryResponse = await callPostNow("nonce-2", { idempotency_key: "key-1" });
+
+    expect(retryResponse.status).toBe(200);
+    expect(await readBody(retryResponse)).toMatchObject({ chargeId: firstBody.chargeId, data: firstBody.data });
+    expect(store.settledNonces).toEqual(["nonce-1"]);
+    expect(store.sentEventIds).toHaveLength(1);
+  });
+
+  test("a key whose dispatch links to no charge of this principal keeps the 409 and takes no payment", async () => {
+    seedDispatchRow({ status: "completed", batch_id: "batch-without-charge" });
+
+    const response = await callPostNow("nonce-2", { idempotency_key: "key-legacy" });
+
+    expect(response.status).toBe(409);
+    expect(await readBody(response)).toMatchObject({ error: "duplicate_idempotency_key" });
+    expect(store.settledNonces).toEqual([]);
   });
 });

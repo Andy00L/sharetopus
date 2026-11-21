@@ -6,6 +6,7 @@ mock.module("server-only", () => ({}));
 type IssuedStatement = { sql: string; params: unknown[] };
 type SqlProducer = { toSQL: () => IssuedStatement };
 type ChargeRow = {
+  id: string;
   network: string;
   action: string;
   amount_usdc: number;
@@ -40,6 +41,7 @@ const { loadProofLedger } = await import("./proofLedger");
 
 function buildPostNowCharge(overrides: Partial<ChargeRow>): ChargeRow {
   return {
+    id: "6f1f6a43-2b3c-4d5e-8f90-0a1b2c3d4e5f",
     network: "base",
     action: "post.text",
     amount_usdc: 0.5,
@@ -90,5 +92,37 @@ describe("loadProofLedger outcomes", () => {
     const ledger = await loadProofLedger();
 
     expect(ledger).toMatchObject({ ok: true, entries: [{ outcome: "failed", platform: null }] });
+  });
+});
+
+describe("loadProofLedger for a post-now whose charge record write was lost", () => {
+  const LOST_RECORD_CHARGE_ID = "9b8a7c6d-0000-4000-8000-000000000001";
+
+  test("its post shows through the dispatch rows stored under the charge id", async () => {
+    rowsByTable.set("x402_charges", [buildPostNowCharge({ id: LOST_RECORD_CHARGE_ID, metadata: {} })]);
+    rowsByTable.set("content_history", [{ batch_id: LOST_RECORD_CHARGE_ID, platform: "linkedin" }]);
+
+    const ledger = await loadProofLedger();
+
+    expect(ledger).toMatchObject({ ok: true, entries: [{ outcome: "published", platform: "linkedin" }] });
+    const historyRead = issuedStatements.find((statement) => readQueriedTable(statement) === "content_history");
+    expect(historyRead?.params).toContain(LOST_RECORD_CHARGE_ID);
+  });
+
+  test("its failed post shows as failed", async () => {
+    rowsByTable.set("x402_charges", [buildPostNowCharge({ id: LOST_RECORD_CHARGE_ID, metadata: {} })]);
+    rowsByTable.set("pending_direct_posts", [{ batch_id: LOST_RECORD_CHARGE_ID, platform: "x" }]);
+
+    const ledger = await loadProofLedger();
+
+    expect(ledger).toMatchObject({ ok: true, entries: [{ outcome: "failed", platform: "x" }] });
+  });
+
+  test("a post charge with no link and no row under its id stays unlinked", async () => {
+    rowsByTable.set("x402_charges", [buildPostNowCharge({ id: LOST_RECORD_CHARGE_ID, metadata: {} })]);
+
+    const ledger = await loadProofLedger();
+
+    expect(ledger).toMatchObject({ ok: true, entries: [{ outcome: "unlinked", platform: null }] });
   });
 });

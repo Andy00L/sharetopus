@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, exists, sql } from "drizzle-orm";
+import { and, asc, eq, exists, or, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { x402_charges, x402_reconciliation } from "@/db/schema";
@@ -44,12 +44,20 @@ export type ChargeReplay =
   | {
       state: "settled";
       chargeId: string;
+      principalId: string;
       txHash: string;
+      amountUsdc: number;
       storedResult: Json | null;
       storedMetadata: ChargeMetadata;
     }
-  | { state: "in_progress"; chargeId: string }
-  | { state: "closed"; chargeId: string | null };
+  | { state: "in_progress"; chargeId: string; principalId: string }
+  | { state: "closed"; chargeId: string; principalId: string }
+  | { state: "not_found" }
+  | { state: "lookup_failed"; message: string };
+
+export type ChargeReplayTarget =
+  | { kind: "payment"; nonce: string; payerAddress: string; network: NetworkConfig }
+  | { kind: "batch"; batchId: string; principalId: string };
 
 export type SettleChargeResult =
   | { ok: true; chargeId: string; txHash: string }
@@ -77,10 +85,13 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
         ok: false,
         reason: "replay",
         replay: await loadChargeReplay({
-          nonce: input.verified.nonce,
-          payerAddress: input.verified.payerAddress,
+          target: {
+            kind: "payment",
+            nonce: input.verified.nonce,
+            payerAddress: input.verified.payerAddress,
+            network: input.network,
+          },
           action: input.action,
-          network: input.network,
         }),
       };
     }
@@ -150,18 +161,19 @@ export async function settleCharge(input: SettleChargeInput): Promise<SettleChar
   return { ok: true, chargeId, txHash: settleResult.txHash };
 }
 
-async function loadChargeReplay(params: {
-  nonce: string;
-  payerAddress: string;
+export async function loadChargeReplay(params: {
+  target: ChargeReplayTarget;
   action: string;
-  network: NetworkConfig;
 }): Promise<ChargeReplay> {
+  const { target } = params;
   const { data: chargeRows, error } = await runQuery(
     db
       .select({
         id: x402_charges.id,
+        principal_id: x402_charges.principal_id,
         status: x402_charges.status,
         action: x402_charges.action,
+        amount_usdc: x402_charges.amount_usdc,
         tx_hash: x402_charges.tx_hash,
         error_message: x402_charges.error_message,
         payer_address: x402_charges.payer_address,
@@ -180,39 +192,56 @@ async function loadChargeReplay(params: {
         )}`.mapWith(Boolean),
       })
       .from(x402_charges)
-      .where(eq(x402_charges.nonce, params.nonce))
+      .where(
+        target.kind === "payment"
+          ? eq(x402_charges.nonce, target.nonce)
+          : and(
+              eq(x402_charges.principal_id, target.principalId),
+              or(
+                sql`${x402_charges.id}::text = ${target.batchId}`,
+                sql`${x402_charges.metadata}->>'batch_id' = ${target.batchId}`,
+              ),
+            ),
+      )
+      .orderBy(asc(x402_charges.created_at))
       .limit(1),
   );
 
-  const charge = chargeRows?.[0];
-  if (error || !charge) {
-    if (error) console.error(`[loadChargeReplay] Lookup failed: ${error.message}`);
-    return { state: "closed", chargeId: null };
+  if (error) {
+    console.error(`[loadChargeReplay] Lookup failed: ${error.message}`);
+    return { state: "lookup_failed", message: error.message };
   }
-  if (!addressesMatch(params.network, charge.payer_address, params.payerAddress)) {
-    return { state: "closed", chargeId: null };
+  const charge = chargeRows[0];
+  if (!charge) return { state: "not_found" };
+  if (
+    target.kind === "payment" &&
+    !addressesMatch(target.network, charge.payer_address, target.payerAddress)
+  ) {
+    return { state: "not_found" };
   }
+  const chargeIdentity = { chargeId: charge.id, principalId: charge.principal_id };
   if (charge.action !== params.action) {
-    return { state: "closed", chargeId: charge.id };
+    return { state: "closed", ...chargeIdentity };
   }
   if (charge.status === "pending") {
     const pendingForMs = Date.now() - new Date(charge.created_at).getTime();
     return pendingForMs < PENDING_IN_FLIGHT_MS
-      ? { state: "in_progress", chargeId: charge.id }
-      : { state: "closed", chargeId: charge.id };
+      ? { state: "in_progress", ...chargeIdentity }
+      : { state: "closed", ...chargeIdentity };
   }
   const hasActionFailed = charge.error_message !== null || charge.has_refund_reconciliation;
   if (charge.status === "settled" && charge.tx_hash && !hasActionFailed) {
     const storedMetadata = readChargeMetadata(charge.metadata);
     return {
       state: "settled",
-      chargeId: charge.id,
+      ...chargeIdentity,
       txHash: charge.tx_hash,
+      amountUsdc: charge.amount_usdc,
       storedResult: storedMetadata.result ?? null,
       storedMetadata,
     };
   }
-  return { state: "closed", chargeId: charge.id };
+  return { state: "closed", ...chargeIdentity };
 }
 
 function readChargeMetadata(metadata: Json): ChargeMetadata {

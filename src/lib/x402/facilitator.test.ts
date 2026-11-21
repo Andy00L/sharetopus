@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
 import { encodePaymentSignatureHeader } from "@x402/core/http";
-import type { PaymentPayload, PaymentRequirements, SettleResponse } from "@x402/core/types";
+import type { PaymentPayload, PaymentRequirements, SettleResponse, VerifyResponse } from "@x402/core/types";
 
 import type { RefundSendResult } from "./chain/refundSender";
 import type { NetworkConfig } from "./networks";
@@ -9,6 +9,7 @@ import type { NetworkConfig } from "./networks";
 mock.module("server-only", () => ({}));
 
 let settleReply: SettleResponse;
+let verifyReply: VerifyResponse = { isValid: false, invalidReason: "unused" };
 let refundSendResult: RefundSendResult;
 let confirmationCount = 0;
 
@@ -16,7 +17,7 @@ mock.module("@/lib/x402/facilitatorClient", () => ({
   getFacilitatorClient: () => ({
     ok: true,
     client: {
-      verify: async () => ({ isValid: false, invalidReason: "unused" }),
+      verify: async () => verifyReply,
       settle: async () => settleReply,
     },
   }),
@@ -33,7 +34,7 @@ mock.module("@/lib/x402/chain/confirmTransaction", () => ({
   },
 }));
 
-const { refundPayment, settlePayment } = await import("./facilitator");
+const { refundPayment, settlePayment, verifyPayment } = await import("./facilitator");
 const { getNetworkConfig } = await import("./networks");
 
 function requireNetwork(networkName: string): NetworkConfig {
@@ -121,5 +122,106 @@ describe("refundPayment", () => {
     refundSendResult = { status: "not_sent", message: "CDP answered 400" };
 
     expect(await refundOnBase()).toEqual({ status: "failed", refundTxHash: null, message: "CDP answered 400" });
+  });
+});
+
+describe("verifyPayment on a refusal that can mean the payment was already used", () => {
+  const SIGNED_PAYER = "0x00000000000000000000000000000000000000aa";
+  const AUTHORIZATION_NONCE = "0x9a4d000000000000000000000000000000000000000000000000000000000001";
+  const RECIPIENT = "0x0000000000000000000000000000000000000001";
+  const SPENT_PAYMENT = { nonce: AUTHORIZATION_NONCE, payerAddress: SIGNED_PAYER };
+
+  function refuseVerify(params: { networkName: string; invalidReason: string; payer?: string }) {
+    const network = requireNetwork(params.networkName);
+    verifyReply = { isValid: false, invalidReason: params.invalidReason, payer: params.payer };
+    const paymentHeader = encodePaymentSignatureHeader({
+      x402Version: 2,
+      accepted: { ...REQUIREMENTS, network: network.caipNetwork, asset: network.usdcAddress, payTo: RECIPIENT },
+      payload: {
+        signature: "0x01",
+        authorization: {
+          from: SIGNED_PAYER,
+          to: RECIPIENT,
+          value: "10000",
+          validAfter: "0",
+          validBefore: "1758170309",
+          nonce: AUTHORIZATION_NONCE,
+        },
+      },
+    } satisfies PaymentPayload);
+    return verifyPayment({ paymentHeader, amountUsdc: 0.01, recipientAddress: RECIPIENT, network });
+  }
+
+  const SPENT_REFUSALS = [
+    {
+      facilitator: "Arc, @x402/evm",
+      networkName: "arc",
+      invalidReason: "invalid_exact_evm_nonce_already_used",
+      payer: SIGNED_PAYER,
+      expectedError: { kind: "replay_detected", nonce: AUTHORIZATION_NONCE, payment: SPENT_PAYMENT },
+    },
+    {
+      facilitator: "Arc, @x402/evm",
+      networkName: "arc",
+      invalidReason: "invalid_exact_evm_payload_authorization_valid_before",
+      payer: SIGNED_PAYER,
+      expectedError: { kind: "authorization_expired", payment: SPENT_PAYMENT },
+    },
+    {
+      facilitator: "CDP",
+      networkName: "base",
+      invalidReason: "invalid_payload",
+      payer: undefined,
+      expectedError: { kind: "invalid_payment", payment: SPENT_PAYMENT },
+    },
+    {
+      facilitator: "CDP",
+      networkName: "base",
+      invalidReason: "duplicate_settlement",
+      payer: undefined,
+      expectedError: { kind: "replay_detected", payment: SPENT_PAYMENT },
+    },
+    {
+      facilitator: "Celo, x402-rs",
+      networkName: "celo",
+      invalidReason: "transaction_simulation",
+      payer: SIGNED_PAYER,
+      expectedError: { kind: "invalid_payment", payment: SPENT_PAYMENT },
+    },
+    {
+      facilitator: "Celo, x402-rs",
+      networkName: "celo",
+      invalidReason: "invalid_payment_expired",
+      payer: SIGNED_PAYER,
+      expectedError: { kind: "authorization_expired", payment: SPENT_PAYMENT },
+    },
+  ];
+
+  for (const refusal of SPENT_REFUSALS) {
+    test(`${refusal.facilitator}: ${refusal.invalidReason} is ${refusal.expectedError.kind} and names the payment`, async () => {
+      const verifyResult = await refuseVerify(refusal);
+
+      expect(verifyResult).toMatchObject({ ok: false, error: refusal.expectedError });
+    });
+  }
+
+  test("a facilitator payer that differs from the signed payer names no payment", async () => {
+    const verifyResult = await refuseVerify({
+      networkName: "arc",
+      invalidReason: "invalid_exact_evm_nonce_already_used",
+      payer: "0x00000000000000000000000000000000000000bb",
+    });
+
+    expect(verifyResult).toMatchObject({ ok: false, error: { kind: "replay_detected", payment: null } });
+  });
+
+  test("a refusal about the payment's terms names no payment", async () => {
+    const verifyResult = await refuseVerify({
+      networkName: "arc",
+      invalidReason: "invalid_exact_evm_authorization_value",
+      payer: SIGNED_PAYER,
+    });
+
+    expect(verifyResult).toEqual({ ok: false, error: { kind: "amount_mismatch", expected: 0.01, received: 0.01 } });
   });
 });

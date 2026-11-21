@@ -14,6 +14,7 @@ import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { resolveOrOnboardWalletPrincipal } from "@/lib/x402/auth/resolveOrOnboardWalletPrincipal";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
+  loadChargeReplay,
   refundCharge,
   settleCharge,
   updateChargeRecord,
@@ -24,6 +25,7 @@ import {
 import { getBaseUrl } from "@/lib/x402/config";
 import {
   verifyPayment,
+  type PresentedPayment,
   type SettlePaymentError,
   type VerifiedPayment,
   type VerifyPaymentError,
@@ -43,11 +45,13 @@ import {
 import { buildGenericErrorResponse } from "@/lib/x402/responses/buildErrorResponse";
 import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentRequiredResponse";
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
+import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const KEY_IN_PROGRESS_RETRY_AFTER_SECONDS = 5;
 const KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS = 60;
 const REPLAY_RETRY_AFTER_SECONDS = 5;
+const DUPLICATE_KEY_ERROR_KIND = "duplicate_idempotency_key";
 
 export type ActionResolver<TBody> = (
   body: TBody,
@@ -81,11 +85,22 @@ export type RecoveredReplayResult =
   | { kind: "not_found" }
   | { kind: "lookup_failed"; message: string };
 
-export type ReplayResultRecovery = (params: {
+export type ReplayResultRecovery<TBody> = (params: {
   principal: WalletPrincipal;
   chargeId: string;
   storedMetadata: ChargeMetadata;
+  body: TBody;
 }) => Promise<RecoveredReplayResult>;
+
+export type KeyedReplayBatch =
+  | { kind: "found"; batchId: string }
+  | { kind: "not_found" }
+  | { kind: "lookup_failed"; message: string };
+
+export type KeyedReplayBatchLookup<TBody> = (params: {
+  principal: WalletPrincipal;
+  body: TBody;
+}) => Promise<KeyedReplayBatch>;
 
 export interface X402PaidEndpointOptions<TBody, TResult> {
   endpointPath: string;
@@ -105,7 +120,9 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
 
   handler: X402Handler<TBody, TResult>;
 
-  recoverReplayResult?: ReplayResultRecovery;
+  recoverReplayResult?: ReplayResultRecovery<TBody>;
+
+  findKeyedReplayBatch?: KeyedReplayBatchLookup<TBody>;
 
   rateLimitScope: string;
 
@@ -337,6 +354,19 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     });
     if (!verifyResult.ok) {
       const verifyError = verifyResult.error;
+      const presentedPayment = readPossiblySpentPayment(verifyError);
+      if (presentedPayment && options.recoverReplayResult) {
+        const landedReplayResponse = await answerLandedPaymentReplay({
+          payment: presentedPayment,
+          options,
+          body,
+          actionKey,
+          network,
+          usdcPrice,
+          context,
+        });
+        if (landedReplayResponse) return landedReplayResponse;
+      }
       return context.fail({
         principal: null,
         action: actionKey,
@@ -448,6 +478,22 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
   if (options.precheck) {
     const precheckResult = await options.precheck({ body, principal, network });
     if (!precheckResult.ok) {
+      if (precheckResult.errorKind === DUPLICATE_KEY_ERROR_KIND && options.findKeyedReplayBatch) {
+        const keyedReplayResponse = await answerKeyedDispatchReplay({
+          findKeyedReplayBatch: options.findKeyedReplayBatch,
+          options,
+          body,
+          actionKey,
+          principal,
+          payerAddress: verified.payerAddress,
+          network,
+          usdcPrice,
+          context,
+        });
+        if (keyedReplayResponse) {
+          return { response: keyedReplayResponse, mayHoldUnusedPayment: false };
+        }
+      }
       return {
         response: context.fail({
           principal,
@@ -723,31 +769,21 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
   requestId: string;
   context: RequestContext;
 }): Promise<Response> {
-  const { replay, context, principal, actionKey } = params;
+  const { context, principal, actionKey } = params;
+  const replay = scopeReplayToPrincipal(params.replay, principal.principalId);
 
   switch (replay.state) {
     case "in_progress":
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: replay.chargeId,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "payment_in_progress",
-        message: "This payment is still being processed. Retry the same request in a few seconds.",
-        retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
-      });
+      return failPaymentInProgress({ context, principal, actionKey, chargeId: replay.chargeId });
 
     case "closed":
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: replay.chargeId,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "replay_detected",
-        message: "This payment has already been used.",
-      });
+      return failPaymentUsed({ context, principal, actionKey, chargeId: replay.chargeId });
+
+    case "not_found":
+      return failPaymentUsed({ context, principal, actionKey, chargeId: null });
+
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: replay.message });
 
     case "settled": {
       let replayData: Json | null = replay.storedResult;
@@ -776,6 +812,7 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
           principal,
           chargeId: replay.chargeId,
           storedMetadata: replay.storedMetadata,
+          body: params.body,
         });
         switch (recovery.kind) {
           case "recovered":
@@ -784,19 +821,12 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
           case "not_found":
             break;
           case "lookup_failed":
-            console.error(
-              `[respondToReplay] Outcome lookup failed for replayed charge ${replay.chargeId}: ${recovery.message}`,
-            );
-            return context.fail({
+            return failReplayLookup({
+              context,
               principal,
-              action: actionKey,
+              actionKey,
               chargeId: replay.chargeId,
-              resultStatus: "error",
-              httpStatus: 503,
-              errorKind: "replay_lookup_failed",
-              message:
-                "This payment was already used and its outcome could not be read right now. Retry the same request shortly; it is not charged again.",
-              retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+              message: recovery.message,
             });
           default: {
             const unhandledRecovery: never = recovery;
@@ -829,17 +859,250 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
     default: {
       const unhandledReplay: never = replay;
       console.error(`[respondToReplay] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
-      return context.fail({
-        principal,
-        action: actionKey,
-        chargeId: null,
-        resultStatus: "error",
-        httpStatus: 409,
-        errorKind: "replay_detected",
-        message: "This payment has already been used.",
-      });
+      return failPaymentUsed({ context, principal, actionKey, chargeId: null });
     }
   }
+}
+
+function scopeReplayToPrincipal(replay: ChargeReplay, principalId: string): ChargeReplay {
+  switch (replay.state) {
+    case "settled":
+    case "in_progress":
+    case "closed":
+      return replay.principalId === principalId ? replay : { state: "not_found" };
+    case "not_found":
+    case "lookup_failed":
+      return replay;
+    default: {
+      const unhandledReplay: never = replay;
+      console.error(`[scopeReplayToPrincipal] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
+      return { state: "not_found" };
+    }
+  }
+}
+
+type ReplayFailureParams = {
+  context: RequestContext;
+  principal: WalletPrincipal;
+  actionKey: string;
+  chargeId: string | null;
+};
+
+function failPaymentInProgress(params: ReplayFailureParams & { chargeId: string }): Response {
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 409,
+    errorKind: "payment_in_progress",
+    message: "This payment is still being processed. Retry the same request in a few seconds.",
+    retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+  });
+}
+
+function failPaymentUsed(params: ReplayFailureParams): Response {
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 409,
+    errorKind: "replay_detected",
+    message: "This payment has already been used.",
+  });
+}
+
+function failReplayLookup(
+  params: Omit<ReplayFailureParams, "principal"> & { principal: WalletPrincipal | null; message: string },
+): Response {
+  console.error(
+    `[failReplayLookup] Outcome lookup failed for a replayed payment (charge ${params.chargeId ?? "unknown"}): ${params.message}`,
+  );
+  return params.context.fail({
+    principal: params.principal,
+    action: params.actionKey,
+    chargeId: params.chargeId,
+    resultStatus: "error",
+    httpStatus: 503,
+    errorKind: "replay_lookup_failed",
+    message:
+      "This payment was already used and its outcome could not be read right now. Retry the same request shortly; it is not charged again.",
+    retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+  });
+}
+
+function readPossiblySpentPayment(error: VerifyPaymentError): PresentedPayment | null {
+  switch (error.kind) {
+    case "replay_detected":
+    case "authorization_expired":
+    case "invalid_payment":
+    case "insufficient_funds":
+      return error.payment;
+    case "malformed_header":
+    case "invalid_signature":
+    case "amount_mismatch":
+    case "network_mismatch":
+    case "recipient_mismatch":
+    case "facilitator_error":
+    case "invalid_amount":
+    case "kyt_sanctioned":
+      return null;
+    default: {
+      const unhandledError: never = error;
+      console.error(`[readPossiblySpentPayment] Unhandled verify error: ${JSON.stringify(unhandledError)}`);
+      return null;
+    }
+  }
+}
+
+type DurableReplayParams<TBody, TResult> = {
+  options: X402PaidEndpointOptions<TBody, TResult>;
+  body: TBody;
+  actionKey: string;
+  network: NetworkConfig;
+  usdcPrice: number;
+  context: RequestContext;
+};
+
+async function answerLandedPaymentReplay<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & { payment: PresentedPayment },
+): Promise<Response | null> {
+  const { payment, network, context, actionKey } = params;
+  const replay = await loadChargeReplay({
+    target: { kind: "payment", nonce: payment.nonce, payerAddress: payment.payerAddress, network },
+    action: actionKey,
+  });
+  if (replay.state === "not_found") return null;
+  if (replay.state === "lookup_failed") {
+    return failReplayLookup({ context, principal: null, actionKey, chargeId: null, message: replay.message });
+  }
+
+  const walletResult = await resolveOrOnboardWalletPrincipal({ payerAddress: payment.payerAddress, network });
+  if (!walletResult.ok) {
+    if (walletResult.reason === "sanctioned") {
+      return context.fail({
+        principal: walletResult.principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "sanctioned",
+        httpStatus: 403,
+        errorKind: "sanctioned",
+        message: walletResult.message,
+      });
+    }
+    return failReplayLookup({ context, principal: null, actionKey, chargeId: null, message: walletResult.message });
+  }
+  const principal = walletResult.principal;
+  const ownReplay = scopeReplayToPrincipal(replay, principal.principalId);
+
+  switch (ownReplay.state) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: ownReplay.message });
+    case "in_progress":
+      return failPaymentInProgress({ context, principal, actionKey, chargeId: ownReplay.chargeId });
+    case "closed":
+      return failPaymentUsed({ context, principal, actionKey, chargeId: ownReplay.chargeId });
+    case "settled":
+      return answerSettledReplayFromDurableState({
+        ...params,
+        replay: ownReplay,
+        principal,
+        payerAddress: payment.payerAddress,
+      });
+    default: {
+      const unhandledReplay: never = ownReplay;
+      console.error(`[answerLandedPaymentReplay] Unhandled replay state: ${JSON.stringify(unhandledReplay)}`);
+      return null;
+    }
+  }
+}
+
+async function answerKeyedDispatchReplay<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & {
+    findKeyedReplayBatch: KeyedReplayBatchLookup<TBody>;
+    principal: WalletPrincipal;
+    payerAddress: string;
+  },
+): Promise<Response | null> {
+  const { context, principal, actionKey } = params;
+  const keyedBatch = await params.findKeyedReplayBatch({ principal, body: params.body });
+  switch (keyedBatch.kind) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: null, message: keyedBatch.message });
+    case "found":
+      break;
+    default: {
+      const unhandledBatch: never = keyedBatch;
+      console.error(`[answerKeyedDispatchReplay] Unhandled batch lookup: ${JSON.stringify(unhandledBatch)}`);
+      return null;
+    }
+  }
+
+  const replay = scopeReplayToPrincipal(
+    await loadChargeReplay({
+      target: { kind: "batch", batchId: keyedBatch.batchId, principalId: principal.principalId },
+      action: actionKey,
+    }),
+    principal.principalId,
+  );
+  if (replay.state === "lookup_failed") {
+    return failReplayLookup({ context, principal, actionKey, chargeId: null, message: replay.message });
+  }
+  if (replay.state !== "settled") return null;
+  return answerSettledReplayFromDurableState({ ...params, replay });
+}
+
+async function answerSettledReplayFromDurableState<TBody, TResult extends Json>(
+  params: DurableReplayParams<TBody, TResult> & {
+    replay: Extract<ChargeReplay, { state: "settled" }>;
+    principal: WalletPrincipal;
+    payerAddress: string;
+  },
+): Promise<Response | null> {
+  const { replay, principal, context, actionKey, network } = params;
+  if (!params.options.recoverReplayResult) return null;
+  const recovery = await params.options.recoverReplayResult({
+    principal,
+    chargeId: replay.chargeId,
+    storedMetadata: replay.storedMetadata,
+    body: params.body,
+  });
+  switch (recovery.kind) {
+    case "not_found":
+      return null;
+    case "lookup_failed":
+      return failReplayLookup({ context, principal, actionKey, chargeId: replay.chargeId, message: recovery.message });
+    case "recovered":
+      break;
+    default: {
+      const unhandledRecovery: never = recovery;
+      console.error(`[answerSettledReplayFromDurableState] Unhandled recovery: ${JSON.stringify(unhandledRecovery)}`);
+      return null;
+    }
+  }
+
+  context.audit({ principal, action: actionKey, chargeId: replay.chargeId, resultStatus: "ok" });
+  return buildSettledResponse({
+    data: replay.storedResult ?? recovery.data,
+    txHash: replay.txHash,
+    chargeId: replay.chargeId,
+    network,
+    payerAddress: params.payerAddress,
+    amountAtomic: readFirstAtomicAmount([replay.amountUsdc, params.usdcPrice], network),
+  });
+}
+
+function readFirstAtomicAmount(candidateAmountsUsdc: number[], network: NetworkConfig): string {
+  for (const amountUsdc of candidateAmountsUsdc) {
+    const atomicAmount = usdcToAtomic(amountUsdc, network.usdcDecimals);
+    if (atomicAmount.ok) return atomicAmount.atomicAmount.toString();
+  }
+  return "0";
 }
 
 function describeVerifyError(error: VerifyPaymentError): string {

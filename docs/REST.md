@@ -167,6 +167,8 @@ Error codes:
 
 Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
+`POST /v1/posts/bulk` gives every item one generated `batch_id` (a 32-character nanoid) and overwrites a `batch_id` sent on an item; an item without an `idempotency_key` gets `batch_id:index`. The response's `batch_id` is that shared id.
+
 When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
 
 `POST /v1/posts` without `scheduled_at` publishes now through `directPostBatch`, which writes a `pending_direct_posts` dispatch row and sends a `post.now` event; it writes no `scheduled_posts` row. The call answers 202 with `{ dispatch_id, batch_id, status: "processing", platform, social_account_id }`, built from the dispatch result without a database read. A `batch_id` in the body is stored on the dispatch row and answered back, as on the scheduled path; it labels the post and dedupes nothing, so two keyless calls with one `batch_id` publish twice (`idempotency_key` dedupes). Without one, the server generates it. A retry with an `idempotency_key` that was already dispatched answers 202 with the first call's `dispatch_id` and `batch_id`, read from the existing `pending_direct_posts` row by the lock lookup. The published post then appears in `GET /v1/content-history`. The post-now job fires no webhook, and no REST endpoint reads a dispatch, so a REST client cannot see a publish-now that failed. Before this change the route reread `scheduled_posts` by batch id, found nothing, and answered 500 after the post was dispatched.

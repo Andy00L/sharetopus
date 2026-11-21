@@ -92,7 +92,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
       },
       {
         title: "The server verifies, settles, then executes.",
-        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP, which also screens for sanctions; x402.celo.org for celo; Sharetopus itself for arc, with no third-party screening). A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. Business-rule checks (account ownership, eligibility, quotas, a reused idempotency_key) run before settlement, so a request that cannot succeed is rejected with nothing charged. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, a refund is sent on-chain, the error body carries refundInitiated and refundTxHash, and the charge is recorded as refunded once the chain confirms it. Presenting the same payment again returns the stored result of a settled write action instead of charging twice. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
+        body: "Verification runs off-chain at the network's facilitator (Coinbase CDP, which also screens for sanctions; x402.celo.org for celo; Sharetopus itself for arc, with no third-party screening). A wallet's first verified payment is also its onboarding: the payer address recovered from the verified payment becomes the wallet identity, with no separate signup step. Business-rule checks (account ownership, eligibility, quotas, a reused idempotency_key) run before settlement, so a request that cannot succeed is rejected with nothing charged. A pending charge is recorded before on-chain settlement, then the action runs. If a refundable step fails after settlement, a refund is sent on-chain, the error body carries refundInitiated and refundTxHash, and the charge is recorded as refunded once the chain confirms it. Presenting the same payment again returns the stored result of a settled write action instead of charging twice; post-now answers it too when the facilitator refuses the payment as already used or expired, provided the request names the same account and platform. Settlement details return base64-encoded in the PAYMENT-RESPONSE header (v1 alias X-PAYMENT-RESPONSE).",
       },
       {
         title: "For social accounts: finish OAuth.",
@@ -108,7 +108,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
     callouts: [
       {
         tone: "note",
-        text: "Each signed payment is single use. Presenting the same payment twice returns 409 replay. Sign a fresh payment for every call.",
+        text: "Each signed payment is single use and is never charged twice. Presenting it again returns the original result of a settled write action, or 409 replay when there is none. Sign a fresh payment for every new call.",
       },
       {
         tone: "warning",
@@ -569,7 +569,8 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 name: "idempotency_key",
                 type: "string",
                 required: false,
-                description: "Client-supplied key to dedupe retries.",
+                description:
+                  "Client-supplied key to dedupe retries. A retry with a new payment and a key that was already dispatched returns the first call's answer with 200 and never settles the new payment.",
               },
             ],
           },
@@ -580,7 +581,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 name: "batchId",
                 type: "string",
                 required: true,
-                description: "Batch identifier for this dispatch.",
+                description: "Batch identifier for this dispatch; equal to chargeId.",
               },
               {
                 name: "eventIds",
@@ -593,6 +594,13 @@ export const DOCS_SECTIONS: DocsSection[] = [
                 type: "number",
                 required: true,
                 description: "Count of jobs dispatched.",
+              },
+              {
+                name: "posts",
+                type: "object[]",
+                required: false,
+                description:
+                  "Only on a replay answered from the dispatch rows: each post's status, processing, published with contentId, or failed with failureReason.",
               },
             ],
           },
@@ -616,7 +624,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
             code: `{
   "success": true,
   "data": {
-    "batchId": "f7e6d5c4-b3a2-4190-8f7e-6d5c4b3a2918",
+    "batchId": "8f0a3c52-7c1e-4b8e-9f21-d4a0c0b6e7aa",
     "eventIds": ["a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"],
     "dispatched": 1
   },
@@ -1550,7 +1558,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "409",
           "replay, replay_detected",
-          "This payment was already used and has no stored result to return. A settled write action presented again returns its original result with 200 instead.",
+          "This payment was already used and its result cannot be returned. A settled write action presented again returns its original result with 200 instead; post-now rebuilds it from its dispatch rows and adds posts, each post's status (processing, published with contentId, failed with failureReason), also when the facilitator refuses the payment as already used or expired, provided the request names the first call's account and platform.",
         ],
         [
           "409",
@@ -1560,7 +1568,7 @@ export const DOCS_SECTIONS: DocsSection[] = [
         [
           "409",
           "duplicate_idempotency_key, reauth_not_needed, no_eligible_posts",
-          "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged.",
+          "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged. On post-now, a reused key whose first call settled returns that call's answer with 200 instead.",
         ],
         [
           "409",
@@ -1611,6 +1619,11 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "503",
           "idempotency_check_unavailable",
           "post-now and schedule: the idempotency_key could not be checked. Checked before settlement; nothing charged. Retry after Retry-After.",
+        ],
+        [
+          "503",
+          "replay_lookup_failed",
+          "post-now: a replayed payment or a reused idempotency_key whose first outcome could not be read right now. Nothing charged again; retry the same request after Retry-After.",
         ],
         [
           "504",

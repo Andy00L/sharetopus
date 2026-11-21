@@ -57,6 +57,7 @@ export async function loadProofLedger(options?: {
   const { data: charges, error: chargesError } = await runQuery(
     db
       .select({
+        id: x402_charges.id,
         network: x402_charges.network,
         action: x402_charges.action,
         amount_usdc: x402_charges.amount_usdc,
@@ -87,16 +88,15 @@ export async function loadProofLedger(options?: {
     return { ok: false, reason: "ledger_read_failed" };
   }
 
-  const batchIds = charges
-    .map((charge) => readBatchId(charge.metadata))
-    .filter((batchId): batchId is string => batchId !== null);
+  const batchIds = charges.map((charge) => readBatchId(charge.metadata) ?? readUnlinkedPostChargeId(charge));
+  const lookupBatchIds = batchIds.filter((batchId): batchId is string => batchId !== null);
   const scheduledPostIds = charges
     .map((charge) => charge.scheduled_post_id)
     .filter((postId): postId is string => postId !== null);
 
   const [publishedLookup, failedLookup, scheduledLookup] = await Promise.all([
-    fetchPublishedPlatformsByBatch(batchIds),
-    fetchFailedPlatformsByBatch(batchIds),
+    fetchPublishedPlatformsByBatch(lookupBatchIds),
+    fetchFailedPlatformsByBatch(lookupBatchIds),
     fetchScheduledOutcomesById(scheduledPostIds),
   ]);
   if (!publishedLookup.ok || !failedLookup.ok || !scheduledLookup.ok) {
@@ -110,7 +110,11 @@ export async function loadProofLedger(options?: {
       chargeStatus: charge.status,
       hasActionFailed: charge.error_message !== null,
       action: charge.action,
-      batchId: readBatchId(charge.metadata),
+      batchId: readLinkedBatchId({
+        charge,
+        publishedByBatch: publishedLookup.value,
+        failedByBatch: failedLookup.value,
+      }),
       scheduledPostId: charge.scheduled_post_id,
       publishedByBatch: publishedLookup.value,
       failedByBatch: failedLookup.value,
@@ -137,6 +141,27 @@ function readBatchId(metadata: Json): string | null {
   }
   const batchId = metadata.batch_id;
   return typeof batchId === "string" && batchId.length > 0 ? batchId : null;
+}
+
+function readUnlinkedPostChargeId(charge: {
+  id: string;
+  action: string;
+  scheduled_post_id: string | null;
+}): string | null {
+  return charge.action.startsWith(POST_ACTION_PREFIX) && charge.scheduled_post_id === null ? charge.id : null;
+}
+
+function readLinkedBatchId(params: {
+  charge: { id: string; action: string; metadata: Json; scheduled_post_id: string | null };
+  publishedByBatch: PlatformByKey;
+  failedByBatch: PlatformByKey;
+}): string | null {
+  const storedBatchId = readBatchId(params.charge.metadata);
+  if (storedBatchId !== null) return storedBatchId;
+  const chargeBatchId = readUnlinkedPostChargeId(params.charge);
+  if (chargeBatchId === null) return null;
+  const hasPostRow = params.publishedByBatch.has(chargeBatchId) || params.failedByBatch.has(chargeBatchId);
+  return hasPostRow ? chargeBatchId : null;
 }
 
 function resolveOutcome(params: {

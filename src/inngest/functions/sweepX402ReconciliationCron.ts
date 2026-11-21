@@ -4,7 +4,7 @@ import { and, asc, eq, gte, inArray, isNull, like, lt, notExists, sql } from "dr
 import { NonRetriableError } from "inngest";
 
 import { db, runQuery } from "@/db/client";
-import { x402_charges, x402_reconciliation, x402_refunds } from "@/db/schema";
+import { pending_direct_posts, x402_charges, x402_reconciliation, x402_refunds } from "@/db/schema";
 import { confirmTransaction } from "@/lib/x402/chain/confirmTransaction";
 import { markChargeRefunded } from "@/lib/x402/charges/chargeTransitions";
 import { POST_ACTION_PREFIX } from "@/lib/x402/middleware/resolvePostAction";
@@ -33,6 +33,16 @@ interface OpenItem {
   note: string;
 }
 
+type DispatchStatus = (typeof pending_direct_posts.$inferSelect)["status"];
+
+interface LostRecordItem {
+  kind: "record_lost_post_dispatched";
+  chargeId: string;
+  txHash: string | null;
+  network: string;
+  dispatchStatus: DispatchStatus;
+}
+
 interface SweepSummary {
   reconciliationRows: number;
   stalePendingCharges: number;
@@ -40,6 +50,7 @@ interface SweepSummary {
   settledWithoutOutcome: number;
   resolved: number;
   recordedRefunds: number;
+  lostRecordsWithDispatch: LostRecordItem[];
   open: OpenItem[];
 }
 
@@ -57,7 +68,7 @@ export const sweepX402ReconciliationCron = inngest.createFunction(
     const summary = await step.run("sweep-x402-reconciliation", () => sweepReconciliation());
 
     console.log(
-      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} unrecordedActionFailures=${summary.unrecordedActionFailures} settledWithoutOutcome=${summary.settledWithoutOutcome} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
+      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} unrecordedActionFailures=${summary.unrecordedActionFailures} settledWithoutOutcome=${summary.settledWithoutOutcome} lostRecordsWithDispatch=${summary.lostRecordsWithDispatch.length} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
     );
 
     if (summary.open.length > 0) {
@@ -128,7 +139,12 @@ async function sweepReconciliation(): Promise<SweepSummary> {
 
   const { data: settledWithoutOutcome, error: settledWithoutOutcomeError } = await runQuery(
     db
-      .select({ id: x402_charges.id, network: x402_charges.network, tx_hash: x402_charges.tx_hash })
+      .select({
+        id: x402_charges.id,
+        network: x402_charges.network,
+        tx_hash: x402_charges.tx_hash,
+        principal_id: x402_charges.principal_id,
+      })
       .from(x402_charges)
       .where(
         and(
@@ -150,6 +166,7 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       `[sweepReconciliation] settled-without-outcome read failed: ${settledWithoutOutcomeError.message}`,
     );
   }
+  const dispatchStatusByChargeId = await readDispatchStatusByCharge(settledWithoutOutcome);
 
   const chargeIds = [
     ...new Set(
@@ -225,6 +242,7 @@ async function sweepReconciliation(): Promise<SweepSummary> {
     settledWithoutOutcome: settledWithoutOutcome.length,
     resolved: 0,
     recordedRefunds: 0,
+    lostRecordsWithDispatch: [],
     open: [],
   };
   const chargesWithOpenItems = new Set<string>();
@@ -315,6 +333,17 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   }
 
   for (const unknownCharge of settledWithoutOutcome) {
+    const dispatchStatus = dispatchStatusByChargeId.get(unknownCharge.id);
+    if (dispatchStatus) {
+      summary.lostRecordsWithDispatch.push({
+        kind: "record_lost_post_dispatched",
+        chargeId: unknownCharge.id,
+        txHash: unknownCharge.tx_hash,
+        network: unknownCharge.network,
+        dispatchStatus,
+      });
+      continue;
+    }
     markOpen({
       kind: "action_outcome_unknown",
       chargeId: unknownCharge.id,
@@ -325,6 +354,35 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   }
 
   return summary;
+}
+
+async function readDispatchStatusByCharge(
+  charges: { id: string; principal_id: string }[],
+): Promise<Map<string, DispatchStatus>> {
+  const dispatchStatusByChargeId = new Map<string, DispatchStatus>();
+  if (charges.length === 0) return dispatchStatusByChargeId;
+
+  const principalIdByChargeId = new Map(charges.map((charge) => [charge.id, charge.principal_id]));
+  const { data: dispatchRows, error } = await runQuery(
+    db
+      .select({
+        batch_id: pending_direct_posts.batch_id,
+        principal_id: pending_direct_posts.principal_id,
+        status: pending_direct_posts.status,
+      })
+      .from(pending_direct_posts)
+      .where(inArray(pending_direct_posts.batch_id, [...principalIdByChargeId.keys()])),
+  );
+  if (error) {
+    throw new Error(`[readDispatchStatusByCharge] pending_direct_posts read failed: ${error.message}`);
+  }
+  for (const dispatchRow of dispatchRows) {
+    if (principalIdByChargeId.get(dispatchRow.batch_id) !== dispatchRow.principal_id) continue;
+    if (!dispatchStatusByChargeId.has(dispatchRow.batch_id)) {
+      dispatchStatusByChargeId.set(dispatchRow.batch_id, dispatchRow.status);
+    }
+  }
+  return dispatchStatusByChargeId;
 }
 
 function hasNoRefundOrReconciliation() {

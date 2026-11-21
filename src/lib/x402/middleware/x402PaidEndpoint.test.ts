@@ -149,6 +149,18 @@ mock.module("@/lib/x402/charges/chargeLifecycle", () => ({
     };
   },
   updateChargeRecord: async () => ({ ok: true }),
+  loadChargeReplay: async (params: { target: { kind: "payment" | "batch" } }) =>
+    params.target.kind === "batch"
+      ? {
+          state: "settled",
+          chargeId: "charge-nonce-1",
+          principalId: PRINCIPAL_ID,
+          txHash: "tx-nonce-1",
+          amountUsdc: 0.05,
+          storedResult: { batchId: "batch-1", eventIds: ["dispatch-1"], dispatched: 1 },
+          storedMetadata: {},
+        }
+      : { state: "not_found" },
 }));
 mock.module("@/actions/api/upstash", () => ({
   redis: {
@@ -180,7 +192,14 @@ mock.module("@/actions/server/directPostActions/directPostBatch", () => ({
       details: { total: 1, dispatched, duplicates: 1 - dispatched, rejected: [] },
     };
   },
-  readDirectPostBatchOutcomes: async () => ({ success: true, outcomes: [] }),
+  readDirectPostBatchOutcomes: async () => ({
+    success: true,
+    outcomes: [{ eventId: "dispatch-1", status: "processing" }],
+  }),
+  readKeyedDirectPost: async (params: { principalId: string; idempotencyKey: string }) => ({
+    success: true,
+    batchId: ledger.storedKeys.has(`${params.principalId}:${params.idempotencyKey}`) ? "batch-1" : null,
+  }),
 }));
 mock.module("@/actions/server/scheduleActions/schedule/schedulePostBatch", () => ({
   preflightSchedulePost: async (post: { idempotency_key?: string }, principalId: string) =>
@@ -300,8 +319,8 @@ describe("which first-call outcomes free the key for a retry with a new payment"
     {
       outcome: "the post is stored",
       prepareFirstCall: () => undefined,
-      retryStatus: 409,
-      retryErrorKind: "duplicate_idempotency_key",
+      retryStatus: 200,
+      retryErrorKind: null,
       settleAttempts: ["nonce-1"],
     },
     {

@@ -372,7 +372,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/bulk",
       title: "Bulk schedule posts",
       description:
-        "Schedules 1 to 30 posts in one request; every item takes the same fields as Create a post. All posts share one server-generated batch_id, and each gets the idempotency key batch_id:index unless one is provided. Partial success is possible: rejected items are listed, inserted ones are returned.",
+        "Schedules 1 to 30 posts in one request; every item takes the same fields as Create a post. All posts share one server-generated batch_id: a batch_id sent on an item is ignored. Each item gets the idempotency key batch_id:index unless one is provided. Partial success is possible: rejected items are listed, inserted ones are returned.",
       sourceRef:
         "src/app/api/v1/posts/bulk/route.ts, src/lib/api/rest/validation/postPatchSchemas.ts (PostBulkInputSchema)",
       paramTables: [
@@ -399,9 +399,9 @@ export const REST_POSTS_SECTION: DocsSection = {
             },
             {
               name: "batch_id",
-              type: "string (uuid)",
+              type: "string",
               required: true,
-              description: "Shared batch id for every post in the call.",
+              description: "Shared batch id for every post in the call, a 32-character generated id.",
             },
             {
               name: "total",
