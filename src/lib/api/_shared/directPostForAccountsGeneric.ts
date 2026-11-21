@@ -1,14 +1,43 @@
-import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import type { CreatedVia, MediaType, Platform } from "@/db/schema";
-import type { SocialAccount } from "@/lib/types/dbTypes";
 import "server-only";
 
-export type DirectPostScheduleResult = {
-  success: boolean;
-  count: number;
-  message?: string;
+import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
+import type { CreatedVia, MediaType, Platform } from "@/db/schema";
+import { describePostFailure } from "@/lib/api/_shared/describePostFailure";
+import type {
+  PlatformFailure,
+  PlatformFailureReason,
+} from "@/lib/api/_shared/platformFailure";
+import { ensureValidToken } from "@/lib/api/ensureValidToken";
+import type { SocialAccount } from "@/lib/types/dbTypes";
+
+export type DirectPostRefusal = {
+  success: false;
+  count: 0;
+  message: string;
+  failure: PlatformFailure;
 };
+
+export type DirectPostScheduleResult =
+  | { success: true; count: 1; message: string; failure?: undefined }
+  | DirectPostRefusal;
+
+const UNLOCATED_FAILURE: PlatformFailure = {
+  reason: "unknown",
+  mayHavePublished: true,
+};
+
+/** A refusal decided before any platform request, so nothing was published. */
+export function buildDirectPostRefusal(
+  message: string,
+  reason: PlatformFailureReason,
+): DirectPostRefusal {
+  return {
+    success: false,
+    count: 0,
+    message,
+    failure: { reason, mayHavePublished: false },
+  };
+}
 
 export type GenericDirectPostConfig = {
   platform: Platform;
@@ -23,43 +52,43 @@ export type GenericDirectPostConfig = {
 };
 
 export type DirectPostHookContext<TPostResult> = {
-  postResult: TPostResult;
+  postResult: SucceededPostResult<TPostResult>;
   historyResult: { success: boolean; message: string; recordId?: string };
   config: GenericDirectPostConfig;
 };
 
+type AdapterPostResult = {
+  success: boolean;
+  postId?: string;
+  publishId?: string;
+  postUrl?: string;
+  message?: string;
+  error?: string;
+  details?: unknown;
+  failure?: PlatformFailure;
+};
+
+type SucceededPostResult<TPostResult> = Exclude<TPostResult, { success: false }>;
+
+function isPostSucceeded<TPostResult extends AdapterPostResult>(
+  postResult: TPostResult,
+): postResult is SucceededPostResult<TPostResult> {
+  return postResult.success;
+}
+
 export type DirectPostPlatformAdapter<
   TPassthrough,
-  TPostResult extends {
-    success: boolean;
-    postId?: string;
-    publishId?: string;
-    postUrl?: string;
-    message?: string;
-    error?: string;
-    details?: unknown;
-  },
+  TPostResult extends AdapterPostResult,
 > = {
   validate?: (
     passthrough: TPassthrough,
     config: GenericDirectPostConfig,
-  ) =>
-    | Promise<DirectPostScheduleResult | null>
-    | DirectPostScheduleResult
-    | null;
-
-  checkRateLimit?: (
-    passthrough: TPassthrough,
-    config: GenericDirectPostConfig,
-  ) => Promise<DirectPostScheduleResult | null>;
+  ) => DirectPostRefusal | null;
 
   preparePassthrough?: (
     passthrough: TPassthrough,
     config: GenericDirectPostConfig,
-  ) => Promise<
-    | { success: true; passthrough: TPassthrough }
-    | (DirectPostScheduleResult & { success: false })
-  >;
+  ) => Promise<{ success: true; passthrough: TPassthrough } | DirectPostRefusal>;
 
   call: (
     accessToken: string,
@@ -68,7 +97,7 @@ export type DirectPostPlatformAdapter<
   ) => Promise<TPostResult>;
 
   toHistoryFields: (
-    postResult: TPostResult,
+    postResult: SucceededPostResult<TPostResult>,
     passthrough: TPassthrough,
     config: GenericDirectPostConfig,
   ) => {
@@ -79,7 +108,7 @@ export type DirectPostPlatformAdapter<
   };
 
   onPostSuccess?: (
-    ctx: DirectPostHookContext<TPostResult>,
+    hookContext: DirectPostHookContext<TPostResult>,
     passthrough: TPassthrough,
   ) => Promise<void>;
 };
@@ -87,82 +116,41 @@ export type DirectPostPlatformAdapter<
 /** Shared direct-post flow: validate, refresh the token, call the platform adapter, record content history. */
 export async function directPostForAccountsGeneric<
   TPassthrough,
-  TPostResult extends {
-    success: boolean;
-    postId?: string;
-    publishId?: string;
-    postUrl?: string;
-    message?: string;
-    error?: string;
-    details?: unknown;
-  },
+  TPostResult extends AdapterPostResult,
 >(
   config: GenericDirectPostConfig,
   passthrough: TPassthrough,
   adapter: DirectPostPlatformAdapter<TPassthrough, TPostResult>,
 ): Promise<DirectPostScheduleResult> {
-  const {
-    logPrefix,
-    account,
-    accountContent,
-    userId,
-    batchId,
-    postType,
-    platform,
-  } = config;
+  const { logPrefix, account, accountContent, userId, batchId, postType, platform } =
+    config;
 
   try {
     console.log(`${logPrefix} Starting to post directly to ${platform}`);
 
-    if (!account) {
-      console.error(`${logPrefix} No account provided`);
-      return {
-        success: false,
-        count: 0,
-        message: `No ${platform} account provided`,
-      };
-    }
-
     if (!accountContent) {
       console.error(`${logPrefix} No account content provided`);
-      return {
-        success: false,
-        count: 0,
-        message: "No content found for account",
-      };
+      return buildDirectPostRefusal("No content found for account", "invalid_input");
     }
 
-    if (adapter.validate) {
-      const validation = await adapter.validate(passthrough, config);
-      if (validation && !validation.success) {
-        return validation;
-      }
-    }
-
-    if (adapter.checkRateLimit) {
-      const rateLimit = await adapter.checkRateLimit(passthrough, config);
-      if (rateLimit && !rateLimit.success) {
-        return rateLimit;
-      }
+    const validation = adapter.validate?.(passthrough, config);
+    if (validation) {
+      return validation;
     }
 
     let activePassthrough = passthrough;
     if (adapter.preparePassthrough) {
-      const prep = await adapter.preparePassthrough(passthrough, config);
-      if (!prep.success) {
-        return prep;
+      const preparation = await adapter.preparePassthrough(passthrough, config);
+      if (!preparation.success) {
+        return preparation;
       }
-      activePassthrough = prep.passthrough;
+      activePassthrough = preparation.passthrough;
     }
 
     const validToken = await ensureValidToken(account);
-    if (!validToken.success || !validToken.token) {
+    if (!validToken.success) {
       console.error(`${logPrefix} Invalid token for account ${account.id}`);
-      return {
-        success: false,
-        count: 0,
-        message: validToken.error ?? "Failed to validate access token",
-      };
+      return buildDirectPostRefusal(validToken.error, validToken.failureReason);
     }
 
     console.log(
@@ -175,26 +163,26 @@ export async function directPostForAccountsGeneric<
       config,
     );
 
-    console.log(`${logPrefix} Post response for ${account.username ?? account.id}:`, {
-      success: postResult.success,
-      publishId: postResult.publishId,
-      postId: postResult.postId,
-      postUrl: postResult.postUrl,
-      message: postResult.message,
-    });
-
-    if (!postResult.success) {
-      console.error(`${logPrefix} Failed with error:`, postResult.error);
-      if (postResult.details)
-        console.error(`${logPrefix} Error details:`, postResult.details);
-      if (postResult.message)
-        console.error(`${logPrefix} Error message:`, postResult.message);
+    if (!isPostSucceeded(postResult)) {
+      const failure = postResult.failure ?? UNLOCATED_FAILURE;
+      console.error(
+        `${logPrefix} Failed for account ${account.id} (reason=${failure.reason}, may_have_published=${failure.mayHavePublished}):`,
+        postResult.error,
+        postResult.details ?? "",
+      );
       return {
         success: false,
         count: 0,
-        message: postResult.message ?? `Failed to post to ${platform}`,
+        message: describePostFailure(postResult, platform),
+        failure,
       };
     }
+
+    console.log(`${logPrefix} Posted for ${account.username ?? account.id}:`, {
+      publishId: postResult.publishId,
+      postId: postResult.postId,
+      postUrl: postResult.postUrl,
+    });
 
     const historyFields = adapter.toHistoryFields(
       postResult,
@@ -236,10 +224,10 @@ export async function directPostForAccountsGeneric<
           { postResult, historyResult, config },
           activePassthrough,
         );
-      } catch (hookErr) {
+      } catch (hookError) {
         console.error(
           `${logPrefix} onPostSuccess hook threw (post still succeeded):`,
-          hookErr instanceof Error ? hookErr.message : hookErr,
+          hookError instanceof Error ? hookError.message : hookError,
         );
       }
     }
@@ -249,18 +237,19 @@ export async function directPostForAccountsGeneric<
       count: 1,
       message: `Successfully posted to ${account.display_name ?? account.username ?? account.id}`,
     };
-  } catch (error) {
+  } catch (unexpectedError) {
     console.error(
-      `${logPrefix} Unexpected error for account ${account?.id}:`,
-      error instanceof Error ? error.message : error,
+      `${logPrefix} Unexpected error for account ${account.id}:`,
+      unexpectedError instanceof Error ? unexpectedError.message : unexpectedError,
     );
     return {
       success: false,
       count: 0,
       message:
-        error instanceof Error
-          ? `Failed to post to ${platform}: ${error.message}`
+        unexpectedError instanceof Error
+          ? `Failed to post to ${platform}: ${unexpectedError.message}`
           : `Failed to post to ${platform}`,
+      failure: UNLOCATED_FAILURE,
     };
   }
 }

@@ -6,6 +6,7 @@ import { resolveTikTokPrivacyLevel } from "@/lib/api/tiktok/post/tikTokPrivacy";
 import { dispatchTikTokPublishPollEvent } from "@/inngest/functions/tikTokPublishStatusPollHelpers";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -54,60 +55,57 @@ export async function directPostForTikTokAccounts(
     },
     { config },
     {
-      validate: (pt, cfg) => {
-        if (!pt.config.tiktokMediaUrl) {
-          return {
-            success: false,
-            count: 0,
-            message: "Content file could not be retrieve.",
-          };
-        }
-        if (cfg.accountContent.accountId !== cfg.account.id) {
-          console.error(
-            `[TikTok Direct Post] No or mismatched content for account ${cfg.account.id}`,
+      validate: (passthrough, genericConfig) => {
+        if (!passthrough.config.tiktokMediaUrl) {
+          return buildDirectPostRefusal(
+            "No media URL was minted for the TikTok post.",
+            "invalid_input",
           );
-          return {
-            success: false,
-            count: 0,
-            message: "No content found for account",
-          };
+        }
+        if (genericConfig.accountContent.accountId !== genericConfig.account.id) {
+          console.error(
+            `[TikTok Direct Post] No or mismatched content for account ${genericConfig.account.id}`,
+          );
+          return buildDirectPostRefusal(
+            "No content found for account",
+            "invalid_input",
+          );
         }
         return null;
       },
-      call: async (accessToken, pt) =>
+      call: async (accessToken, passthrough) =>
         postToTikTok({
           accessToken,
-          title: pt.config.accountContent.title ?? "",
-          description: pt.config.accountContent.description ?? "",
-          tikTokOptions: pt.config.platformOptions.tiktok,
-          mediaType: pt.config.mediaType ?? "",
-          media_url: pt.config.tiktokMediaUrl,
-          coverTimestamp: pt.config.coverTimestamp,
-          postType: pt.config.postType,
+          title: passthrough.config.accountContent.title ?? "",
+          description: passthrough.config.accountContent.description ?? "",
+          tikTokOptions: passthrough.config.platformOptions.tiktok,
+          mediaType: passthrough.config.mediaType ?? "",
+          media_url: passthrough.config.tiktokMediaUrl,
+          coverTimestamp: passthrough.config.coverTimestamp,
+          postType: passthrough.config.postType,
         }),
-      toHistoryFields: (postResult, pt, cfg) => ({
-        content_id: postResult.postId || postResult.publishId || "",
+      toHistoryFields: (postResult, passthrough, genericConfig) => ({
+        content_id: postResult.publishId,
         media_url: postResult.postUrl || null,
-        status: postResult.status ?? "posted",
+        status: postResult.status,
         extra: {
           post_data: postResult.data,
-          post_type: cfg.postType,
+          post_type: genericConfig.postType,
           posted_at: new Date().toISOString(),
-          privacy_level: resolveTikTokPrivacyLevel(pt.config.platformOptions.tiktok),
+          privacy_level: resolveTikTokPrivacyLevel(passthrough.config.platformOptions.tiktok),
         },
       }),
-      onPostSuccess: async ({ postResult, historyResult, config: cfg }, pt) => {
-        if (!postResult.publishId) return;
+      onPostSuccess: async ({ postResult, historyResult, config: genericConfig }, passthrough) => {
         const pendingInsert = await insertPendingTikTokPull({
           publish_id: postResult.publishId,
-          principal_id: cfg.userId,
-          social_account_id: cfg.accountContent.accountId,
-          scheduled_post_id: cfg.scheduledPostId,
+          principal_id: genericConfig.userId,
+          social_account_id: genericConfig.accountContent.accountId,
+          scheduled_post_id: genericConfig.scheduledPostId,
           content_history_id: historyResult.success
             ? (historyResult.recordId ?? null)
             : null,
-          media_storage_path: pt.config.mediaPath,
-          creator_username: postResult.creator_username ?? null,
+          media_storage_path: passthrough.config.mediaPath,
+          creator_username: postResult.creator_username,
         });
         if (!pendingInsert.success) {
           console.error(
@@ -121,7 +119,7 @@ export async function directPostForTikTokAccounts(
           content_history_id: historyResult.success
             ? (historyResult.recordId ?? null)
             : null,
-          social_account_id: cfg.accountContent.accountId,
+          social_account_id: genericConfig.accountContent.accountId,
         });
         if (!dispatchResult.success) {
           console.error(

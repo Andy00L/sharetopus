@@ -2,10 +2,16 @@ import "server-only";
 
 import { z } from "zod";
 
+import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import {
+  buildHttpFailure,
+  buildInputFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** Feed and photo publishes are quick JSON calls; 30s covers them. */
-const PUBLISH_TIMEOUT_MS = 30_000;
 /** Video publish makes Facebook pull file_url server-side; allow 2 minutes. */
 const VIDEO_PUBLISH_TIMEOUT_MS = 120_000;
 
@@ -24,14 +30,9 @@ const FacebookPublishSchema = z.object({
   post_id: z.string().optional(),
 });
 
-export interface FacebookPostResult {
-  success: boolean;
-  postId?: string;
-  postUrl?: string;
-  error?: string;
-  details?: Record<string, unknown>;
-  message?: string;
-}
+export type FacebookPostResult =
+  | { success: true; postId: string; postUrl: string; message: string }
+  | PlatformPostFailure;
 
 /**
  * Publish one post to one Facebook Page with its PAGE access token:
@@ -61,22 +62,18 @@ export async function postToFacebook({
 }): Promise<FacebookPostResult> {
   if (!pageAccessToken || !pageId) {
     console.error("[postToFacebook] Missing page token or page id");
-    return {
-      success: false,
-      error: "Missing required parameters (pageAccessToken and pageId)",
-    };
+    return buildInputFailure(
+      "Missing required parameters (pageAccessToken and pageId)",
+    );
   }
   if (postType !== "text" && !mediaUrl) {
     console.error("[postToFacebook] Media post without media URL");
-    return {
-      success: false,
-      error: "Media URL is required for image and video posts",
-    };
+    return buildInputFailure("Media URL is required for image and video posts");
   }
 
   let endpoint: string;
   let body: Record<string, string>;
-  let timeoutMs = PUBLISH_TIMEOUT_MS;
+  let timeoutMs = PLATFORM_PUBLISH_TIMEOUT_MS;
 
   switch (postType) {
     case "text":
@@ -85,11 +82,11 @@ export async function postToFacebook({
       break;
     case "image":
       endpoint = `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/photos`;
-      body = { url: mediaUrl!, caption: message };
+      body = { url: mediaUrl ?? "", caption: message };
       break;
     case "video":
       endpoint = `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/videos`;
-      body = { file_url: mediaUrl!, description: message };
+      body = { file_url: mediaUrl ?? "", description: message };
       timeoutMs = VIDEO_PUBLISH_TIMEOUT_MS;
       break;
   }
@@ -111,23 +108,24 @@ export async function postToFacebook({
       console.error(
         `[postToFacebook] Publish failed (${response.status}): ${responseText}`,
       );
-      return {
-        success: false,
-        error: `Facebook ${postType} publish failed (${response.status})`,
-        details: parseErrorDetails(responseText),
-      };
+      return buildHttpFailure({
+        platform: "facebook",
+        action: `Facebook ${postType} publish`,
+        httpStatus: response.status,
+        responseText,
+        isPublishRequest: true,
+      });
     }
 
-    const parsed = FacebookPublishSchema.safeParse(JSON.parse(responseText));
+    const parsed = FacebookPublishSchema.safeParse(parseJsonObject(responseText));
     if (!parsed.success) {
       console.error("[postToFacebook] Publish response failed validation.");
-      return {
-        success: false,
-        error: "Facebook publish response had an unexpected shape",
-      };
+      return buildUnreadableAnswerFailure({
+        action: `Facebook ${postType} publish`,
+        isPublishRequest: true,
+      });
     }
 
-    // Prefer the feed post id (photos return both a media id and post_id).
     const postId = parsed.data.post_id ?? parsed.data.id;
     console.log(`[postToFacebook] Published ${postType} post ${postId}`);
 
@@ -137,16 +135,15 @@ export async function postToFacebook({
       postUrl: `https://www.facebook.com/${postId}`,
       message: `Successfully created ${postType} post on Facebook`,
     };
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToFacebook] Publish error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "Facebook publish request failed" };
+    return buildNetworkFailure({
+      action: `Facebook ${postType} publish`,
+      requestError,
+      isPublishRequest: true,
+    });
   }
-}
-
-/** Best-effort JSON parse of a provider error body for the details field. */
-function parseErrorDetails(errorText: string): Record<string, unknown> {
-  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

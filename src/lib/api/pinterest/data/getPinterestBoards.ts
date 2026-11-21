@@ -4,6 +4,7 @@
 // proxy. Client components go through pinterestBoardsForAccount.ts, which
 // resolves the token by account id after an ownership check.
 import "server-only";
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 
 import { z } from "zod";
 
@@ -86,6 +87,7 @@ export async function getPinterestBoards(
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
     if (response.status === 401) {

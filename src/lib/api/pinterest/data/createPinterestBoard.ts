@@ -1,6 +1,7 @@
 // Server-only library function, NOT a server action (same rationale as
 // getPinterestBoards.ts: raw-token input must never be client-callable).
 import "server-only";
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 
 import { PinterestBoard } from "./getPinterestBoards";
 
@@ -42,6 +43,7 @@ export async function createPinterestBoard(
         name,
         description: description ?? "",
       }),
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
     console.log(

@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { resolveRestApiKey } from "../auth/resolveRestApiKey";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
@@ -14,6 +14,7 @@ import {
 import {
   writeRestAuditLog,
   type RestAuditOutcome,
+  type RestAuditWriteInput,
 } from "../audit/writeRestAuditLog";
 import type { RestApiKeyContext } from "../auth/types";
 
@@ -57,7 +58,8 @@ export type WithRestEndpointConfig = {
  *   4. Check the principal has required scopes
  *   5. Apply per-principal rate limit via checkRateLimit
  *   6. Call the handler with full context and the raw request
- *   7. After handler returns (or throws), write to rest_audit_log
+ *   7. After handler returns (or throws), write to rest_audit_log once
+ *      the response is sent, so the INSERT never delays the caller
  *
  * Handler is responsible for body parsing, Zod validation, and
  * returning NextResponse for all outcomes (success, 404, conflict).
@@ -74,7 +76,7 @@ export function withRestEndpoint(
     const requestId = generateRequestId();
     const clientIpHash = await extractIpHash();
     const userAgent = await extractUserAgent();
-    const endpoint = new URL(request.url).pathname;
+    const endpoint = request.nextUrl.pathname;
     const httpMethod = request.method;
 
     // Step 2: validate Authorization header shape.
@@ -94,7 +96,7 @@ export function withRestEndpoint(
 
     // Step 3: resolve bearer to RestPrincipal. A database failure answers
     // 503: a 401 would tell the caller a valid key is bad.
-    const resolution = await resolveRestApiKey(bearerToken);
+    const resolution = await resolveRestApiKey(bearerToken, clientIpHash);
     if (resolution.status === "unavailable") {
       return restErrorResponse(
         "service_unavailable",
@@ -129,7 +131,7 @@ export function withRestEndpoint(
         principal.scopes.includes("api:full"),
     );
     if (!hasRequiredScopes) {
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: 403,
         outcome: "auth_error",
@@ -155,7 +157,7 @@ export function withRestEndpoint(
       const retryAfterSeconds = isLimitHit
         ? rateLimitResult.resetIn
         : SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS;
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: isLimitHit ? 429 : 503,
         outcome: isLimitHit ? "rate_limited" : "internal_error",
@@ -191,7 +193,7 @@ export function withRestEndpoint(
         `[withRestEndpoint] handler threw for ${endpoint} request_id=${requestId}:`,
         errorMessage,
       );
-      await writeRestAuditLog({
+      scheduleRestAuditLog({
         context: restRequestContext,
         statusCode: 500,
         outcome: "internal_error",
@@ -232,7 +234,7 @@ export function withRestEndpoint(
                 ? "client_error"
                 : "internal_error";
 
-    await writeRestAuditLog({
+    scheduleRestAuditLog({
       context: restRequestContext,
       statusCode: responseStatusCode,
       outcome,
@@ -243,4 +245,11 @@ export function withRestEndpoint(
 
     return handlerResponse;
   };
+}
+
+function scheduleRestAuditLog(
+  input: Omit<RestAuditWriteInput, "finishedAt">,
+): void {
+  const finishedAt = Date.now();
+  after(() => writeRestAuditLog({ ...input, finishedAt }));
 }

@@ -2,16 +2,17 @@ import "server-only";
 
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import { postToYouTube } from "@/lib/api/youtube/post/postToYouTube";
+import {
+  postToYouTube,
+  YOUTUBE_TITLE_MAX_CHARS,
+} from "@/lib/api/youtube/post/postToYouTube";
 import type { YouTubePostResult } from "@/lib/api/youtube/post/postToYouTube";
 import type { CreatedVia, MediaType } from "@/db/schema";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
-
-/** YouTube video titles are capped at 100 characters. sourceRef: postToYouTube.ts */
-const YOUTUBE_TITLE_MAX_CHARS = 100;
 
 interface YouTubeDirectPostConfig {
   account: SocialAccount;
@@ -63,18 +64,16 @@ export async function directPostForYouTubeAccounts(
     {
       validate: (passthrough) => {
         if (passthrough.config.postType !== "video") {
-          return {
-            success: false,
-            count: 0,
-            message: "YouTube only supports video posts",
-          };
+          return buildDirectPostRefusal(
+            "YouTube only supports video posts",
+            "invalid_input",
+          );
         }
         if (!passthrough.config.mediaPath) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media file is required for YouTube posts",
-          };
+          return buildDirectPostRefusal(
+            "Media file is required for YouTube posts",
+            "invalid_input",
+          );
         }
         return null;
       },
@@ -88,7 +87,7 @@ export async function directPostForYouTubeAccounts(
             "[YouTube Direct Post] Failed to fetch media:",
             fileResult.message,
           );
-          return { success: false, count: 0, message: fileResult.message };
+          return buildDirectPostRefusal(fileResult.message, "transient");
         }
         return {
           success: true,
@@ -107,7 +106,7 @@ export async function directPostForYouTubeAccounts(
           accessToken,
           title: resolvedTitle,
           description: content.description,
-          buffer: passthrough.buffer!,
+          buffer: passthrough.buffer ?? Buffer.alloc(0),
           mediaType: passthrough.config.mediaType ?? "video/mp4",
           privacyStatus:
             passthrough.config.platformOptions.youtube?.privacyStatus ??

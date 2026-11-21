@@ -1,5 +1,11 @@
 import { TikTokOptions } from "@/lib/types/dbTypes";
-import { toJsonObject } from "@/lib/utils/jsonObject";
+import {
+  buildHttpFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import "server-only";
 import { TikTokPostInitSchema } from "./postImage";
 import type { TikTokPostResult } from "./postToTikTok";
@@ -66,38 +72,37 @@ export async function handleVideoPost({
             video_url: media_url,
           },
         }),
+        signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
       }
     );
+    const initText = await initResponse.text();
 
     if (!initResponse.ok) {
-      const errorData: unknown = await initResponse.json();
       console.error(
-        "[Tiktok Post Function] Video initialization error:",
-        errorData
+        `[handleVideoPost] Video initialization failed (${initResponse.status}): ${initText}`
       );
-      return {
-        success: false,
-        error: "Failed to initialize video post",
-        details: toJsonObject(errorData) ?? undefined,
-      };
+      return buildHttpFailure({
+        platform: "tiktok",
+        action: "TikTok video post initialization",
+        httpStatus: initResponse.status,
+        responseText: initText,
+        isPublishRequest: true,
+      });
     }
 
-    const initData = TikTokPostInitSchema.safeParse(await initResponse.json());
+    const initData = TikTokPostInitSchema.safeParse(parseJsonObject(initText));
     if (!initData.success) {
-      console.error(
-        "[Tiktok Post Function] Video initialization returned no publish_id"
-      );
-      return {
-        success: false,
-        error: "Failed to initialize video post",
-        message: "TikTok returned no publish_id",
-      };
+      console.error("[handleVideoPost] Video initialization returned no publish_id");
+      return buildUnreadableAnswerFailure({
+        action: "TikTok video post initialization",
+        isPublishRequest: true,
+      });
     }
 
     const publishId = initData.data.data.publish_id;
 
     console.log(
-      `[Tiktok Post Function] Video post initialized successfully with publish_id: ${publishId}`
+      `[handleVideoPost] Video post initialized successfully with publish_id: ${publishId}`
     );
     return {
       success: true,
@@ -109,13 +114,13 @@ export async function handleVideoPost({
       content_id: publishId,
       creator_username: creatorUsername,
     };
-  } catch (error) {
-    console.error("[tiktok Post Function] Unexpected error:", error);
-
-    return {
-      success: false,
-      error: "Failed to post video to TikTok",
-      message: "Unexpected error",
-    };
+  } catch (requestError) {
+    const failure = buildNetworkFailure({
+      action: "TikTok video post initialization",
+      requestError,
+      isPublishRequest: true,
+    });
+    console.error("[handleVideoPost]", failure.error);
+    return failure;
   }
 }

@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -59,21 +60,19 @@ export async function directPostForFacebookAccounts(
     {
       validate: (passthrough) => {
         if (!passthrough.config.account.account_identifier) {
-          return {
-            success: false,
-            count: 0,
-            message: "No Facebook Page id found for account",
-          };
+          return buildDirectPostRefusal(
+            "No Facebook Page id found for account",
+            "invalid_input",
+          );
         }
         if (
           passthrough.config.postType !== "text" &&
           !passthrough.config.mediaUrl
         ) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media URL is required for Facebook image and video posts",
-          };
+          return buildDirectPostRefusal(
+            "Media URL is required for Facebook image and video posts",
+            "invalid_input",
+          );
         }
         return null;
       },

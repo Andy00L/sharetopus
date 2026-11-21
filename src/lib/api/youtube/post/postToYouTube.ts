@@ -2,14 +2,22 @@ import "server-only";
 
 import { z } from "zod";
 
+import {
+  PLATFORM_API_TIMEOUT_MS,
+  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
+import {
+  buildHttpFailure,
+  buildInputFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** Resumable-session initiation is a small JSON call; 15s is generous. */
-const INIT_TIMEOUT_MS = 15_000;
-/** The byte upload moves the whole video in one PUT; 4 minutes covers 250 MB on a slow link. */
-const UPLOAD_TIMEOUT_MS = 240_000;
 /** YouTube video titles are capped at 100 characters. sourceRef: videos.insert snippet.title docs. */
-const YOUTUBE_TITLE_MAX_CHARS = 100;
+export const YOUTUBE_TITLE_MAX_CHARS = 100;
 
 /**
  * Uploaded video resource (only the fields this module reads).
@@ -19,14 +27,9 @@ const YouTubeVideoSchema = z.object({
   id: z.string().min(1),
 });
 
-export interface YouTubePostResult {
-  success: boolean;
-  postId?: string;
-  postUrl?: string;
-  error?: string;
-  details?: Record<string, unknown>;
-  message?: string;
-}
+export type YouTubePostResult =
+  | { success: true; postId: string; postUrl: string; message: string }
+  | PlatformPostFailure;
 
 /**
  * Upload one video to YouTube via the resumable upload protocol:
@@ -56,16 +59,15 @@ export async function postToYouTube({
 }): Promise<YouTubePostResult> {
   if (!accessToken) {
     console.error("[postToYouTube] Missing access token");
-    return { success: false, error: "Missing access token" };
+    return buildInputFailure("Missing access token");
   }
   if (!buffer || buffer.length === 0) {
     console.error("[postToYouTube] Missing video bytes");
-    return { success: false, error: "Missing video file for YouTube upload" };
+    return buildInputFailure("Missing video file for YouTube upload");
   }
 
   const boundedTitle = title.slice(0, YOUTUBE_TITLE_MAX_CHARS);
 
-  // Step 1: open the resumable upload session with the video metadata.
   let sessionUrl: string;
   try {
     const initResponse = await fetch(
@@ -89,7 +91,7 @@ export async function postToYouTube({
             selfDeclaredMadeForKids: false,
           },
         }),
-        signal: AbortSignal.timeout(INIT_TIMEOUT_MS),
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       },
     );
 
@@ -98,11 +100,13 @@ export async function postToYouTube({
       console.error(
         `[postToYouTube] Resumable session init failed (${initResponse.status}): ${errorText}`,
       );
-      return {
-        success: false,
-        error: `YouTube upload initiation failed (${initResponse.status})`,
-        details: parseErrorDetails(errorText),
-      };
+      return buildHttpFailure({
+        platform: "youtube",
+        action: "YouTube upload initiation",
+        httpStatus: initResponse.status,
+        responseText: errorText,
+        isPublishRequest: false,
+      });
     }
 
     const locationHeader = initResponse.headers.get("location");
@@ -110,24 +114,25 @@ export async function postToYouTube({
       console.error(
         "[postToYouTube] Resumable session init returned no Location header",
       );
-      return {
-        success: false,
-        error: "YouTube did not return an upload session URL",
-      };
+      return buildUnreadableAnswerFailure({
+        action: "YouTube upload initiation",
+        isPublishRequest: false,
+      });
     }
     sessionUrl = locationHeader;
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToYouTube] Resumable session init error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "YouTube upload initiation request failed" };
+    return buildNetworkFailure({
+      action: "YouTube upload initiation",
+      requestError,
+      isPublishRequest: false,
+    });
   }
 
-  // Step 2: upload the video bytes in a single PUT.
   try {
-    // Copy into a plain Uint8Array: Buffer's ArrayBufferLike backing is not
-    // assignable to fetch's BodyInit without a type suppression.
     const uploadResponse = await fetch(sessionUrl, {
       method: "PUT",
       headers: {
@@ -135,8 +140,8 @@ export async function postToYouTube({
         "Content-Type": mediaType,
         "Content-Length": String(buffer.length),
       },
-      body: new Uint8Array(buffer),
-      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+      body: viewBufferAsFetchBody(buffer),
+      signal: AbortSignal.timeout(PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS),
     });
 
     const responseText = await uploadResponse.text();
@@ -145,22 +150,24 @@ export async function postToYouTube({
       console.error(
         `[postToYouTube] Byte upload failed (${uploadResponse.status}): ${responseText}`,
       );
-      return {
-        success: false,
-        error: `YouTube video upload failed (${uploadResponse.status})`,
-        details: parseErrorDetails(responseText),
-      };
+      return buildHttpFailure({
+        platform: "youtube",
+        action: "YouTube video upload",
+        httpStatus: uploadResponse.status,
+        responseText,
+        isPublishRequest: true,
+      });
     }
 
-    const parsed = YouTubeVideoSchema.safeParse(JSON.parse(responseText));
+    const parsed = YouTubeVideoSchema.safeParse(parseJsonObject(responseText));
     if (!parsed.success) {
       console.error(
         "[postToYouTube] Upload response failed validation (missing video id).",
       );
-      return {
-        success: false,
-        error: "YouTube upload response had an unexpected shape",
-      };
+      return buildUnreadableAnswerFailure({
+        action: "YouTube video upload",
+        isPublishRequest: true,
+      });
     }
 
     const videoId = parsed.data.id;
@@ -172,16 +179,15 @@ export async function postToYouTube({
       postUrl: `https://www.youtube.com/watch?v=${videoId}`,
       message: "Successfully uploaded video to YouTube",
     };
-  } catch (error) {
+  } catch (requestError) {
     console.error(
       "[postToYouTube] Byte upload error:",
-      error instanceof Error ? error.message : error,
+      requestError instanceof Error ? requestError.message : requestError,
     );
-    return { success: false, error: "YouTube video upload request failed" };
+    return buildNetworkFailure({
+      action: "YouTube video upload",
+      requestError,
+      isPublishRequest: true,
+    });
   }
-}
-
-/** Best-effort JSON parse of a provider error body for the details field. */
-function parseErrorDetails(errorText: string): Record<string, unknown> {
-  return parseJsonObject(errorText) ?? { rawError: errorText };
 }

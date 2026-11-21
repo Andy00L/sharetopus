@@ -1,5 +1,6 @@
 // lib/api/tiktok/client.ts
 import "server-only";
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 import { TikTokProfile } from "@/lib/types/socialProfiles";
 
 export async function getTikTokProfile(
@@ -22,6 +23,7 @@ export async function getTikTokProfile(
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
     // Never log the body: it holds the creator's personal profile.

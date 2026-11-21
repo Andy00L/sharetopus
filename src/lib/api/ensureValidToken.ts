@@ -1,9 +1,9 @@
-// lib/api/ensureValidToken.ts
 import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import type { Platform } from "@/db/schema";
+import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
   readStoredCredential,
@@ -19,11 +19,27 @@ import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
 import refreshXToken from "./x/data/refreshXToken";
 import refreshYouTubeToken from "./youtube/data/refreshYouTubeToken";
 
-type EnsureValidTokenResult = {
-  success: boolean;
-  token?: string;
-  error?: string;
-};
+type TokenFailureReason = Extract<
+  PlatformFailureReason,
+  "auth_expired" | "transient" | "unknown"
+>;
+
+type EnsureValidTokenResult =
+  | { success: true; token: string; error?: undefined }
+  | {
+      success: false;
+      token?: undefined;
+      error: string;
+      failureReason: TokenFailureReason;
+    };
+
+function buildReconnectResult(platform: Platform): EnsureValidTokenResult {
+  return {
+    success: false,
+    error: `Your ${platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
+    failureReason: "auth_expired",
+  };
+}
 
 /**
  * Returns a valid access token for any platform, refreshing it first when
@@ -55,10 +71,7 @@ export async function ensureValidToken(
     console.error(
       `[ensureValidToken] No access token for ${account.platform}`,
     );
-    return {
-      success: false,
-      error: `Your ${account.platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
-    };
+    return buildReconnectResult(account.platform);
   }
 
   if (!isTokenExpiring(account.token_expires_at)) {
@@ -164,6 +177,7 @@ async function refreshAndStoreToken(
     return {
       success: false,
       error: `There was a problem refreshing your ${account.platform} connection. Please try again or reconnect your account.`,
+      failureReason: "unknown",
     };
   }
 }
@@ -173,6 +187,7 @@ function buildRetryLaterResult(platform: Platform): EnsureValidTokenResult {
   return {
     success: false,
     error: `We could not refresh your ${platform} connection just now. Please try again in a few minutes.`,
+    failureReason: "transient",
   };
 }
 
@@ -274,10 +289,7 @@ async function handleRejectedRefresh(
     );
   }
 
-  return {
-    success: false,
-    error: `Your ${account.platform} account needs to be reconnected. Please go to your connections page to reconnect.`,
-  };
+  return buildReconnectResult(account.platform);
 }
 
 /**

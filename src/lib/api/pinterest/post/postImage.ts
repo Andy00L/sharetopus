@@ -1,19 +1,79 @@
-// =============================================================================
-// lib/api/pinterest/post/postImage.ts
-// =============================================================================
 import "server-only";
 
 import { z } from "zod";
 
-import { readStringField } from "@/lib/platforms/providers/_shared/providerFetch";
-import { PinterestPostResult } from "./postToPinterest";
+import {
+  buildHttpFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
+import type { PinterestPostResult } from "./postToPinterest";
 
-/** POST /v5/pins answer: the pin id, the rest kept for the result's data. Also read by createVideoPin. */
-export const CreatedPinSchema = z.looseObject({ id: z.string() });
+/** POST /v5/pins answer: the pin id, the rest kept for the result's data. */
+const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
 
 /**
- * Create an image pin using direct URL upload (no download needed)
+ * Sends one POST /v5/pins request and reads the created pin. Shared by the
+ * image and video flows, since both end with this publishing request.
  */
+export async function createPin({
+  accessToken,
+  pinBody,
+  action,
+  pinLabel,
+}: {
+  accessToken: string;
+  pinBody: Record<string, unknown>;
+  action: string;
+  pinLabel: "image" | "video";
+}): Promise<PinterestPostResult> {
+  try {
+    const response = await fetch("https://api.pinterest.com/v5/pins", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(pinBody),
+      signal: AbortSignal.timeout(PLATFORM_PUBLISH_TIMEOUT_MS),
+    });
+    const responseText = await response.text();
+
+    if (!response.ok) {
+      console.error(`[createPin] ${action} failed (${response.status}): ${responseText}`);
+      return buildHttpFailure({
+        platform: "pinterest",
+        action,
+        httpStatus: response.status,
+        responseText,
+        isPublishRequest: true,
+      });
+    }
+
+    const createdPin = CreatedPinSchema.safeParse(parseJsonObject(responseText));
+    if (!createdPin.success) {
+      console.error(`[createPin] ${action} answer had no pin id`);
+      return buildUnreadableAnswerFailure({ action, isPublishRequest: true });
+    }
+
+    console.log(`[createPin] Created ${pinLabel} pin ${createdPin.data.id}`);
+    return {
+      success: true,
+      postId: createdPin.data.id,
+      postUrl: `https://www.pinterest.com/pin/${createdPin.data.id}/`,
+      data: createdPin.data,
+      message: `Successfully created ${pinLabel} pin`,
+    };
+  } catch (requestError) {
+    const failure = buildNetworkFailure({ action, requestError, isPublishRequest: true });
+    console.error("[createPin]", failure.error);
+    return failure;
+  }
+}
+
+/** Creates an image pin that Pinterest pulls from the public mediaUrl. */
 export async function createImagePin({
   accessToken,
   boardId,
@@ -29,61 +89,16 @@ export async function createImagePin({
   link: string;
   mediaUrl: string;
 }): Promise<PinterestPostResult> {
-  try {
-    const requestBody = {
+  return createPin({
+    accessToken,
+    pinBody: {
       board_id: boardId,
-      media_source: {
-        source_type: "image_url",
-        url: mediaUrl,
-      },
+      media_source: { source_type: "image_url", url: mediaUrl },
       title,
       description,
       link,
-    };
-
-    const response = await fetch("https://api.pinterest.com/v5/pins", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const payload: unknown = await response.json();
-
-    if (!response.ok) {
-      console.error("[Pinterest] Image pin creation failed:", payload);
-      return {
-        success: false,
-        error: "Failed to create image pin",
-        message: readStringField(payload, "message") ?? undefined,
-      };
-    }
-
-    const createdPin = CreatedPinSchema.safeParse(payload);
-    if (!createdPin.success) {
-      console.error("[Pinterest] Image pin response had no pin id");
-      return {
-        success: false,
-        error: "Failed to create image pin",
-        message: "Pinterest returned no pin id",
-      };
-    }
-
-    return {
-      success: true,
-      postId: createdPin.data.id,
-      postUrl: `https://www.pinterest.com/pin/${createdPin.data.id}/`,
-      data: createdPin.data,
-      message: "Successfully created image pin",
-    };
-  } catch (error) {
-    console.error("[Pinterest PostImage] Unexpected error:", error);
-    return {
-      success: false,
-      error: "Failed to create image pin",
-      message: "Unexpected error",
-    };
-  }
+    },
+    action: "Pinterest image pin creation",
+    pinLabel: "image",
+  });
 }

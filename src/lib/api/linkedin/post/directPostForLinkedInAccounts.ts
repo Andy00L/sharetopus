@@ -1,10 +1,10 @@
-"use server";
+import "server-only";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
-import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import type { LinkedInPostResult } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -26,13 +26,11 @@ interface DirectPostConfig {
   platformOptions: PlatformOptions;
   accountContent: AccountContent;
   userId: string | null;
-  cleanupFiles?: boolean;
   fileName?: string;
   batchId: string;
   postType: MediaType;
   isCronJob?: boolean;
   scheduledPostId?: string;
-  cronSecret?: string;
   createdVia: CreatedVia;
 }
 
@@ -42,6 +40,11 @@ type LinkedInPassthrough = {
   config: DirectPostConfig;
 };
 
+/**
+ * Publish one post to one LinkedIn member via the shared direct-post
+ * pipeline. Only called from the Inngest workers (post.now and post.due),
+ * which already rate limit at the batch layer.
+ */
 export async function directPostForLinkedInAccounts(
   config: DirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -65,76 +68,54 @@ export async function directPostForLinkedInAccounts(
       config,
     },
     {
-      validate: (pt) => {
-        if (!pt.memberUrn) {
-          return {
-            success: false,
-            count: 0,
-            message: "No LinkedIn identifier found for account",
-          };
-        }
-        return null;
-      },
-      checkRateLimit: async (pt) => {
-        if (pt.config.isCronJob) return null;
-        const rateCheck = await checkRateLimit(
-          "directPostLinkedIn",
-          pt.config.userId,
-          25,
-          60,
-        );
-        if (!rateCheck.success) {
-          console.warn(
-            `[LinkedIn Direct Post] Rate limit exceeded for user: ${pt.config.userId}`,
+      validate: (passthrough) => {
+        if (!passthrough.memberUrn) {
+          return buildDirectPostRefusal(
+            "No LinkedIn identifier found for account",
+            "invalid_input",
           );
-          return {
-            success: false,
-            count: 0,
-            message: rateCheck.message,
-          };
         }
         return null;
       },
-      preparePassthrough: async (pt) => {
-        if (!pt.config.mediaPath) {
-          return { success: true, passthrough: pt };
+      preparePassthrough: async (passthrough) => {
+        if (passthrough.config.postType === "text" || !passthrough.config.mediaPath) {
+          return { success: true, passthrough };
         }
-        const buf = await getSupabaseVideoFile(
-          pt.config.mediaPath,
-          pt.config.userId,
+        const fileResult = await getSupabaseVideoFile(
+          passthrough.config.mediaPath,
+          passthrough.config.userId,
         );
-        if (!buf.success) {
+        if (!fileResult.success) {
           console.error(
             `[LinkedIn Direct Post] Failed to fetch media:`,
-            buf.message,
+            fileResult.message,
           );
-          return { success: false, count: 0, message: buf.message };
+          return buildDirectPostRefusal(fileResult.message, "transient");
         }
-        return { success: true, passthrough: { ...pt, buffer: buf.buffer } };
+        return {
+          success: true,
+          passthrough: { ...passthrough, buffer: fileResult.buffer },
+        };
       },
-      call: async (accessToken, pt) =>
+      call: async (accessToken, passthrough) =>
         postToLinkedIn({
           accessToken,
-          memberUrn: pt.memberUrn!,
-          text: pt.config.accountContent.description,
-          link: pt.config.accountContent.link,
-          mediaPath: pt.config.mediaPath,
-          mediaType: pt.config.mediaType,
-          fileName: pt.config.fileName,
-          userId: pt.config.userId ?? "",
-          postType: pt.config.postType,
-          buffer: pt.buffer,
-          coverTimestamp: pt.config.coverTimestamp,
+          memberUrn: passthrough.memberUrn ?? "",
+          text: passthrough.config.accountContent.description,
+          link: passthrough.config.accountContent.link,
+          mediaType: passthrough.config.mediaType,
+          postType: passthrough.config.postType,
+          buffer: passthrough.buffer,
         }),
-      toHistoryFields: (postResult, _pt, cfg) => ({
-        content_id: postResult.postId ?? "",
+      toHistoryFields: (postResult, _passthrough, genericConfig) => ({
+        content_id: postResult.postId,
         media_url: postResult.postId
           ? `https://www.linkedin.com/feed/update/${postResult.postId}`
           : null,
         status: "posted",
         extra: {
           post_data: postResult.data,
-          post_type: cfg.postType,
+          post_type: genericConfig.postType,
           posted_at: new Date().toISOString(),
         },
       }),

@@ -14,9 +14,19 @@ import { restPaths } from "./paths";
  * component under components.schemas. Serving the paths without it sent
  * Zod's internal objects instead of schemas.
  *
- * Public endpoint, cached for 1 hour. No auth required.
+ * Public endpoint, cached for 1 hour. No auth required. The document only
+ * depends on code, so it is built once per instance.
  */
-export function buildOpenApiDocument() {
+export function buildOpenApiDocument(): OpenApiDocument {
+  cachedOpenApiDocument ??= renderOpenApiDocument();
+  return cachedOpenApiDocument;
+}
+
+type OpenApiDocument = ReturnType<typeof createDocument>;
+
+let cachedOpenApiDocument: OpenApiDocument | undefined;
+
+function renderOpenApiDocument(): OpenApiDocument {
   return createDocument({
     openapi: "3.1.0",
     info: {

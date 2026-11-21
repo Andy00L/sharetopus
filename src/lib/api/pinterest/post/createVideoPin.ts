@@ -1,45 +1,62 @@
+import "server-only";
+
 import { z } from "zod";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { buildStreamingMultipartFormDataBody } from "@/lib/api/_shared/buildStreamingMultipartFormDataBody";
-import { readStringField } from "@/lib/platforms/providers/_shared/providerFetch";
+import {
+  buildHttpFailure,
+  buildNetworkFailure,
+  buildUnreadableAnswerFailure,
+  type PlatformPostFailure,
+} from "@/lib/api/_shared/platformFailure";
+import {
+  PLATFORM_API_TIMEOUT_MS,
+  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
-import "server-only";
-import { CreatedPinSchema } from "./postImage";
-import { PinterestPostResult } from "./postToPinterest";
+import { createPin } from "./postImage";
+import type { PinterestPostResult } from "./postToPinterest";
 
-/** POST /v5/media answer: where and how to upload the video bytes. */
+const SIGNED_URL_EXPIRY_SECONDS = 600;
+const PROCESSING_DEADLINE_MS = 200_000;
+const PROCESSING_POLL_INITIAL_INTERVAL_MS = 2_000;
+const PROCESSING_POLL_MAX_INTERVAL_MS = 8_000;
+
+/**
+ * POST /v5/media answer: where and how to upload the video bytes.
+ * sourceRef: https://developers.pinterest.com/docs/api/v5/media-create
+ */
 const MediaRegistrationSchema = z.object({
-  media_id: z.string(),
-  upload_url: z.string(),
+  media_id: z.string().min(1),
+  upload_url: z.string().min(1),
   upload_parameters: z.record(z.string(), z.string()),
 });
 
-/** GET /v5/media/{id} answer: the processing status (succeeded, failed, ...). */
+/**
+ * GET /v5/media/{id} answer. status is registered, processing, succeeded or failed.
+ * sourceRef: https://developers.pinterest.com/docs/api/v5/media-get
+ */
 const MediaStatusSchema = z.object({ status: z.string() });
 
-type MediaUploadResult =
-  | {
-      success: true;
-      media_id: string;
-      upload_url: string;
-      upload_parameters: Record<string, string>;
-    }
-  | {
-      success: false;
-      error: string;
-      message?: string;
-    };
+type MediaRegistration = z.infer<typeof MediaRegistrationSchema>;
+
+type StepOutcome = { success: true } | PlatformPostFailure;
+
+function buildStorageFailure(error: string): PlatformPostFailure {
+  return {
+    success: false,
+    error,
+    failure: { reason: "transient", mayHavePublished: false },
+  };
+}
 
 /**
- * Create a video pin using the 4-step process:
- * 1. Register media upload with Pinterest
- * 2. Stream the video file from Supabase to Pinterest's S3
- * 3. Wait for Pinterest to process the video
- * 4. Create pin with the processed video
- *
- * Step 2 streams the file chunk-by-chunk via a ReadableStream so
- * memory peaks at the chunk size (~64KB), not the full file size.
+ * Creates a video pin: register a media upload, stream the file from
+ * storage to Pinterest's upload URL, wait for processing, create the pin.
+ * The upload streams chunk by chunk, so memory holds one chunk, not the file.
  */
 export async function createVideoPin({
   accessToken,
@@ -62,62 +79,45 @@ export async function createVideoPin({
   fileName: string;
   coverTimestamp: number;
 }): Promise<PinterestPostResult> {
-  try {
-    // Step 1: Register media upload
-    const registrationResult = await registerMediaUpload(accessToken);
-    if (!registrationResult.success) {
-      return registrationResult;
-    }
+  const registration = await registerMediaUpload(accessToken);
+  if (!registration.success) return registration;
 
-    const { media_id, upload_url, upload_parameters } = registrationResult;
+  const upload = await uploadVideoFileStreaming({
+    registration: registration.registration,
+    mediaPath,
+    mediaType,
+    fileName,
+  });
+  if (!upload.success) return upload;
 
-    // Step 2: Stream video file from Supabase to Pinterest's S3
-    const uploadResult = await uploadVideoFileStreaming({
-      uploadUrl: upload_url,
-      uploadParameters: upload_parameters,
-      mediaPath,
-      mediaType,
-      fileName,
-    });
-    if (!uploadResult.success) {
-      return uploadResult;
-    }
+  const processing = await waitForVideoProcessing(
+    accessToken,
+    registration.registration.media_id,
+  );
+  if (!processing.success) return processing;
 
-    // Step 3: Wait for video processing
-    const processingResult = await waitForVideoProcessing(
-      accessToken,
-      media_id,
-    );
-    if (!processingResult.success) {
-      return processingResult;
-    }
-
-    // Step 4: Create pin with processed video
-    return await createPinWithVideo({
-      accessToken,
-      boardId,
+  return createPin({
+    accessToken,
+    pinBody: {
+      board_id: boardId,
+      media_source: {
+        media_id: registration.registration.media_id,
+        source_type: "video_id",
+        cover_image_key_frame_time: Math.floor(coverTimestamp / 1000),
+      },
       title,
       description,
       link,
-      mediaId: media_id,
-      coverTimestamp,
-    });
-  } catch (error) {
-    console.error("[Pinterest PostVideo] Unexpected error:", error);
-    return {
-      success: false,
-      error: "Failed to create video pin",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
-  }
+    },
+    action: "Pinterest video pin creation",
+    pinLabel: "video",
+  });
 }
 
-/**
- * Step 1: Register media upload with Pinterest
- */
 async function registerMediaUpload(
   accessToken: string,
-): Promise<MediaUploadResult> {
+): Promise<{ success: true; registration: MediaRegistration } | PlatformPostFailure> {
+  const action = "Pinterest video upload registration";
   try {
     const response = await fetch("https://api.pinterest.com/v5/media", {
       method: "POST",
@@ -126,371 +126,216 @@ async function registerMediaUpload(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ media_type: "video" }),
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
-
-    const payload: unknown = await response.json();
+    const responseText = await response.text();
 
     if (!response.ok) {
-      console.error("[Pinterest PostVideo] Media registration failed:", payload);
-      return {
-        success: false,
-        error: "Failed to register media upload",
-        message: `Registration failed with status: ${response.status}`,
-      };
-    }
-
-    const registration = MediaRegistrationSchema.safeParse(payload);
-    if (!registration.success) {
       console.error(
-        "[Pinterest PostVideo] Media registration response had an unexpected shape",
+        `[registerMediaUpload] Registration failed (${response.status}): ${responseText}`,
       );
-      return {
-        success: false,
-        error: "Failed to register media upload",
-        message: "Pinterest returned an incomplete media registration",
-      };
+      return buildHttpFailure({
+        platform: "pinterest",
+        action,
+        httpStatus: response.status,
+        responseText,
+        isPublishRequest: false,
+      });
     }
 
-    console.log("[Pinterest PostVideo] Media registered successfully");
-    return {
-      success: true,
-      media_id: registration.data.media_id,
-      upload_url: registration.data.upload_url,
-      upload_parameters: registration.data.upload_parameters,
-    };
-  } catch (error) {
-    console.error("[Pinterest PostVideo] Media registration error:", error);
-    return {
-      success: false,
-      error: "Failed to register media upload",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
+    const registration = MediaRegistrationSchema.safeParse(parseJsonObject(responseText));
+    if (!registration.success) {
+      console.error("[registerMediaUpload] Registration answer had an unexpected shape");
+      return buildUnreadableAnswerFailure({ action, isPublishRequest: false });
+    }
+    return { success: true, registration: registration.data };
+  } catch (requestError) {
+    return buildNetworkFailure({ action, requestError, isPublishRequest: false });
   }
 }
 
 /**
- * Step 2: Stream the video file from Supabase to Pinterest's S3.
- *
- * Mints a Supabase signed URL, fetches it for a ReadableStream,
- * reads Content-Length from the response headers, then builds a
- * streaming multipart/form-data body via buildStreamingMultipartFormDataBody.
- * Memory peaks at chunk size (~64KB), not file size.
+ * Streams the stored file into Pinterest's upload URL as multipart/form-data.
+ * The upload URL is an S3 POST endpoint whose policy requires Content-Length,
+ * so the file size comes from the storage answer's header. One deadline
+ * covers both the storage download and the upload, since they run as one stream.
  */
 async function uploadVideoFileStreaming({
-  uploadUrl,
-  uploadParameters,
+  registration,
   mediaPath,
   mediaType,
   fileName,
 }: {
-  uploadUrl: string;
-  uploadParameters: Record<string, string>;
+  registration: MediaRegistration;
   mediaPath: string;
   mediaType: string;
   fileName: string;
-}): Promise<PinterestPostResult> {
-  try {
-    // Mint a Supabase signed URL (10-minute expiry for upload window)
-    const { data: signedData, error: signedError } = await adminSupabase.storage
-      .from(MEDIA_BUCKET)
-      .createSignedUrl(mediaPath, 600);
-
-    if (signedError || !signedData?.signedUrl) {
-      console.error(
-        "[Pinterest PostVideo] Failed to mint signed URL:",
-        signedError,
-      );
-      return {
-        success: false,
-        error: "Failed to mint Supabase signed URL for video",
-        message: signedError?.message ?? "No signed URL returned",
-      };
-    }
-
-    // Fetch the signed URL for the file stream and Content-Length
-    const supabaseResponse = await fetch(signedData.signedUrl);
-
-    if (!supabaseResponse.ok) {
-      console.error(
-        `[Pinterest PostVideo] Supabase fetch returned ${supabaseResponse.status}`,
-      );
-      return {
-        success: false,
-        error: "Failed to fetch video from storage",
-        message: `Storage returned status ${supabaseResponse.status}`,
-      };
-    }
-
-    if (!supabaseResponse.body) {
-      console.error("[Pinterest PostVideo] Supabase response has no body");
-      return {
-        success: false,
-        error: "Storage returned empty body for video",
-      };
-    }
-
-    const contentLengthHeader = supabaseResponse.headers.get("content-length");
-    if (!contentLengthHeader) {
-      console.error(
-        "[Pinterest PostVideo] Missing Content-Length from storage",
-      );
-      return {
-        success: false,
-        error: "Storage did not return Content-Length for video",
-        message:
-          "Cannot stream without known file size (S3 requires Content-Length)",
-      };
-    }
-
-    const fileByteLength = Number(contentLengthHeader);
-    if (!Number.isFinite(fileByteLength) || fileByteLength <= 0) {
-      console.error(
-        "[Pinterest PostVideo] Invalid Content-Length:",
-        contentLengthHeader,
-      );
-      return {
-        success: false,
-        error: "Storage returned invalid Content-Length for video",
-      };
-    }
-
-    console.log(
-      `[Pinterest PostVideo] Streaming ${fileByteLength} bytes to Pinterest S3`,
+}): Promise<StepOutcome> {
+  const { data: signedData, error: signedError } = await adminSupabase.storage
+    .from(MEDIA_BUCKET)
+    .createSignedUrl(mediaPath, SIGNED_URL_EXPIRY_SECONDS);
+  if (signedError || !signedData?.signedUrl) {
+    console.error(
+      "[uploadVideoFileStreaming] Failed to mint signed URL:",
+      signedError?.message ?? "no signed URL returned",
     );
+    return buildStorageFailure("Failed to mint a storage URL for the video");
+  }
 
-    // Build the streaming multipart body
-    const { body: streamingBody, headers: streamingHeaders } =
-      buildStreamingMultipartFormDataBody({
-        fields: uploadParameters,
-        fileFieldName: "file",
-        fileName,
-        fileContentType: mediaType,
-        fileByteLength,
-        fileStream: supabaseResponse.body,
+  const streamDeadline = AbortSignal.timeout(PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS);
+
+  let storageResponse: Response;
+  try {
+    storageResponse = await fetch(signedData.signedUrl, { signal: streamDeadline });
+  } catch (requestError) {
+    const message = describeNetworkError(requestError);
+    console.error("[uploadVideoFileStreaming] Storage download failed:", message);
+    return buildStorageFailure(`Failed to fetch video from storage: ${message}`);
+  }
+
+  if (!storageResponse.ok || !storageResponse.body) {
+    await storageResponse.body?.cancel();
+    console.error(
+      `[uploadVideoFileStreaming] Storage answered ${storageResponse.status} without a usable body`,
+    );
+    return buildStorageFailure(
+      `Failed to fetch video from storage (status ${storageResponse.status})`,
+    );
+  }
+
+  const fileByteLength = Number(storageResponse.headers.get("content-length"));
+  if (!Number.isFinite(fileByteLength) || fileByteLength <= 0) {
+    await storageResponse.body.cancel();
+    console.error("[uploadVideoFileStreaming] Storage answer had no usable Content-Length");
+    return buildStorageFailure("Storage did not return the video size");
+  }
+
+  console.log(`[uploadVideoFileStreaming] Streaming ${fileByteLength} bytes to Pinterest`);
+
+  const { body: streamingBody, headers: streamingHeaders } =
+    buildStreamingMultipartFormDataBody({
+      fields: registration.upload_parameters,
+      fileFieldName: "file",
+      fileName,
+      fileContentType: mediaType,
+      fileByteLength,
+      fileStream: storageResponse.body,
+    });
+
+  // Node's fetch requires duplex: "half" for a ReadableStream body, and
+  // lib.dom's RequestInit does not declare it yet.
+  // sourceRef: https://nodejs.org/api/globals.html#fetch
+  const streamingUploadInit: RequestInit & { duplex: "half" } = {
+    method: "POST",
+    body: streamingBody,
+    headers: streamingHeaders,
+    duplex: "half",
+    signal: streamDeadline,
+  };
+
+  const action = "Pinterest video upload";
+  try {
+    const uploadResponse = await fetch(registration.upload_url, streamingUploadInit);
+    if (!uploadResponse.ok) {
+      const uploadText = await uploadResponse.text();
+      console.error(
+        `[uploadVideoFileStreaming] Upload failed (${uploadResponse.status}): ${uploadText}`,
+      );
+      return buildHttpFailure({
+        platform: "pinterest",
+        action,
+        httpStatus: uploadResponse.status,
+        responseText: uploadText,
+        isPublishRequest: false,
       });
+    }
+    await uploadResponse.body?.cancel();
+  } catch (requestError) {
+    return buildNetworkFailure({ action, requestError, isPublishRequest: false });
+  }
 
-    // POST to Pinterest's S3 upload endpoint. Node's fetch requires
-    // duplex: "half" for a ReadableStream body, and lib.dom's RequestInit
-    // does not declare it yet, so the init is typed with it added
-    // (sourceRef: https://nodejs.org/api/globals.html#fetch).
-    const streamingUploadInit: RequestInit & { duplex: "half" } = {
-      method: "POST",
-      body: streamingBody,
-      headers: streamingHeaders,
-      duplex: "half",
-    };
-    const response = await fetch(uploadUrl, streamingUploadInit);
+  return { success: true };
+}
+
+async function readMediaStatus(
+  accessToken: string,
+  mediaId: string,
+): Promise<{ success: true; status: string } | PlatformPostFailure> {
+  const action = "Pinterest video status check";
+  try {
+    const response = await fetch(`https://api.pinterest.com/v5/media/${mediaId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
+    });
+    const responseText = await response.text();
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("[Pinterest PostVideo] Video upload failed:", errorText);
-      return {
-        success: false,
-        error: "Failed to upload media",
-        message: `Upload failed with status: ${response.status}`,
-      };
+      console.error(
+        `[readMediaStatus] Status check failed (${response.status}): ${responseText}`,
+      );
+      return buildHttpFailure({
+        platform: "pinterest",
+        action,
+        httpStatus: response.status,
+        responseText,
+        isPublishRequest: false,
+      });
     }
 
-    console.log("[Pinterest PostVideo] Video uploaded successfully (streamed)");
-    return { success: true };
-  } catch (error) {
-    console.error("[Pinterest PostVideo] Video upload error:", error);
-    return {
-      success: false,
-      error: "Failed to upload video",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
+    const mediaStatus = MediaStatusSchema.safeParse(parseJsonObject(responseText));
+    if (!mediaStatus.success) {
+      console.error("[readMediaStatus] Status answer had no status");
+      return buildUnreadableAnswerFailure({ action, isPublishRequest: false });
+    }
+    return { success: true, status: mediaStatus.data.status };
+  } catch (requestError) {
+    return buildNetworkFailure({ action, requestError, isPublishRequest: false });
   }
 }
 
-/**
- * Step 3: Wait for video processing to complete
- */
+function waitFor(durationMs: number): Promise<void> {
+  return new Promise((resolveWait) => setTimeout(resolveWait, durationMs));
+}
+
+/** Polls with a growing interval until Pinterest reports the video processed, failed, or the deadline passes. */
 async function waitForVideoProcessing(
   accessToken: string,
   mediaId: string,
-): Promise<PinterestPostResult> {
-  const MAX_TIMEOUT = 200000; // 40 seconds
-  const WAIT_TIME = 1000; // 1 second between checks
-  const MAX_ATTEMPTS = Math.floor(MAX_TIMEOUT / WAIT_TIME);
+): Promise<StepOutcome> {
+  const deadlineMs = Date.now() + PROCESSING_DEADLINE_MS;
+  let pollIndex = 0;
+  let lastStatus = "registered";
 
-  const startTime = Date.now();
+  for (;;) {
+    const statusResult = await readMediaStatus(accessToken, mediaId);
+    if (!statusResult.success) return statusResult;
+    lastStatus = statusResult.status;
 
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    // Check timeout
-    if (Date.now() - startTime > MAX_TIMEOUT) {
+    if (lastStatus === "succeeded") return { success: true };
+    if (lastStatus === "failed") {
       return {
         success: false,
-        error: "Video processing timeout",
-        message: "Pinterest is taking too long to process your video",
+        error: "Pinterest couldn't process your video. Try a different format.",
+        failure: { reason: "invalid_input", mayHavePublished: false },
       };
     }
 
-    // Check processing status
-    const statusResult = await checkMediaStatus(accessToken, mediaId);
-    if (!statusResult.success) {
-      return statusResult;
-    }
-
-    const status = statusResult.message!;
-
-    if (status === "succeeded") {
-      console.log("[Pinterest] Video processing completed");
-      return { success: true };
-    }
-
-    if (status === "failed") {
-      return {
-        success: false,
-        error: "Video processing failed",
-        message:
-          "Pinterest couldn't process your video. Try a different format.",
-      };
-    }
-    console.log(
-      `[Pinterest PostVideo] Upload status: ${status} (attempt ${
-        attempt + 1
-      }/${MAX_ATTEMPTS})`,
+    const pollIntervalMs = Math.min(
+      PROCESSING_POLL_MAX_INTERVAL_MS,
+      PROCESSING_POLL_INITIAL_INTERVAL_MS * 2 ** pollIndex,
     );
-
-    // Wait before next check
-    await new Promise((resolve) => setTimeout(resolve, WAIT_TIME));
+    if (Date.now() + pollIntervalMs > deadlineMs) break;
+    await waitFor(pollIntervalMs);
+    pollIndex++;
   }
 
+  console.error(
+    `[waitForVideoProcessing] Media ${mediaId} still ${lastStatus} after ${PROCESSING_DEADLINE_MS / 1000} s`,
+  );
   return {
     success: false,
     error:
-      "Your video is taking longer than expected to process. Please try again or use a smaller video file.",
-    message:
-      "Pinterest is taking too long to process your video. This may happen with very large files or during high traffic periods.",
+      "Pinterest video processing timeout: your video is taking longer than expected to process. Please try again or use a smaller video file.",
+    failure: { reason: "transient", mayHavePublished: false },
   };
-}
-
-/**
- * Check media processing status
- */
-async function checkMediaStatus(
-  accessToken: string,
-  mediaId: string,
-): Promise<PinterestPostResult> {
-  try {
-    const response = await fetch(
-      `https://api.pinterest.com/v5/media/${mediaId}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-
-    const payload: unknown = await response.json();
-    const mediaStatus = MediaStatusSchema.safeParse(payload);
-
-    if (!response.ok || !mediaStatus.success) {
-      console.error("[Pinterest PostVideo] Status check failed:", payload);
-      return {
-        success: false,
-        error:
-          "Unable to verify video upload status with Pinterest. Please try again in a few minutes.",
-        message:
-          "Pinterest's servers are temporarily unavailable. Please try again later.",
-      };
-    }
-    // Return status in message field for easy access
-    return {
-      success: true,
-      message: mediaStatus.data.status,
-    };
-  } catch (error) {
-    console.error("[Pinterest PostVideo] Status check error:", error);
-    return {
-      success: false,
-      error:
-        "Unable to verify video upload status with Pinterest. Please try again in a few minutes.",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
-  }
-}
-
-/**
- * Step 4: Create pin with processed video
- */
-async function createPinWithVideo({
-  accessToken,
-  boardId,
-  title,
-  description,
-  link,
-  mediaId,
-  coverTimestamp,
-}: {
-  accessToken: string;
-  boardId: string;
-  title: string;
-  description: string;
-  link: string;
-  mediaId: string;
-  coverTimestamp: number;
-}): Promise<PinterestPostResult> {
-  try {
-    const requestBody = {
-      board_id: boardId,
-      media_source: {
-        media_id: mediaId,
-        source_type: "video_id",
-        cover_image_key_frame_time: Math.floor(coverTimestamp / 1000),
-      },
-      title,
-      description,
-      link,
-    };
-
-    const response = await fetch("https://api.pinterest.com/v5/pins", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const payload: unknown = await response.json();
-
-    if (!response.ok) {
-      console.error("[Pinterest] Pin creation failed:", payload);
-      return {
-        success: false,
-        error: "Failed to create pin",
-        message: readStringField(payload, "message") ?? undefined,
-      };
-    }
-
-    const createdPin = CreatedPinSchema.safeParse(payload);
-    if (!createdPin.success) {
-      console.error("[Pinterest] Pin creation response had no pin id");
-      return {
-        success: false,
-        error: "Failed to create pin",
-        message: "Pinterest returned no pin id",
-      };
-    }
-
-    console.log("[Pinterest] Pin created successfully");
-    return {
-      success: true,
-      postId: createdPin.data.id,
-      postUrl: `https://www.pinterest.com/pin/${createdPin.data.id}/`,
-      data: createdPin.data,
-      message: "Successfully created video pin",
-    };
-  } catch (error) {
-    console.error("[Pinterest PostVideo] Pin creation error:", error);
-    return {
-      success: false,
-      error: "Failed to create video pin",
-      message: error instanceof Error ? error.message : "Unexpected error",
-    };
-  }
 }

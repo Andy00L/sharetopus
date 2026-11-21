@@ -1,7 +1,14 @@
-"use server";
+import "server-only";
 
 import { z } from "zod";
 
+import {
+  classifyPlatformHttpFailure,
+  type PlatformFailure,
+} from "@/lib/api/_shared/platformFailure";
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { PrivacyLevel } from "@/lib/types/dbTypes";
 
 /** creator_info `data`; the composer reads every field. */
@@ -53,11 +60,9 @@ const CreatorInfoResponseSchema = z.object({
     .optional(),
 });
 
-type CreatorInfoApiResponse = z.infer<typeof CreatorInfoResponseSchema>;
-
 type GetCreatorInfoResult =
   | { success: true; data: CreatorInfoData }
-  | { success: false; message: string };
+  | { success: false; message: string; failure: PlatformFailure };
 
 /**
  * User-facing messages for the creator_info error codes a creator can act
@@ -80,19 +85,6 @@ const CREATOR_INFO_ERROR_MESSAGES: Record<string, string> = {
     "TikTok is receiving too many requests. Please wait a minute and try again.",
 };
 
-/** Reads the TikTok error envelope from any response, 2xx or not; null when unreadable. */
-async function readCreatorInfoResponse(
-  response: Response,
-): Promise<CreatorInfoApiResponse | null> {
-  try {
-    const payload: unknown = await response.json();
-    const envelope = CreatorInfoResponseSchema.safeParse(payload);
-    return envelope.success ? envelope.data : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Fetches TikTok creator info for the Content Posting API.
  * Returns privacy_level_options, interaction flags, and creator display info.
@@ -103,7 +95,11 @@ export async function getTikTokCreatorInfo(
 ): Promise<GetCreatorInfoResult> {
   if (!accessToken) {
     console.error("[getTikTokCreatorInfo] Missing access token");
-    return { success: false, message: "Missing TikTok access token" };
+    return {
+      success: false,
+      message: "Missing TikTok access token",
+      failure: { reason: "auth_expired", mayHavePublished: false },
+    };
   }
 
   try {
@@ -115,39 +111,58 @@ export async function getTikTokCreatorInfo(
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json; charset=UTF-8",
         },
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       }
     );
 
     // TikTok answers errors with a 4xx status AND the error envelope, so the
     // code is read before the status decides anything.
-    const json = await readCreatorInfoResponse(response);
-    const errorCode = json?.error?.code;
+    const responseText = await response.text();
+    const parsedEnvelope = CreatorInfoResponseSchema.safeParse(
+      parseJsonObject(responseText),
+    );
+    const envelope = parsedEnvelope.success ? parsedEnvelope.data : null;
+    const errorCode = envelope?.error?.code;
 
     if (!response.ok || (errorCode && errorCode !== "ok")) {
       console.error(
         "[getTikTokCreatorInfo] API error:",
         response.status,
-        json?.error ?? "unreadable body",
+        envelope?.error ?? "unreadable body",
       );
+      const classification = classifyPlatformHttpFailure({
+        platform: "tiktok",
+        httpStatus: response.status,
+        responseText,
+      });
       return {
         success: false,
         message:
           (errorCode && CREATOR_INFO_ERROR_MESSAGES[errorCode]) ??
-          json?.error?.message ??
+          envelope?.error?.message ??
           `TikTok API returned ${response.status}`,
+        failure: { reason: classification.reason, mayHavePublished: false },
       };
     }
 
-    const creatorInfo = CreatorInfoDataSchema.safeParse(json?.data);
+    const creatorInfo = CreatorInfoDataSchema.safeParse(envelope?.data);
     if (!creatorInfo.success) {
       console.error("[getTikTokCreatorInfo] No usable data in response");
-      return { success: false, message: "No creator info data returned" };
+      return {
+        success: false,
+        message: "No creator info data returned",
+        failure: { reason: "unknown", mayHavePublished: false },
+      };
     }
 
     return { success: true, data: creatorInfo.data };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[getTikTokCreatorInfo] Unexpected error:", message);
-    return { success: false, message: `Failed to fetch creator info: ${message}` };
+  } catch (requestError) {
+    const message = describeNetworkError(requestError);
+    console.error("[getTikTokCreatorInfo] Request failed:", message);
+    return {
+      success: false,
+      message: `Failed to fetch creator info: ${message}`,
+      failure: { reason: "transient", mayHavePublished: false },
+    };
   }
 }

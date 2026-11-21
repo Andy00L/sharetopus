@@ -1,6 +1,9 @@
-import fetch from "node-fetch";
 import "server-only";
 import { z } from "zod";
+
+import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
+import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
 /**
  * /v2/post/publish/status/fetch/ answer. Every field may be absent: a
@@ -73,12 +76,12 @@ export async function getTikTokPublishStatus(input: {
           "Content-Type": "application/json; charset=UTF-8",
         },
         body: JSON.stringify({ publish_id }),
+        signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
       }
     );
 
-    // Read the body exactly once (FIX 17 convention).
     const parsedBody = PublishStatusResponseSchema.safeParse(
-      await response.json(),
+      parseJsonObject(await response.text()),
     );
     if (!parsedBody.success) {
       console.error(
@@ -138,8 +141,8 @@ export async function getTikTokPublishStatus(input: {
       kind: "in_progress",
       raw_status: status,
     };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch (requestError) {
+    const message = describeNetworkError(requestError);
     console.error("[getTikTokPublishStatus] Network error:", message);
     return { success: false, message: `Network error: ${message}` };
   }

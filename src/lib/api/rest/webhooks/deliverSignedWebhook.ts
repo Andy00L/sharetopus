@@ -2,8 +2,9 @@ import "server-only";
 
 import { fetch as undiciFetch, type Response as UndiciResponse } from "undici";
 
+import { describeNetworkError } from "@/lib/net/describeNetworkError";
 import {
-  buildPinnedAgent,
+  acquirePinnedDispatcher,
   resolveHostToPublicAddresses,
 } from "@/lib/net/pinnedFetch";
 
@@ -111,7 +112,6 @@ export async function deliverSignedWebhook(
     };
   }
 
-  const dispatcher = buildPinnedAgent(resolution.addresses);
   try {
     const response = await undiciFetch(url, {
       method: "POST",
@@ -119,7 +119,7 @@ export async function deliverSignedWebhook(
       body: opts.body,
       redirect: "manual",
       signal: AbortSignal.timeout(opts.timeoutMs),
-      dispatcher,
+      dispatcher: acquirePinnedDispatcher(resolution.addresses),
     });
     const cappedBody = await readCappedResponseBody(response);
     const responseBody =
@@ -129,12 +129,7 @@ export async function deliverSignedWebhook(
     return {
       statusCode: null,
       responseBody: null,
-      errorMessage:
-        deliveryError instanceof Error
-          ? deliveryError.message
-          : "unknown network error",
+      errorMessage: describeNetworkError(deliveryError),
     };
-  } finally {
-    dispatcher.close().catch(() => {});
   }
 }

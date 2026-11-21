@@ -2,6 +2,7 @@ import "server-only";
 
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
 import {
+  buildDirectPostRefusal,
   directPostForAccountsGeneric,
   type DirectPostScheduleResult,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
@@ -62,11 +63,10 @@ export async function directPostForXAccounts(
           passthrough.config.postType !== "text" &&
           !passthrough.config.mediaPath
         ) {
-          return {
-            success: false,
-            count: 0,
-            message: "Media file is required for X image and video posts",
-          };
+          return buildDirectPostRefusal(
+            "Media file is required for X image and video posts",
+            "invalid_input",
+          );
         }
         return null;
       },
@@ -86,7 +86,7 @@ export async function directPostForXAccounts(
             "[X Direct Post] Failed to fetch media:",
             fileResult.message,
           );
-          return { success: false, count: 0, message: fileResult.message };
+          return buildDirectPostRefusal(fileResult.message, "transient");
         }
         return {
           success: true,

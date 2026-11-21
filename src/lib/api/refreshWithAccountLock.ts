@@ -22,8 +22,8 @@ const LOCK_TTL_MS = 45_000;
  * than LOCK_TTL_MS, so a waiter outlasts the lock of a run that crashed. */
 const WAIT_DEADLINE_MS = LOCK_TTL_MS + 5_000;
 
-/** Pause between checks while another run holds the lock, in milliseconds. */
-const POLL_INTERVAL_MS = 500;
+const POLL_INITIAL_INTERVAL_MS = 500;
+const POLL_MAX_INTERVAL_MS = 4_000;
 
 /** Deletes the lock only while this run still owns it. A plain DEL could
  * remove a lock that another run took after ours expired.
@@ -90,6 +90,7 @@ export async function refreshWithAccountLock<Refreshed>(
 ): Promise<LockedRefreshOutcome<Refreshed>> {
   const lockKey = `token_refresh_lock:${accountId}`;
   const deadline = Date.now() + WAIT_DEADLINE_MS;
+  let pollIndex = 0;
 
   do {
     const lock = await tryAcquireRefreshLock(lockKey);
@@ -107,7 +108,10 @@ export async function refreshWithAccountLock<Refreshed>(
       }
     }
 
-    await waitFor(POLL_INTERVAL_MS);
+    await waitFor(
+      Math.min(POLL_MAX_INTERVAL_MS, POLL_INITIAL_INTERVAL_MS * 2 ** pollIndex),
+    );
+    pollIndex++;
     const stored = await readStoredCredential(accountId);
     if (!stored.ok) return { kind: "unavailable", message: stored.message };
     const freshToken = selectFreshAccessToken(stored.credential);

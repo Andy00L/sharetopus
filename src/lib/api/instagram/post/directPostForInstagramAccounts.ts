@@ -1,12 +1,18 @@
-import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { ensureValidToken } from "@/lib/api/ensureValidToken";
-import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
-import { SocialAccount } from "@/lib/types/dbTypes";
-import { ScheduleResult } from "@/lib/types/ScheduleResult";
 import "server-only";
 
-/** Posts an image or a video (as a Reel) to one Instagram account now and records it in content history. */
-export async function directPostForInstagramAccounts(config: {
+import type { CreatedVia } from "@/db/schema";
+import {
+  buildDirectPostRefusal,
+  directPostForAccountsGeneric,
+  type DirectPostScheduleResult,
+} from "@/lib/api/_shared/directPostForAccountsGeneric";
+import { postToInstagram } from "@/lib/api/instagram/post/postToInstagram";
+import type { InstagramPostResult } from "@/lib/api/instagram/post/postToInstagram";
+import type { SocialAccount } from "@/lib/types/dbTypes";
+
+const INSTAGRAM_ALT_TEXT_MAX_CHARS = 1_000;
+
+interface InstagramDirectPostConfig {
   account: SocialAccount;
   mediaPath: string;
   coverTimestamp: number;
@@ -18,166 +24,83 @@ export async function directPostForInstagramAccounts(config: {
     isCustomized: boolean;
   };
   userId: string | null;
+  /** Public signed URL Instagram pulls the media from. */
   mediaUrl: string;
   postType: "image" | "video";
   fileName: string;
   batchId: string;
   scheduledPostId?: string;
-  createdVia: "web" | "mcp" | "x402" | "api";
-}): Promise<ScheduleResult> {
-  const {
-    account,
-    postType,
-    mediaType,
-    accountContent,
-    userId,
-    mediaUrl,
-    batchId,
-  } = config;
+  createdVia: CreatedVia;
+}
 
-  try {
-    console.log(
-      "[Instagram Direct Post] Starting to post directly to Instagram",
-    );
+type InstagramPassthrough = {
+  config: InstagramDirectPostConfig;
+};
 
-    if (!accountContent || accountContent.accountId !== account.id) {
-      console.error(
-        `[Instagram Direct Post] No or mismatched content for account ${account.id}`,
-      );
-      return {
-        success: false,
-        count: 0,
-        message: "No content found for account",
-      };
-    }
-
-    const validToken = await ensureValidToken(account);
-
-    if (!validToken.success) {
-      console.error(
-        `[Instagram Direct Post] No valid access token for account ${account.id}`,
-      );
-      return {
-        success: false,
-        count: 0,
-        message: validToken.error,
-      };
-    }
-
-    // Validate Instagram Business/Creator account ID
-    if (!account.account_identifier) {
-      console.error(
-        `[Instagram Direct Post] Missing Instagram Business/Creator account ID for account ${account.id}`,
-      );
-      return {
-        success: false,
-        count: 0,
-        message: "Missing Instagram Business/Creator account ID",
-      };
-    }
-
-    console.log(
-      `[Instagram Direct Post] Posting to account: ${
-        account.username ?? account.id
-      }`,
-    );
-
-    // Map generic postType to Instagram-specific types
-    let instagramPostType: "image" | "reel" | "carousel";
-
-    if (postType === "video") {
-      instagramPostType = "reel";
-    } else {
-      // "text" maps to "image" since Instagram doesn't support text-only posts
-      instagramPostType = "image";
-    }
-    // Call our Instagram posting function
-    const postResult = await postToInstagram({
-      accessToken: validToken.token!,
-      userId: account.account_identifier,
-      caption: accountContent.description ?? "",
-      mediaUrl: mediaUrl,
-      mediaType: mediaType ?? "",
-      fileName: config.fileName,
-      postType: instagramPostType,
-      coverTimestamp: config.coverTimestamp,
-      altText: accountContent.description.substring(0, 1000) || "viral post",
-      shareToFeed: true,
-    });
-
-    console.log(`[Instagram Direct Post] Post response for ${account.username ?? account.id}:`, {
-      success: postResult.success,
-      postId: postResult.postId,
-      containerId: postResult.containerId,
-      message: postResult.message,
-    });
-
-    if (postResult.success) {
-      const historyResult = await storeContentHistory(
-        {
-          platform: "instagram",
-          content_id: postResult.postId ?? "",
-          social_account_id: accountContent.accountId,
-          title: accountContent.title || null,
-          description: accountContent.description || null,
-          media_url: postResult.publicUrl!,
-          batch_id: batchId,
-          scheduled_post_id: config.scheduledPostId ?? null,
-          status: "posted",
-          media_type: postType,
-          extra: {
-            post_data: postResult,
-            post_type: postType,
-            posted_at: new Date().toISOString(),
-          },
-          created_via: config.createdVia,
+/** Posts an image, or a video as a Reel, to one Instagram account now and records it in content history. */
+export async function directPostForInstagramAccounts(
+  config: InstagramDirectPostConfig,
+): Promise<DirectPostScheduleResult> {
+  return directPostForAccountsGeneric<InstagramPassthrough, InstagramPostResult>(
+    {
+      platform: "instagram",
+      logPrefix: "[Instagram Direct Post]",
+      account: config.account,
+      accountContent: config.accountContent,
+      userId: config.userId ?? "",
+      batchId: config.batchId,
+      scheduledPostId: config.scheduledPostId ?? null,
+      postType: config.postType,
+      createdVia: config.createdVia,
+    },
+    { config },
+    {
+      validate: (passthrough, genericConfig) => {
+        if (genericConfig.accountContent.accountId !== genericConfig.account.id) {
+          console.error(
+            `[Instagram Direct Post] No or mismatched content for account ${genericConfig.account.id}`,
+          );
+          return buildDirectPostRefusal("No content found for account", "invalid_input");
+        }
+        if (!genericConfig.account.account_identifier) {
+          return buildDirectPostRefusal(
+            "Missing Instagram Business/Creator account ID",
+            "invalid_input",
+          );
+        }
+        if (!passthrough.config.mediaUrl) {
+          return buildDirectPostRefusal(
+            "Instagram requires media content. Please provide a public mediaUrl.",
+            "invalid_input",
+          );
+        }
+        return null;
+      },
+      call: async (accessToken, passthrough) =>
+        postToInstagram({
+          accessToken,
+          igUserId: passthrough.config.account.account_identifier ?? "",
+          caption: passthrough.config.accountContent.description,
+          mediaUrl: passthrough.config.mediaUrl,
+          postType: passthrough.config.postType === "video" ? "reel" : "image",
+          coverTimestamp: passthrough.config.coverTimestamp,
+          altText:
+            passthrough.config.accountContent.description.slice(
+              0,
+              INSTAGRAM_ALT_TEXT_MAX_CHARS,
+            ) || undefined,
+          shareToFeed: true,
+        }),
+      toHistoryFields: (postResult, _passthrough, genericConfig) => ({
+        content_id: postResult.postId,
+        media_url: postResult.postUrl ?? null,
+        status: "posted",
+        extra: {
+          container_id: postResult.containerId,
+          post_type: genericConfig.postType,
+          posted_at: new Date().toISOString(),
         },
-        userId,
-      );
-
-      if (!historyResult.success) {
-        // The post is live, so this still reports success (same as directPostForAccountsGeneric).
-        console.error(
-          `[Instagram Direct Post] CONTENT HISTORY NOT RECORDED for a ` +
-            `published post (account=${account.id} ` +
-            `scheduled_post_id=${config.scheduledPostId ?? "none"} ` +
-            `content_id=${postResult.postId ?? "unknown"}): ` +
-            `${historyResult.message}`,
-        );
-      } else {
-        console.log(
-          `[Instagram Direct Post] Successfully posted to account and saved to history`,
-        );
-      }
-    }
-
-    if (!postResult.success) {
-      console.error(
-        "[Instagram Direct Post] Failed with error:",
-        postResult.message,
-      );
-
-      return {
-        success: false,
-        count: 0,
-        message: postResult.message || "Failed to post to Instagram",
-      };
-    }
-
-    return {
-      success: true,
-      count: 1,
-      message: `Successfully posted to Instagram account ${
-        account.username || account.id
-      }`,
-    };
-  } catch (error) {
-    console.error("[Instagram Direct Post] Error:", error);
-
-    return {
-      success: false,
-      count: 0,
-      message: `Failed to post to Instagram`,
-    };
-  }
+      }),
+    },
+  );
 }

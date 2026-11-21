@@ -1,14 +1,14 @@
 import "server-only";
 
 import { and, eq, isNull } from "drizzle-orm";
+import { after } from "next/server";
 
 import { db, runQuery } from "@/db/client";
 import { api_keys } from "@/db/schema";
 import { hashToken, isApiKeyToken } from "@/lib/api/tokens";
 import { applySubscriptionGate } from "@/lib/mcp/auth/resolvers/applySubscriptionGate";
-import { extractIpHash } from "@/lib/api/context";
 import type { PrincipalResolution } from "@/lib/types/principal";
-import { waitUntil } from "@vercel/functions";
+import { isLastUseStale } from "@/lib/api/isLastUseStale";
 import type { RestPrincipal } from "./types";
 
 /**
@@ -19,34 +19,23 @@ import type { RestPrincipal } from "./types";
  *   2. DB lookup by token_hash (kind='rest', not revoked)
  *   3. Expiry check (expires_at > now, or null)
  *   4. Subscription gate (active subscription required)
- *   5. Background last_used_at + last_used_ip update (fire-and-forget)
+ *   5. last_used_at + last_used_ip update after the response, at most once
+ *      per LAST_USED_WRITE_INTERVAL_MS per key
  *
  * "rejected" when a check fails, "unavailable" when a database read failed
  * on the way. Never throws. The caller (HOF) answers 401 and 503.
- *
- * Side effects:
- *   - Updates api_keys.last_used_at and last_used_ip via waitUntil
- *     (does NOT block the request)
- *
- * Reused helpers:
- *   - hashToken: shared with MCP resolver
- *   - applySubscriptionGate: shared with MCP resolver, handles subscription
- *     cache (60s TTL + Stripe webhook invalidation)
- *   - extractIpHash: pulls hashed IP from next/headers
  */
 export async function resolveRestApiKey(
   bearerToken: string,
+  clientIpHash: string | null,
 ): Promise<PrincipalResolution<RestPrincipal>> {
   try {
-    // Step 1: Format check. Cheap, no DB. Reject foreign tokens early.
     if (!isApiKeyToken(bearerToken, "rest")) {
       return { status: "rejected" };
     }
 
     const restApiKeyHashed = hashToken(bearerToken);
 
-    // Step 2: DB lookup. Filters on kind='rest' and not revoked.
-    // token_hash is unique, so one row is the most there can be.
     const { data: apiKeyRows, error: lookupError } = await runQuery(
       db
         .select({
@@ -55,6 +44,7 @@ export async function resolveRestApiKey(
           scopes: api_keys.scopes,
           expires_at: api_keys.expires_at,
           prefix: api_keys.prefix,
+          last_used_at: api_keys.last_used_at,
         })
         .from(api_keys)
         .where(
@@ -80,7 +70,6 @@ export async function resolveRestApiKey(
       return { status: "rejected" };
     }
 
-    // Step 3: Expiry check.
     if (
       apiKeyRow.expires_at !== null &&
       new Date(apiKeyRow.expires_at).getTime() < Date.now()
@@ -91,8 +80,6 @@ export async function resolveRestApiKey(
       return { status: "rejected" };
     }
 
-    // Step 4: Subscription gate. Rejects without an active subscription.
-    // The generic preserves RestPrincipal on the resolved principal.
     const principalCandidate: RestPrincipal = {
       kind: "rest",
       principalId: apiKeyRow.principal_id,
@@ -107,10 +94,10 @@ export async function resolveRestApiKey(
       return gateResolution;
     }
 
-    // Step 5: Fire-and-forget last_used_at + last_used_ip update.
-    // waitUntil keeps the Vercel function alive long enough for the UPDATE
-    // to complete after we return the response.
-    waitUntil(updateLastUsedFields(apiKeyRow.id));
+    if (isLastUseStale(apiKeyRow.last_used_at, Date.now())) {
+      const apiKeyId = apiKeyRow.id;
+      after(() => updateLastUsedFields(apiKeyId, clientIpHash));
+    }
 
     return gateResolution;
   } catch (unexpectedError) {
@@ -120,44 +107,39 @@ export async function resolveRestApiKey(
         ? unexpectedError.message
         : unexpectedError,
     );
-    // Our failure, not the key's: a 401 would tell the caller the key is bad.
     return { status: "unavailable" };
   }
 }
 
 /**
- * Updates api_keys.last_used_at to now and last_used_ip to the hashed
- * client IP from the current request context.
- *
- * Soft-failure: errors are logged but never bubble up. last_used tracking
- * is observability data, not an auth gate.
- *
- * Runs inside waitUntil so it does NOT block the request response.
+ * Sets api_keys.last_used_at to now and last_used_ip to the hashed client
+ * IP. Errors are logged, never raised: last-use tracking is observability
+ * data, not an auth gate, and rest_audit_log keeps the per-request trail.
  */
-async function updateLastUsedFields(apiKeyId: string): Promise<void> {
+async function updateLastUsedFields(
+  apiKeyId: string,
+  clientIpHash: string | null,
+): Promise<void> {
   try {
-    const clientIpHash = await extractIpHash();
-
-    const updatePayload: { last_used_at: string; last_used_ip?: string } = {
-      last_used_at: new Date().toISOString(),
-    };
-    if (clientIpHash) {
-      updatePayload.last_used_ip = clientIpHash;
-    }
-
     const { error: updateError } = await runQuery(
-      db.update(api_keys).set(updatePayload).where(eq(api_keys.id, apiKeyId)),
+      db
+        .update(api_keys)
+        .set({
+          last_used_at: new Date().toISOString(),
+          ...(clientIpHash ? { last_used_ip: clientIpHash } : {}),
+        })
+        .where(eq(api_keys.id, apiKeyId)),
     );
 
     if (updateError) {
       console.warn(
-        "[resolveRestApiKey.updateLastUsedFields] failed:",
+        "[updateLastUsedFields] failed:",
         updateError.message,
       );
     }
   } catch (unexpectedError) {
     console.warn(
-      "[resolveRestApiKey.updateLastUsedFields] Unexpected error:",
+      "[updateLastUsedFields] Unexpected error:",
       unexpectedError instanceof Error
         ? unexpectedError.message
         : unexpectedError,
