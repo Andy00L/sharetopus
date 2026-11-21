@@ -78,5 +78,7 @@ export function restPostBatchFailureResponse(
       return restErrorResponse("not_found", "Post not found", requestId);
     case "not_eligible":
       return restErrorResponse("conflict", batchResult.message, requestId);
+    case "access_required":
+      return restErrorResponse("forbidden", batchResult.message, requestId);
   }
 }

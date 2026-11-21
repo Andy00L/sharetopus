@@ -83,7 +83,7 @@ describe("updateScheduledTimeBatch", () => {
 
     const result = await updateScheduledTimeBatch(["post-1"], LATER_ISO, PRINCIPAL_ID, "web");
 
-    expect(result).toEqual({ success: false, failure: "not_eligible", message: REVIVE_NEEDS_ACCESS_MESSAGE });
+    expect(result).toEqual({ success: false, failure: "access_required", message: REVIVE_NEEDS_ACCESS_MESSAGE });
     expect(countUpdates()).toBe(0);
   });
 

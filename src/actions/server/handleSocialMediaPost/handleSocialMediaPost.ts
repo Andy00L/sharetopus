@@ -1,5 +1,6 @@
 "use server";
 
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
@@ -144,6 +145,24 @@ export async function handleSocialMediaPost(config: {
       message: errorMessage,
       errors: [],
     };
+  }
+
+  if (!cronSecret) {
+    const access = await checkActiveSubscription(userId);
+    if (!access.isActive) {
+      console.warn(
+        `[handleSocialMediaPost] Refused for ${userId}: access ${access.status}`,
+      );
+      return {
+        success: false,
+        counts: buildZeroCounts(),
+        message:
+          access.status === "unavailable"
+            ? "Could not check your plan. Please try again."
+            : "Posting needs an active plan or referral weeks.",
+        errors: [],
+      };
+    }
   }
 
   const rateCheck = await checkRateLimit({

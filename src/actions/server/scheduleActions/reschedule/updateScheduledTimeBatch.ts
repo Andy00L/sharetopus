@@ -148,7 +148,7 @@ export async function updateScheduledTimeBatch(
       );
       return {
         success: false,
-        failure: reviveAccess.failure === "unavailable" ? "unavailable" : "not_eligible",
+        failure: reviveAccess.failure === "unavailable" ? "unavailable" : "access_required",
         message: reviveAccess.message,
       };
     }

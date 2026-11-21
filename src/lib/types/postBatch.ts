@@ -46,6 +46,8 @@ export type PostBatchFailure =
  * - unauthenticated: the web caller has no valid session
  * - not_found: no id matched a post, or one belongs to another principal
  * - not_eligible: no post is in a status the change applies to
+ * - access_required: the change needs an active plan or referral weeks the
+ *   owner does not have
  * - rate_limited: too many calls; resetIn says when to retry
  * - unavailable: a check could not run (rate limiter, post read); nothing
  *   changed, so a retry is safe
@@ -56,6 +58,7 @@ export type PostChangeFailure =
   | "unauthenticated"
   | "not_found"
   | "not_eligible"
+  | "access_required"
   | "rate_limited"
   | "unavailable"
   | "internal";
