@@ -25,10 +25,9 @@ import {
   setTransactionMessageLifetimeUsingBlockhash,
 } from "@solana/kit";
 
-import { CDP_SEND_TIMEOUT_MS, getCdpClient } from "@/lib/x402/cdp/cdpClient";
+import { getCdpClient, sendThroughCdp } from "@/lib/x402/cdp/cdpClient";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { getRecipientAddress, getRpcUrl } from "@/lib/x402/config";
-import { withTimeout } from "@/lib/x402/http/withTimeout";
 import {
   buildTransferCheckedInstruction,
   findAssociatedTokenAddress,
@@ -43,14 +42,46 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
   const senderAddress = getRecipientAddress(input.network);
   if (!senderAddress) {
     return {
-      ok: false,
+      status: "not_sent",
       message: `${input.network.recipientEnvVar} env var not set. Cannot issue the Solana refund.`,
     };
   }
 
   const cdpResult = getCdpClient();
-  if (!cdpResult.ok) return { ok: false, message: cdpResult.message };
+  if (!cdpResult.ok) return { status: "not_sent", message: cdpResult.message };
+  const cdpClient = cdpResult.client;
 
+  const builtTransaction = await buildRefundTransaction(input, senderAddress);
+  if (!builtTransaction.ok) {
+    console.error(`[refundSolana] Could not build the refund: ${builtTransaction.message}`);
+    return { status: "not_sent", message: builtTransaction.message };
+  }
+
+  // The CDP SDK's Solana network name matches the WalletChain short name
+  // "solana"; the registry has no Solana testnet.
+  const sendResult = await sendThroughCdp({
+    send: async () => {
+      const sentTransaction = await cdpClient.solana.sendTransaction({
+        network: "solana",
+        transaction: builtTransaction.base64Transaction,
+        idempotencyKey: input.idempotencyKey,
+      });
+      return sentTransaction.signature;
+    },
+    operationName: "CDP refund send on Solana",
+  });
+  if (sendResult.status === "sent") {
+    console.log(
+      `[refundSolana] Refund sent: ${sendResult.txHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
+    );
+  }
+  return sendResult;
+}
+
+async function buildRefundTransaction(
+  input: RefundSendInput,
+  senderAddress: string,
+): Promise<{ ok: true; base64Transaction: string } | { ok: false; message: string }> {
   try {
     const rpc = createSolanaRpc(getRpcUrl(input.network));
 
@@ -95,27 +126,11 @@ export async function refundSolana(input: RefundSendInput): Promise<RefundSendRe
     );
 
     const compiledTx = compileTransaction(txMessage);
-    const base64Tx = getBase64EncodedWireTransaction(compiledTx);
-
-    // Sign and send via CDP. The CDP SDK's Solana network name matches the
-    // WalletChain short name "solana"; the registry has no Solana testnet.
-    const result = await withTimeout(
-      cdpResult.client.solana.sendTransaction({
-        network: "solana",
-        transaction: base64Tx,
-        idempotencyKey: input.idempotencyKey,
-      }),
-      CDP_SEND_TIMEOUT_MS,
-      "CDP refund send on Solana",
-    );
-
-    console.log(
-      `[refundSolana] Refund sent: ${result.signature}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
-    );
-    return { ok: true, txHash: result.signature };
+    return { ok: true, base64Transaction: getBase64EncodedWireTransaction(compiledTx) };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error during the Solana refund.";
-    console.error(`[refundSolana] Failed: ${message}`);
-    return { ok: false, message };
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Unexpected error while building the Solana refund.",
+    };
   }
 }

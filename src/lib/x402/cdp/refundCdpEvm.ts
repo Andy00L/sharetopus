@@ -11,11 +11,10 @@ import "server-only";
 
 import { isAddress } from "viem";
 
-import { CDP_SEND_TIMEOUT_MS, getCdpClient } from "@/lib/x402/cdp/cdpClient";
+import { getCdpClient, sendThroughCdp } from "@/lib/x402/cdp/cdpClient";
 import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
 import { buildUsdcTransferCall } from "@/lib/x402/chain/usdcTransfer";
 import { getRecipientAddress } from "@/lib/x402/config";
-import { withTimeout } from "@/lib/x402/http/withTimeout";
 import type { EvmNetworkConfig } from "@/lib/x402/networks";
 
 /** EVM networks the CDP SDK can send on. sourceRef: @coinbase/cdp-sdk evm.sendTransaction network union. */
@@ -33,13 +32,13 @@ export async function refundCdpEvm(
 ): Promise<RefundSendResult> {
   const networkName = network.name;
   if (!isCdpEvmNetworkName(networkName)) {
-    return { ok: false, message: `The CDP SDK cannot send refunds on ${network.displayName}.` };
+    return { status: "not_sent", message: `The CDP SDK cannot send refunds on ${network.displayName}.` };
   }
 
   const senderAddress = getRecipientAddress(network);
   if (!senderAddress || !isAddress(senderAddress, { strict: false })) {
     return {
-      ok: false,
+      status: "not_sent",
       message: `${network.recipientEnvVar} is not set to a valid EVM address; cannot issue the refund.`,
     };
   }
@@ -49,14 +48,15 @@ export async function refundCdpEvm(
     recipientAddress: input.payerAddress,
     amountUsdc: input.amountUsdc,
   });
-  if (!transfer.ok) return transfer;
+  if (!transfer.ok) return { status: "not_sent", message: transfer.message };
 
   const cdpResult = getCdpClient();
-  if (!cdpResult.ok) return { ok: false, message: cdpResult.message };
+  if (!cdpResult.ok) return { status: "not_sent", message: cdpResult.message };
+  const cdpClient = cdpResult.client;
 
-  try {
-    const result = await withTimeout(
-      cdpResult.client.evm.sendTransaction({
+  const sendResult = await sendThroughCdp({
+    send: async () => {
+      const sentTransaction = await cdpClient.evm.sendTransaction({
         address: senderAddress,
         transaction: {
           to: transfer.usdcContract,
@@ -65,17 +65,15 @@ export async function refundCdpEvm(
         },
         network: networkName,
         idempotencyKey: input.idempotencyKey,
-      }),
-      CDP_SEND_TIMEOUT_MS,
-      `CDP refund send on ${network.displayName}`,
-    );
+      });
+      return sentTransaction.transactionHash;
+    },
+    operationName: `CDP refund send on ${network.displayName}`,
+  });
+  if (sendResult.status === "sent") {
     console.log(
-      `[refundCdpEvm] Refund sent: ${result.transactionHash}, amount: ${input.amountUsdc} USDC on ${network.displayName}, reason: ${input.reason}`,
+      `[refundCdpEvm] Refund sent: ${sendResult.txHash}, amount: ${input.amountUsdc} USDC on ${network.displayName}, reason: ${input.reason}`,
     );
-    return { ok: true, txHash: result.transactionHash };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error during the CDP refund.";
-    console.error(`[refundCdpEvm] Failed on ${network.displayName}: ${message}`);
-    return { ok: false, message };
   }
+  return sendResult;
 }

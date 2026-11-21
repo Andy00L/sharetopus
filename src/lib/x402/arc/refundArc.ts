@@ -24,12 +24,12 @@ import { buildUsdcTransferCall } from "@/lib/x402/chain/usdcTransfer";
 export async function refundArc(input: RefundSendInput): Promise<RefundSendResult> {
   const { network } = input;
   if (network.family !== "evm") {
-    return { ok: false, message: "Arc refunds need an EVM network entry." };
+    return { status: "not_sent", message: "Arc refunds need an EVM network entry." };
   }
 
   const signerResult = getArcSigner();
   if (!signerResult.ok) {
-    return { ok: false, message: signerResult.message };
+    return { status: "not_sent", message: signerResult.message };
   }
 
   const transfer = buildUsdcTransferCall({
@@ -37,7 +37,7 @@ export async function refundArc(input: RefundSendInput): Promise<RefundSendResul
     recipientAddress: input.payerAddress,
     amountUsdc: input.amountUsdc,
   });
-  if (!transfer.ok) return transfer;
+  if (!transfer.ok) return { status: "not_sent", message: transfer.message };
 
   try {
     const refundTxHash = await broadcastCall(
@@ -48,10 +48,10 @@ export async function refundArc(input: RefundSendInput): Promise<RefundSendResul
     console.log(
       `[refundArc] Refund sent: ${refundTxHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
     );
-    return { ok: true, txHash: refundTxHash };
+    return { status: "sent", txHash: refundTxHash };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error during the Arc refund.";
     console.error(`[refundArc] Failed: ${message}`);
-    return { ok: false, message };
+    return { status: "not_sent", message };
   }
 }

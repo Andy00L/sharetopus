@@ -24,5 +24,6 @@ export interface RefundSendInput {
 }
 
 export type RefundSendResult =
-  | { ok: true; txHash: string }
-  | { ok: false; message: string };
+  | { status: "sent"; txHash: string }
+  | { status: "not_sent"; message: string }
+  | { status: "outcome_unknown"; message: string };

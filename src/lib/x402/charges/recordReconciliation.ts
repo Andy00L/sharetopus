@@ -17,9 +17,11 @@ import { x402_reconciliation } from "@/db/schema";
  *   - settle_unrecorded: settled on-chain but the charge row could not be
  *     transitioned; tx_hash is the settlement transaction.
  *   - refund_failed: the request could not finish a refund it owed. tx_hash
- *     is the refund transaction when one was sent (reverted, not yet
- *     confirmed, or landed but unrecorded), null when nothing was sent. The
- *     sweep resolves the row from that transaction's on-chain state.
+ *     is the refund transaction when one is known (reverted, not yet
+ *     confirmed, or landed but unrecorded); the sweep resolves the row from
+ *     that transaction's on-chain state. A null tx_hash means none is known:
+ *     nothing was sent, or a send timed out and may still have gone out, so
+ *     the sender wallet's outgoing transfers decide.
  *
  * Best-effort: this never throws and never changes the caller's outcome. A
  * failed insert is logged, and the console.error at each call site remains

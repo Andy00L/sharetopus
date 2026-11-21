@@ -17,11 +17,11 @@ import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliatio
 import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/config";
 import type { Platform } from "@/lib/x402/connect/types";
 import { NETWORKS } from "@/lib/x402/networks";
-import { readActionPrice } from "@/lib/x402/pricing/readActionPrice";
+import { readActionPrice, readFreshActionPrice } from "@/lib/x402/pricing/readActionPrice";
 import { buildKnownExplorerTxUrl } from "@/lib/x402/proof/explorer";
 import { usdcToAtomic } from "@/lib/x402/usdcAmount";
 import { buildUsdcPaymentTransaction } from "./buildUsdcPaymentTransaction";
-import { verifyUsdcPayment } from "./verifyUsdcPayment";
+import { verifyUsdcPayment, type VerifyUsdcPaymentResult } from "./verifyUsdcPayment";
 
 /**
  * The post-now Blink: a Solana Action that publishes a text post to one of
@@ -199,7 +199,7 @@ export async function preparePostNowPayment(params: {
   const ownership = await checkAccountOwnership(walletResult.principal, params.target);
   if (!ownership.ok) return ownership;
 
-  const priceResult = await readActionPrice(BLINK_ACTION);
+  const priceResult = await readFreshActionPrice(BLINK_ACTION);
   if (!priceResult.ok) {
     return { ok: false, httpStatus: 503, message: "Pricing is unavailable right now." };
   }
@@ -242,7 +242,7 @@ export async function confirmPostNowPayment(params: {
     return { ok: false, httpStatus: 400, message: "account is not a valid Solana address." };
   }
 
-  const priceResult = await readActionPrice(BLINK_ACTION);
+  const priceResult = await readFreshActionPrice(BLINK_ACTION);
   if (!priceResult.ok) {
     return { ok: false, httpStatus: 503, message: "Pricing is unavailable right now." };
   }
@@ -264,6 +264,9 @@ export async function confirmPostNowPayment(params: {
     network: SOLANA_NETWORK,
   });
   if (!verification.ok) {
+    if (verification.reason === "amount_short" && verification.atomicReceived > BigInt(0)) {
+      return recordUnderpayment(verification);
+    }
     return {
       ok: false,
       httpStatus: mapVerificationStatus(verification.reason),
@@ -503,8 +506,28 @@ async function refundAndFail(params: {
   };
 }
 
+async function recordUnderpayment(
+  underpayment: Extract<VerifyUsdcPaymentResult, { reason: "amount_short" }>,
+): Promise<BlinkFailure> {
+  console.error(
+    `[recordUnderpayment] CHARGE RECONCILIATION NEEDED: tx ${underpayment.txSignature} from ${underpayment.payerAddress} paid ${underpayment.atomicReceived} atomic USDC, under the current post-now price; no charge recorded, refund by hand.`,
+  );
+  await recordX402Reconciliation({
+    kind: "settle_unrecorded",
+    txHash: underpayment.txSignature,
+    payerAddress: underpayment.payerAddress,
+    amountAtomic: underpayment.atomicReceived.toString(),
+    network: SOLANA_NETWORK.name,
+  });
+  return {
+    ok: false,
+    httpStatus: 402,
+    message: `${underpayment.message} Nothing was posted. The payment is recorded for a manual refund; do not resend it.`,
+  };
+}
+
 function mapVerificationStatus(
-  reason: Exclude<Awaited<ReturnType<typeof verifyUsdcPayment>>, { ok: true }>["reason"],
+  reason: Exclude<VerifyUsdcPaymentResult, { ok: true }>["reason"],
 ): number {
   switch (reason) {
     case "invalid_signature":

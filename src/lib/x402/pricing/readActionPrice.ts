@@ -13,9 +13,11 @@ import "server-only";
  * or implausibly large price fails closed instead of reaching usdcToAtomic,
  * where it would turn into a zero-amount requirement.
  *
- * Results are cached per instance for PRICE_CACHE_TTL_MS, and never past the
- * row's effective_until, so an unpaid 402 probe usually needs no database
+ * readActionPrice caches per instance for PRICE_CACHE_TTL_MS, and never past
+ * the row's effective_until, so an unpaid 402 probe usually needs no database
  * connection. A price edited in place takes effect up to that long late.
+ * readFreshActionPrice skips the cache: the Blink reads it because there the
+ * wallet pays before the price is checked.
  *
  * Called by: x402PaidEndpoint, connect/handleConnectChallenge,
  *            connect/handleConnectVerify, solanaActions/postNowBlink
@@ -48,7 +50,12 @@ export async function readActionPrice(
   if (cachedPrice && cachedPrice.expiresAtMs > Date.now()) {
     return { ok: true, usdcPrice: cachedPrice.usdcPrice };
   }
+  return readFreshActionPrice(action);
+}
 
+export async function readFreshActionPrice(
+  action: string,
+): Promise<ReadActionPriceResult> {
   const nowIso = new Date().toISOString();
   const { data: pricingRows, error: pricingError } = await runQuery(
     db

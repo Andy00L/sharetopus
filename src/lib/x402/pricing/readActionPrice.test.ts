@@ -19,7 +19,7 @@ mock.module("@/db/client", () => ({
   },
 }));
 
-const { readActionPrice } = await import("./readActionPrice");
+const { readActionPrice, readFreshActionPrice } = await import("./readActionPrice");
 
 beforeEach(() => {
   databaseReads = 0;
@@ -53,6 +53,20 @@ describe("readActionPrice cache", () => {
     const afterClose = await readActionPrice("connect_account");
 
     expect(afterClose).toEqual({ ok: false, message: 'No active pricing for action "connect_account".' });
+    expect(databaseReads).toBe(2);
+  });
+
+  test("a fresh read sees a price edited while the old one is cached, and later cached reads serve the new price", async () => {
+    activeRows = [{ usdc_price: 0.5, effective_until: null }];
+    await readActionPrice("post.text");
+
+    activeRows = [{ usdc_price: 0.75, effective_until: null }];
+    setSystemTime(new Date(START_MS + MINUTE_MS));
+    const freshRead = await readFreshActionPrice("post.text");
+    const cachedRead = await readActionPrice("post.text");
+
+    expect(freshRead).toEqual({ ok: true, usdcPrice: 0.75 });
+    expect(cachedRead).toEqual({ ok: true, usdcPrice: 0.75 });
     expect(databaseReads).toBe(2);
   });
 });

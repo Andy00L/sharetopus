@@ -13,13 +13,13 @@ import "server-only";
  * Called by: middleware/x402PaidEndpoint.ts, connect/handleConnectVerify.ts,
  *            solanaActions/postNowBlink.ts (refundCharge)
  * Tables touched: x402_charges (insert, read, update), x402_refunds (insert),
- *                 x402_reconciliation (insert)
+ *                 x402_reconciliation (insert, read)
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq, exists, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { x402_charges } from "@/db/schema";
+import { x402_charges, x402_reconciliation } from "@/db/schema";
 import type { Json } from "@/db/schema";
 import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import {
@@ -27,6 +27,7 @@ import {
   markChargeFailed,
   markChargeRefunded,
   markChargeSettled,
+  type ChargeTransitionResult,
 } from "@/lib/x402/charges/chargeTransitions";
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
 import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
@@ -199,6 +200,17 @@ async function loadChargeReplay(params: {
         payer_address: x402_charges.payer_address,
         metadata: x402_charges.metadata,
         created_at: x402_charges.created_at,
+        has_refund_reconciliation: sql<boolean>`${exists(
+          db
+            .select({ id: x402_reconciliation.id })
+            .from(x402_reconciliation)
+            .where(
+              and(
+                eq(x402_reconciliation.charge_id, x402_charges.id),
+                eq(x402_reconciliation.kind, "refund_failed"),
+              ),
+            ),
+        )}`.mapWith(Boolean),
       })
       .from(x402_charges)
       .where(eq(x402_charges.nonce, params.nonce))
@@ -222,7 +234,7 @@ async function loadChargeReplay(params: {
       ? { state: "in_progress", chargeId: charge.id }
       : { state: "closed", chargeId: charge.id };
   }
-  const hasActionFailed = charge.error_message !== null;
+  const hasActionFailed = charge.error_message !== null || charge.has_refund_reconciliation;
   if (charge.status === "settled" && charge.tx_hash && !hasActionFailed) {
     return {
       state: "settled",
@@ -304,15 +316,39 @@ export interface RefundChargeOutcome {
 /**
  * Refunds a settled charge after the paid action failed. The failure is
  * written on the charge before the refund is sent, so a replay of the payment
- * is refused from then on. Refunded only when the chain confirms it; a refund
- * that is unconfirmed or could not be sent leaves the charge settled with a
- * reconciliation row (a null tx hash means nothing was sent).
+ * is refused from then on; when that write fails twice, a refund_failed
+ * reconciliation row is written first instead, and replays read it the same
+ * way. A charge that is no longer settled gets no refund, only that row.
+ * Refunded only when the chain confirms it; any other outcome leaves the
+ * charge settled with a reconciliation row. A null tx hash there means no
+ * refund transaction is known: nothing was sent, or a send timed out and may
+ * still have gone out.
  */
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
-  await markChargeActionFailed({
+  const reconciliationBase = {
+    chargeId: input.chargeId,
+    network: input.network.name,
+    payerAddress: input.payerAddress,
+    amountAtomic: usdcToAtomic(input.amountUsdc, input.network.usdcDecimals),
+  };
+
+  const markerWrite = await writeActionFailedMarker({
     chargeId: input.chargeId,
     errorMessage: `action_failed: ${input.reason}`,
   });
+  if (!markerWrite.success && markerWrite.reason === "not_in_expected_status") {
+    console.error(
+      `[refundCharge] CHARGE RECONCILIATION NEEDED: charge ${input.chargeId} is no longer settled, so no refund was sent (another writer moved it; a second refund could pay twice).`,
+    );
+    await recordX402Reconciliation({ kind: "refund_failed", txHash: null, ...reconciliationBase });
+    return { refundInitiated: false, refundTxHash: null };
+  }
+  if (!markerWrite.success) {
+    console.error(
+      `[refundCharge] CHARGE RECONCILIATION NEEDED: the action_failed marker could not be written on charge ${input.chargeId} (${markerWrite.message}); recording the owed refund before sending it.`,
+    );
+    await recordX402Reconciliation({ kind: "refund_failed", txHash: null, ...reconciliationBase });
+  }
 
   const refundResult = await refundPayment({
     payerAddress: input.payerAddress,
@@ -321,12 +357,6 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
     reason: input.reason,
     idempotencyKey: input.chargeId,
   });
-  const reconciliationBase = {
-    chargeId: input.chargeId,
-    network: input.network.name,
-    payerAddress: input.payerAddress,
-    amountAtomic: usdcToAtomic(input.amountUsdc, input.network.usdcDecimals),
-  };
 
   switch (refundResult.status) {
     case "confirmed": {
@@ -362,6 +392,18 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
       return { refundInitiated: true, refundTxHash: refundResult.refundTxHash };
     }
 
+    case "send_unknown": {
+      console.error(
+        `[refundCharge] REFUND SEND OUTCOME UNKNOWN for charge ${input.chargeId} (settle tx ${input.settleTxHash}): ${refundResult.message}. The refund may have gone out: check the sender wallet's outgoing transfers to ${input.payerAddress} before refunding by hand.`,
+      );
+      await recordX402Reconciliation({
+        kind: "refund_failed",
+        txHash: null,
+        ...reconciliationBase,
+      });
+      return { refundInitiated: false, refundTxHash: null };
+    }
+
     case "failed": {
       console.error(
         `[refundCharge] REFUND FAILED for charge ${input.chargeId} (settle tx ${input.settleTxHash}): ${refundResult.message}`,
@@ -380,4 +422,13 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
       return { refundInitiated: false, refundTxHash: null };
     }
   }
+}
+
+async function writeActionFailedMarker(params: {
+  chargeId: string;
+  errorMessage: string;
+}): Promise<ChargeTransitionResult> {
+  const firstAttempt = await markChargeActionFailed(params);
+  if (firstAttempt.success || firstAttempt.reason !== "db_error") return firstAttempt;
+  return markChargeActionFailed(params);
 }

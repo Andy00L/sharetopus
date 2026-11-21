@@ -207,9 +207,10 @@ export type SettlePaymentResult =
 
 /**
  * not_verified and insufficient_funds are definitive: the facilitator
- * rejected the payment before broadcasting, so no money moved. The other
- * two are indeterminate: a transaction may have been sent (its hash, when
- * the facilitator reported one, rides along for reconciliation).
+ * rejected the payment before broadcasting and named no transaction, so no
+ * money moved. The other two are indeterminate: a transaction may have been
+ * sent (its hash, when the facilitator reported one, rides along for
+ * reconciliation).
  */
 export type SettlePaymentError =
   | { kind: "not_verified"; message: string }
@@ -282,11 +283,13 @@ export type RefundPaymentInput = RefundSendInput;
 /**
  * confirmed: the refund landed. unconfirmed: it was sent but did not confirm
  * in time; it may still land, so it is neither refunded nor failed yet.
- * failed: nothing was sent, or the chain reverted it.
+ * send_unknown: the send did not answer, so no hash is known and the refund
+ * may still go out. failed: nothing was sent, or the chain reverted it.
  */
 export type RefundPaymentResult =
   | { status: "confirmed"; refundTxHash: string; refundedAt: string }
   | { status: "unconfirmed"; refundTxHash: string; message: string }
+  | { status: "send_unknown"; message: string }
   | { status: "failed"; refundTxHash: string | null; message: string };
 
 /**
@@ -302,8 +305,11 @@ export async function refundPayment(
   }
 
   const sendResult = await sendRefund(input);
-  if (!sendResult.ok) {
+  if (sendResult.status === "not_sent") {
     return { status: "failed", refundTxHash: null, message: sendResult.message };
+  }
+  if (sendResult.status === "outcome_unknown") {
+    return { status: "send_unknown", message: sendResult.message };
   }
 
   const confirmation = await confirmTransaction({
@@ -337,7 +343,7 @@ function sendRefund(input: RefundSendInput): Promise<RefundSendResult> {
       return network.family === "evm" ? refundCdpEvm(input, network) : refundSolana(input);
     default: {
       const unhandledLane: never = network.settlement;
-      return Promise.resolve({ ok: false, message: `No refund sender for lane ${String(unhandledLane)}.` });
+      return Promise.resolve({ status: "not_sent", message: `No refund sender for lane ${String(unhandledLane)}.` });
     }
   }
 }
@@ -454,9 +460,10 @@ function buildVerifyError(params: {
 }
 
 /**
- * Settle reasons that prove nothing was broadcast. The facilitator re-runs
- * verify inside settle, so any verify-class rejection stops it before the
- * transfer is sent. Everything else is treated as indeterminate.
+ * Settle reasons that prove nothing was broadcast, when the reply names no
+ * transaction. The facilitator re-runs verify inside settle, so any
+ * verify-class rejection stops it before the transfer is sent. A reply that
+ * names a transaction, or any other reason, is treated as indeterminate.
  * sourceRef: @x402/evm dist/cjs/exact/facilitator/index.js, x402 core reasons
  */
 const DEFINITIVE_SETTLE_REASONS: Readonly<Record<string, "not_verified" | "insufficient_funds">> = {
@@ -490,6 +497,13 @@ function classifySettleFailure(
   transaction: string | undefined,
 ): SettlePaymentError {
   const displayMessage = message || reason || "Settlement failed.";
+  if (transaction) {
+    return {
+      kind: "facilitator_error",
+      message: `${displayMessage} (the facilitator reported transaction ${transaction}, so the payment may have moved)`,
+      transaction,
+    };
+  }
   const definitiveKind = reason ? DEFINITIVE_SETTLE_REASONS[reason] : undefined;
   if (definitiveKind === "insufficient_funds") {
     return { kind: "insufficient_funds", message: displayMessage };
@@ -497,7 +511,7 @@ function classifySettleFailure(
   if (definitiveKind === "not_verified") {
     return { kind: "not_verified", message: displayMessage };
   }
-  return { kind: "facilitator_error", message: displayMessage, transaction: transaction || null };
+  return { kind: "facilitator_error", message: displayMessage, transaction: null };
 }
 
 /** The amount the payer actually signed, for error context only. */

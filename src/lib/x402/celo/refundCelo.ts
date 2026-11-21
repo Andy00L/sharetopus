@@ -58,18 +58,18 @@ let cachedCeloRefundSigner: OperatorSigner | null = null;
 export async function refundCelo(input: RefundSendInput): Promise<RefundSendResult> {
   const { network } = input;
   if (network.family !== "evm") {
-    return { ok: false, message: "Celo refunds need an EVM network entry." };
+    return { status: "not_sent", message: "Celo refunds need an EVM network entry." };
   }
 
   const signerResult = getCeloRefundSigner(network);
-  if (!signerResult.ok) return signerResult;
+  if (!signerResult.ok) return { status: "not_sent", message: signerResult.message };
 
   const transfer = buildUsdcTransferCall({
     network,
     recipientAddress: input.payerAddress,
     amountUsdc: input.amountUsdc,
   });
-  if (!transfer.ok) return transfer;
+  if (!transfer.ok) return { status: "not_sent", message: transfer.message };
 
   try {
     const refundTxHash = await broadcastCall(
@@ -80,11 +80,11 @@ export async function refundCelo(input: RefundSendInput): Promise<RefundSendResu
     console.log(
       `[refundCelo] Refund sent: ${refundTxHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
     );
-    return { ok: true, txHash: refundTxHash };
+    return { status: "sent", txHash: refundTxHash };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error during the Celo refund.";
     console.error(`[refundCelo] Failed: ${message}`);
-    return { ok: false, message };
+    return { status: "not_sent", message };
   }
 }
 

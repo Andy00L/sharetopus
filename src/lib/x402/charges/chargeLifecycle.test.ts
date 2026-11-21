@@ -17,6 +17,7 @@ type ChargeRow = {
   payer_address: string;
   metadata: Record<string, unknown>;
   created_at: string;
+  has_refund_reconciliation: boolean;
 };
 
 const CHARGE_ID = "6f1f6a43-2b3c-4d5e-8f90-0a1b2c3d4e5f";
@@ -26,9 +27,12 @@ let issuedStatements: IssuedStatement[] = [];
 let storedCharge: ChargeRow | null = null;
 let refundResult: RefundPaymentResult = { status: "failed", refundTxHash: null, message: "rpc down" };
 let recordedReconciliations: Array<{ kind: string; txHash: string | null }> = [];
+let failingUpdateCount = 0;
+let isChargeSettled = true;
+let refundSendCount = 0;
 
 function answerStatement(statement: IssuedStatement): unknown[] {
-  if (statement.sql.startsWith("update")) return [{ id: CHARGE_ID }];
+  if (statement.sql.startsWith("update")) return isChargeSettled ? [{ id: CHARGE_ID }] : [];
   if (statement.sql.startsWith("select")) return storedCharge ? [storedCharge] : [];
   return [];
 }
@@ -38,12 +42,19 @@ mock.module("@/db/client", () => ({
   runQuery: async (query: SqlProducer) => {
     const statement = query.toSQL();
     issuedStatements.push(statement);
+    if (statement.sql.startsWith("update") && failingUpdateCount > 0) {
+      failingUpdateCount -= 1;
+      return { data: null, error: { message: "connection reset", code: "08006" } };
+    }
     return { data: answerStatement(statement), error: null };
   },
 }));
 
 mock.module("@/lib/x402/facilitator", () => ({
-  refundPayment: async () => refundResult,
+  refundPayment: async () => {
+    refundSendCount += 1;
+    return refundResult;
+  },
   settlePayment: async () => ({ ok: false, error: { kind: "timeout", message: "unused", transaction: null } }),
 }));
 
@@ -125,6 +136,9 @@ beforeEach(() => {
   issuedStatements = [];
   recordedReconciliations = [];
   storedCharge = null;
+  failingUpdateCount = 0;
+  isChargeSettled = true;
+  refundSendCount = 0;
 });
 
 describe("refundCharge after the paid action failed", () => {
@@ -143,6 +157,16 @@ describe("refundCharge after the paid action failed", () => {
     expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);
   });
 
+  test("a refund send that timed out leaves the charge settled and a reconciliation row with no tx hash", async () => {
+    refundResult = { status: "send_unknown", message: "CDP refund send on Base did not answer within 15000 ms." };
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(readUpdates()).toHaveLength(1);
+    expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);
+  });
+
   test("a confirmed refund records the failure first, then moves the charge from settled to refunded", async () => {
     refundResult = { status: "confirmed", refundTxHash: "0xrefund", refundedAt: "2026-11-21T00:00:00.000Z" };
 
@@ -157,6 +181,49 @@ describe("refundCharge after the paid action failed", () => {
   });
 });
 
+describe("refundCharge when the failure cannot be written on the charge", () => {
+  test("a marker write that fails once is retried, and the refund goes out with no extra reconciliation row", async () => {
+    failingUpdateCount = 1;
+    refundResult = { status: "confirmed", refundTxHash: "0xrefund", refundedAt: "2026-11-21T00:00:00.000Z" };
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: true, refundTxHash: "0xrefund" });
+    expect(readUpdates().map((update) => update.params[0])).toEqual([
+      "action_failed: Could not dispatch the post.",
+      "action_failed: Could not dispatch the post.",
+      "refunded",
+    ]);
+    expect(refundSendCount).toBe(1);
+    expect(recordedReconciliations).toEqual([]);
+  });
+
+  test("a marker write that fails twice records the owed refund before sending it", async () => {
+    failingUpdateCount = 2;
+    refundResult = { status: "failed", refundTxHash: null, message: "rpc down" };
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(refundSendCount).toBe(1);
+    expect(recordedReconciliations).toEqual([
+      { kind: "refund_failed", txHash: null },
+      { kind: "refund_failed", txHash: null },
+    ]);
+  });
+
+  test("a charge that is no longer settled gets no refund, only a reconciliation row", async () => {
+    isChargeSettled = false;
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(readUpdates()).toHaveLength(1);
+    expect(refundSendCount).toBe(0);
+    expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);
+  });
+});
+
 describe("a replayed payment", () => {
   const settledCharge: ChargeRow = {
     id: CHARGE_ID,
@@ -167,6 +234,7 @@ describe("a replayed payment", () => {
     payer_address: PAYER_ADDRESS,
     metadata: {},
     created_at: "2026-11-21T00:00:00.000Z",
+    has_refund_reconciliation: false,
   };
 
   test("is served again when its settled charge's action succeeded", async () => {
@@ -179,6 +247,14 @@ describe("a replayed payment", () => {
 
   test("is refused when its settled charge records a failed action", async () => {
     storedCharge = { ...settledCharge, error_message: "action_failed: Could not dispatch the post." };
+
+    const result = await replayStoredPayment();
+
+    expect(result).toEqual({ ok: false, reason: "replay", replay: { state: "closed", chargeId: CHARGE_ID } });
+  });
+
+  test("is refused when its settled charge has a refund reconciliation row but no failure marker", async () => {
+    storedCharge = { ...settledCharge, has_refund_reconciliation: true };
 
     const result = await replayStoredPayment();
 

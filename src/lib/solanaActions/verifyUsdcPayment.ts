@@ -42,13 +42,20 @@ export type VerifyUsdcPaymentResult =
     }
   | {
       ok: false;
+      reason: "amount_short";
+      message: string;
+      txSignature: string;
+      payerAddress: string;
+      atomicReceived: bigint;
+    }
+  | {
+      ok: false;
       reason:
         | "invalid_signature"
         | "not_found"
         | "failed_on_chain"
         | "payer_mismatch"
         | "no_usdc_credit"
-        | "amount_short"
         | "rpc_error";
       message: string;
     };
@@ -142,6 +149,9 @@ export async function verifyUsdcPayment(params: {
       ok: false,
       reason: "amount_short",
       message: `The transaction paid ${atomicReceived} atomic USDC; ${params.minimumAtomicAmount} was required.`,
+      txSignature: String(txSignature),
+      payerAddress: String(feePayer.pubkey),
+      atomicReceived,
     };
   }
 
