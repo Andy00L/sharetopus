@@ -1,16 +1,13 @@
 import "server-only";
 
-import { eq } from "drizzle-orm";
-
 import { storeContentHistory } from "@/actions/server/contentHistoryActions/storeContentHistory";
-import { db, runQuery } from "@/db/client";
-import { social_accounts } from "@/db/schema";
 import type { CreatedVia, MediaType } from "@/db/schema";
 import type { PlatformFailure } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
   refreshWithAccountLock,
   settleRefusedRefresh,
+  storeRefreshedCredential,
   type RefreshWindowOptions,
   type StoredCredential,
 } from "@/lib/api/refreshWithAccountLock";
@@ -26,8 +23,6 @@ import type {
   ProviderDefinition,
   TokenRefreshFailureReason,
 } from "./types";
-
-const ROTATED_TOKEN_WRITE_ATTEMPTS = 2;
 
 export type RegistryPublishOutcome =
   | { success: true; count: 1; reconnectWarning: string | null }
@@ -203,6 +198,7 @@ async function ensureFreshRegistryToken(
   const refreshCredential = provider.refresh;
   if (!refreshCredential) {
     return settleRegistryRefusal({
+      providerLabel: provider.label,
       accountId: account.id,
       platform: account.platform,
       refusedExpiresAt: account.token_expires_at,
@@ -230,11 +226,7 @@ async function ensureFreshRegistryToken(
     case "refreshed":
       return outcome.value;
     case "unavailable":
-      return {
-        success: false,
-        message: `We could not refresh your ${provider.label} connection just now. Please try again in a few minutes.`,
-        reason: "transient",
-      };
+      return buildRetryLaterResult(provider.label);
   }
 }
 
@@ -262,6 +254,7 @@ async function refreshAndStoreRegistryToken(input: {
     };
     if (refreshed.reason === "transient") return refusal;
     return settleRegistryRefusal({
+      providerLabel,
       accountId: input.accountId,
       platform: input.platform,
       refusedExpiresAt: stored.token_expires_at,
@@ -269,44 +262,38 @@ async function refreshAndStoreRegistryToken(input: {
     });
   }
 
+  const storeOutcome = await storeRefreshedCredential({
+    accountId: input.accountId,
+    replacedExpiresAt: stored.token_expires_at,
+    credential: {
+      access_token: refreshed.accessToken,
+      refresh_token: refreshed.rotatedRefreshToken ?? stored.refresh_token,
+      token_expires_at:
+        refreshed.expiresIn === null
+          ? null
+          : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+    },
+  });
+  if (storeOutcome.kind === "stored") {
+    return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };
+  }
+  if (storeOutcome.kind === "superseded") {
+    return { success: true, accessToken: storeOutcome.accessToken, reconnectWarning: null };
+  }
+
   const hasRotatedRefreshToken =
     refreshed.rotatedRefreshToken !== null &&
     refreshed.rotatedRefreshToken !== stored.refresh_token;
-  const writeAttempts = hasRotatedRefreshToken ? ROTATED_TOKEN_WRITE_ATTEMPTS : 1;
-  let persistErrorMessage: string | null = null;
-  for (let attemptIndex = 0; attemptIndex < writeAttempts; attemptIndex++) {
-    const { error: persistError } = await runQuery(
-      db
-        .update(social_accounts)
-        .set({
-          access_token: refreshed.accessToken,
-          refresh_token: refreshed.rotatedRefreshToken ?? stored.refresh_token,
-          token_expires_at:
-            refreshed.expiresIn === null
-              ? null
-              : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
-          is_available: true,
-          updated_at: new Date().toISOString(),
-        })
-        .where(eq(social_accounts.id, input.accountId)),
-    );
-    persistErrorMessage = persistError?.message ?? null;
-    if (!persistError) break;
-  }
-
-  if (persistErrorMessage === null) {
-    return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };
-  }
   if (!hasRotatedRefreshToken) {
     console.error(
       `${logPrefix} Token persist failed for account ${input.accountId}; the ` +
-        `stored refresh token is still valid. ${persistErrorMessage}`,
+        `stored refresh token is still valid. ${storeOutcome.message}`,
     );
     return { success: true, accessToken: refreshed.accessToken, reconnectWarning: null };
   }
   console.error(
     `${logPrefix} RECONNECT REQUIRED: the rotated refresh token for account ` +
-      `${input.accountId} could not be saved. ${persistErrorMessage}`,
+      `${input.accountId} could not be saved. ${storeOutcome.message}`,
   );
   return {
     success: true,
@@ -316,15 +303,29 @@ async function refreshAndStoreRegistryToken(input: {
 }
 
 async function settleRegistryRefusal(input: {
+  providerLabel: string;
   accountId: string;
   platform: string;
   refusedExpiresAt: string | null;
   refusal: RegistryTokenFailure;
 }): Promise<FreshTokenResult> {
   const settled = await settleRefusedRefresh(input);
-  return settled.kind === "refreshed_elsewhere"
-    ? { success: true, accessToken: settled.accessToken, reconnectWarning: null }
-    : input.refusal;
+  switch (settled.kind) {
+    case "refreshed_elsewhere":
+      return { success: true, accessToken: settled.accessToken, reconnectWarning: null };
+    case "needs_reconnect":
+      return input.refusal;
+    case "retry_later":
+      return buildRetryLaterResult(input.providerLabel);
+  }
+}
+
+function buildRetryLaterResult(providerLabel: string): RegistryTokenFailure {
+  return {
+    success: false,
+    message: `We could not refresh your ${providerLabel} connection just now. Please try again in a few minutes.`,
+    reason: "transient",
+  };
 }
 
 function buildSessionExpiredResult(providerLabel: string): RegistryTokenFailure {

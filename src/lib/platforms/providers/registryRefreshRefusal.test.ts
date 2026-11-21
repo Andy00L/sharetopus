@@ -36,11 +36,13 @@ mock.module("@/db/client", () => ({
     }
     const isFlagWrite =
       builtSql.sql.includes('"is_available"') && builtSql.params.includes(false);
-    if (isFlagWrite && isFlagGuardMet(builtSql)) {
+    const isFlagApplied = isFlagWrite && isFlagGuardMet(builtSql);
+    if (isFlagApplied) {
       storedAccountRow.is_available = false;
       flagWriteCount += 1;
     }
-    return { data: [], error: null };
+    const returnsRows = builtSql.sql.includes(" returning ");
+    return { data: isFlagApplied && returnsRows ? [{ id: "account-1" }] : [], error: null };
   },
 }));
 
@@ -150,7 +152,7 @@ describe("a refused registry refresh flags the account", () => {
     expect(storedAccountRow.is_available).toBe(true);
   });
 
-  test("a token saved after the re-read keeps its row unflagged", async () => {
+  test("a token saved after the re-read keeps its row unflagged and is returned", async () => {
     answerRefresh = () => REFUSED_REFRESH;
     rowSavedAfterReread = {
       access_token: "access-saved-late",
@@ -159,7 +161,11 @@ describe("a refused registry refresh flags the account", () => {
       is_available: true,
     };
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
-    expect(tokenResult.success ? null : tokenResult.reason).toBe("auth_expired");
+    expect(tokenResult).toEqual({
+      success: true,
+      accessToken: "access-saved-late",
+      reconnectWarning: null,
+    });
     expect(flagWriteCount).toBe(0);
     expect(storedAccountRow.is_available).toBe(true);
   });

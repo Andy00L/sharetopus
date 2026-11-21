@@ -1,17 +1,14 @@
-import { and, eq } from "drizzle-orm";
-
-import { db, runQuery } from "@/db/client";
-import { social_accounts } from "@/db/schema";
 import type { Platform } from "@/db/schema";
 import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
   refreshWithAccountLock,
   settleRefusedRefresh,
+  storeRefreshedCredential,
   type RefreshWindowOptions,
 } from "@/lib/api/refreshWithAccountLock";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
-import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 import refreshInstagramToken from "./instagram/data/refreshInstagramToken";
 import refreshLinkedInToken from "./linkedin/data/refreshLinkedinToken";
 import refreshPinterestToken from "./pinterest/data/refreshPinterestToken";
@@ -89,46 +86,28 @@ async function refreshAndStoreToken(
     }
     const newTokens = refreshResult.tokens;
 
-    const updateSuccess = await updateTokenInDatabase(
-      account.id,
-      account.platform,
-      newTokens,
-      account.refresh_token ?? null,
-    );
+    const storeOutcome = await storeRefreshedCredential({
+      accountId: account.id,
+      replacedExpiresAt: account.token_expires_at,
+      credential: {
+        access_token: newTokens.access_token,
+        refresh_token: newTokens.refresh_token || account.refresh_token,
+        token_expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
+      },
+    });
 
-    if (!updateSuccess) {
-      const refreshTokenWasRotated =
-        Boolean(newTokens.refresh_token) &&
-        newTokens.refresh_token !== account.refresh_token;
-
-      if (refreshTokenWasRotated) {
-        console.error(
-          `[ensureValidToken ${account.platform}] RECONNECT REQUIRED: ` +
-            `refresh token rotated but could not be persisted for account ` +
-            `${account.id}. The stored refresh token is now invalid and its ` +
-            `replacement was lost; automatic refresh will fail from here on.`,
+    switch (storeOutcome.kind) {
+      case "stored":
+        console.log(
+          `[ensureValidToken ${account.platform}] Token refreshed successfully`,
         );
-      } else {
-        console.error(
-          `[ensureValidToken ${account.platform}] DB update failed after ` +
-            `refresh for account ${account.id}; the stored refresh token is ` +
-            `still valid, so the next call will refresh again.`,
-        );
-      }
-
-      return {
-        success: true,
-        token: newTokens.access_token,
-      };
+        return { success: true, token: newTokens.access_token };
+      case "superseded":
+        return { success: true, token: storeOutcome.accessToken };
+      case "failed":
+        logLostTokenStore(account, newTokens.refresh_token, storeOutcome.message);
+        return { success: true, token: newTokens.access_token };
     }
-
-    console.log(
-      `[ensureValidToken ${account.platform}] Token refreshed successfully`,
-    );
-    return {
-      success: true,
-      token: newTokens.access_token,
-    };
   } catch (error) {
     console.error(
       `[ensureValidToken ${account.platform}] Refresh error:`,
@@ -204,71 +183,36 @@ async function handleRejectedRefresh(
     platform: account.platform,
     refusedExpiresAt: account.token_expires_at,
   });
-  return settled.kind === "refreshed_elsewhere"
-    ? { success: true, token: settled.accessToken }
-    : buildReconnectResult(account.platform);
+  switch (settled.kind) {
+    case "refreshed_elsewhere":
+      return { success: true, token: settled.accessToken };
+    case "needs_reconnect":
+      return buildReconnectResult(account.platform);
+    case "retry_later":
+      return buildRetryLaterResult(account.platform);
+  }
 }
 
-async function updateTokenInDatabase(
-  accountId: string,
-  platform: Platform,
-  tokenData: TokenExchangeResponse,
-  currentRefreshToken: string | null,
-): Promise<boolean> {
-  try {
-    console.log(
-      `[updateTokenInDatabase ${platform}] Updating tokens for account ${accountId}`,
+function logLostTokenStore(
+  account: SocialAccount,
+  newRefreshToken: string | undefined,
+  storeErrorMessage: string,
+): void {
+  const refreshTokenWasRotated =
+    Boolean(newRefreshToken) && newRefreshToken !== account.refresh_token;
+
+  if (refreshTokenWasRotated) {
+    console.error(
+      `[logLostTokenStore ${account.platform}] RECONNECT REQUIRED: ` +
+        `refresh token rotated but could not be persisted for account ` +
+        `${account.id}. The stored refresh token is now invalid and its ` +
+        `replacement was lost; automatic refresh will fail from here on. ${storeErrorMessage}`,
     );
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + tokenData.expires_in * 1000);
-
-    const updatePayload = {
-      access_token: tokenData.access_token,
-      refresh_token: tokenData.refresh_token || currentRefreshToken,
-      token_expires_at: expiresAt.toISOString(),
-      is_available: true,
-      updated_at: new Date().toISOString(),
-    };
-
-    const runUpdate = async (): Promise<string | null> => {
-      const { error } = await runQuery(
-        db
-          .update(social_accounts)
-          .set(updatePayload)
-          .where(
-            and(
-              eq(social_accounts.id, accountId),
-              eq(social_accounts.platform, platform),
-            ),
-          ),
-      );
-      return error ? error.message : null;
-    };
-
-    let updateError = await runUpdate();
-    if (updateError) {
-      console.warn(
-        `[updateTokenInDatabase ${platform}] Update failed for account ` +
-          `${accountId}, retrying once: ${updateError}`,
-      );
-      updateError = await runUpdate();
-    }
-
-    if (updateError) {
-      console.error(
-        `[updateTokenInDatabase ${platform}] Update error after retry for ` +
-          `account ${accountId}: ${updateError}`,
-      );
-      return false;
-    }
-
-    console.log(
-      `[updateTokenInDatabase ${platform}] Tokens updated for ${accountId}`,
-    );
-    return true;
-  } catch (error) {
-    console.error(`[updateTokenInDatabase ${platform}] Error:`, error);
-    return false;
+    return;
   }
+  console.error(
+    `[logLostTokenStore ${account.platform}] DB update failed after ` +
+      `refresh for account ${account.id}; the stored refresh token is ` +
+      `still valid, so the next call will refresh again. ${storeErrorMessage}`,
+  );
 }

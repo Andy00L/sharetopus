@@ -17,6 +17,7 @@ const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 const POLL_INITIAL_INTERVAL_MS = 500;
 const POLL_MAX_INTERVAL_MS = 4_000;
+const CREDENTIAL_WRITE_ATTEMPTS = 2;
 
 // Deletes the lock only while this run still owns it. A plain DEL could remove a
 // lock that another run took after ours expired:
@@ -36,9 +37,15 @@ export type LockedRefreshOutcome<Refreshed> =
 
 export type RefreshWindowOptions = { refreshIfExpiringWithinMs?: number };
 
+export type CredentialStoreOutcome =
+  | { kind: "stored" }
+  | { kind: "superseded"; accessToken: string }
+  | { kind: "failed"; message: string };
+
 export type RefusedRefreshOutcome =
   | { kind: "refreshed_elsewhere"; accessToken: string }
-  | { kind: "needs_reconnect" };
+  | { kind: "needs_reconnect" }
+  | { kind: "retry_later" };
 
 type LockAttempt =
   | { kind: "acquired"; ownerId: string }
@@ -143,28 +150,91 @@ export async function settleRefusedRefresh(input: {
       : null;
   if (freshToken) return { kind: "refreshed_elsewhere", accessToken: freshToken };
 
-  const rowStillHoldsRefusedCredential = and(
-    eq(social_accounts.id, input.accountId),
-    input.refusedExpiresAt === null
-      ? isNull(social_accounts.token_expires_at)
-      : eq(social_accounts.token_expires_at, input.refusedExpiresAt),
-  );
-  const { error: flagError } = await runQuery(
+  const { data: flaggedRows, error: flagError } = await runQuery(
     db
       .update(social_accounts)
       .set({ is_available: false, updated_at: new Date().toISOString() })
-      .where(rowStillHoldsRefusedCredential),
+      .where(
+        and(
+          eq(social_accounts.id, input.accountId),
+          holdsTokenExpiry(input.refusedExpiresAt),
+        ),
+      )
+      .returning({ id: social_accounts.id }),
   );
   if (flagError) {
     console.error(
       `[settleRefusedRefresh ${input.platform}] Could not flag account ${input.accountId} as unavailable: ${flagError.message}`,
     );
-  } else {
+    return { kind: "retry_later" };
+  }
+  if (flaggedRows.length > 0) {
     console.warn(
       `[settleRefusedRefresh ${input.platform}] Account ${input.accountId} flagged as needing re-authentication.`,
     );
+    return { kind: "needs_reconnect" };
   }
-  return { kind: "needs_reconnect" };
+
+  const current = await readStoredCredential(input.accountId);
+  const currentToken = current.ok ? selectFreshAccessToken(current.credential) : null;
+  if (currentToken) return { kind: "refreshed_elsewhere", accessToken: currentToken };
+  console.warn(
+    `[settleRefusedRefresh ${input.platform}] Account ${input.accountId} changed after the refusal but holds no fresh token; asking to retry later.`,
+  );
+  return { kind: "retry_later" };
+}
+
+export async function storeRefreshedCredential(input: {
+  accountId: string;
+  replacedExpiresAt: string | null;
+  credential: StoredCredential;
+}): Promise<CredentialStoreOutcome> {
+  let lastErrorMessage = "";
+  for (let attemptNumber = 1; attemptNumber <= CREDENTIAL_WRITE_ATTEMPTS; attemptNumber++) {
+    const { data: storedRows, error } = await runQuery(
+      db
+        .update(social_accounts)
+        .set({ ...input.credential, is_available: true, updated_at: new Date().toISOString() })
+        .where(
+          and(
+            eq(social_accounts.id, input.accountId),
+            holdsTokenExpiry(input.replacedExpiresAt),
+          ),
+        )
+        .returning({ id: social_accounts.id }),
+    );
+    if (!error) {
+      return storedRows.length > 0 ? { kind: "stored" } : settleUnmatchedStore(input);
+    }
+    lastErrorMessage = error.message;
+    console.warn(
+      `[storeRefreshedCredential] Write ${attemptNumber} of ${CREDENTIAL_WRITE_ATTEMPTS} failed for account ${input.accountId}: ${error.message}`,
+    );
+  }
+  return { kind: "failed", message: lastErrorMessage };
+}
+
+async function settleUnmatchedStore(input: {
+  accountId: string;
+  credential: StoredCredential;
+}): Promise<CredentialStoreOutcome> {
+  const current = await readStoredCredential(input.accountId);
+  if (!current.ok) return { kind: "failed", message: current.message };
+  if (current.credential.access_token === input.credential.access_token) return { kind: "stored" };
+  const currentToken = selectFreshAccessToken(current.credential);
+  if (currentToken) {
+    console.warn(
+      `[settleUnmatchedStore] Another refresh stored a newer token for account ${input.accountId}; keeping it.`,
+    );
+    return { kind: "superseded", accessToken: currentToken };
+  }
+  return { kind: "failed", message: "The stored credential changed and holds no fresh token." };
+}
+
+function holdsTokenExpiry(expiresAt: string | null) {
+  return expiresAt === null
+    ? isNull(social_accounts.token_expires_at)
+    : eq(social_accounts.token_expires_at, expiresAt);
 }
 
 async function refreshIfStillExpiring<Refreshed>(

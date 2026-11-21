@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { randomBytes } from "node:crypto";
+
+import { drizzle } from "drizzle-orm/postgres-js";
 
 import type { StoredCredential } from "@/lib/api/refreshWithAccountLock";
+import { createSocialAccountRowFake } from "@/lib/api/socialAccountRowFake";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 import type {
@@ -13,28 +17,18 @@ import {
   FIXTURE_STORAGE_BASE_URL,
 } from "./_shared/signedStorageUrlFixture";
 
+process.env.SOCIAL_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+
 mock.module("server-only", () => ({}));
 
-function buildChainableQuery(): object {
-  const chainableQuery: object = new Proxy(() => chainableQuery, {
-    get: () => () => chainableQuery,
-    apply: () => chainableQuery,
-  });
-  return chainableQuery;
-}
+const accountTable = createSocialAccountRowFake();
+mock.module("@/db/client", () => ({ db: drizzle.mock(), runQuery: accountTable.runQuery }));
 
-let failingWriteCount = 0;
-let writeCount = 0;
-mock.module("@/db/client", () => ({
-  db: buildChainableQuery(),
-  runQuery: async () => {
-    writeCount += 1;
-    if (writeCount <= failingWriteCount) {
-      return { data: null, error: { message: "connection reset", code: null } };
-    }
-    return { data: [], error: null };
-  },
-}));
+function failFirstStores(failingStoreCount: number): void {
+  accountTable.setHooks({
+    beforeStoreApplies: async (storeNumber) => (storeNumber <= failingStoreCount ? "fail" : "commit"),
+  });
+}
 
 const storedHistoryRows: unknown[] = [];
 mock.module("@/actions/server/contentHistoryActions/storeContentHistory", () => ({
@@ -109,8 +103,7 @@ const EXPIRED_ACCOUNT: SocialAccount = {
 };
 
 beforeEach(() => {
-  failingWriteCount = 0;
-  writeCount = 0;
+  accountTable.reset({ id: "account-1", platform: "bluesky", is_available: true, ...STORED_CREDENTIAL });
   refreshAnswer = {
     ok: true,
     accessToken: "new-access",
@@ -127,13 +120,14 @@ describe("refreshRegistryAccountToken", () => {
       accessToken: "new-access",
       reconnectWarning: null,
     });
-    expect(writeCount).toBe(1);
+    expect(accountTable.countStores()).toBe(1);
+    expect(accountTable.readRow()).toMatchObject({ access_token: "new-access", refresh_token: "new-refresh" });
   });
 
   test("a rotated refresh token that cannot be saved is retried once, then reported", async () => {
-    failingWriteCount = 2;
+    failFirstStores(2);
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
-    expect(writeCount).toBe(2);
+    expect(accountTable.countStores()).toBe(2);
     expect(tokenResult.success).toBe(true);
     if (!tokenResult.success) return;
     expect(tokenResult.accessToken).toBe("new-access");
@@ -141,9 +135,9 @@ describe("refreshRegistryAccountToken", () => {
   });
 
   test("a second write that succeeds keeps the rotated token without a warning", async () => {
-    failingWriteCount = 1;
+    failFirstStores(1);
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
-    expect(writeCount).toBe(2);
+    expect(accountTable.countStores()).toBe(2);
     expect(tokenResult).toEqual({
       success: true,
       accessToken: "new-access",
@@ -152,7 +146,7 @@ describe("refreshRegistryAccountToken", () => {
   });
 
   test("a lost write without rotation keeps the stored refresh token usable", async () => {
-    failingWriteCount = 1;
+    failFirstStores(2);
     refreshAnswer = {
       ok: true,
       accessToken: "new-access",
@@ -160,7 +154,7 @@ describe("refreshRegistryAccountToken", () => {
       expiresIn: 3600,
     };
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
-    expect(writeCount).toBe(1);
+    expect(accountTable.countStores()).toBe(2);
     expect(tokenResult).toEqual({
       success: true,
       accessToken: "new-access",
@@ -172,6 +166,39 @@ describe("refreshRegistryAccountToken", () => {
     refreshAnswer = { ok: false, message: "invalid_grant", reason: "auth_expired" };
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
     expect(tokenResult.success ? null : tokenResult.reason).toBe("auth_expired");
+  });
+
+  test("a rotated token whose first write committed but lost its reply is kept without a warning", async () => {
+    accountTable.setHooks({
+      beforeStoreApplies: async (storeNumber) => (storeNumber === 1 ? "commit_and_lose_reply" : "commit"),
+    });
+    const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    expect(tokenResult).toEqual({ success: true, accessToken: "new-access", reconnectWarning: null });
+    expect(accountTable.readRow()).toMatchObject({ access_token: "new-access", refresh_token: "new-refresh" });
+  });
+
+  test("path G: a write retried after a lost reply keeps the newer token another refresh saved", async () => {
+    const savedByOtherRefresh = {
+      id: "account-1",
+      platform: "bluesky",
+      is_available: true,
+      access_token: "access-saved-by-other-refresh",
+      refresh_token: "refresh-saved-by-other-refresh",
+      token_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    };
+    accountTable.setHooks({
+      beforeStoreApplies: async (storeNumber) => (storeNumber === 1 ? "commit_and_lose_reply" : "commit"),
+      afterStoreApplies: async (storeNumber) => {
+        if (storeNumber === 1) accountTable.replaceRow(savedByOtherRefresh);
+      },
+    });
+    const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
+    expect(accountTable.readRow()).toEqual(savedByOtherRefresh);
+    expect(tokenResult).toEqual({
+      success: true,
+      accessToken: "access-saved-by-other-refresh",
+      reconnectWarning: null,
+    });
   });
 });
 
