@@ -3,7 +3,7 @@ import type { FailureEventPayload } from "inngest";
 import { inngest } from "@/inngest/client";
 import { postNowEvent, PostNowEventDataSchema } from "@/inngest/events/postNow";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
-import { isSafeToRetryPost } from "./platformErrors";
+import { buildMissingMediaRefusal, isSafeToRetryPost } from "./platformErrors";
 import {
   buildDirectPublishRequest,
   findPublishedDirectPost,
@@ -98,7 +98,13 @@ export const processDirectPost = inngest.createFunction(
           storagePath: data.media_path,
           principalId: data.principal_id,
         });
-        if (!minted.success) throw new Error(`signed-url-failure: ${minted.message}`);
+        if (!minted.success) {
+          if (minted.reason === "not_found") {
+            const refusal = buildMissingMediaRefusal(minted.message);
+            return { success: false, message: refusal.message, contentId: null, mayHavePublished: false };
+          }
+          throw new Error(`signed-url-failure: ${minted.message}`);
+        }
 
         const publishResult = await publishToPlatform(
           buildDirectPublishRequest({ data, account: fetched.account, urls: minted }),

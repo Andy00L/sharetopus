@@ -40,7 +40,7 @@ const PHOTO_POST: ProviderPublishInput = {
   fileName: "photo.png",
   mediaMimeType: "image/png",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 describe("Telegram media sent by link", () => {

@@ -13,7 +13,10 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
-import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
+import {
+  postToLinkedIn,
+  UNKNOWN_LINKEDIN_POST_ID,
+} from "@/lib/api/linkedin/post/postToLinkedIn";
 import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
 
 import {
@@ -154,7 +157,7 @@ async function linkedinPagePublish(
 
   const shareResult = await postToLinkedIn({
     accessToken: input.accessToken,
-    memberUrn: `urn:li:organization:${organizationId}`,
+    authorUrn: `urn:li:organization:${organizationId}`,
     text: commentary,
     postType: input.postType,
     mediaType: input.mediaMimeType,
@@ -163,7 +166,7 @@ async function linkedinPagePublish(
   if (!shareResult.success) {
     return { ok: false, message: shareResult.error, failure: shareResult.failure };
   }
-  return { ok: true, postId: shareResult.postId, postUrl: null };
+  return { ok: true, postId: shareResult.postId ?? UNKNOWN_LINKEDIN_POST_ID, postUrl: null };
 }
 
 async function linkedinPageRunTool(

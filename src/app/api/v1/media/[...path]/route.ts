@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
-import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
+import {
+  restErrorResponse,
+  SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
+} from "@/lib/api/rest/errors/restErrorResponse";
 import { ViewUrlQuerySchema } from "@/lib/api/rest/validation/mediaSchemas";
 import type {
   MediaDeleteResult,
@@ -57,11 +60,14 @@ export const GET = withRestEndpoint({
       expiresInSeconds,
     );
     if (!viewUrlResult.success) {
-      return restErrorResponse(
-        "not_found",
-        "File not found in storage",
-        ctx.requestId,
-      );
+      return viewUrlResult.reason === "not_found"
+        ? restErrorResponse("not_found", "File not found in storage", ctx.requestId)
+        : restErrorResponse(
+            "service_unavailable",
+            "Storage could not sign a view URL. Try again shortly.",
+            ctx.requestId,
+            { retry_after_seconds: SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS },
+          );
     }
 
     return {

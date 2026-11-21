@@ -4,13 +4,12 @@ import type { Blob } from "node:buffer";
 
 import { fetch as undiciFetch } from "undici";
 
+import { STORAGE_READ_TIMEOUT_MS } from "@/actions/server/data/storageRead";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { describeNetworkError } from "@/lib/net/describeNetworkError";
 
 import type { ProviderPublishFailure } from "../types";
 import { failPublish, refusePublish } from "./publishFailure";
-
-const STORED_MEDIA_TIMEOUT_MS = 60_000;
 
 export const BYTES_PER_MB = 1024 * 1024;
 
@@ -28,7 +27,7 @@ export async function fetchStoredMedia(
 ): Promise<StoredMediaResult> {
   try {
     const mediaResponse = await undiciFetch(mediaUrl, {
-      signal: AbortSignal.timeout(STORED_MEDIA_TIMEOUT_MS),
+      signal: AbortSignal.timeout(STORAGE_READ_TIMEOUT_MS),
     });
     if (!mediaResponse.ok) {
       await mediaResponse.body?.cancel();
@@ -58,7 +57,7 @@ export async function readStoredMediaBytes(
 ): Promise<{ ok: true; declaredBytes: number | null } | ProviderPublishFailure> {
   try {
     const mediaResponse = await undiciFetch(mediaUrl, {
-      signal: AbortSignal.timeout(STORED_MEDIA_TIMEOUT_MS),
+      signal: AbortSignal.timeout(STORAGE_READ_TIMEOUT_MS),
     });
     await mediaResponse.body?.cancel();
     if (!mediaResponse.ok) {

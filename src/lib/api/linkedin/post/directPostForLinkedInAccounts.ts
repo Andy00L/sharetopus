@@ -1,7 +1,11 @@
 import "server-only";
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
-import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
-import type { LinkedInPostResult } from "@/lib/api/linkedin/post/postToLinkedIn";
+import { toPublishFailureReason } from "@/actions/server/data/storageRead";
+import {
+  postToLinkedIn,
+  UNKNOWN_LINKEDIN_POST_ID,
+  type LinkedInPostResult,
+} from "@/lib/api/linkedin/post/postToLinkedIn";
 import { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import {
   buildDirectPostRefusal,
@@ -87,7 +91,7 @@ export async function directPostForLinkedInAccounts(
             `[LinkedIn Direct Post] Failed to fetch media:`,
             fileResult.message,
           );
-          return buildDirectPostRefusal(fileResult.message, "transient");
+          return buildDirectPostRefusal(fileResult.message, toPublishFailureReason(fileResult.reason));
         }
         return {
           success: true,
@@ -97,7 +101,7 @@ export async function directPostForLinkedInAccounts(
       call: async (accessToken, passthrough) =>
         postToLinkedIn({
           accessToken,
-          memberUrn: passthrough.memberUrn ?? "",
+          authorUrn: passthrough.memberUrn ?? "",
           text: passthrough.config.accountContent.description,
           link: passthrough.config.accountContent.link,
           mediaType: passthrough.config.mediaType,
@@ -105,7 +109,7 @@ export async function directPostForLinkedInAccounts(
           buffer: passthrough.buffer,
         }),
       toHistoryFields: (postResult, _passthrough, genericConfig) => ({
-        content_id: postResult.postId,
+        content_id: postResult.postId ?? UNKNOWN_LINKEDIN_POST_ID,
         media_url: postResult.postId
           ? `https://www.linkedin.com/feed/update/${postResult.postId}`
           : null,

@@ -38,7 +38,7 @@ const ARTICLE_POST: ProviderPublishInput = {
   fileName: "",
   mediaMimeType: "",
   options: { tags: ["Bun", "typescript", "Testing", "web", "fifth"] },
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 describe("Dev.to article create", () => {

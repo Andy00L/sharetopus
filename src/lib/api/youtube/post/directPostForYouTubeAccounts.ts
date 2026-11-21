@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseVideoFile } from "@/actions/server/data/getSupabaseVideoFile";
+import { toPublishFailureReason } from "@/actions/server/data/storageRead";
 import {
   buildDirectPostRefusal,
   directPostForAccountsGeneric,
@@ -87,7 +88,7 @@ export async function directPostForYouTubeAccounts(
             "[YouTube Direct Post] Failed to fetch media:",
             fileResult.message,
           );
-          return buildDirectPostRefusal(fileResult.message, "transient");
+          return buildDirectPostRefusal(fileResult.message, toPublishFailureReason(fileResult.reason));
         }
         return {
           success: true,

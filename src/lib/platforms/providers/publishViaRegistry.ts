@@ -25,18 +25,11 @@ export type RegistryPublishOutcome =
   | { success: true; count: 1; reconnectWarning: string | null }
   | { success: false; count: 0; message: string; failure: PlatformFailure };
 
-export type RegistryPublishResult = {
-  success: boolean;
-  count: number;
-  message?: string;
-  failure?: PlatformFailure;
-};
-
-export type RegistryPostOrigin =
+export type PostOrigin =
   | { kind: "scheduled"; scheduledPostId: string }
   | { kind: "post_now"; dispatchId: string };
 
-type RegistryPublishContent = {
+export type RegistryPublishArgs = {
   account: SocialAccount;
   principalId: string;
   title: string | null;
@@ -47,43 +40,23 @@ type RegistryPublishContent = {
   options: unknown;
   batchId: string;
   createdVia: CreatedVia;
+  postType: MediaType;
+  origin: PostOrigin;
 };
-
-export type RegistryPublishArgs = RegistryPublishContent &
-  (
-    | { postType: MediaType; origin: RegistryPostOrigin }
-    | { mediaType: MediaType; scheduledPostId: string | null }
-  );
 
 type ResolvedPostOrigin = {
-  postType: MediaType;
   scheduledPostId: string | null;
-  idempotencyKey: string | null;
+  idempotencyKey: string;
 };
 
-function resolvePostOrigin(args: RegistryPublishArgs): ResolvedPostOrigin {
-  if (!("origin" in args)) {
-    return {
-      postType: args.mediaType,
-      scheduledPostId: args.scheduledPostId,
-      idempotencyKey: args.scheduledPostId,
-    };
-  }
-  switch (args.origin.kind) {
+function resolvePostOrigin(origin: PostOrigin): ResolvedPostOrigin {
+  switch (origin.kind) {
     case "scheduled":
-      return {
-        postType: args.postType,
-        scheduledPostId: args.origin.scheduledPostId,
-        idempotencyKey: args.origin.scheduledPostId,
-      };
+      return { scheduledPostId: origin.scheduledPostId, idempotencyKey: origin.scheduledPostId };
     case "post_now":
-      return {
-        postType: args.postType,
-        scheduledPostId: null,
-        idempotencyKey: args.origin.dispatchId,
-      };
+      return { scheduledPostId: null, idempotencyKey: origin.dispatchId };
     default: {
-      const unhandledOrigin: never = args.origin;
+      const unhandledOrigin: never = origin;
       return unhandledOrigin;
     }
   }
@@ -94,7 +67,7 @@ export async function publishViaRegistry(
 ): Promise<RegistryPublishOutcome> {
   const { account } = args;
   const logPrefix = `[publishViaRegistry ${account.platform}]`;
-  const postOrigin = resolvePostOrigin(args);
+  const postOrigin = resolvePostOrigin(args.origin);
 
   const providerResult = resolveConfiguredProvider(account.platform);
   if (!providerResult.ok) {
@@ -125,7 +98,7 @@ export async function publishViaRegistry(
     accountIdentifier: account.account_identifier,
     title: args.title ?? "",
     body: args.body ?? "",
-    postType: postOrigin.postType,
+    postType: args.postType,
     mediaUrl: args.mediaUrl,
     fileName: args.fileName,
     mediaMimeType: args.mediaMimeType,
@@ -153,7 +126,7 @@ export async function publishViaRegistry(
       batch_id: args.batchId,
       scheduled_post_id: postOrigin.scheduledPostId,
       status: "posted",
-      media_type: postOrigin.postType,
+      media_type: args.postType,
       extra: {
         post_url: publishResult.postUrl,
         published_via: "provider_registry",

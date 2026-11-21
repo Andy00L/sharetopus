@@ -4,23 +4,16 @@ import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import type { Platform } from "@/db/schema";
 import {
   buildTokenRefreshEvents,
   TOKEN_REFRESH_HORIZON_MS,
 } from "@/inngest/events/socialAccountTokenRefresh";
+import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { listRefreshablePlatformIds } from "@/lib/platforms/providers/registry";
 
 import { inngest } from "../client";
 
-const ENSURE_VALID_TOKEN_PLATFORMS = [
-  "tiktok",
-  "pinterest",
-  "linkedin",
-  "youtube",
-  "x",
-  "instagram",
-  "facebook",
-] as const satisfies readonly Platform[];
+const REFRESHABLE_PLATFORMS = [...POSTING_PLATFORMS, ...listRefreshablePlatformIds()];
 
 const MAX_ACCOUNTS_PER_RUN = 1000;
 
@@ -43,7 +36,7 @@ export const refreshExpiringTokensCron = inngest.createFunction(
               isNull(social_accounts.deleted_at),
               isNotNull(social_accounts.token_expires_at),
               eq(social_accounts.is_available, true),
-              inArray(social_accounts.platform, ENSURE_VALID_TOKEN_PLATFORMS),
+              inArray(social_accounts.platform, REFRESHABLE_PLATFORMS),
               lt(social_accounts.token_expires_at, horizonIso),
             ),
           )

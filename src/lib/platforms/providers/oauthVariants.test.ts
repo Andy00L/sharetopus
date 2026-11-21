@@ -12,7 +12,7 @@ mock.module("./_shared/fetchStoredMedia", () => ({
 }));
 
 type LinkedInShareCall = {
-  memberUrn: string;
+  authorUrn: string;
   text: string;
   postType: string;
   mediaType?: string;
@@ -21,6 +21,7 @@ type LinkedInShareCall = {
 const linkedInShareCalls: LinkedInShareCall[] = [];
 let linkedInShareAnswer: unknown = { success: true, postId: "urn:li:share:1", data: {}, message: "" };
 mock.module("@/lib/api/linkedin/post/postToLinkedIn", () => ({
+  UNKNOWN_LINKEDIN_POST_ID: "unknown-post-id",
   postToLinkedIn: async (shareCall: LinkedInShareCall) => {
     linkedInShareCalls.push(shareCall);
     return linkedInShareAnswer;
@@ -47,7 +48,7 @@ const SHOT_POST: ProviderPublishInput = {
   fileName: "shot.png",
   mediaMimeType: "image/png",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 describe("Dribbble shot create", () => {
@@ -92,7 +93,7 @@ describe("LinkedIn Page publish", () => {
       postUrl: null,
     });
     const shareCall = linkedInShareCalls[0];
-    expect(shareCall?.memberUrn).toBe("urn:li:organization:5590506");
+    expect(shareCall?.authorUrn).toBe("urn:li:organization:5590506");
     expect(shareCall?.postType).toBe("image");
     expect(shareCall?.mediaType).toBe("image/png");
     expect(shareCall?.buffer?.toString("utf8")).toBe("png bytes");
@@ -103,6 +104,15 @@ describe("LinkedIn Page publish", () => {
     await linkedinPageBehavior.publish({ ...PAGE_POST, postType: "text", mediaUrl: null });
     expect(linkedInShareCalls[0]?.postType).toBe("text");
     expect(linkedInShareCalls[0]?.buffer).toBeUndefined();
+  });
+
+  test("a share LinkedIn created without returning its id is a published post", async () => {
+    linkedInShareAnswer = { success: true, postId: undefined, data: {}, message: "" };
+    expect(await linkedinPageBehavior.publish(PAGE_POST)).toEqual({
+      ok: true,
+      postId: "unknown-post-id",
+      postUrl: null,
+    });
   });
 
   test("the share failure keeps its typed reason", async () => {

@@ -69,7 +69,7 @@ export function buildDirectPublishRequest(input: {
     coverTimestampMs: data.cover_timestamp,
     media: { storagePath: data.media_path, urls },
     batchId: data.batch_id,
-    scheduledPostId: null,
+    origin: { kind: "post_now", dispatchId: data.dispatch_id },
     createdVia: data.created_via,
   };
 }

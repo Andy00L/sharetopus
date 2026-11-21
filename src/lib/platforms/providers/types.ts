@@ -68,7 +68,7 @@ export type ProviderPublishInput = {
   fileName: string;
   mediaMimeType: string;
   options: Record<string, unknown>;
-  idempotencyKey: string | null;
+  idempotencyKey: string;
 };
 
 export type ProviderPublishFailure = {

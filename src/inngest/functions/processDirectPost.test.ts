@@ -15,8 +15,15 @@ type PublishResult =
   | { ok: true }
   | { ok: false; reason: string; message: string; mayHavePublished: boolean };
 
+type MintResult =
+  | { success: true; publicUrl: string | null; tiktokUrl: string | null }
+  | { success: false; reason: "not_found" | "unavailable"; message: string };
+
+const MINTED_NOTHING: MintResult = { success: true, publicUrl: null, tiktokUrl: null };
+
 type WorkerState = {
   lock: LockState | null;
+  mintResult: MintResult;
   isInHistory: boolean;
   isFinalizeFailing: boolean;
   platformResult: PublishResult;
@@ -52,6 +59,7 @@ const PROCESSING_LOCK: LockState = {
 
 const workerState: WorkerState = {
   lock: PROCESSING_LOCK,
+  mintResult: MINTED_NOTHING,
   isInHistory: false,
   isFinalizeFailing: false,
   platformResult: { ok: true },
@@ -90,7 +98,7 @@ mock.module("./processDirectPostHelpers", () => ({
 }));
 
 mock.module("./publishToPlatform", () => ({
-  mintPublishMediaUrls: async () => ({ success: true, publicUrl: null, tiktokUrl: null }),
+  mintPublishMediaUrls: async () => workerState.mintResult,
   publishToPlatform: async () => {
     workerState.platformCalls += 1;
     return workerState.platformResult;
@@ -146,6 +154,7 @@ function runOnFailure(eventData: unknown = EVENT_DATA) {
 
 beforeEach(() => {
   workerState.lock = PROCESSING_LOCK;
+  workerState.mintResult = MINTED_NOTHING;
   workerState.isInHistory = false;
   workerState.isFinalizeFailing = false;
   workerState.platformResult = { ok: true };
@@ -177,6 +186,20 @@ describe("processDirectPost", () => {
   test("a failed finalize throws so Inngest retries that step instead of leaving the lock processing", async () => {
     workerState.isFinalizeFailing = true;
     await expect(runWorker(0)).rejects.toThrow("finalize-failure");
+  });
+
+  test("a media file storage says is gone fails the post at once, an outage is retried", async () => {
+    workerState.mintResult = { success: false, reason: "not_found", message: "Object not found" };
+    await runWorker(0, EVENT_DATA_WITH_MEDIA);
+    expect(workerState.platformCalls).toBe(0);
+    expect(workerState.finalizedOutcomes).toEqual([
+      { status: "failed", failureReason: "Media file no longer exists: Object not found" },
+    ]);
+
+    workerState.finalizedOutcomes = [];
+    workerState.mintResult = { success: false, reason: "unavailable", message: "fetch failed" };
+    await expect(runWorker(0, EVENT_DATA_WITH_MEDIA)).rejects.toThrow("signed-url-failure: fetch failed");
+    expect(workerState.finalizedOutcomes).toEqual([]);
   });
 
   test("a rate-limited publish throws so Inngest retries it", async () => {

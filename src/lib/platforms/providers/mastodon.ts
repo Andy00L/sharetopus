@@ -1,6 +1,5 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { Blob } from "node:buffer";
@@ -154,10 +153,9 @@ async function publish(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${input.accessToken}`,
-      // Mastodon dedupes identical requests carrying the same idempotency
-      // key for roughly an hour, which turns a worker retry into a no-op
-      // instead of a duplicate toot.
-      "Idempotency-Key": buildIdempotencyKey(input, statusText),
+      // Mastodon stores idempotency keys for up to 1 hour:
+      // https://docs.joinmastodon.org/methods/statuses/
+      "Idempotency-Key": `${input.accountIdentifier}:post:${input.idempotencyKey}`,
     },
     body: JSON.stringify(statusPayload),
     timeoutMs: MASTODON_TIMEOUT_MS,
@@ -203,19 +201,6 @@ function buildStatusText(input: ProviderPublishInput): string {
   if (!trimmedTitle) return trimmedBody;
   if (!trimmedBody) return trimmedTitle;
   return `${trimmedTitle}\n\n${trimmedBody}`;
-}
-
-function buildIdempotencyKey(
-  input: Pick<ProviderPublishInput, "accountIdentifier" | "idempotencyKey" | "postType" | "fileName">,
-  statusText: string,
-): string {
-  if (input.idempotencyKey) {
-    return `${input.accountIdentifier}:post:${input.idempotencyKey}`;
-  }
-  const contentHash = createHash("sha256")
-    .update(JSON.stringify([statusText, input.postType, input.fileName]))
-    .digest("hex");
-  return `${input.accountIdentifier}:content:${contentHash}`;
 }
 
 type MediaUploadResult = { ok: true; mediaId: string } | ProviderPublishFailure;

@@ -215,11 +215,4 @@ describe("publishViaRegistry post origin", () => {
     expect(publishedInputs[0]?.idempotencyKey).toBe("scheduled-3");
     expect(readStoredScheduledPostId()).toBe("scheduled-3");
   });
-
-  test("the legacy shape still publishes", async () => {
-    publishedInputs.length = 0;
-    await publishViaRegistry({ ...PUBLISH_CONTENT, mediaType: "text", scheduledPostId: null });
-    expect(publishedInputs[0]?.idempotencyKey).toBeNull();
-    expect(readStoredScheduledPostId()).toBeNull();
-  });
 });

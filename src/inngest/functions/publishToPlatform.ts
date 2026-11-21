@@ -1,10 +1,11 @@
 import "server-only";
 
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
-import type { CreatedVia, MediaType, Platform } from "@/db/schema";
+import type { StorageReadFailureReason } from "@/actions/server/data/storageRead";
+import type { CreatedVia, MediaType } from "@/db/schema";
 import type {
   DirectPostScheduleResult,
-  DirectPostWarning,
+  DirectPostWarningKind,
 } from "@/lib/api/_shared/directPostForAccountsGeneric";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
@@ -23,16 +24,13 @@ import {
 } from "@/lib/platforms/capabilities";
 import {
   publishViaRegistry,
-  type RegistryPublishResult,
+  type PostOrigin,
+  type RegistryPublishOutcome,
 } from "@/lib/platforms/providers/publishViaRegistry";
 import type { PlatformOptions, SocialAccount } from "@/lib/types/dbTypes";
 import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 
-import {
-  buildInputRefusal,
-  buildTextClassifiedFailure,
-  type PublishFailure,
-} from "./platformErrors";
+import { buildInputRefusal, type PublishFailure } from "./platformErrors";
 
 export const DEFAULT_COVER_TIMESTAMP_MS = 1_000;
 export const DEFAULT_PINTEREST_BOARD_NAME = "Board";
@@ -57,7 +55,7 @@ export type PublishMediaUrls = {
 
 export type MintMediaUrlsResult =
   | ({ success: true } & PublishMediaUrls)
-  | { success: false; message: string };
+  | { success: false; reason: StorageReadFailureReason; message: string };
 
 export function resolveSignedUrlTtlS(platform: string): number {
   return platformHotlinksMedia(platform) ? HOTLINK_SIGNED_URL_TTL_S : RUNTIME.signedUrlTtlS;
@@ -83,7 +81,9 @@ export async function mintPublishMediaUrls(input: {
         mediaPath: input.storagePath,
         principalId: input.principalId,
       });
-      if (!tikTokUrl.success) return { success: false, message: tikTokUrl.message };
+      if (!tikTokUrl.success) {
+        return { success: false, reason: "unavailable", message: tikTokUrl.message };
+      }
       return { success: true, publicUrl: null, tiktokUrl: tikTokUrl.url };
     }
     case "public_url": {
@@ -91,12 +91,18 @@ export async function mintPublishMediaUrls(input: {
         input.storagePath,
         resolveSignedUrlTtlS(input.platform),
       );
-      if (!signed.success) return { success: false, message: signed.message };
+      if (!signed.success) {
+        return { success: false, reason: signed.reason, message: signed.message };
+      }
       return { success: true, publicUrl: signed.url, tiktokUrl: null };
     }
     default: {
       const unhandledKind: never = urlKind;
-      return { success: false, message: `Unhandled media URL kind: ${String(unhandledKind)}` };
+      return {
+        success: false,
+        reason: "unavailable",
+        message: `Unhandled media URL kind: ${String(unhandledKind)}`,
+      };
     }
   }
 }
@@ -125,18 +131,29 @@ export type PublishRequest = {
   coverTimestampMs: number | null;
   media: { storagePath: string; urls: PublishMediaUrls };
   batchId: string;
-  scheduledPostId: string | null;
+  origin: PostOrigin;
   createdVia: CreatedVia;
 };
 
 export type PublishResult = { ok: true } | PublishFailure;
 
-function logPublishWarnings(request: PublishRequest, warnings: DirectPostWarning[]): void {
+type PublishWarning = {
+  kind: DirectPostWarningKind | "rotated_token_not_saved";
+  message: string;
+};
+
+function describePostOrigin(origin: PostOrigin): string {
+  return origin.kind === "scheduled"
+    ? `scheduled_post_id=${origin.scheduledPostId}`
+    : `dispatch_id=${origin.dispatchId}`;
+}
+
+function logPublishWarnings(request: PublishRequest, warnings: PublishWarning[]): void {
   for (const warning of warnings) {
     console.error(
       `[publishToPlatform] Published with warning kind=${warning.kind} ` +
         `platform=${request.platform} account=${request.account.id} batch_id=${request.batchId} ` +
-        `scheduled_post_id=${request.scheduledPostId ?? "none"}: ${warning.message}`,
+        `${describePostOrigin(request.origin)}: ${warning.message}`,
     );
   }
 }
@@ -157,12 +174,24 @@ function fromAdapterResult(
   };
 }
 
-function fromRegistryResult(
-  platform: Platform,
-  registryResult: RegistryPublishResult,
+function fromRegistryOutcome(
+  request: PublishRequest,
+  registryOutcome: RegistryPublishOutcome,
 ): PublishResult {
-  if (registryResult.success && registryResult.count > 0) return { ok: true };
-  return buildTextClassifiedFailure(platform, registryResult.message ?? "Failed without message");
+  if (registryOutcome.success) {
+    if (registryOutcome.reconnectWarning !== null) {
+      logPublishWarnings(request, [
+        { kind: "rotated_token_not_saved", message: registryOutcome.reconnectWarning },
+      ]);
+    }
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    reason: registryOutcome.failure.reason,
+    message: registryOutcome.message,
+    mayHavePublished: registryOutcome.failure.mayHavePublished,
+  };
 }
 
 export async function publishToPlatform(request: PublishRequest): Promise<PublishResult> {
@@ -174,7 +203,8 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
   const fileName = media.storagePath.split("/").pop() ?? "";
   const mimeType = deriveMediaMimeType(fileName, postType);
   const coverTimestamp = request.coverTimestampMs ?? DEFAULT_COVER_TIMESTAMP_MS;
-  const scheduledPostId = request.scheduledPostId ?? undefined;
+  const scheduledPostId =
+    request.origin.kind === "scheduled" ? request.origin.scheduledPostId : undefined;
   const accountContent = {
     accountId: account.id,
     title: request.title,
@@ -285,20 +315,20 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
           }),
         );
       default:
-        return fromRegistryResult(
-          platform,
+        return fromRegistryOutcome(
+          request,
           await publishViaRegistry({
             account,
             principalId: request.principalId,
             title: request.title || null,
             body: request.description || null,
-            mediaType: postType,
+            postType,
+            origin: request.origin,
             mediaUrl: media.urls.publicUrl,
             fileName,
             mediaMimeType: mimeType,
             options: request.registryOptions,
             batchId: request.batchId,
-            scheduledPostId: request.scheduledPostId,
             createdVia: request.createdVia,
           }),
         );
@@ -307,6 +337,6 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
     const message =
       unexpectedError instanceof Error ? unexpectedError.message : String(unexpectedError);
     console.error(`[publishToPlatform] ${platform} adapter threw:`, message);
-    return buildTextClassifiedFailure(platform, message);
+    return { ok: false, reason: "unknown", message, mayHavePublished: true };
   }
 }

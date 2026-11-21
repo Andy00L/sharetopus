@@ -33,7 +33,7 @@ const CHAT_POST: ProviderPublishInput = {
   fileName: "",
   mediaMimeType: "",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 describe("Kick chat send", () => {

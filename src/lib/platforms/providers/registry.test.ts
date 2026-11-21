@@ -31,7 +31,7 @@ describe("provider behaviors never throw past the registry", () => {
       fileName: "",
       mediaMimeType: "",
       options: {},
-      idempotencyKey: null,
+      idempotencyKey: "post-1",
     });
     expect(published).toEqual({
       ok: false,

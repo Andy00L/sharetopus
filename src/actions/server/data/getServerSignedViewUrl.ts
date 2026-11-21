@@ -1,18 +1,21 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import {
+  classifyStorageReadError,
+  type StorageReadFailureReason,
+} from "@/actions/server/data/storageRead";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import "server-only";
+
+export type SignedViewUrlResult =
+  | { success: true; url: string }
+  | { success: false; reason: StorageReadFailureReason; message: string };
 
 export async function getServerSignedViewUrl(
   path: string,
   expiresInSeconds: number = 300,
-): Promise<
-  { success: true; url: string } | { success: false; message: string }
-> {
-  if (!path || path.trim() === "") {
-    return {
-      success: false,
-      message: "[getServerSignedViewUrl] Path is empty",
-    };
+): Promise<SignedViewUrlResult> {
+  if (path.trim() === "") {
+    return { success: false, reason: "not_found", message: "[getServerSignedViewUrl] Path is empty" };
   }
 
   try {
@@ -21,25 +24,20 @@ export async function getServerSignedViewUrl(
       .createSignedUrl(path, expiresInSeconds);
 
     if (error) {
-      console.error("[getServerSignedViewUrl] Supabase error:", error.message);
-      return {
-        success: false,
-        message: `Failed to sign view URL: ${error.message}`,
-      };
+      const reason = classifyStorageReadError(error);
+      console.error(`[getServerSignedViewUrl] Supabase error (${reason}):`, error.message);
+      return { success: false, reason, message: `Failed to sign view URL: ${error.message}` };
     }
 
-    if (!data?.signedUrl) {
-      return {
-        success: false,
-        message: "[getServerSignedViewUrl] Empty signed URL",
-      };
+    if (!data.signedUrl) {
+      return { success: false, reason: "unavailable", message: "[getServerSignedViewUrl] Empty signed URL" };
     }
 
     return { success: true, url: data.signedUrl };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+  } catch (signError) {
+    const message = signError instanceof Error ? signError.message : String(signError);
     console.error("[getServerSignedViewUrl] Unexpected error:", message);
-    return { success: false, message: `[getServerSignedViewUrl] ${message}` };
+    return { success: false, reason: "unavailable", message: `[getServerSignedViewUrl] ${message}` };
   }
 }
 

@@ -199,7 +199,7 @@ export function buildScheduledPublishRequest(input: {
       coverTimestampMs: post.cover_image_timestamp,
       media: { storagePath: post.media_storage_path, urls },
       batchId: resolvePostBatchId(post),
-      scheduledPostId: post.id,
+      origin: { kind: "scheduled", scheduledPostId: post.id },
       createdVia: post.created_via,
     },
   };

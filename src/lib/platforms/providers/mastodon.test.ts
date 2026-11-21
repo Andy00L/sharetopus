@@ -36,7 +36,7 @@ const TEXT_POST: ProviderPublishInput = {
   fileName: "",
   mediaMimeType: "",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 async function publishAndReadKey(post: ProviderPublishInput): Promise<string | undefined> {
@@ -58,15 +58,4 @@ describe("Mastodon Idempotency-Key", () => {
     expect(firstKey).not.toBe(secondKey);
   });
 
-  test("without an identity, a retry of the same post keeps its key and other media changes it", async () => {
-    const firstKey = await publishAndReadKey(TEXT_POST);
-    const retryKey = await publishAndReadKey(TEXT_POST);
-    const otherMediaKey = await publishAndReadKey({
-      ...TEXT_POST,
-      postType: "image",
-      fileName: "other.png",
-    });
-    expect(retryKey).toBe(firstKey);
-    expect(otherMediaKey).not.toBe(firstKey);
-  });
 });

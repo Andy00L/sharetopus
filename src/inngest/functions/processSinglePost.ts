@@ -6,6 +6,7 @@ import { postDueEvent, PostDueEventDataSchema } from "@/inngest/events/postDue";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import {
   buildInputRefusal,
+  buildMissingMediaRefusal,
   isSafeToRetryPost,
   type PlatformPostOutcome,
 } from "./platformErrors";
@@ -134,6 +135,7 @@ export const processSinglePost = inngest.createFunction(
         principalId: post.principal_id,
       });
       if (!minted.success) {
+        if (minted.reason === "not_found") return buildMissingMediaRefusal(minted.message);
         throw new Error(`signed-url-failure: ${minted.message}`);
       }
 

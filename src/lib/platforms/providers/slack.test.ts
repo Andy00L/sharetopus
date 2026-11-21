@@ -33,7 +33,7 @@ const IMAGE_POST: ProviderPublishInput = {
   fileName: "photo.png",
   mediaMimeType: "image/png",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 async function publishAndReadBlocks(post: ProviderPublishInput): Promise<unknown[]> {

@@ -46,7 +46,7 @@ const VIDEO_POST: ProviderPublishInput = {
   fileName: "clip.mp4",
   mediaMimeType: "video/mp4",
   options: {},
-  idempotencyKey: null,
+  idempotencyKey: "post-1",
 };
 
 function refreshWith(accessToken: string | null) {

@@ -10,8 +10,16 @@ import {
 } from "@/inngest/events/socialAccountTokenRefresh";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { isTokenExpiring } from "@/lib/api/refreshWithAccountLock";
+import { isPostingPlatform } from "@/lib/platforms/capabilities";
+import { refreshRegistryAccountToken } from "@/lib/platforms/providers/publishViaRegistry";
+import type { TokenRefreshFailureReason } from "@/lib/platforms/providers/types";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 
 import { inngest } from "../client";
+
+type HorizonRefreshResult =
+  | { ok: true; reconnectWarning: string | null }
+  | { ok: false; message: string; reason: TokenRefreshFailureReason };
 
 export type TokenRefreshOutcome =
   | { outcome: "skipped"; reason: "account_gone" | "already_unavailable" }
@@ -52,24 +60,42 @@ async function refreshAccountToken(socialAccountId: string): Promise<TokenRefres
     return { outcome: "not_due" };
   }
 
-  const tokenResult = await ensureValidToken(account, {
-    refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS,
-  });
-  if (tokenResult.success) return { outcome: "refreshed" };
+  const refreshResult = await refreshWithinHorizon(account);
+  if (refreshResult.ok) {
+    if (refreshResult.reconnectWarning === null) return { outcome: "refreshed" };
+    console.warn(
+      `[refreshAccountToken] ${account.platform} account ${account.id} needs a reconnect: ${refreshResult.reconnectWarning}`,
+    );
+    return { outcome: "needs_reconnect", message: refreshResult.reconnectWarning };
+  }
 
-  switch (tokenResult.failureReason) {
+  switch (refreshResult.reason) {
     case "auth_expired":
       console.warn(
-        `[refreshAccountToken] ${account.platform} account ${account.id} needs a reconnect: ${tokenResult.error}`,
+        `[refreshAccountToken] ${account.platform} account ${account.id} needs a reconnect: ${refreshResult.message}`,
       );
-      return { outcome: "needs_reconnect", message: tokenResult.error };
+      return { outcome: "needs_reconnect", message: refreshResult.message };
     case "transient":
       throw new Error(
-        `[refreshAccountToken] ${account.platform} account ${account.id} refresh failed (${tokenResult.failureReason}): ${tokenResult.error}`,
+        `[refreshAccountToken] ${account.platform} account ${account.id} refresh failed (${refreshResult.reason}): ${refreshResult.message}`,
       );
     default: {
-      const unhandledReason: never = tokenResult.failureReason;
+      const unhandledReason: never = refreshResult.reason;
       throw new Error(`[refreshAccountToken] Unhandled failure reason: ${String(unhandledReason)}`);
     }
   }
+}
+
+async function refreshWithinHorizon(account: SocialAccount): Promise<HorizonRefreshResult> {
+  const windowOptions = { refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS };
+  if (isPostingPlatform(account.platform)) {
+    const tokenResult = await ensureValidToken(account, windowOptions);
+    return tokenResult.success
+      ? { ok: true, reconnectWarning: null }
+      : { ok: false, message: tokenResult.error, reason: tokenResult.failureReason };
+  }
+  const tokenResult = await refreshRegistryAccountToken(account, windowOptions);
+  return tokenResult.success
+    ? { ok: true, reconnectWarning: tokenResult.reconnectWarning }
+    : { ok: false, message: tokenResult.message, reason: tokenResult.reason };
 }

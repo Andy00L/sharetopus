@@ -23,11 +23,16 @@ type AccountRow = { id: string; platform: string; is_available: boolean; token_e
 type TokenResult =
   | { success: true; token: string }
   | { success: false; error: string; failureReason: "auth_expired" | "transient" };
+type RegistryTokenResult =
+  | { success: true; accessToken: string; reconnectWarning: string | null }
+  | { success: false; message: string; reason: "auth_expired" | "transient" };
 
 let storedAccountRows: AccountRow[] = [];
 let nextTokenResult: TokenResult = { success: true, token: "token" };
 let ensureValidTokenCalls = 0;
 let ensureValidTokenOptions: unknown = undefined;
+let nextRegistryResult: RegistryTokenResult = { success: true, accessToken: "token", reconnectWarning: null };
+let registryRefreshOptions: unknown[] = [];
 
 mock.module("@/db/client", () => ({
   db: buildChainableQuery(),
@@ -39,6 +44,13 @@ mock.module("@/lib/api/ensureValidToken", () => ({
     ensureValidTokenCalls += 1;
     ensureValidTokenOptions = options;
     return nextTokenResult;
+  },
+}));
+
+mock.module("@/lib/platforms/providers/publishViaRegistry", () => ({
+  refreshRegistryAccountToken: async (_account: unknown, options: unknown) => {
+    registryRefreshOptions.push(options);
+    return nextRegistryResult;
   },
 }));
 
@@ -76,6 +88,8 @@ beforeEach(() => {
   nextTokenResult = { success: true, token: "token" };
   ensureValidTokenCalls = 0;
   ensureValidTokenOptions = undefined;
+  nextRegistryResult = { success: true, accessToken: "token", reconnectWarning: null };
+  registryRefreshOptions = [];
 });
 
 describe("refreshSocialAccountToken", () => {
@@ -105,6 +119,37 @@ describe("refreshSocialAccountToken", () => {
     storedAccountRows = [{ id: "account-1", platform: "instagram", is_available: true, token_expires_at: buildExpiryInDays(3) }];
     expect(await runRefresh()).toEqual({ outcome: "refreshed" });
     expect(ensureValidTokenOptions).toEqual({ refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS });
+  });
+});
+
+describe("refreshSocialAccountToken for registry platforms", () => {
+  const THREADS_ROW: AccountRow = {
+    id: "account-1",
+    platform: "threads",
+    is_available: true,
+    token_expires_at: buildExpiryInDays(3),
+  };
+
+  test("a Threads token inside the 7-day horizon is renewed through the registry, not ensureValidToken", async () => {
+    storedAccountRows = [THREADS_ROW];
+    expect(await runRefresh()).toEqual({ outcome: "refreshed" });
+    expect(registryRefreshOptions).toEqual([{ refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS }]);
+    expect(ensureValidTokenCalls).toBe(0);
+  });
+
+  test("a renewed token whose rotated refresh token was not saved ends as needs_reconnect", async () => {
+    storedAccountRows = [THREADS_ROW];
+    nextRegistryResult = { success: true, accessToken: "token", reconnectWarning: "Please reconnect the account." };
+    expect(await runRefresh()).toEqual({ outcome: "needs_reconnect", message: "Please reconnect the account." });
+  });
+
+  test("a registry refresh that may pass later fails the step, a refused one does not", async () => {
+    storedAccountRows = [THREADS_ROW];
+    nextRegistryResult = { success: false, message: "Threads answered 503", reason: "transient" };
+    await expect(runRefresh()).rejects.toThrow("threads account account-1 refresh failed (transient)");
+
+    nextRegistryResult = { success: false, message: "Threads refused the token", reason: "auth_expired" };
+    expect(await runRefresh()).toEqual({ outcome: "needs_reconnect", message: "Threads refused the token" });
   });
 });
 

@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { STORAGE_READ_TIMEOUT_MS } from "@/actions/server/data/storageRead";
 import type { MediaType } from "@/db/schema";
 import {
   buildHttpFailure,
@@ -16,6 +17,7 @@ import {
   PLATFORM_PUBLISH_TIMEOUT_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
+import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { JsonObject } from "@/lib/utils/jsonObject";
 
@@ -52,10 +54,24 @@ const SHARE_LABEL_BY_CATEGORY = {
   VIDEO: "video",
 } satisfies Record<ShareMediaCategory, string>;
 
-const UNKNOWN_LINKEDIN_POST_ID = "unknown-post-id";
+export const UNKNOWN_LINKEDIN_POST_ID = "unknown-post-id";
+
+const PUBLISH_STEP_BUDGET_MS = RUNTIME.minStepBudgetS * 1000;
+const TOKEN_REFRESH_WAIT_MAX_MS = 50_000;
+const DATABASE_WORK_RESERVE_MS = 10_000;
+
+export const LINKEDIN_MEDIA_UPLOAD_TIMEOUT_MS = Math.min(
+  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
+  PUBLISH_STEP_BUDGET_MS -
+    TOKEN_REFRESH_WAIT_MAX_MS -
+    STORAGE_READ_TIMEOUT_MS -
+    DATABASE_WORK_RESERVE_MS -
+    PLATFORM_API_TIMEOUT_MS -
+    PLATFORM_PUBLISH_TIMEOUT_MS,
+);
 
 export type LinkedInPostResult =
-  | { success: true; postId: string; data: JsonObject; message: string }
+  | { success: true; postId: string | undefined; data: JsonObject; message: string }
   | PlatformPostFailure;
 
 type MediaUploadOutcome =
@@ -64,13 +80,13 @@ type MediaUploadOutcome =
 
 async function uploadMediaAsset({
   accessToken,
-  memberUrn,
+  authorUrn,
   postType,
   mediaType,
   buffer,
 }: {
   accessToken: string;
-  memberUrn: string;
+  authorUrn: string;
   postType: "image" | "video";
   mediaType: string;
   buffer: Buffer;
@@ -95,7 +111,7 @@ async function uploadMediaAsset({
                 ? "urn:li:digitalmediaRecipe:feedshare-image"
                 : "urn:li:digitalmediaRecipe:feedshare-video",
             ],
-            owner: memberUrn,
+            owner: authorUrn,
             serviceRelationships: [
               {
                 relationshipType: "OWNER",
@@ -151,7 +167,7 @@ async function uploadMediaAsset({
         "Content-Type": mediaType,
       },
       body: viewBufferAsFetchBody(buffer),
-      signal: AbortSignal.timeout(PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS),
+      signal: AbortSignal.timeout(LINKEDIN_MEDIA_UPLOAD_TIMEOUT_MS),
     });
     if (!uploadResponse.ok) {
       const uploadText = await uploadResponse.text();
@@ -178,14 +194,14 @@ async function uploadMediaAsset({
 }
 
 /**
- * Publishes one share for one member through v2/ugcPosts. Image and video
- * shares upload the bytes as an asset first; a text post with a link becomes
- * an ARTICLE share.
+ * Publishes one share through v2/ugcPosts for a member or an organization
+ * author. Image and video shares upload the bytes as an asset first; a text
+ * post with a link becomes an ARTICLE share.
  * sourceRef: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin
  */
 export async function postToLinkedIn({
   accessToken,
-  memberUrn,
+  authorUrn,
   text,
   title,
   link,
@@ -194,7 +210,7 @@ export async function postToLinkedIn({
   buffer,
 }: {
   accessToken: string;
-  memberUrn: string;
+  authorUrn: string;
   text: string;
   title?: string;
   link?: string;
@@ -202,9 +218,9 @@ export async function postToLinkedIn({
   mediaType?: string;
   buffer?: Buffer;
 }): Promise<LinkedInPostResult> {
-  if (!accessToken || !memberUrn) {
-    console.error("[postToLinkedIn] Missing access token or member URN");
-    return buildInputFailure("Missing required parameters (accessToken and memberUrn)");
+  if (!accessToken || !authorUrn) {
+    console.error("[postToLinkedIn] Missing access token or author URN");
+    return buildInputFailure("Missing required parameters (accessToken and authorUrn)");
   }
 
   let shareMediaCategory: ShareMediaCategory = "NONE";
@@ -219,7 +235,7 @@ export async function postToLinkedIn({
     }
     const uploadOutcome = await uploadMediaAsset({
       accessToken,
-      memberUrn,
+      authorUrn,
       postType,
       mediaType,
       buffer,
@@ -258,7 +274,7 @@ export async function postToLinkedIn({
         "X-Restli-Protocol-Version": "2.0.0",
       },
       body: JSON.stringify({
-        author: memberUrn,
+        author: authorUrn,
         lifecycleState: "PUBLISHED",
         specificContent: {
           "com.linkedin.ugc.ShareContent": {
@@ -294,12 +310,14 @@ export async function postToLinkedIn({
       shareResponse.headers.get("x-restli-id") ??
       (typeof bodyPostId === "string" ? bodyPostId : null);
     if (!postId) {
-      console.warn("[postToLinkedIn] Share created without a post id in the answer");
+      console.warn(
+        `[postToLinkedIn] Share created (${shareResponse.status}) without a post id in the answer`,
+      );
     }
 
     return {
       success: true,
-      postId: postId || UNKNOWN_LINKEDIN_POST_ID,
+      postId: postId || undefined,
       data: shareBody,
       message: `Successfully created ${SHARE_LABEL_BY_CATEGORY[shareMediaCategory]} post on LinkedIn`,
     };

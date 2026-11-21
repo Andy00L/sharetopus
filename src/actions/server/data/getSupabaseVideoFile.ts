@@ -1,71 +1,52 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
+import {
+  classifyStorageReadError,
+  STORAGE_READ_TIMEOUT_MS,
+  type StorageReadFailureReason,
+} from "@/actions/server/data/storageRead";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
 import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 import "server-only";
 
+export type StoredFileResult =
+  | { success: true; buffer: Buffer }
+  | { success: false; reason: StorageReadFailureReason; message: string };
+
 export async function getSupabaseVideoFile(
   filePath: string,
-  userId: string | null
-): Promise<{ success: boolean; message: string; buffer?: Buffer }> {
+  userId: string | null,
+): Promise<StoredFileResult> {
   if (!isOwnedMediaPath(filePath, userId ?? "")) {
     console.warn(
-      `[Get Supabase video File]  Attempt to access invalid/unauthorized path by user ${userId}: ${filePath}`
+      `[getSupabaseVideoFile] Refused a path outside the caller's folder for user ${userId}: ${filePath}`,
     );
-    return {
-      success: false,
-      message: "Invalid file path or unauthorized access.",
-    };
+    return { success: false, reason: "not_found", message: "Invalid file path or unauthorized access." };
   }
 
   try {
-    console.log(
-      `[Get Supabase video File]  Fetching file for user ${userId}: ${filePath}`
-    );
+    console.log(`[getSupabaseVideoFile] Fetching file for user ${userId}: ${filePath}`);
 
     const { data, error } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
-      .download(filePath);
+      .download(filePath, undefined, { signal: AbortSignal.timeout(STORAGE_READ_TIMEOUT_MS) });
 
     if (error) {
+      const reason = classifyStorageReadError(error);
       console.error(
-        `[Get Supabase video File] Supabase download error for path ${filePath}:`,
-        error
+        `[getSupabaseVideoFile] Supabase download error (${reason}) for path ${filePath}:`,
+        error.message,
       );
-      return {
-        success: false,
-        message: `Failed to download file: ${error.message}`,
-      };
-    }
-
-    if (!data) {
-      console.error(`[Get Supabase video File] File not found or is empty: ${filePath}`);
-      return {
-        success: false,
-        message: "File not found or is empty",
-      };
+      return { success: false, reason, message: `Failed to download file: ${error.message}` };
     }
 
     const buffer = Buffer.from(await data.arrayBuffer());
 
-    console.log(
-      `[Get Supabase video File]  Successfully retrieved file: ${filePath} (${buffer.length} bytes)`
-    );
-    return {
-      success: true,
-      message: "Successfully retrieved file",
-      buffer: buffer,
-    };
-  } catch (err) {
-    console.error(
-      `[Get Supabase video File]  Unexpected error retrieving ${filePath}:`,
-      err
-    );
-    return {
-      success: false,
-      message:
-        err instanceof Error
-          ? err.message
-          : "Unexpected error retrieving file",
-    };
+    console.log(`[getSupabaseVideoFile] Retrieved file: ${filePath} (${buffer.length} bytes)`);
+    return { success: true, buffer };
+  } catch (downloadError) {
+    const message =
+      downloadError instanceof Error ? downloadError.message : "Unexpected error retrieving file";
+    console.error(`[getSupabaseVideoFile] Unexpected error retrieving ${filePath}:`, message);
+    return { success: false, reason: "unavailable", message };
   }
 }

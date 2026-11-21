@@ -6,6 +6,12 @@ type Outcome =
 
 type PublishResult = { ok: true } | Extract<Outcome, { ok: false }>;
 
+type MintResult =
+  | { success: true; publicUrl: string | null; tiktokUrl: string | null }
+  | { success: false; reason: "not_found" | "unavailable"; message: string };
+
+const MINTED_NOTHING: MintResult = { success: true, publicUrl: null, tiktokUrl: null };
+
 type PostRow = {
   id: string;
   status: string;
@@ -50,6 +56,7 @@ type HelperState = {
   recorded: Outcome[];
   platformCalls: number;
   publishResult: PublishResult;
+  mintResult: MintResult;
   cleanupDecisions: { platform: string; mightBeLive: boolean }[];
   shouldDeleteMedia: boolean;
   stepLog: string[];
@@ -63,6 +70,7 @@ const helperState: HelperState = {
   recorded: [],
   platformCalls: 0,
   publishResult: { ok: true },
+  mintResult: MINTED_NOTHING,
   cleanupDecisions: [],
   shouldDeleteMedia: true,
   stepLog: [],
@@ -100,7 +108,7 @@ mock.module("./processSinglePostHelpers", () => ({
 }));
 
 mock.module("./publishToPlatform", () => ({
-  mintPublishMediaUrls: async () => ({ success: true, publicUrl: null, tiktokUrl: null }),
+  mintPublishMediaUrls: async () => helperState.mintResult,
   publishToPlatform: async (): Promise<PublishResult> => {
     helperState.platformCalls += 1;
     return helperState.publishResult;
@@ -158,6 +166,7 @@ beforeEach(() => {
   helperState.recorded = [];
   helperState.platformCalls = 0;
   helperState.publishResult = { ok: true };
+  helperState.mintResult = MINTED_NOTHING;
   helperState.cleanupDecisions = [];
   helperState.shouldDeleteMedia = true;
   helperState.stepLog = [];
@@ -205,6 +214,25 @@ describe("processSinglePost", () => {
       mayHavePublished: false,
     };
     await expect(runWorker()).rejects.toThrow("retryable: transient");
+    expect(helperState.recorded).toEqual([]);
+  });
+
+  test("a media file storage says is gone fails the post at once, an outage is retried", async () => {
+    helperState.mintResult = { success: false, reason: "not_found", message: "Failed to sign view URL: Object not found" };
+    await runWorker();
+    expect(helperState.platformCalls).toBe(0);
+    expect(helperState.recorded).toEqual([
+      {
+        ok: false,
+        reason: "invalid_input",
+        message: "Media file no longer exists: Failed to sign view URL: Object not found",
+        mayHavePublished: false,
+      },
+    ]);
+
+    helperState.recorded = [];
+    helperState.mintResult = { success: false, reason: "unavailable", message: "fetch failed" };
+    await expect(runWorker()).rejects.toThrow("signed-url-failure: fetch failed");
     expect(helperState.recorded).toEqual([]);
   });
 

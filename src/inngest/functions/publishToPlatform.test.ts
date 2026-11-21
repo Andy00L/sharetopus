@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import type { DirectPostScheduleResult } from "@/lib/api/_shared/directPostForAccountsGeneric";
-import type { RegistryPublishResult } from "@/lib/platforms/providers/publishViaRegistry";
+import type { RegistryPublishOutcome } from "@/lib/platforms/providers/publishViaRegistry";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 type AdapterCall = { adapter: string; config: Record<string, unknown> };
@@ -9,12 +9,16 @@ type AdapterCall = { adapter: string; config: Record<string, unknown> };
 const adapterState: {
   calls: AdapterCall[];
   adapterResult: DirectPostScheduleResult;
-  registryResult: RegistryPublishResult;
+  registryResult: RegistryPublishOutcome;
+  registryError: Error | null;
+  signedUrlFailure: { reason: "not_found" | "unavailable"; message: string } | null;
   signedTtls: number[];
 } = {
   calls: [],
   adapterResult: { success: true, count: 1, message: "posted", warnings: [] },
-  registryResult: { success: true, count: 1 },
+  registryResult: { success: true, count: 1, reconnectWarning: null },
+  registryError: null,
+  signedUrlFailure: null,
   signedTtls: [],
 };
 
@@ -29,6 +33,7 @@ mock.module("server-only", () => ({}));
 mock.module("@/actions/server/data/getServerSignedViewUrl", () => ({
   getServerSignedViewUrl: async (path: string, ttlS: number) => {
     adapterState.signedTtls.push(ttlS);
+    if (adapterState.signedUrlFailure) return { success: false, ...adapterState.signedUrlFailure };
     return { success: true, url: `https://signed.example/${path}` };
   },
 }));
@@ -63,6 +68,7 @@ mock.module("@/lib/api/youtube/post/directPostForYouTubeAccounts", () => ({
 mock.module("@/lib/platforms/providers/publishViaRegistry", () => ({
   publishViaRegistry: async (config: Record<string, unknown>) => {
     adapterState.calls.push({ adapter: "registry", config });
+    if (adapterState.registryError) throw adapterState.registryError;
     return adapterState.registryResult;
   },
 }));
@@ -121,7 +127,7 @@ function buildRequest(overrides: Partial<PublishRequest>): PublishRequest {
       urls: { publicUrl: "https://signed.example/clip", tiktokUrl: "https://proxy.example/clip" },
     },
     batchId: "batch-1",
-    scheduledPostId: null,
+    origin: { kind: "post_now", dispatchId: "dispatch-1" },
     createdVia: "web",
     ...overrides,
   };
@@ -135,7 +141,9 @@ function readOnlyCall(): AdapterCall {
 beforeEach(() => {
   adapterState.calls = [];
   adapterState.adapterResult = { success: true, count: 1, message: "posted", warnings: [] };
-  adapterState.registryResult = { success: true, count: 1 };
+  adapterState.registryResult = { success: true, count: 1, reconnectWarning: null };
+  adapterState.registryError = null;
+  adapterState.signedUrlFailure = null;
   adapterState.signedTtls = [];
 });
 
@@ -222,7 +230,7 @@ describe("publishToPlatform", () => {
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     try {
       const result = await publishToPlatform(
-        buildRequest({ platform: "tiktok", scheduledPostId: "post-9" }),
+        buildRequest({ platform: "tiktok", origin: { kind: "scheduled", scheduledPostId: "post-9" } }),
       );
       expect(result).toEqual({ ok: true });
       const loggedLines = errorSpy.mock.calls.map((call) => String(call[0]));
@@ -235,18 +243,91 @@ describe("publishToPlatform", () => {
     }
   });
 
-  test("registry failures keep the text classifier, so only a rate limit is retried", async () => {
-    adapterState.registryResult = { success: false, count: 0, message: "Too many requests" };
-    const rateLimited = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
-    if (rateLimited.ok) throw new Error("expected a failure");
-    expect(rateLimited.reason).toBe("rate_limited");
-    expect(isSafeToRetryPost(rateLimited)).toBe(true);
+  test("a registry post whose rotated token was not saved stays a success and logs a warning line", async () => {
+    adapterState.registryResult = {
+      success: true,
+      count: 1,
+      reconnectWarning: "Bluesky renewed this connection but the renewed credential could not be saved.",
+    };
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
+      expect(result).toEqual({ ok: true });
+      const loggedLines = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(loggedLines).toHaveLength(1);
+      expect(loggedLines[0]).toContain("kind=rotated_token_not_saved");
+      expect(loggedLines[0]).toContain("account=account-1");
+      expect(loggedLines[0]).toContain("dispatch_id=dispatch-1");
+      expect(loggedLines[0]).toContain("could not be saved");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 
-    adapterState.registryResult = { success: false, count: 0, message: "Request timeout" };
-    const timedOut = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
-    if (timedOut.ok) throw new Error("expected a failure");
-    expect(timedOut.reason).toBe("transient");
-    expect(isSafeToRetryPost(timedOut)).toBe(false);
+  test("a registry failure's typed reason passes through, so a send that may have published is never retried", async () => {
+    adapterState.registryResult = {
+      success: false,
+      count: 0,
+      message: "Post failed (503): unavailable",
+      failure: { reason: "transient", mayHavePublished: false },
+    };
+    const refusedBeforeSend = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
+    expect(refusedBeforeSend).toEqual({
+      ok: false,
+      reason: "transient",
+      message: "Post failed (503): unavailable",
+      mayHavePublished: false,
+    });
+    if (refusedBeforeSend.ok) throw new Error("expected a failure");
+    expect(isSafeToRetryPost(refusedBeforeSend)).toBe(true);
+
+    adapterState.registryResult = {
+      success: false,
+      count: 0,
+      message: "Too many requests, request timeout",
+      failure: { reason: "transient", mayHavePublished: true },
+    };
+    const maybePublished = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
+    if (maybePublished.ok) throw new Error("expected a failure");
+    expect(maybePublished.mayHavePublished).toBe(true);
+    expect(isSafeToRetryPost(maybePublished)).toBe(false);
+  });
+
+  test("the registry gets the post type and the origin, and an adapter gets a scheduled post id only from a scheduled origin", async () => {
+    await publishToPlatform(
+      buildRequest({ platform: "mastodon", postType: "text", origin: { kind: "post_now", dispatchId: "dispatch-7" } }),
+    );
+    const registryConfig = readOnlyCall().config;
+    expect(registryConfig.postType).toBe("text");
+    expect(registryConfig.origin).toEqual({ kind: "post_now", dispatchId: "dispatch-7" });
+    expect(Object.keys(registryConfig)).not.toContain("scheduledPostId");
+    expect(Object.keys(registryConfig)).not.toContain("mediaType");
+
+    adapterState.calls = [];
+    await publishToPlatform(buildRequest({ origin: { kind: "post_now", dispatchId: "dispatch-7" } }));
+    expect(readOnlyCall().config.scheduledPostId).toBeUndefined();
+
+    adapterState.calls = [];
+    await publishToPlatform(buildRequest({ origin: { kind: "scheduled", scheduledPostId: "post-3" } }));
+    expect(readOnlyCall().config.scheduledPostId).toBe("post-3");
+  });
+
+  test("a throw that escapes a platform call is an unknown outcome that may have published, whatever its text says", async () => {
+    adapterState.registryError = new Error("rate limit reached");
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const thrown = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
+      expect(thrown).toEqual({
+        ok: false,
+        reason: "unknown",
+        message: "rate limit reached",
+        mayHavePublished: true,
+      });
+      if (thrown.ok) throw new Error("expected a failure");
+      expect(isSafeToRetryPost(thrown)).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 
@@ -270,6 +351,15 @@ describe("mintPublishMediaUrls", () => {
     });
     await mint("reddit");
     expect(adapterState.signedTtls).toEqual([RUNTIME.signedUrlTtlS, HOTLINK_SIGNED_URL_TTL_S]);
+  });
+
+  test("a failed signature keeps storage's reason, so a worker can tell a missing file from an outage", async () => {
+    adapterState.signedUrlFailure = { reason: "not_found", message: "Object not found" };
+    expect(await mintPublishMediaUrls({ platform: "instagram", storagePath, principalId: "principal-1" })).toEqual({
+      success: false,
+      reason: "not_found",
+      message: "Object not found",
+    });
   });
 
   test("a text post mints nothing", async () => {

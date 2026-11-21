@@ -84,6 +84,7 @@ type PostTargetFields = {
   post_type: MediaType;
   title?: string | null;
   pinterest_board_id?: string;
+  pinterest_link?: string;
   subreddit?: string;
   community_id?: number;
   location_name?: string;
@@ -106,6 +107,12 @@ export function findPostTargetIssues(
         message: `${target.path} is required when platform is ${target.platform}`,
       });
     }
+  }
+  if (post.pinterest_link && post.platform !== "pinterest") {
+    issues.push({
+      path: "pinterest_link",
+      message: "pinterest_link is only valid when platform is pinterest",
+    });
   }
   if (platformRequiresTitle(post.platform) && !post.title?.trim()) {
     issues.push({
