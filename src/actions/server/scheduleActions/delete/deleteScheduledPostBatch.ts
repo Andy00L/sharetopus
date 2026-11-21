@@ -1,6 +1,6 @@
 import "server-only";
 
-import { inArray } from "drizzle-orm";
+import { and, inArray, ne } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
@@ -12,7 +12,12 @@ import {
 import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import { DELETE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
-import { checkPostChangeRules } from "../preflightScheduledPostChange";
+import {
+  checkPostChangeRules,
+  describePublishingRefusal,
+  findPublishingPostIds,
+  PUBLISHING_POST_STATUS,
+} from "../preflightScheduledPostChange";
 
 export type DeleteScheduledPostBatchResult = {
   message: string;
@@ -113,11 +118,29 @@ export async function deleteScheduledPostBatch(
       }
     }
 
+    const publishingPostIds = findPublishingPostIds(rules.eligiblePosts);
+    if (publishingPostIds.length > 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: describePublishingRefusal(publishingPostIds),
+      };
+    }
+
     const postIdsToDelete = rules.eligiblePosts.map((post) => post.id);
-    const { error: deleteError } = await runQuery(
+    const { data: deletedPosts, error: deleteError } = await runQuery(
       db
         .delete(scheduled_posts)
-        .where(inArray(scheduled_posts.id, postIdsToDelete)),
+        .where(
+          and(
+            inArray(scheduled_posts.id, postIdsToDelete),
+            ne(scheduled_posts.status, PUBLISHING_POST_STATUS),
+          ),
+        )
+        .returning({
+          id: scheduled_posts.id,
+          media_storage_path: scheduled_posts.media_storage_path,
+        }),
     );
 
     if (deleteError) {
@@ -132,9 +155,17 @@ export async function deleteScheduledPostBatch(
       };
     }
 
+    if (deletedPosts.length === 0) {
+      return {
+        success: false,
+        failure: "not_eligible",
+        message: describePublishingRefusal(postIdsToDelete),
+      };
+    }
+
     const mediaCleanup = await deleteUnreferencedMediaFiles(
       principalId,
-      posts.map((post) => post.media_storage_path),
+      deletedPosts.map((post) => post.media_storage_path),
     );
     if (!mediaCleanup.success) {
       console.error(
@@ -146,11 +177,11 @@ export async function deleteScheduledPostBatch(
 
     return {
       success: true,
-      message: `Deleted ${posts.length} post(s).`,
+      message: `Deleted ${deletedPosts.length} post(s).`,
       details: {
         total: postIds.length,
-        succeeded: posts.length,
-        failed: postIds.length - posts.length,
+        succeeded: deletedPosts.length,
+        failed: postIds.length - deletedPosts.length,
         mediaDeleted,
       },
     };

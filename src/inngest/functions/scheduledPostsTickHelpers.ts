@@ -73,6 +73,7 @@ export async function settleStuckProcessingPosts(input: {
     const finalized = await finalizeProcessingPost({
       post: stuckPost,
       failureMessage: input.failureMessage,
+      abandonedClaimBeforeIso: input.claimedBeforeIso,
     });
     if (!finalized.success) {
       failures.push({ postId: stuckPost.id, message: finalized.message });

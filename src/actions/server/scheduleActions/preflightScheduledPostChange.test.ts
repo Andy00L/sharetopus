@@ -95,3 +95,21 @@ describe("preflightScheduledPostChange", () => {
     ).toEqual({ ok: true });
   });
 });
+
+describe("the paid delete precheck", () => {
+  test("refuses a post that is publishing now before any payment", async () => {
+    storedPosts = [buildPost("post-1", "scheduled"), buildPost("post-2", "processing")];
+    expect(
+      await preflightScheduledPostChange({
+        postIds: ["post-1", "post-2"],
+        principalId: PRINCIPAL_ID,
+        action: "delete",
+      }),
+    ).toEqual({
+      ok: false,
+      httpStatus: 409,
+      errorKind: "post_publishing",
+      message: "Post post-2 is publishing now. Try again in a minute.",
+    });
+  });
+});

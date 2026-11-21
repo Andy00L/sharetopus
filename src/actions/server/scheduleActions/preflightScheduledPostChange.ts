@@ -11,6 +11,20 @@ import {
 } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
 
+export const PUBLISHING_POST_STATUS = "processing" satisfies PostStatus;
+
+export function findPublishingPostIds(posts: { id: string; status: PostStatus }[]): string[] {
+  return posts.filter((post) => post.status === PUBLISHING_POST_STATUS).map((post) => post.id);
+}
+
+export function describePublishingRefusal(publishingPostIds: string[]): string {
+  const subject =
+    publishingPostIds.length === 1
+      ? `Post ${publishingPostIds[0]} is`
+      : `Posts ${publishingPostIds.join(", ")} are`;
+  return `${subject} publishing now. Try again in a minute.`;
+}
+
 export type PostChangeRuleResult<Post> =
   | { ok: true; eligiblePosts: Post[] }
   | { ok: false; violation: "not_found" }
@@ -65,7 +79,16 @@ export async function preflightScheduledPostChange(params: {
     principalId: params.principalId,
     eligibleStatuses,
   });
-  if (rules.ok) return { ok: true };
+  if (rules.ok) {
+    const publishingPostIds = params.action === "delete" ? findPublishingPostIds(posts) : [];
+    if (publishingPostIds.length === 0) return { ok: true };
+    return {
+      ok: false,
+      httpStatus: 409,
+      errorKind: "post_publishing",
+      message: describePublishingRefusal(publishingPostIds),
+    };
+  }
   switch (rules.violation) {
     case "not_found":
       return { ok: false, httpStatus: 404, errorKind: "posts_not_found", message: "No posts found for these ids." };

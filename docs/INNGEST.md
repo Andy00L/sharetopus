@@ -37,7 +37,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 
 | Function ID | Trigger | Concurrency | Retries | Purpose |
 |---|---|---|---|---|
-| scheduled-posts-tick | Cron `0 * * * *` | 1 | 2 | Hourly safety net: re-sends `post.due` for unclaimed posts due within 2 h |
+| scheduled-posts-tick | Cron `0 * * * *` | 1 | 2 | Hourly safety net: re-sends `post.due` for unclaimed posts due within 2 h, settles posts left in `processing` 2 h after their last write |
 | process-single-post | Event `post.due` | 5 (dynamic) | 3 (`WORKER_MAX_RETRIES`, capped at 20) | Publish one scheduled post |
 | process-direct-post | Event `post.now` | 5 (dynamic) | 3 (`WORKER_MAX_RETRIES`, capped at 20) | Publish one "post now" item |
 | tiktok-publish-status-poll | Event `tiktok.publish.poll` | 5 per account | 3 | Poll TikTok until a publish completes or fails |
@@ -67,7 +67,7 @@ Inngest stores the result of every completed step and retries only a step that t
 
 - A step that should be retried throws inside itself. A failed read or write is never returned as an error value from a completed step, since Inngest would show a green run and never retry it. This is the one documented exception to errors as values in this codebase.
 - No step returns an OAuth token or a secret. A step that needs the account row loads it itself (`fetchAccountForPublish`) and returns only what the next step needs.
-- A step that publishes checks first whether an earlier attempt already published (the publish guard), so a retry never posts twice.
+- A step that publishes checks first whether an earlier attempt already published (the publish guard). process-single-post also claims the attempt in the database right before the platform call (`publish_started_at`), so a retry after a killed attempt never calls the platform a second time.
 
 A function whose last error should not be retried throws `NonRetriableError` (sweep-orphan-storage-files after a failed folder listing, sweep-x402-reconciliation when open items remain, deliver-webhook after its last POST).
 
@@ -95,7 +95,7 @@ flowchart TD
     S -->|No| T
     T[Cron hourly at :00] --> B[SELECT scheduled_posts\nWHERE status IN scheduled, queued\nAND scheduled_at <= now + 2 h\nORDER BY scheduled_at LIMIT 200]
     B --> C{Any rows?}
-    C -->|No| D[Return sent: 0]
+    C -->|No| ST
     C -->|Yes| P{Overdue by more than 15 min?}
     P -->|No| O[Event id post.due-id-epochMs\nts = scheduled_at when in the future]
     P -->|Yes| L[Fresh id ...-late-nowMs]
@@ -103,9 +103,13 @@ flowchart TD
     L --> G
     E --> R[process-single-post starts at ts]
     G --> R
+    G --> ST[settle-stuck-processing-posts\nstatus processing AND updated_at < now - 2 h]
+    ST --> F[finalizeProcessingPost: posted with a\ncontent_history row, else failed]
 ```
 
-The step that reads the rows also stores `nowMs`, so a retry of the send step reuses the same event ids. The tick writes nothing to `scheduled_posts`: the state moves from `scheduled` to `processing` only in the worker's claim. `queued` is a legacy state, still read and claimable, never written.
+The step that reads the rows also stores `nowMs`, so a retry of the send step reuses the same event ids. The tick never claims a post: the state moves from `scheduled` to `processing` only in the worker's claim. `queued` is a legacy state, still read and claimable, never written.
+
+The last step, `settle-stuck-processing-posts`, runs even when no post is due. It reads `processing` rows whose `updated_at` is more than 2 hours old (`STUCK_PROCESSING_AGE_MS`, oldest first, 200 at most) and settles each with `finalizeProcessingPost`: `posted` when a `content_history` row exists, else `failed` with "Publishing stopped without a result; the post may have published". The `on_scheduled_posts_update` trigger sets `updated_at` on every UPDATE, so the claim to `processing`, the publish claim and its release all restart that clock. The settle's own write also requires `publish_started_at` to be null or older than the same 2 h cutoff, so a run that claimed its attempt after the read keeps the post. The step tries every row, then throws if any failed, so Inngest retries it.
 
 ## process-single-post
 
@@ -132,9 +136,14 @@ flowchart TD
     C -->|Claimed| H[call-platform-direct-post]
     H --> I{content_history row\nfor this post?}
     I -->|Yes| K[Outcome: published]
-    I -->|No| J[Load account, mint media URLs,\npublishToPlatform]
-    J -->|transient or rate_limited,\nmayHavePublished false| X
-    J --> K2[Outcome: success or final failure]
+    I -->|No| J[Load account, mint media URLs]
+    J --> CA{Claim publish_started_at\nWHERE processing AND null}
+    CA -->|Row gone or not processing| Z2[Return skipped]
+    CA -->|Claim already held| K3[Outcome: unknown,\nmay have published]
+    CA -->|Claimed| PP[publishToPlatform]
+    PP -->|transient or rate_limited,\nmayHavePublished false| RL[Release the claim, throw:\nstep retried]
+    PP --> K2[Outcome: success or final failure]
+    K3 --> R
     K --> R[record-status]
     K2 --> R
     R -->|Success| R1[status posted, post.published webhook]
@@ -148,11 +157,11 @@ Steps, in order:
 1. `load-post-for-processing` reads the post and checks that its account exists (id only, `loadPostForProcessing`). A failed read throws. A missing or already terminal post (`posted`, `failed`, `cancelled`) ends the run.
 2. When the run starts more than 10 s before `scheduled_at` (a late safety-net event can arrive early, or Inngest starts a run early), `wait-until-scheduled-time` sleeps until the post's time.
 3. The claim step runs the publish-time access gate (`gatePostOnOwnerAccess`), then the claim. Posts created through x402 skip the gate (`needsOwnerAccessToPublish`). For every other post the gate reads `checkActiveSubscription`: an unreadable state throws (the step is retried and the post stays unclaimed, never published on an unknown); no access pauses the post exactly like a lost subscription (`status = 'cancelled'`, `cancelled_by_sub_at = now`, `buildAccessPauseValues`). With access, `claimPostForProcessing` moves the post to `processing` with a compare-and-set on its id, a waiting status and the event's `scheduled_at`, so an event for a post rescheduled since dispatch claims nothing. A missing account or a platform that refuses the media type still passes through the gate and the claim, then records `invalid_input`.
-4. `call-platform-direct-post` first checks `content_history` for a row with this post's id (the publish guard). Without one it loads the account with its tokens (`fetchAccountForPublish`), mints the media URLs inside the step (`mintPublishMediaUrls`), and calls `publishToPlatform`. A media file that no longer exists fails the post as `invalid_input`. A `transient` or `rate_limited` failure with `mayHavePublished: false` throws, so Inngest retries the step; every other failure is final.
+4. `call-platform-direct-post` first checks `content_history` for a row with this post's id (the publish guard). Without one it loads the account with its tokens (`fetchAccountForPublish`) and mints the media URLs inside the step (`mintPublishMediaUrls`). A media file that no longer exists fails the post as `invalid_input`. Right before the call, `claimPublishAttempt` sets `publish_started_at` where the post is `processing` and the column is null. When that matches no row it rereads the row: gone or no longer `processing` returns `skipped` with no call; still `processing` means an earlier attempt holds the claim, so the step returns `unknown` with `mayHavePublished: true` ("An earlier publish attempt stopped before it reported a result; the post may have published") and never calls the platform. After a claim, `publishToPlatform` runs. A `transient` or `rate_limited` failure with `mayHavePublished: false` clears the claim (`releasePublishAttempt`) and throws, so Inngest retries the step; every other failure is final.
 5. `record-status` writes `posted` or `failed` with a guard on `status = 'processing'` (`recordPostStatus`), stores the `failed_posts` row, and fires the webhooks.
 6. `cleanup-storage` deletes the media when nothing else references it (`cleanupMediaIfUnreferenced`). It is skipped when the post may be live on TikTok (the TikTok finalize cleans up after the pull settles) or on a platform that hotlinks our URL (`shouldDeleteMediaAfterPublish`).
 
-When every retry fails, `finalizeExhaustedPost` claims the post if it is not yet `processing`, checks the publish guard, and records `posted` when a `content_history` row exists, `failed` (`transient`, "Retries exhausted") otherwise.
+When every retry fails, `finalizeExhaustedPost` claims the post if it is not yet `processing`, checks the publish guard, and records `posted` when a `content_history` row exists, `failed` (`transient`, "Retries exhausted") otherwise. Its write requires `publish_started_at` to be null, so it never settles a post whose attempt may still be calling the platform (the failure event can come from a second run that never claimed the post); the hourly safety net settles such a post 2 h later. A failed read or write throws, and Inngest runs `onFailure` once more.
 
 Platform compatibility comes from the capability catalog (`platformSupportsMediaType` in `src/lib/platforms/capabilities.ts`).
 

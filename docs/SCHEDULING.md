@@ -37,14 +37,14 @@ stateDiagram-v2
     cancelled --> scheduled : resume or reschedule (needs access unless x402)
     cancelled --> scheduled : resume on resubscribe or grace cron (past times bumped to now + 1h)
     cancelled --> [*] : grace cron deletes posts paused more than 7 days without access
-    processing --> posted : platform publish success (posted_at = now, content_history inserted)
-    processing --> failed : final error or retries exhausted (error_message, failed_posts row)
+    processing --> posted : platform publish success (posted_at = now, content_history inserted), or settled with a content_history row
+    processing --> failed : final error, retries exhausted, a retry that finds the publish claim held, or still processing 2 h after its last write (error_message, failed_posts row)
     posted --> failed : TikTok rejects the pull after content/init
     posted --> [*]
     failed --> [*]
 
     note right of scheduled : post.due sent with ts = scheduled_at when due within 2 h, the hourly safety net re-sends
-    note right of processing : rate_limited and transient with mayHavePublished false are retried (max 3)
+    note right of processing : publish_started_at claims each platform call, rate_limited and transient with mayHavePublished false release it and are retried (max 3), delete is refused
 ```
 
 `queued` is a legacy state: the claim and the safety net still accept it, nothing writes it any more.
@@ -98,7 +98,9 @@ flowchart TD
 | cancelled | scheduled | resume or reschedule | Refused without access (x402 posts exempt). Past dates bumped to now + 1 hour on resume. Sends `post.due`. |
 | cancelled | scheduled | resume on resubscribe, grace cron | Only rows with `cancelled_by_sub_at`. Past dates bumped to now + 1 hour. Sends `post.due`. |
 | processing | posted | Platform publish success | `posted_at` set to `now()`. Content history inserted. `post.published` webhook. |
-| processing | failed | Final platform error, or retries exhausted with no `content_history` row | Error recorded in `error_message`. `failed_posts` row inserted. `post.failed` webhook. |
+| processing | failed | Final platform error, retries exhausted with no `content_history` row, or still `processing` 2 h after its last write (settled by the hourly safety net) | Error recorded in `error_message`. `failed_posts` row inserted. `post.failed` webhook. |
+| processing | failed | A retry finds `publish_started_at` set and no `content_history` row | Recorded as `unknown`: "An earlier publish attempt stopped before it reported a result; the post may have published". No platform call. |
+| processing | (unchanged) | The row is gone or no longer `processing` when the attempt claims it | No platform call, nothing recorded. |
 | processing or posted | failed | TikTok pull finalized as failed | `finalizeTikTokPostByPublishId`, then `post.failed` webhook. |
 
 ## Publish-time access gate
@@ -107,7 +109,7 @@ A scheduled post publishes only while its owner has access: an `active` or `tria
 
 - x402 posts (`created_via = 'x402'`) skip the check (`needsOwnerAccessToPublish` in `src/actions/checkActiveSubscription.ts`): a wallet principal has no plan and pays per post.
 - No access: the post is paused exactly like a lost subscription (`status = 'cancelled'`, `cancelled_by_sub_at = now`, `buildAccessPauseValues`), and the run ends with `paused-without-access`. It comes back when access returns and is deleted after 7 days without it (see [Subscription-triggered cancel](#subscription-triggered-cancel)).
-- Access read unavailable: the step throws, Inngest retries it, and the post stays unclaimed. If every retry fails, `onFailure` marks it failed. A post is never published on an unknown.
+- Access read unavailable: the step throws, Inngest retries it, and the post stays unclaimed. If every retry fails, `onFailure` marks it failed. If `onFailure` cannot write, it throws and Inngest retries it once; the hourly safety net settles any post still `processing` 2 h after its last write. A post is never published on an unknown.
 
 The gate reads the database each time, not the 60 s per-instance subscription cache, since a cached "active" could open it up to 60 s after access ended.
 
@@ -259,7 +261,8 @@ Both workers retry, and both publish through `publishToPlatform`. Each platform 
 - Max retries: `RUNTIME.maxRetries` (default 3, capped at 20)
 - Backoff: Inngest default exponential backoff
 - Throttle: 5 per minute per `social_account_id`
-- Publish guard: before publishing again, the step looks for a `content_history` row from an earlier attempt, so a retry never posts twice
+- Publish guard: before publishing again, the step looks for a `content_history` row from an earlier attempt
+- Publish claim (scheduled posts): right before the platform call, `claimPublishAttempt` sets `scheduled_posts.publish_started_at` with a compare-and-set on `status = 'processing'` and the column being null. When it matches no row, the step rereads the row: gone or no longer `processing` ends the run with no call; still `processing` means an earlier attempt holds the claim (killed after the platform may have accepted), so the post is recorded `failed` as `unknown`, "may have published", and the platform is never called again. A `rate_limited` or `transient` failure with `mayHavePublished: false` clears the claim (`releasePublishAttempt`) before the step throws, so its retry calls again. If that release fails, the retry records "may have published" instead of calling. Every claim to `processing` starts with the column cleared.
 
 **Error classification (`isSafeToRetryPost` in `src/inngest/functions/platformErrors.ts`):**
 
@@ -276,7 +279,7 @@ A failure with `mayHavePublished: true` is never retried, whatever its reason, s
 
 Final failures: `error_message` is recorded on the `scheduled_posts` row and a `failed_posts` row is inserted. A `post.failed` webhook fires, plus `connection.expired` for `auth_expired`.
 
-Retried failures: the worker throws inside the publish step, Inngest retries that step with backoff. When every retry fails, `onFailure` records `posted` if the publish guard finds a `content_history` row and `failed` otherwise.
+Retried failures: the worker throws inside the publish step, Inngest retries that step with backoff. When every retry fails, `onFailure` records `posted` if the publish guard finds a `content_history` row and `failed` otherwise. It leaves a post whose publish claim is held to the hourly safety net, since an attempt may still be calling the platform or the failure event may come from another run that never claimed the post. If `onFailure` cannot write, it throws and Inngest retries it once; the hourly safety net settles any post still `processing` 2 h after its last write, also only when its publish claim is null or older than 2 h.
 
 ## Cancel, resume, reschedule, delete
 
@@ -285,7 +288,7 @@ Retried failures: the worker throws inside the publish step, Inngest retries tha
 | **Cancel** | Only posts with `status=scheduled` can be cancelled. Sets `status=cancelled` and clears `cancelled_by_sub_at`. |
 | **Resume** | Moves `cancelled` posts back to `scheduled` and clears `cancelled_by_sub_at`. Past dates are bumped to now + 1 hour via `bumpPastScheduleToFuture`. Sends `post.due`. Refused without access unless every post is an x402 post: "Bringing back a cancelled post needs an active plan or referral weeks. Renew your subscription, then try again." |
 | **Reschedule** | Changes `scheduled_at` for 1 to 50 posts in `scheduled` or `cancelled`. Automatically resumes cancelled posts (no separate resume call needed), clearing `cancelled_by_sub_at` like Resume, and sends `post.due`. When the batch holds a cancelled post that needs access and the owner has none, the batch is refused with `failure: "access_required"` (REST answers 403 `forbidden`); moving a post that is still `scheduled` needs no access check. |
-| **Delete** | Permanent removal, any status. Media no other row references is deleted (`deleteUnreferencedMediaFiles`). |
+| **Delete** | Permanent removal, any status but `processing`. A batch with a post that is publishing now is refused and nothing is deleted: "Post {id} is publishing now. Try again in a minute." (`failure: "not_eligible"`, REST 409 `conflict`, MCP tool error, x402 409 `post_publishing` before payment). The DELETE also carries `status <> 'processing'`, so a post a run claims after the read is kept and counted in `failed`. Media of the deleted posts that no other row references is deleted (`deleteUnreferencedMediaFiles`). Disconnecting a social account still deletes its posts through the foreign key, a post in `processing` included. |
 
 The access checks for Resume and Reschedule live in the batch functions (`checkAccessToRevivePosts`), so the web actions, MCP `update_scheduled_posts`, REST `PATCH /v1/posts/{id}` and the x402 reschedule route all apply them. An unreadable plan refuses with "Could not check your plan, so nothing changed. Please try again." (`failure: "unavailable"` on reschedule).
 
@@ -308,7 +311,7 @@ Three crons recover stuck or orphaned data.
 
 | Cron | Schedule | Behavior |
 |------|----------|----------|
-| `scheduled-posts-tick` | Hourly at :00 | Re-sends `post.due` for unclaimed posts (`scheduled` or legacy `queued`) due within 2 hours; posts overdue by more than 15 minutes get a fresh event id |
+| `scheduled-posts-tick` | Hourly at :00 | Re-sends `post.due` for unclaimed posts (`scheduled` or legacy `queued`) due within 2 hours; posts overdue by more than 15 minutes get a fresh event id. Then settles posts still `processing` 2 hours after their last write and whose publish claim is null or older than 2 hours: `posted` with a `content_history` row, else `failed` ("Publishing stopped without a result; the post may have published") |
 | `sweep-stuck-direct-posts` | Hourly at :15 | Marks `pending_direct_posts` rows still `processing` 60 minutes after `created_at` as `failed` |
 | `sweep-orphan-storage-files` | Daily at 03:00 UTC | Deletes storage files older than 24 hours that are not referenced by any of the 4 media tables |
 

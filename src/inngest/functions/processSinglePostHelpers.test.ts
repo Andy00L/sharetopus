@@ -7,6 +7,8 @@ type StoredPost = {
   id: string;
   status: string;
   scheduled_at: string;
+  updated_at: string;
+  publish_started_at: string | null;
   cancelled_by_sub_at: string | null;
   error_message: string | null;
 };
@@ -17,18 +19,20 @@ type AccessRows = {
   isReadFailing: boolean;
 };
 
-type ColumnCondition = { column: string; allowedValues: unknown[] };
-
 const POST_ID = "post-1";
 const FIRST_TIME = "2026-11-20T10:00:00+00:00";
 const SECOND_TIME = "2026-11-20T12:30:00+00:00";
+const DB_NOW = "2026-11-20T14:00:00.000Z";
+const SETTLE_CUTOFF = "2026-11-20T12:00:00.000Z";
 
 const postStore = new Map<string, StoredPost>();
 
 const accessRows: AccessRows = { subscriptions: [], users: [], isReadFailing: false };
 
-const WHERE_CONDITION_PATTERN =
-  /"scheduled_posts"\."(\w+)" (?:= \$(\d+)|in \(([^)]*)\))/g;
+const TIME_COLUMNS = new Set(["scheduled_at", "updated_at", "publish_started_at"]);
+const WHERE_TOKEN_PATTERN =
+  /"scheduled_posts"\."\w+" (?:is null|(?:=|<>|<) \$\d+|in \([^)]*\))|\(|\)|\band\b|\bor\b/g;
+const ATOM_PATTERN = /^"scheduled_posts"\."(\w+)" (is null|=|<>|<|in) ?(?:\$(\d+)|\(([^)]*)\))?$/;
 const SET_ASSIGNMENT_PATTERN = /"(\w+)" = \$(\d+)/g;
 
 function readSqlStatement(query: unknown): { sql: string; params: unknown[] } {
@@ -55,68 +59,105 @@ function readParam(params: unknown[], placeholder: string): unknown {
   return params[Number(placeholder.replace("$", "")) - 1];
 }
 
-function readWhereConditions(whereSql: string, params: unknown[]): ColumnCondition[] {
-  return [...whereSql.matchAll(WHERE_CONDITION_PATTERN)].map((conditionMatch) => {
-    const [, column, equalsIndex, inPlaceholders] = conditionMatch;
-    const allowedValues = equalsIndex
-      ? [params[Number(equalsIndex) - 1]]
-      : inPlaceholders.split(", ").map((placeholder) => readParam(params, placeholder));
-    return { column, allowedValues };
-  });
-}
-
-function isSameStoredValue(column: string, storedValue: string, wantedValue: unknown): boolean {
-  if (typeof wantedValue !== "string") return false;
-  return column === "scheduled_at"
-    ? Date.parse(storedValue) === Date.parse(wantedValue)
-    : storedValue === wantedValue;
-}
-
-function readStoredValue(storedPost: StoredPost, column: string): string {
+function readStoredValue(storedPost: StoredPost, column: string): string | null {
   switch (column) {
     case "id":
-      return storedPost.id;
     case "status":
-      return storedPost.status;
     case "scheduled_at":
-      return storedPost.scheduled_at;
+    case "updated_at":
+    case "publish_started_at":
+      return storedPost[column];
     default:
       throw new Error(`Unknown column ${column}`);
   }
 }
 
-function matchesConditions(storedPost: StoredPost, conditions: ColumnCondition[]): boolean {
-  return conditions.every((condition) => {
-    const storedValue = readStoredValue(storedPost, condition.column);
-    return condition.allowedValues.some((wantedValue) =>
-      isSameStoredValue(condition.column, storedValue, wantedValue),
-    );
-  });
+function compareStoredValue(column: string, storedValue: string, wantedValue: unknown): number {
+  if (typeof wantedValue !== "string") throw new Error(`Unexpected param for ${column}`);
+  if (TIME_COLUMNS.has(column)) return Date.parse(storedValue) - Date.parse(wantedValue);
+  return storedValue === wantedValue ? 0 : 1;
 }
 
+function evaluateAtom(atomSql: string, storedPost: StoredPost, params: unknown[]): boolean {
+  const atomMatch = ATOM_PATTERN.exec(atomSql);
+  if (!atomMatch) throw new Error(`Unexpected condition: ${atomSql}`);
+  const [, column, operator, paramIndex, inPlaceholders] = atomMatch;
+  const storedValue = readStoredValue(storedPost, column);
+  if (operator === "is null") return storedValue === null;
+  if (storedValue === null) return false;
+  if (operator === "in") {
+    return inPlaceholders
+      .split(", ")
+      .some((placeholder) => compareStoredValue(column, storedValue, readParam(params, placeholder)) === 0);
+  }
+  const comparison = compareStoredValue(column, storedValue, params[Number(paramIndex) - 1]);
+  if (operator === "=") return comparison === 0;
+  if (operator === "<>") return comparison !== 0;
+  return comparison < 0;
+}
+
+// drizzle wraps every and()/or() group in parentheses and never mixes the
+// two connectives inside one group.
+function matchesWhere(whereSql: string, storedPost: StoredPost, params: unknown[]): boolean {
+  const tokens = whereSql.match(WHERE_TOKEN_PATTERN) ?? [];
+  let position = 0;
+  const readOperand = (): boolean => {
+    const token = tokens[position];
+    position += 1;
+    if (token !== "(") return evaluateAtom(token, storedPost, params);
+    const groupValue = readGroup();
+    position += 1;
+    return groupValue;
+  };
+  const readGroup = (): boolean => {
+    let groupValue = readOperand();
+    while (tokens[position] === "and" || tokens[position] === "or") {
+      const connective = tokens[position];
+      position += 1;
+      const operandValue = readOperand();
+      groupValue = connective === "and" ? groupValue && operandValue : groupValue || operandValue;
+    }
+    return groupValue;
+  };
+  return readGroup();
+}
+
+function readWhereSql(sql: string): string {
+  return (sql.split(" where ")[1] ?? "").split(/ returning | limit | order by /)[0];
+}
+
+function selectRows(sql: string, params: unknown[]): StoredPost[] {
+  const whereSql = readWhereSql(sql);
+  return [...postStore.values()].filter((storedPost) => matchesWhere(whereSql, storedPost, params));
+}
+
+function assignColumn(storedPost: StoredPost, column: string, assignedValue: unknown): StoredPost {
+  const nullableValue = typeof assignedValue === "string" ? assignedValue : null;
+  switch (column) {
+    case "status":
+      return typeof assignedValue === "string" ? { ...storedPost, status: assignedValue } : storedPost;
+    case "cancelled_by_sub_at":
+    case "error_message":
+    case "publish_started_at":
+      return { ...storedPost, [column]: nullableValue };
+    default:
+      return storedPost;
+  }
+}
+
+// The on_scheduled_posts_update trigger sets updated_at = now() on every
+// UPDATE (public.handle_updated_at).
 function runUpdate(sql: string, params: unknown[]): { id: string }[] {
-  const [setSql, whereSql] = sql.split(" where ");
-  const conditions = readWhereConditions(whereSql, params);
+  const setSql = sql.split(" where ")[0];
   const assignments = [...setSql.matchAll(SET_ASSIGNMENT_PATTERN)];
-  return [...postStore.values()]
-    .filter((storedPost) => matchesConditions(storedPost, conditions))
-    .map((storedPost) => {
-      let updatedPost = storedPost;
-      for (const [, column, paramIndex] of assignments) {
-        const assignedValue = params[Number(paramIndex) - 1];
-        if (column === "status" && typeof assignedValue === "string") {
-          updatedPost = { ...updatedPost, status: assignedValue };
-        }
-        if (column === "cancelled_by_sub_at" && typeof assignedValue === "string") {
-          updatedPost = { ...updatedPost, cancelled_by_sub_at: assignedValue };
-        }
-        if (column === "error_message" && typeof assignedValue === "string") {
-          updatedPost = { ...updatedPost, error_message: assignedValue };
-        }
-      }
-      postStore.set(storedPost.id, updatedPost);
-      return { id: storedPost.id };
-    });
+  return selectRows(sql, params).map((storedPost) => {
+    let updatedPost = storedPost;
+    for (const [, column, paramIndex] of assignments) {
+      updatedPost = assignColumn(updatedPost, column, params[Number(paramIndex) - 1]);
+    }
+    postStore.set(storedPost.id, { ...updatedPost, updated_at: DB_NOW });
+    return { id: storedPost.id };
+  });
 }
 
 mock.module("server-only", () => ({}));
@@ -172,18 +213,28 @@ mock.module("@/db/client", () => ({
       const rows = sql.includes('from "users"') ? accessRows.users : accessRows.subscriptions;
       return { data: rows, error: null };
     }
+    if (sql.startsWith("select") && sql.includes('from "scheduled_posts"')) {
+      return { data: selectRows(sql, params), error: null };
+    }
     if (!sql.startsWith('update "scheduled_posts"')) {
       throw new Error(`Unexpected statement: ${sql}`);
+    }
+    if (writeState.isUpdateFailing) {
+      return { data: null, error: { message: "connection reset", code: "08006" } };
     }
     return { data: runUpdate(sql, params), error: null };
   },
 }));
 
+const writeState = { isUpdateFailing: false };
+
 const {
   claimPostForProcessing,
+  claimPublishAttempt,
   cleanupMediaIfUnreferenced,
   finalizeProcessingPost,
   gatePostOnOwnerAccess,
+  releasePublishAttempt,
 } = await import("./processSinglePostHelpers");
 
 function storePost(changes: Partial<StoredPost>): void {
@@ -191,6 +242,8 @@ function storePost(changes: Partial<StoredPost>): void {
     id: POST_ID,
     status: "scheduled",
     scheduled_at: FIRST_TIME,
+    updated_at: FIRST_TIME,
+    publish_started_at: null,
     cancelled_by_sub_at: null,
     error_message: null,
     ...changes,
@@ -223,13 +276,15 @@ function buildScheduledPostRow(): typeof scheduled_posts.$inferSelect {
     created_at: FIRST_TIME,
     updated_at: FIRST_TIME,
     cancelled_by_sub_at: null,
+    publish_started_at: null,
   };
 }
 
-function finalizeStuckPost() {
+function finalizeStuckPost(abandonedClaimBeforeIso: string | null) {
   return finalizeProcessingPost({
     post: buildScheduledPostRow(),
     failureMessage: "Publishing stopped without a result; the post may have published",
+    abandonedClaimBeforeIso,
   });
 }
 
@@ -257,6 +312,7 @@ beforeEach(() => {
   accessRows.subscriptions = [];
   accessRows.users = [];
   accessRows.isReadFailing = false;
+  writeState.isUpdateFailing = false;
 });
 
 describe("a post.due run re-checks the row before it claims it", () => {
@@ -362,7 +418,7 @@ describe("finalizeProcessingPost settles a post no run will settle", () => {
   test("a post with a content_history row is recorded posted, not failed", async () => {
     storePost({ status: "processing" });
     historyState.publishedPostIds = new Set([POST_ID]);
-    const finalized = await finalizeStuckPost();
+    const finalized = await finalizeStuckPost(null);
     expect(finalized).toEqual({ success: true, outcome: { ok: true, contentId: POST_ID }, updated: true });
     expect(postStore.get(POST_ID)?.status).toBe("posted");
     expect(failedPostRecords).toEqual([]);
@@ -370,7 +426,7 @@ describe("finalizeProcessingPost settles a post no run will settle", () => {
 
   test("a post without one is recorded failed with a message that it may have published", async () => {
     storePost({ status: "processing" });
-    const finalized = await finalizeStuckPost();
+    const finalized = await finalizeStuckPost(null);
     expect(finalized.success).toBe(true);
     expect(postStore.get(POST_ID)?.status).toBe("failed");
     expect(postStore.get(POST_ID)?.error_message).toContain("may have published");
@@ -380,7 +436,7 @@ describe("finalizeProcessingPost settles a post no run will settle", () => {
   test("a history read that fails changes nothing and reports the failure", async () => {
     storePost({ status: "processing" });
     historyState.isReadFailing = true;
-    const finalized = await finalizeStuckPost();
+    const finalized = await finalizeStuckPost(null);
     expect(finalized).toEqual({
       success: false,
       message: "content history lookup failed: connection reset",
@@ -390,9 +446,70 @@ describe("finalizeProcessingPost settles a post no run will settle", () => {
 
   test("a post another writer settled first is left as it is", async () => {
     storePost({ status: "posted" });
-    const finalized = await finalizeStuckPost();
+    const finalized = await finalizeStuckPost(null);
     expect(finalized).toMatchObject({ success: true, updated: false });
     expect(postStore.get(POST_ID)?.status).toBe("posted");
     expect(failedPostRecords).toEqual([]);
+  });
+});
+
+describe("the publish claim taken right before the platform call", () => {
+  test("the first attempt claims the post, a retry finds the claim held", async () => {
+    storePost({ status: "processing" });
+    expect(await claimPublishAttempt(POST_ID)).toEqual({ success: true, kind: "claimed" });
+    expect(postStore.get(POST_ID)?.publish_started_at).not.toBeNull();
+    expect(await claimPublishAttempt(POST_ID)).toEqual({
+      success: true,
+      kind: "attempt-already-started",
+    });
+  });
+
+  test("a post that is gone or no longer processing is never claimed", async () => {
+    expect(await claimPublishAttempt(POST_ID)).toEqual({ success: true, kind: "post-deleted" });
+    storePost({ status: "failed" });
+    expect(await claimPublishAttempt(POST_ID)).toEqual({
+      success: true,
+      kind: "post-no-longer-processing",
+    });
+    expect(postStore.get(POST_ID)?.publish_started_at).toBeNull();
+  });
+
+  test("a released claim lets the retry claim the post again", async () => {
+    storePost({ status: "processing" });
+    await claimPublishAttempt(POST_ID);
+    expect(await releasePublishAttempt(POST_ID)).toEqual({ success: true });
+    expect(await claimPublishAttempt(POST_ID)).toEqual({ success: true, kind: "claimed" });
+  });
+
+  test("a claim the database refuses is reported and claims nothing", async () => {
+    storePost({ status: "processing" });
+    writeState.isUpdateFailing = true;
+    expect(await claimPublishAttempt(POST_ID)).toMatchObject({ success: false });
+    expect(postStore.get(POST_ID)?.publish_started_at).toBeNull();
+  });
+
+  test("a run that claims the post for processing starts with no publish claim", async () => {
+    storePost({ publish_started_at: "2026-11-19T09:00:00.000Z" });
+    expect(await claimForEventTime(FIRST_TIME)).toBe(true);
+    expect(postStore.get(POST_ID)?.publish_started_at).toBeNull();
+  });
+});
+
+describe("a settler never overrides a publish attempt that holds the claim", () => {
+  test("the failure handler leaves a post with a held claim in processing", async () => {
+    storePost({ status: "processing", publish_started_at: "2026-11-20T13:59:00.000Z" });
+    expect(await finalizeStuckPost(null)).toMatchObject({ success: true, updated: false });
+    expect(postStore.get(POST_ID)?.status).toBe("processing");
+    expect(failedPostRecords).toEqual([]);
+  });
+
+  test("the hourly safety net skips a claim taken after its cutoff and settles an older one", async () => {
+    storePost({ status: "processing", publish_started_at: "2026-11-20T13:59:00.000Z" });
+    expect(await finalizeStuckPost(SETTLE_CUTOFF)).toMatchObject({ success: true, updated: false });
+    expect(postStore.get(POST_ID)?.status).toBe("processing");
+
+    storePost({ status: "processing", publish_started_at: "2026-11-20T10:05:00.000Z" });
+    expect(await finalizeStuckPost(SETTLE_CUTOFF)).toMatchObject({ success: true, updated: true });
+    expect(postStore.get(POST_ID)?.status).toBe("failed");
   });
 });

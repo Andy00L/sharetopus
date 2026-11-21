@@ -41,7 +41,7 @@
 | `bun run db:migrate` | Applies the pending migrations in `drizzle/` and records each one in `drizzle.__drizzle_migrations`. |
 | `bun run db:pull` | Reads the live database into `drizzle/`. Only for checking drift: `src/db/schema.ts` is edited by hand. |
 
-To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object. `drizzle/0001_drop_unused_access.sql` (2026-09-24) is the first applied change: generated from the schema, then extended by hand with grants, which `src/db/schema.ts` cannot express (see [RLS posture](#rls-posture)). `db:migrate` runs every pending migration in one transaction. The latest, `drizzle/0006_media_path_index_and_tiktok_pull_fks.sql` (2026-11-19), replaced the partial media-path index on `scheduled_posts` with a full one and gave both `pending_tiktok_pulls` foreign keys ON DELETE SET NULL.
+To change the schema, edit `src/db/schema.ts`, run `bun run db:generate`, review the SQL it wrote, then apply it with `bun run db:migrate`. A migration runs against production only after that review. `drizzle/0000_baseline.sql` marks the starting point (2026-09-23) and runs nothing, since the database already had every object. `drizzle/0001_drop_unused_access.sql` (2026-09-24) is the first applied change: generated from the schema, then extended by hand with grants, which `src/db/schema.ts` cannot express (see [RLS posture](#rls-posture)). `db:migrate` runs every pending migration in one transaction. `drizzle/0006_media_path_index_and_tiktok_pull_fks.sql` (2026-11-19) replaced the partial media-path index on `scheduled_posts` with a full one and gave both `pending_tiktok_pulls` foreign keys ON DELETE SET NULL. The latest, `drizzle/0007_scheduled_posts_publish_started_at.sql` (2026-11-21), adds the nullable column `scheduled_posts.publish_started_at` (no default, so no row is rewritten).
 
 | Variable | Pooler | Used by |
 |----------|--------|---------|
@@ -137,7 +137,7 @@ erDiagram
 
 | Table | Purpose | Columns |
 |-------|---------|---------|
-| `scheduled_posts` | Posts awaiting or in-process publication. | id, principal_id, social_account_id, platform, status (`scheduled` &#124; `queued` &#124; `processing` &#124; `posted` &#124; `failed` &#124; `cancelled`), scheduled_at, posted_at, scheduled_at_date (GENERATED), post_title, post_description, post_options, media_type (`text` &#124; `image` &#124; `video`), media_storage_path, cover_image_timestamp, batch_id, error_message, retry_count, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), idempotency_key, x402_charge_id, metadata, cancelled_by_sub_at, created_at, updated_at |
+| `scheduled_posts` | Posts awaiting or in-process publication. | id, principal_id, social_account_id, platform, status (`scheduled` &#124; `queued` &#124; `processing` &#124; `posted` &#124; `failed` &#124; `cancelled`), scheduled_at, posted_at, scheduled_at_date (GENERATED), post_title, post_description, post_options, media_type (`text` &#124; `image` &#124; `video`), media_storage_path, cover_image_timestamp, batch_id, error_message, retry_count, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), idempotency_key, x402_charge_id, metadata, cancelled_by_sub_at, publish_started_at (the publish claim: set right before the platform call, cleared by a safe "try later" and by each claim to `processing`), created_at, updated_at |
 | `failed_posts` | Archive of terminal post failures. Same structure as `scheduled_posts`. | (mirrors `scheduled_posts`) |
 | `content_history` | Record of published content, written after successful posting. | id, principal_id, social_account_id, scheduled_post_id, platform, content_id, title, description, media_url, media_type, status, batch_id, created_via (`web` &#124; `mcp` &#124; `x402` &#124; `api`), extra, created_at |
 | `pending_direct_posts` | Lock table for "post now" operations. Prevents duplicate direct posts. | event_id (PK), batch_id, principal_id, social_account_id, platform, media_storage_path, status (`processing` &#124; `completed` &#124; `failed`), failure_reason, idempotency_key, finished_at, created_at |
@@ -336,14 +336,14 @@ stateDiagram-v2
     scheduled --> cancelled : user cancels, or access loss pauses it (cancelled_by_sub_at)
     cancelled --> scheduled : resume, reschedule, or access back
     cancelled --> [*] : deleted 7 days after an access-loss pause
-    processing --> posted : platform API returns success
-    processing --> failed : final platform error or retries exhausted (row copied to failed_posts)
+    processing --> posted : platform API returns success, or settled with a content_history row
+    processing --> failed : final platform error, retries exhausted, publish claim found held, or 2 h without a write (row copied to failed_posts)
     posted --> failed : TikTok rejects the pull
     failed --> [*]
     posted --> [*]
 ```
 
-The row stays in `scheduled_posts` with status `failed`; `failed_posts` holds a copy. Transitions and their triggers: [SCHEDULING.md](./SCHEDULING.md#status-transitions).
+The row stays in `scheduled_posts` with status `failed`; `failed_posts` holds a copy. While a post is `processing`, `publish_started_at` records that an attempt may have reached the platform: a retry that finds it set never calls the platform again, both settlers skip a post whose claim an attempt may still hold, and every delete path refuses the post (the DELETE carries `status <> 'processing'`). Transitions and their triggers: [SCHEDULING.md](./SCHEDULING.md#status-transitions).
 
 ### pending_direct_posts.status
 

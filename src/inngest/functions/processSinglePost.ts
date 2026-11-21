@@ -14,13 +14,14 @@ import {
   buildScheduledPublishRequest,
   checkPlatformCompatibility,
   claimPostForProcessing,
+  claimPublishAttempt,
   cleanupMediaIfUnreferenced,
   finalizeProcessingPost,
   findPublishedContentHistory,
   gatePostOnOwnerAccess,
   loadPostForProcessing,
-  readPostStatus,
   recordPostStatus,
+  releasePublishAttempt,
 } from "./processSinglePostHelpers";
 import {
   mintPublishMediaUrls,
@@ -35,6 +36,13 @@ type RowClaim =
   | { claimed: false; skipReason: "claimed-by-another-worker" | "paused-without-access" };
 
 type PublishSkip = { skipped: true; reason: "post-deleted" | "post-no-longer-processing" };
+
+const EARLIER_ATTEMPT_UNFINISHED: PlatformPostOutcome = {
+  ok: false,
+  reason: "unknown",
+  message: "An earlier publish attempt stopped before it reported a result; the post may have published",
+  mayHavePublished: true,
+};
 
 // A step that wants to be retried throws inside itself: Inngest stores
 // completed step results, so a throw placed after a step never re-runs it.
@@ -169,19 +177,29 @@ export const processSinglePost = inngest.createFunction(
       });
       if (!built.ok) return built;
 
-      const current = await readPostStatus(post.id);
-      if (!current.success) throw new Error(current.message);
-      if (current.status !== "processing") {
-        const skip: PublishSkip = {
-          skipped: true,
-          reason: current.status === null ? "post-deleted" : "post-no-longer-processing",
-        };
-        return skip;
+      const attempt = await claimPublishAttempt(post.id);
+      if (!attempt.success) throw new Error(attempt.message);
+      switch (attempt.kind) {
+        case "post-deleted":
+        case "post-no-longer-processing": {
+          const skip: PublishSkip = { skipped: true, reason: attempt.kind };
+          return skip;
+        }
+        case "attempt-already-started":
+          return EARLIER_ATTEMPT_UNFINISHED;
+        case "claimed":
+          break;
+        default: {
+          const unhandledAttempt: never = attempt.kind;
+          return unhandledAttempt;
+        }
       }
 
       const publishResult = await publishToPlatform(built.request);
       if (!publishResult.ok && isSafeToRetryPost(publishResult)) {
-        throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}`);
+        const released = await releasePublishAttempt(post.id);
+        const releaseNote = released.success ? "" : ` (${released.message})`;
+        throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}${releaseNote}`);
       }
       const outcome: PlatformPostOutcome = publishResult.ok
         ? { ok: true, contentId: post.id }
@@ -253,6 +271,7 @@ async function finalizeExhaustedPost(
   const finalized = await finalizeProcessingPost({
     post: loaded.post,
     failureMessage: `Retries exhausted: ${error.message}`,
+    abandonedClaimBeforeIso: null,
   });
   if (!finalized.success) {
     throw new Error(`[finalizeExhaustedPost] Post ${scheduledPostId}: ${finalized.message}`);

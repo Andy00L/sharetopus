@@ -55,13 +55,22 @@ type GateResult =
 
 const GATE_OPEN: GateResult = { success: true, isOpen: true };
 
-type FinalizeCall = { postId: string; failureMessage: string };
+type FinalizeCall = { postId: string; failureMessage: string; abandonedClaimBeforeIso: string | null };
 
-type StatusReread = { success: true; status: string | null } | { success: false; message: string };
+type AttemptClaim =
+  | {
+      success: true;
+      kind: "claimed" | "post-deleted" | "post-no-longer-processing" | "attempt-already-started";
+    }
+  | { success: false; message: string };
+
+type AttemptRelease = { success: true } | { success: false; message: string };
 
 type HelperState = {
   load: LoadResult;
-  statusReread: StatusReread;
+  attemptClaim: AttemptClaim;
+  attemptRelease: AttemptRelease;
+  releaseCalls: number;
   recordFailure: string | null;
   finalizeCalls: FinalizeCall[];
   gate: GateResult;
@@ -78,11 +87,14 @@ type HelperState = {
   stepLog: string[];
 };
 
-const STILL_PROCESSING: StatusReread = { success: true, status: "processing" };
+const CLAIMED: AttemptClaim = { success: true, kind: "claimed" };
+const RELEASED: AttemptRelease = { success: true };
 
 const helperState: HelperState = {
   load: { kind: "ready", post: POST },
-  statusReread: STILL_PROCESSING,
+  attemptClaim: CLAIMED,
+  attemptRelease: RELEASED,
+  releaseCalls: 0,
   recordFailure: null,
   finalizeCalls: [],
   gate: GATE_OPEN,
@@ -128,7 +140,11 @@ mock.module("./processSinglePostHelpers", () => ({
     return helperState.claim;
   },
   findPublishedContentHistory: async () => ({ success: true, isPublished: helperState.isPublished }),
-  readPostStatus: async () => helperState.statusReread,
+  claimPublishAttempt: async () => helperState.attemptClaim,
+  releasePublishAttempt: async () => {
+    helperState.releaseCalls += 1;
+    return helperState.attemptRelease;
+  },
   checkPlatformCompatibility: () => ({ compatible: true, reason: "" }),
   buildScheduledPublishRequest: () => ({ ok: true, request: {} }),
   recordPostStatus: async (input: { result: Outcome }) => {
@@ -136,9 +152,17 @@ mock.module("./processSinglePostHelpers", () => ({
     helperState.recorded.push(input.result);
     return { success: true, updated: true };
   },
-  finalizeProcessingPost: async (input: { post: PostRow; failureMessage: string }) => {
+  finalizeProcessingPost: async (input: {
+    post: PostRow;
+    failureMessage: string;
+    abandonedClaimBeforeIso: string | null;
+  }) => {
     if (helperState.recordFailure) return { success: false, message: helperState.recordFailure };
-    helperState.finalizeCalls.push({ postId: input.post.id, failureMessage: input.failureMessage });
+    helperState.finalizeCalls.push({
+      postId: input.post.id,
+      failureMessage: input.failureMessage,
+      abandonedClaimBeforeIso: input.abandonedClaimBeforeIso,
+    });
     return { success: true, outcome: { ok: true, contentId: input.post.id }, updated: true };
   },
   cleanupMediaIfUnreferenced: async () => ({ success: true, deleted: false }),
@@ -197,7 +221,9 @@ function runOnFailure() {
 
 beforeEach(() => {
   helperState.load = { kind: "ready", post: POST };
-  helperState.statusReread = STILL_PROCESSING;
+  helperState.attemptClaim = CLAIMED;
+  helperState.attemptRelease = RELEASED;
+  helperState.releaseCalls = 0;
   helperState.recordFailure = null;
   helperState.finalizeCalls = [];
   helperState.gate = GATE_OPEN;
@@ -316,6 +342,7 @@ describe("processSinglePost", () => {
     await runWorker();
     expect(helperState.platformCalls).toBe(1);
     expect(helperState.recorded).toEqual([mayHavePublished]);
+    expect(helperState.releaseCalls).toBe(0);
   });
 
   test("media cleanup follows the shared decision for the published outcome", async () => {
@@ -375,9 +402,9 @@ describe("processSinglePost", () => {
   });
 });
 
-describe("processSinglePost rereads the row before the platform call", () => {
+describe("processSinglePost claims the attempt right before the platform call", () => {
   test("a post deleted after its claim is not sent to the platform", async () => {
-    helperState.statusReread = { success: true, status: null };
+    helperState.attemptClaim = { success: true, kind: "post-deleted" };
     const outcome = await runWorker();
     expect(helperState.platformCalls).toBe(0);
     expect(helperState.recorded).toEqual([]);
@@ -385,17 +412,55 @@ describe("processSinglePost rereads the row before the platform call", () => {
   });
 
   test("a post settled while its publish step waited for a retry is not sent", async () => {
-    helperState.statusReread = { success: true, status: "failed" };
+    helperState.attemptClaim = { success: true, kind: "post-no-longer-processing" };
     const outcome = await runWorker();
     expect(helperState.platformCalls).toBe(0);
     expect(helperState.recorded).toEqual([]);
     expect(outcome).toEqual({ skipped: true, reason: "post-no-longer-processing" });
   });
 
-  test("a reread that fails throws so Inngest retries the step, and nothing is sent", async () => {
-    helperState.statusReread = { success: false, message: "status reread failed: timeout" };
-    await expect(runWorker()).rejects.toThrow("status reread failed: timeout");
+  test("a claim that cannot run throws so Inngest retries the step, and nothing is sent", async () => {
+    helperState.attemptClaim = { success: false, message: "publish claim failed: timeout" };
+    await expect(runWorker()).rejects.toThrow("publish claim failed: timeout");
     expect(helperState.platformCalls).toBe(0);
+  });
+
+  test("a retry after an attempt that may have reached the platform never calls it again", async () => {
+    helperState.attemptClaim = { success: true, kind: "attempt-already-started" };
+    await runWorker();
+    expect(helperState.platformCalls).toBe(0);
+    expect(helperState.recorded).toEqual([
+      {
+        ok: false,
+        reason: "unknown",
+        message: "An earlier publish attempt stopped before it reported a result; the post may have published",
+        mayHavePublished: true,
+      },
+    ]);
+  });
+
+  test("a try-later refusal releases the claim before it throws, so the retry calls again", async () => {
+    helperState.publishResult = {
+      ok: false,
+      reason: "rate_limited",
+      message: "slow down",
+      mayHavePublished: false,
+    };
+    await expect(runWorker()).rejects.toThrow("retryable: rate_limited");
+    expect(helperState.releaseCalls).toBe(1);
+    expect(helperState.recorded).toEqual([]);
+  });
+
+  test("a release that fails still throws, so the step is retried rather than recorded", async () => {
+    helperState.publishResult = {
+      ok: false,
+      reason: "transient",
+      message: "token refresh failed",
+      mayHavePublished: false,
+    };
+    helperState.attemptRelease = { success: false, message: "publish release failed: timeout" };
+    await expect(runWorker()).rejects.toThrow("retryable: transient");
+    expect(helperState.recorded).toEqual([]);
   });
 });
 
@@ -406,7 +471,7 @@ describe("processSinglePost onFailure", () => {
       { scheduledPostId: POST.id, dispatchedScheduledAt: EVENT_DATA.scheduled_at },
     ]);
     expect(helperState.finalizeCalls).toEqual([
-      { postId: POST.id, failureMessage: "Retries exhausted: boom" },
+      { postId: POST.id, failureMessage: "Retries exhausted: boom", abandonedClaimBeforeIso: null },
     ]);
   });
 

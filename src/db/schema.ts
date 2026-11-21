@@ -368,6 +368,7 @@ export const scheduled_posts = pgTable("scheduled_posts", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
   cancelled_by_sub_at: timestamptz(),
+  publish_started_at: timestamptz(),
 }, (table): PgTableExtraConfigValue[] => [
   index("idx_scheduled_posts_batch").on(table.batch_id).where(sql`(batch_id IS NOT NULL)`),
   index("idx_scheduled_posts_cancelled_by_sub_at").on(table.cancelled_by_sub_at).where(sql`(cancelled_by_sub_at IS NOT NULL)`),

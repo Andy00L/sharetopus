@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or, type SQL } from "drizzle-orm";
 
 import {
   checkActiveSubscription,
@@ -105,6 +105,7 @@ export async function claimPostForProcessing(target: RunTarget): Promise<ClaimRe
       .set({
         status: "processing" satisfies PostStatus,
         updated_at: new Date().toISOString(),
+        publish_started_at: null,
       })
       .where(isWaitingForThisRun(target))
       .returning({ id: scheduled_posts.id }),
@@ -185,11 +186,11 @@ export async function findPublishedContentHistory(
   return { success: true, isPublished: data.length > 0 };
 }
 
-export type PostStatusReadResult =
+type PostStatusReadResult =
   | { success: true; status: PostStatus | null }
   | { success: false; message: string };
 
-export async function readPostStatus(scheduledPostId: string): Promise<PostStatusReadResult> {
+async function readPostStatus(scheduledPostId: string): Promise<PostStatusReadResult> {
   const { data, error } = await runQuery(
     db
       .select({ status: scheduled_posts.status })
@@ -201,6 +202,63 @@ export async function readPostStatus(scheduledPostId: string): Promise<PostStatu
     return { success: false, message: `status reread failed: ${error.message}` };
   }
   return { success: true, status: data[0]?.status ?? null };
+}
+
+export type PublishAttemptClaim =
+  | {
+      success: true;
+      kind: "claimed" | "post-deleted" | "post-no-longer-processing" | "attempt-already-started";
+    }
+  | { success: false; message: string };
+
+export async function claimPublishAttempt(scheduledPostId: string): Promise<PublishAttemptClaim> {
+  const { data: claimedRows, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ publish_started_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(scheduled_posts.id, scheduledPostId),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          isNull(scheduled_posts.publish_started_at),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
+  );
+  if (error) {
+    console.error("[claimPublishAttempt] claim failed:", error.message);
+    return { success: false, message: `publish claim failed: ${error.message}` };
+  }
+  if (claimedRows.length > 0) return { success: true, kind: "claimed" };
+
+  const current = await readPostStatus(scheduledPostId);
+  if (!current.success) return current;
+  if (current.status === null) return { success: true, kind: "post-deleted" };
+  if (current.status !== "processing") return { success: true, kind: "post-no-longer-processing" };
+  return { success: true, kind: "attempt-already-started" };
+}
+
+export type PublishAttemptRelease = { success: true } | { success: false; message: string };
+
+export async function releasePublishAttempt(
+  scheduledPostId: string,
+): Promise<PublishAttemptRelease> {
+  const { error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ publish_started_at: null })
+      .where(
+        and(
+          eq(scheduled_posts.id, scheduledPostId),
+          eq(scheduled_posts.status, "processing" satisfies PostStatus),
+        ),
+      ),
+  );
+  if (error) {
+    console.error("[releasePublishAttempt] release failed:", error.message);
+    return { success: false, message: `publish release failed: ${error.message}` };
+  }
+  return { success: true };
 }
 
 export type CompatibilityResult = {
@@ -279,7 +337,15 @@ export async function recordPostStatus(args: {
   post: ScheduledPost;
   result: PlatformPostOutcome;
 }): Promise<RecordStatusResult> {
-  const { post, result } = args;
+  return writePostOutcome({ ...args, settleCondition: undefined });
+}
+
+async function writePostOutcome(args: {
+  post: ScheduledPost;
+  result: PlatformPostOutcome;
+  settleCondition: SQL | undefined;
+}): Promise<RecordStatusResult> {
+  const { post, result, settleCondition } = args;
   const nowIso = new Date().toISOString();
 
   if (result.ok) {
@@ -296,13 +362,14 @@ export async function recordPostStatus(args: {
           and(
             eq(scheduled_posts.id, post.id),
             eq(scheduled_posts.status, "processing" satisfies PostStatus),
+            settleCondition,
           ),
         )
         .returning({ id: scheduled_posts.id }),
     );
 
     if (error) {
-      console.error("[recordPostStatus] mark posted failed:", error.message);
+      console.error("[writePostOutcome] mark posted failed:", error.message);
       return { success: false, message: `mark-posted error: ${error.message}` };
     }
     const wasPosted = data.length > 0;
@@ -329,13 +396,14 @@ export async function recordPostStatus(args: {
         and(
           eq(scheduled_posts.id, post.id),
           eq(scheduled_posts.status, "processing" satisfies PostStatus),
+          settleCondition,
         ),
       )
       .returning({ id: scheduled_posts.id }),
   );
 
   if (error) {
-    console.error("[recordPostStatus] mark failed failed:", error.message);
+    console.error("[writePostOutcome] mark failed failed:", error.message);
     return { success: false, message: `mark-failed error: ${error.message}` };
   }
 
@@ -364,7 +432,7 @@ export async function recordPostStatus(args: {
   });
   if (!storeResult.success) {
     console.error(
-      "[recordPostStatus] Failed to store failed post record:",
+      "[writePostOutcome] Failed to store failed post record:",
       storeResult.message,
     );
   }
@@ -390,18 +458,30 @@ export type FinalizeProcessingResult =
   | { success: true; outcome: PlatformPostOutcome; updated: boolean }
   | { success: false; message: string };
 
+function hasNoLiveAttempt(abandonedClaimBeforeIso: string | null): SQL | undefined {
+  const hasNoClaim = isNull(scheduled_posts.publish_started_at);
+  return abandonedClaimBeforeIso === null
+    ? hasNoClaim
+    : or(hasNoClaim, lt(scheduled_posts.publish_started_at, abandonedClaimBeforeIso));
+}
+
 export async function finalizeProcessingPost(input: {
   post: ScheduledPost;
   failureMessage: string;
+  abandonedClaimBeforeIso: string | null;
 }): Promise<FinalizeProcessingResult> {
-  const { post, failureMessage } = input;
+  const { post, failureMessage, abandonedClaimBeforeIso } = input;
   const published = await findPublishedContentHistory(post);
   if (!published.success) return { success: false, message: published.message };
 
   const outcome: PlatformPostOutcome = published.isPublished
     ? { ok: true, contentId: post.id }
     : { ok: false, reason: "transient", message: failureMessage, mayHavePublished: true };
-  const recorded = await recordPostStatus({ post, result: outcome });
+  const recorded = await writePostOutcome({
+    post,
+    result: outcome,
+    settleCondition: hasNoLiveAttempt(abandonedClaimBeforeIso),
+  });
   if (!recorded.success) return recorded;
   return { success: true, outcome, updated: recorded.updated };
 }
