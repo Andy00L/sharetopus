@@ -27,9 +27,30 @@ function disableQueryPipelining(databaseUrl: string): string {
   return connectionUrl.toString();
 }
 
+// Next.js sets NEXT_PHASE before it collects page data and prerenders:
+// node_modules/next/dist/build/index.js (PHASE_PRODUCTION_BUILD).
+const NEXT_BUILD_PHASE = "phase-production-build";
+
+// Names under .invalid never resolve (RFC 6761 section 6.4).
+const UNCONFIGURED_DATABASE_HOST = "database-url-not-set.invalid";
+
+function createUnconfiguredBuildClient() {
+  console.warn(
+    "[createUnconfiguredBuildClient] DATABASE_URL is not set during next build: every query fails, and pages that read the database prerender their fallback.",
+  );
+  return drizzle(
+    postgres({
+      host: UNCONFIGURED_DATABASE_HOST,
+      max: MAX_CONNECTIONS_PER_INSTANCE,
+      prepare: false,
+    }),
+  );
+}
+
 function createDatabaseClient() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
+    if (process.env.NEXT_PHASE === NEXT_BUILD_PHASE) return createUnconfiguredBuildClient();
     throw new Error(
       "[createDatabaseClient] DATABASE_URL is not set. Use the Supabase transaction pooler connection string (port 6543).",
     );
