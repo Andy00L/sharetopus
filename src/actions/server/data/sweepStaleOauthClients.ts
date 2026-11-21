@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, eq, gt, inArray, lt, notExists } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { mcp_audit_log, mcp_oauth_clients } from "@/db/schema";
@@ -83,10 +83,28 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
       };
     }
 
-    const { error: deleteErr } = await runQuery(
+    const { data: deletedRows, error: deleteErr } = await runQuery(
       db
         .delete(mcp_oauth_clients)
-        .where(inArray(mcp_oauth_clients.client_id, toDelete)),
+        .where(
+          and(
+            inArray(mcp_oauth_clients.client_id, toDelete),
+            eq(mcp_oauth_clients.trust_level, "unverified"),
+            lt(mcp_oauth_clients.created_at, cutoff),
+            notExists(
+              db
+                .select({ oauth_client_id: mcp_audit_log.oauth_client_id })
+                .from(mcp_audit_log)
+                .where(
+                  and(
+                    eq(mcp_audit_log.oauth_client_id, mcp_oauth_clients.client_id),
+                    gt(mcp_audit_log.created_at, cutoff),
+                  ),
+                ),
+            ),
+          ),
+        )
+        .returning({ client_id: mcp_oauth_clients.client_id }),
     );
 
     if (deleteErr) {
@@ -97,13 +115,13 @@ export async function sweepStaleOauthClients(): Promise<SweepResult> {
     }
 
     console.log(
-      `[sweepStaleOauthClients] Deleted ${toDelete.length}/${candidates.length} candidates`
+      `[sweepStaleOauthClients] Deleted ${deletedRows.length}/${candidates.length} candidates`
     );
 
     return {
       success: true,
       candidatesFound: candidates.length,
-      deleted: toDelete.length,
+      deleted: deletedRows.length,
     };
   } catch (err) {
     return {

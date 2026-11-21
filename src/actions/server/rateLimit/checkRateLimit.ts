@@ -8,7 +8,7 @@ import { headers } from "next/headers";
 import { resolveClientIp } from "@/lib/net/clientIp";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
-import type { RateLimitRule } from "./rateLimitRules";
+import type { RateLimitRule } from "@/actions/server/rateLimit/rateLimitRules";
 
 async function getIpAddress(): Promise<string | null> {
   return resolveClientIp(await headers());
@@ -31,8 +31,6 @@ export type RateLimitRequest = {
   rule: RateLimitRule;
   bypassSecret?: string;
 };
-
-const LEGACY_DEFAULT_RULE: RateLimitRule = { limit: 20, windowSeconds: 60 };
 
 /**
  * One limiter per operation, limit and window, kept for the life of the
@@ -61,31 +59,7 @@ function getLimiter(
   return limiter;
 }
 
-export async function checkRateLimit(request: RateLimitRequest): Promise<RateLimitCheck>;
-/** @deprecated Pass a RateLimitRequest with a named rule from rateLimitRules.ts. */
-export async function checkRateLimit(
-  operationName: string,
-  userId?: string | null,
-  limit?: number,
-  windowSeconds?: number,
-  bypassSecret?: string,
-): Promise<RateLimitCheck>;
-export async function checkRateLimit(
-  requestOrOperation: RateLimitRequest | string,
-  userId?: string | null,
-  limit: number = LEGACY_DEFAULT_RULE.limit,
-  windowSeconds: number = LEGACY_DEFAULT_RULE.windowSeconds,
-  bypassSecret?: string,
-): Promise<RateLimitCheck> {
-  const request: RateLimitRequest =
-    typeof requestOrOperation === "string"
-      ? {
-          operation: requestOrOperation,
-          identifier: userId,
-          rule: { limit, windowSeconds },
-          bypassSecret,
-        }
-      : requestOrOperation;
+export async function checkRateLimit(request: RateLimitRequest): Promise<RateLimitCheck> {
   const operationName = request.operation;
   try {
     const validBypassSecret = process.env.CRON_SECRET_KEY;

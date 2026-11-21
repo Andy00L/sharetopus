@@ -70,11 +70,19 @@ export async function promoteOauthClientsOnResubscribe(
 
     const clientIds = candidates.map((candidate) => candidate.client_id);
 
-    const { error: updateErr } = await runQuery(
+    const { data: promotedRows, error: updateErr } = await runQuery(
       db
         .update(mcp_oauth_clients)
         .set({ trust_level: "verified" })
-        .where(inArray(mcp_oauth_clients.client_id, clientIds)),
+        .where(
+          and(
+            inArray(mcp_oauth_clients.client_id, clientIds),
+            eq(mcp_oauth_clients.registered_by_user_id, principalId),
+            eq(mcp_oauth_clients.trust_level, "unverified"),
+            isNull(mcp_oauth_clients.revoked_at),
+          ),
+        )
+        .returning({ client_id: mcp_oauth_clients.client_id }),
     );
 
     if (updateErr) {
@@ -85,9 +93,9 @@ export async function promoteOauthClientsOnResubscribe(
     }
 
     console.log(
-      `[promoteOauthClientsOnResubscribe] Promoted ${clientIds.length} clients for ${principalId}`
+      `[promoteOauthClientsOnResubscribe] Promoted ${promotedRows.length} of ${clientIds.length} candidates for ${principalId}`
     );
-    return { success: true, promoted: clientIds.length };
+    return { success: true, promoted: promotedRows.length };
   } catch (err) {
     return {
       success: false,

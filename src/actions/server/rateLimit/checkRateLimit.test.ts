@@ -47,12 +47,6 @@ describe("checkRateLimit", () => {
     expect(limitedIdentifiers).toEqual(["user_a"]);
   });
 
-  test("keeps the old 20 per 60 s default for positional callers", async () => {
-    await checkRateLimit("test_legacy_default", "user_b");
-
-    expect(builtLimiters[0].limiter).toEqual({ limit: 20, window: "60 s" });
-  });
-
   test("falls back to the client IP when no identifier is given", async () => {
     await checkRateLimit({
       operation: "test_ip_fallback",
