@@ -19,10 +19,10 @@ export const cleanupCancelledPostsAfterGraceCron = inngest.createFunction(
 
     return {
       ok: true,
-      candidatesFound: result.candidatesFound,
+      principalsChecked: result.principalsChecked,
+      principalsResumed: result.principalsResumed,
+      resumedPosts: result.resumedPosts,
       deleted: result.deleted,
-      skippedDueToResubscribe: result.skippedDueToResubscribe,
-      skippedDueToCheckError: result.skippedDueToCheckError,
     };
   }
 );

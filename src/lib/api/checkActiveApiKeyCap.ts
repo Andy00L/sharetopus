@@ -16,7 +16,7 @@ const KIND_LABELS: Record<ApiKeyKind, string> = { mcp: "MCP", rest: "REST" };
  * MAX_ACTIVE_API_KEYS_PER_KIND unrevoked ones. A failed count refuses with a
  * retry message; reading it as zero let a key past the limit.
  *
- * Called by createApiKey (kind 'mcp') and createRestApiKey (kind 'rest').
+ * Called by createApiKey (src/actions/server/api/apiKeys.ts) for both kinds.
  */
 export async function checkActiveApiKeyCap(
   principalId: string,

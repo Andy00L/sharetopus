@@ -19,11 +19,10 @@ import type { PreflightResult } from "@/lib/types/preflight";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { randomUUID } from "node:crypto";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { DIRECT_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { validatePostFields } from "../scheduleActions/validatePostFields";
 
 const MAX_BATCH_SIZE = 30;
-const RATE_LIMIT = 20;
-const RATE_WINDOW_SECONDS = 60;
 
 export type DirectPostData = {
   socialAccountId: string;
@@ -97,12 +96,11 @@ export async function directPostBatch(
       };
     }
 
-    const rateCheck = await checkRateLimit(
-      `${source}_direct_post_batch`,
-      principalId,
-      RATE_LIMIT,
-      RATE_WINDOW_SECONDS,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: `${source}_direct_post_batch`,
+      identifier: principalId,
+      rule: DIRECT_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

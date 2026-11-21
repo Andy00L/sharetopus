@@ -21,7 +21,7 @@ export default async function ReferralPage() {
   const protocol = headerList.get("x-forwarded-proto") ?? "https";
   const origin = `${protocol}://${host}`;
 
-  const summary = await getReferralSummary(userId, origin);
+  const summary = await getReferralSummary(origin);
 
   if (!summary.success) {
     return (

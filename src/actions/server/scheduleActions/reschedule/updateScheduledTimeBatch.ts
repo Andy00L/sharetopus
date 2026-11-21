@@ -11,13 +11,12 @@ import {
 } from "@/inngest/dispatch/sendPostDueEvents";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { RESCHEDULE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   checkPostChangeRules,
   POST_CHANGE_ELIGIBLE_STATUSES,
 } from "../preflightScheduledPostChange";
 
-const RATE_LIMIT = 30;
-const RATE_WINDOW_SECONDS = 60;
 
 export type UpdateScheduledTimeBatchResult = {
   message: string;
@@ -72,12 +71,11 @@ export async function updateScheduledTimeBatch(
     }
 
     const rateLimitScope = `${source}_update_scheduled_time_batch`;
-    const rateCheck = await checkRateLimit(
-      rateLimitScope,
-      principalId,
-      RATE_LIMIT,
-      RATE_WINDOW_SECONDS,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: RESCHEDULE_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

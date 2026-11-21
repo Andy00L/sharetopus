@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { USE_SHARE_LINK_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { checkShareLinkOwnerCapacity } from "@/actions/server/share-link/checkShareLinkOwnerCapacity";
 import { validateShareToken } from "@/actions/server/share-link/validateShareToken";
 import { db, runQuery } from "@/db/client";
@@ -44,12 +45,11 @@ export async function POST(
 
   // 1. Rate limit: 5/min per IP (userId=null falls back to IP). Only a limit
   // hit is the friend's doing; a limiter that could not answer is ours.
-  const rateLimitResult = await checkRateLimit(
-    "shareLink.use",
-    null,
-    5,
-    60,
-  );
+  const rateLimitResult = await checkRateLimit({
+    operation: "shareLink.use",
+    identifier: null,
+    rule: USE_SHARE_LINK_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     return redirectToError(
       platform,

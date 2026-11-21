@@ -4,6 +4,7 @@ import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "@/actions/server/authCheckCronJob";
 import { deleteSupabaseFileAction } from "@/actions/server/data/storageFiles/deleteSupabaseFileAction";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { HANDLE_SOCIAL_MEDIA_POST_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import {
   isPostingPlatform,
@@ -129,7 +130,7 @@ export async function handleSocialMediaPost(config: {
   );
 
   const authResult = cronSecret
-    ? await authCheckCronJob(userId, cronSecret)
+    ? await authCheckCronJob(cronSecret)
     : await authCheck(userId);
 
   if (!authResult) {
@@ -145,13 +146,12 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  const rateCheck = await checkRateLimit(
-    "handleSocialMediaPost",
-    userId,
-    30,
-    60,
-    cronSecret,
-  );
+  const rateCheck = await checkRateLimit({
+    operation: "handleSocialMediaPost",
+    identifier: userId,
+    rule: HANDLE_SOCIAL_MEDIA_POST_RATE_LIMIT,
+    bypassSecret: cronSecret,
+  });
   if (!rateCheck.success) {
     console.warn(`[handleSocialMediaPost] Rate limit exceeded for ${userId}`);
     return {

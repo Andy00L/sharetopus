@@ -1,6 +1,5 @@
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
-import { listRestApiKeys } from "@/actions/server/api/listRestApiKeys";
-import { listApiKeys } from "@/actions/server/mcp/listApiKeys";
+import { listApiKeys } from "@/actions/server/api/apiKeys";
 import { InactiveSubscriptionNotice } from "@/components/InactiveSubscriptionNotice";
 import { ApiKeysCard } from "@/components/integrations/ApiKeysCard";
 import { McpDocsCard } from "@/components/integrations/McpDocsCard";
@@ -16,10 +15,7 @@ export default async function IntegrationsPage() {
     return <InactiveSubscriptionNotice status={sub.status} />;
   }
 
-  const [mcpKeysResult, restKeysResult] = await Promise.all([
-    listApiKeys(userId ?? null),
-    listRestApiKeys(userId ?? null),
-  ]);
+  const keysResult = await listApiKeys();
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -33,8 +29,16 @@ export default async function IntegrationsPage() {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <ApiKeysCard kind="mcp" initialKeys={mcpKeysResult.data ?? []} />
-      <ApiKeysCard kind="rest" initialKeys={restKeysResult.data ?? []} />
+      {keysResult.success ? (
+        <>
+          <ApiKeysCard kind="mcp" initialKeys={keysResult.keysByKind.mcp} />
+          <ApiKeysCard kind="rest" initialKeys={keysResult.keysByKind.rest} />
+        </>
+      ) : (
+        <p className="px-4 text-sm text-destructive">
+          {keysResult.message} Reload the page to try again.
+        </p>
+      )}
       <McpDocsCard />
     </div>
   );

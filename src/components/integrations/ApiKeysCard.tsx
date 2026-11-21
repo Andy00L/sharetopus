@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "@clerk/nextjs";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -22,30 +21,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createRestApiKey } from "@/actions/server/api/createRestApiKey";
-import { revokeRestApiKey } from "@/actions/server/api/revokeRestApiKey";
-import { createApiKey } from "@/actions/server/mcp/createApiKey";
-import { revokeApiKey } from "@/actions/server/mcp/revokeApiKey";
+import {
+  createApiKey,
+  revokeApiKey,
+  type ListedApiKey,
+} from "@/actions/server/api/apiKeys";
 import {
   API_KEY_EXPIRY_DAYS_OPTIONS,
   DEFAULT_API_KEY_EXPIRY_DAYS,
   isValidApiKeyExpiryDays,
   type ApiKeyExpiryDays,
 } from "@/lib/mcp/apiKeyExpiry";
-
-type CardKeyKind = "mcp" | "rest";
-
-interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-  created_at: string;
-  last_used_at: string | null;
-  expires_at: string | null;
-}
+import type { ApiKeyKind } from "@/lib/api/tokens";
 
 const CARD_COPY: Record<
-  CardKeyKind,
+  ApiKeyKind,
   { title: string; description: string; namePlaceholder: string; emptyText: string }
 > = {
   mcp: {
@@ -96,12 +86,11 @@ export function ApiKeysCard({
   kind,
   initialKeys,
 }: {
-  kind: CardKeyKind;
-  initialKeys: ApiKey[];
+  kind: ApiKeyKind;
+  initialKeys: ListedApiKey[];
 }) {
-  const { userId } = useAuth();
   const copy = CARD_COPY[kind];
-  const [keys, setKeys] = useState<ApiKey[]>(initialKeys);
+  const [keys, setKeys] = useState<ListedApiKey[]>(initialKeys);
   const [newKeyName, setNewKeyName] = useState("");
   const [newRawKey, setNewRawKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -120,10 +109,11 @@ export function ApiKeysCard({
     setLoading(true);
     setError(null);
 
-    const result =
-      kind === "mcp"
-        ? await createApiKey(userId ?? null, keyName, selectedExpiresInDays)
-        : await createRestApiKey({ name: keyName, expiresInDays: selectedExpiresInDays });
+    const result = await createApiKey({
+      kind,
+      name: keyName,
+      expiresInDays: selectedExpiresInDays,
+    });
     setLoading(false);
 
     if (!result.success) {
@@ -149,10 +139,7 @@ export function ApiKeysCard({
   async function handleRevoke(keyId: string) {
     setRevokingKeyId(keyId);
     setError(null);
-    const result =
-      kind === "mcp"
-        ? await revokeApiKey(userId ?? null, keyId)
-        : await revokeRestApiKey(userId ?? null, keyId);
+    const result = await revokeApiKey({ kind, keyId });
     setRevokingKeyId(null);
     if (result.success) {
       setKeys((previousKeys) => previousKeys.filter((apiKey) => apiKey.id !== keyId));

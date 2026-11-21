@@ -56,6 +56,13 @@ export interface DatabaseError {
   code: string | null;
 }
 
+// SQLSTATE unique_violation: https://www.postgresql.org/docs/current/errcodes-appendix.html
+const UNIQUE_VIOLATION_SQLSTATE = "23505";
+
+export function isUniqueViolation(error: DatabaseError): boolean {
+  return error.code === UNIQUE_VIOLATION_SQLSTATE;
+}
+
 export type QueryResult<Data> =
   | { data: Data; error: null }
   | { data: null; error: DatabaseError };

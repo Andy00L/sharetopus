@@ -7,6 +7,7 @@ import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { CANCEL_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   checkPostChangeRules,
   POST_CHANGE_ELIGIBLE_STATUSES,
@@ -42,7 +43,11 @@ export async function cancelScheduledPostBatch(
     }
 
     const rateLimitScope = `${source}_cancel_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: CANCEL_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

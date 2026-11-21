@@ -1,11 +1,12 @@
 import "server-only";
 
+import { auth } from "@clerk/nextjs/server";
+
+import { loadSettledReferralStanding } from "@/lib/referral/loadReferralStanding";
 import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
 import { ensureReferralCode } from "./generateReferralCode";
-import { loadReferralStanding } from "./loadReferralProgress";
 
 export async function getReferralSummary(
-  userId: string,
   origin: string,
 ): Promise<
   | {
@@ -21,12 +22,17 @@ export async function getReferralSummary(
     }
   | { success: false; message: string }
 > {
+  const { userId } = await auth();
+  if (!userId) {
+    return { success: false, message: "Not signed in" };
+  }
+
   const codeResult = await ensureReferralCode(userId);
   if (!codeResult.success) {
     return { success: false, message: codeResult.message };
   }
 
-  const standingResult = await loadReferralStanding(userId);
+  const standingResult = await loadSettledReferralStanding(userId);
   if (!standingResult.success) {
     return { success: false, message: standingResult.message };
   }

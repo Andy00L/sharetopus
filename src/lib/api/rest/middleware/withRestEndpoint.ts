@@ -7,6 +7,7 @@ import { resolveRestApiKey } from "../auth/resolveRestApiKey";
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { REST_ENDPOINT_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   restErrorResponse,
   SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS,
@@ -148,10 +149,11 @@ export function withRestEndpoint(
 
     // Step 5: per-principal rate limit. A limiter outage answers 503: the
     // caller did nothing wrong, and a 429 would tell it to slow down.
-    const rateLimitResult = await checkRateLimit(
-      config.rateLimitAction,
-      principal.principalId,
-    );
+    const rateLimitResult = await checkRateLimit({
+      operation: config.rateLimitAction,
+      identifier: principal.principalId,
+      rule: REST_ENDPOINT_RATE_LIMIT,
+    });
     if (!rateLimitResult.success) {
       const isLimitHit = rateLimitResult.reason === "limited";
       const retryAfterSeconds = isLimitHit

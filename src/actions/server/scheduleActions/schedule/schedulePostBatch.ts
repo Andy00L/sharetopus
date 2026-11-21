@@ -19,12 +19,11 @@ import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { SCHEDULE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { validatePostFields } from "../validatePostFields";
 import { countPostsByPlatform, findDailyQuotaViolation } from "./dailyQuota";
 
 const MAX_BATCH_SIZE = 50;
-const RATE_LIMIT = 10;
-const RATE_WINDOW_SECONDS = 60;
 const DEFAULT_PLATFORM_DAILY_CAP = 50;
 const QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 const QUOTA_COUNTED_STATUSES: PostStatus[] = ["scheduled", "queued", "processing"];
@@ -89,12 +88,11 @@ export async function schedulePostBatch(
     }
 
     const rateLimitScope = `${source}_schedule_post_batch`;
-    const rateCheck = await checkRateLimit(
-      rateLimitScope,
-      principalId,
-      RATE_LIMIT,
-      RATE_WINDOW_SECONDS,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: SCHEDULE_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

@@ -22,27 +22,10 @@ export type InvoicePayment = {
 export async function recordInvoicePayment(
   payment: InvoicePayment,
 ): Promise<{ ok: boolean }> {
-  return recordInvoicePayments([payment]);
-}
-
-export async function recordInvoicePayments(
-  payments: InvoicePayment[],
-): Promise<{ ok: boolean }> {
-  const succeededRows = payments
-    .filter((payment) => payment.outcome === "succeeded")
-    .map(toInvoiceRow);
-  const failedRows = payments
-    .filter((payment) => payment.outcome === "failed")
-    .map(toInvoiceRow);
-
-  let isRecorded = true;
-
-  if (succeededRows.length > 0) {
-    const { error } = await runQuery(
-      db
-        .insert(stripe_invoices)
-        .values(succeededRows)
-        .onConflictDoUpdate({
+  const insertInvoice = db.insert(stripe_invoices).values(toInvoiceRow(payment));
+  const { error } = await runQuery(
+    payment.outcome === "succeeded"
+      ? insertInvoice.onConflictDoUpdate({
           target: stripe_invoices.stripe_invoice_id,
           set: {
             status: "succeeded",
@@ -50,28 +33,20 @@ export async function recordInvoicePayments(
             currency: sql`excluded.currency`,
           },
           setWhere: eq(stripe_invoices.status, "failed"),
+        })
+      : insertInvoice.onConflictDoNothing({
+          target: stripe_invoices.stripe_invoice_id,
         }),
-    );
-    if (error) {
-      logRecordFailure("succeeded", succeededRows, error.message);
-      isRecorded = false;
-    }
-  }
+  );
 
-  if (failedRows.length > 0) {
-    const { error } = await runQuery(
-      db
-        .insert(stripe_invoices)
-        .values(failedRows)
-        .onConflictDoNothing({ target: stripe_invoices.stripe_invoice_id }),
+  if (error) {
+    console.error(
+      `[recordInvoicePayment] Failed to record ${payment.outcome} for invoice ${payment.stripeInvoiceId}:`,
+      error.message,
     );
-    if (error) {
-      logRecordFailure("failed", failedRows, error.message);
-      isRecorded = false;
-    }
+    return { ok: false };
   }
-
-  return { ok: isRecorded };
+  return { ok: true };
 }
 
 function toInvoiceRow(
@@ -85,16 +60,4 @@ function toInvoiceRow(
     currency: payment.currency,
     status: payment.outcome,
   };
-}
-
-function logRecordFailure(
-  outcome: InvoicePaymentOutcome,
-  rows: (typeof stripe_invoices.$inferInsert)[],
-  errorMessage: string,
-): void {
-  const invoiceIds = rows.map((row) => row.stripe_invoice_id).join(", ");
-  console.error(
-    `[recordInvoicePayments] Failed to record ${outcome} for invoice(s) ${invoiceIds}:`,
-    errorMessage,
-  );
 }

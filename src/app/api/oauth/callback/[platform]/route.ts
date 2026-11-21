@@ -4,6 +4,7 @@ import { after, NextResponse, type NextRequest } from "next/server";
 
 import { extractIpHash, extractUserAgent } from "@/lib/api/context";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { OAUTH_CALLBACK_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { escapeHtml } from "@/lib/api/oauth/escapeHtml";
 import { logX402Call, type X402AuditEntry } from "@/lib/x402/audit/logX402Call";
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
@@ -69,12 +70,11 @@ export async function GET(
   };
 
   // Rate limit before any DB or provider work.
-  const rateLimitResult = await checkRateLimit(
-    "x402_oauth_callback",
-    null,
-    60,
-    60
-  );
+  const rateLimitResult = await checkRateLimit({
+    operation: "x402_oauth_callback",
+    identifier: null,
+    rule: OAUTH_CALLBACK_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     const rejection = describeRateLimitRejection(rateLimitResult);
     const isLimiterOutage = rejection.errorKind === "rate_limiter_unavailable";

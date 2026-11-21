@@ -3,12 +3,18 @@ import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { stripe_subscriptions, users } from "@/db/schema";
+import {
+  ACCESS_GRANTING_SUBSCRIPTION_STATUSES,
+  stripe_subscriptions,
+  users,
+  type StripeSubscriptionStatus,
+} from "@/db/schema";
 import { priceIdToTier, type PlanTier } from "@/lib/types/plans";
 
+type AccessGrantingStatus = (typeof ACCESS_GRANTING_SUBSCRIPTION_STATUSES)[number];
+
 export type SubscriptionStatus =
-  | "active"
-  | "trialing"
+  | AccessGrantingStatus
   | "referral_grant"
   | "none"
   | "unavailable";
@@ -55,7 +61,7 @@ export async function checkActiveSubscription(
       .where(
         and(
           eq(stripe_subscriptions.user_id, userId),
-          inArray(stripe_subscriptions.status, ["active", "trialing"]),
+          inArray(stripe_subscriptions.status, [...ACCESS_GRANTING_SUBSCRIPTION_STATUSES]),
         ),
       )
       .orderBy(desc(stripe_subscriptions.created_at))
@@ -70,7 +76,7 @@ export async function checkActiveSubscription(
     return inactiveSubscription("unavailable");
   }
 
-  const activeSubscription = subscriptionRows[0];
+  const activeSubscription = subscriptionRows.find(grantsAccess);
   if (!activeSubscription) {
     const { data: userRows, error: userError } = await runQuery(
       db
@@ -110,10 +116,16 @@ export async function checkActiveSubscription(
     isActive: true,
     priceId,
     tier,
-    status: activeSubscription.status === "trialing" ? "trialing" : "active",
+    status: activeSubscription.status,
     currentPeriodEnd: activeSubscription.current_period_end,
     startDate: activeSubscription.start_date,
   };
+}
+
+function grantsAccess<Row extends { status: StripeSubscriptionStatus }>(
+  row: Row,
+): row is Row & { status: AccessGrantingStatus } {
+  return ACCESS_GRANTING_SUBSCRIPTION_STATUSES.some((status) => status === row.status);
 }
 
 function inactiveSubscription(

@@ -8,6 +8,7 @@ import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { DELETE_POST_BATCH_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import {
   checkPostChangeRules,
   POST_CHANGE_ELIGIBLE_STATUSES,
@@ -49,7 +50,11 @@ export async function deleteScheduledPostBatch(
     }
 
     const rateLimitScope = `${source}_delete_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 30, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: DELETE_POST_BATCH_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

@@ -24,11 +24,7 @@ export default function ConnectedAccountsBadge({
   return (
     <div className="flex flex-wrap gap-2 items-center">
       {accounts.map((account) => (
-        <SocialAccountBadge
-          key={account.id}
-          account={account}
-          userId={userId}
-        />
+        <SocialAccountBadge key={account.id} account={account} />
       ))}
     </div>
   );

@@ -10,13 +10,20 @@ import stripe from "@/lib/stripe";
 import { priceIdToTier } from "@/lib/types/plans";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { CHECKOUT_SESSION_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
-export async function checkOutSession(priceId: string): Promise<{
-  success: boolean;
-  message: string;
-  data?: string;
-  resetIn?: number;
-}> {
+export type CheckOutSessionResult =
+  | { success: true; message: string; data: string }
+  | {
+      success: false;
+      reason: "already_subscribed" | "failed";
+      message: string;
+      resetIn?: number;
+    };
+
+export async function checkOutSession(
+  priceId: string,
+): Promise<CheckOutSessionResult> {
   try {
     console.log(
       "[checkOutSession]: Starting checkout session creation process"
@@ -28,6 +35,7 @@ export async function checkOutSession(priceId: string): Promise<{
       console.error(`[checkOutSession]: Unknown or missing price ID: ${priceId}`);
       return {
         success: false,
+        reason: "failed",
         message: "Subscription plan not specified. Please select a valid plan.",
       };
     }
@@ -41,6 +49,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Authentication validation failed. Please sign in again.",
       };
     }
@@ -49,12 +58,11 @@ export async function checkOutSession(priceId: string): Promise<{
     );
 
     console.log(`[checkOutSession]: Checking rate limits for user: ${userId}`);
-    const rateCheck = await checkRateLimit(
-      "stripeCheckOutSession",
-      userId,
-      15,
-      60
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "stripeCheckOutSession",
+      identifier: userId,
+      rule: CHECKOUT_SESSION_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       console.warn(
         `[checkOutSession]: Rate limit exceeded for user: ${userId}. Reset in: ${
@@ -63,6 +71,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: rateCheck.message,
         resetIn: rateCheck.resetIn,
       };
@@ -76,6 +85,7 @@ export async function checkOutSession(priceId: string): Promise<{
     if (subscription.status === "unavailable") {
       return {
         success: false,
+        reason: "failed",
         message: "Could not check your subscription. Please try again.",
       };
     }
@@ -85,6 +95,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "already_subscribed",
         message:
           "You already have an active subscription. Manage it from the billing portal.",
       };
@@ -109,6 +120,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Unable to retrieve your customer information .",
       };
     }
@@ -119,6 +131,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Your customer profile is incomplete. Please contact support.",
       };
     }
@@ -148,6 +161,7 @@ export async function checkOutSession(priceId: string): Promise<{
       );
       return {
         success: false,
+        reason: "failed",
         message: "Failed to create a valid checkout session. Please try again.",
       };
     }
@@ -167,6 +181,7 @@ export async function checkOutSession(priceId: string): Promise<{
     );
     return {
       success: false,
+      reason: "failed",
       message:
         "An unexpected error occurred. Please try again or contact support.",
     };

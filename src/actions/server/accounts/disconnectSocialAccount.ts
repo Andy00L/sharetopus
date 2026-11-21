@@ -1,33 +1,34 @@
-import { authCheck } from "@/actions/server/authCheck";
+import "server-only";
+
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
+
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts, social_accounts } from "@/db/schema";
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
-import "server-only";
 import { deleteUnreferencedMediaFiles } from "../data/storageFiles/deleteSupabaseFile";
+import { MEDIA_HOLDING_POST_STATUSES } from "../data/storageFiles/mediaReferences";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { DISCONNECT_SOCIAL_ACCOUNT_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+
+export type DisconnectSocialAccountResult = {
+  success: boolean;
+  message: string;
+  resetIn?: number;
+};
 
 export async function disconnectSocialAccount(
   accountId: string,
-  userId: string | null,
-): Promise<{ success: boolean; message: string; resetIn?: number }> {
+  userId: string,
+): Promise<DisconnectSocialAccountResult> {
   try {
     console.log(
       `[disconnectSocialAccount] Processing account: ${accountId}, user: ${userId}`,
     );
 
-    if (!userId || !(await authCheck(userId))) {
-      return {
-        success: false,
-        message: "Authentication validation failed. Please sign in again.",
-      };
-    }
-
-    const rateCheck = await checkRateLimit(
-      "disconnectSocialAccount",
-      userId,
-      30,
-      60,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "disconnectSocialAccount",
+      identifier: userId,
+      rule: DISCONNECT_SOCIAL_ACCOUNT_RATE_LIMIT,
+    });
 
     if (!rateCheck.success) {
       console.warn(
@@ -89,7 +90,7 @@ export async function disconnectSocialAccount(
         .where(
           and(
             eq(scheduled_posts.social_account_id, accountId),
-            inArray(scheduled_posts.status, ["scheduled", "queued", "processing", "cancelled"]),
+            inArray(scheduled_posts.status, MEDIA_HOLDING_POST_STATUSES),
             isNotNull(scheduled_posts.media_storage_path),
           ),
         ),
@@ -100,15 +101,15 @@ export async function disconnectSocialAccount(
         `[disconnectSocialAccount]: Error fetching media paths:`,
         postsError.message,
       );
+      return {
+        success: false,
+        message: "Could not load the account's posts. Please try again.",
+      };
     }
 
-    const filesToCheck = [
-      ...new Set(
-        (mediaPaths ?? [])
-          .map((row) => row.media_storage_path)
-          .filter((path): path is string => Boolean(path)),
-      ),
-    ];
+    const filesToCheck = mediaPaths
+      .map((row) => row.media_storage_path)
+      .filter((mediaPath): mediaPath is string => mediaPath !== null);
 
     const { error: deleteError } = await runQuery(
       db.delete(social_accounts).where(eq(social_accounts.id, accountId)),

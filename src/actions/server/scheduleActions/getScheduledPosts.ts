@@ -7,6 +7,7 @@ import { scheduled_posts, social_accounts } from "@/db/schema";
 import type { CreatedVia, PostStatus } from "@/db/schema";
 import type { ScheduledPostListItem } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { LIST_SCHEDULED_POSTS_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
 export async function getScheduledPosts(
   principalId: string,
@@ -29,7 +30,11 @@ export async function getScheduledPosts(
 
   try {
     const rateLimitScope = `${source}_get_scheduled_posts`;
-    const rateCheck = await checkRateLimit(rateLimitScope, principalId, 60, 60);
+    const rateCheck = await checkRateLimit({
+      operation: rateLimitScope,
+      identifier: principalId,
+      rule: LIST_SCHEDULED_POSTS_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       return {
         success: false,

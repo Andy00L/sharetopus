@@ -2,6 +2,7 @@
 
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { CREATE_SHARE_LINK_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { generateShareToken } from "@/actions/server/share-link/lib/token";
 import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
@@ -51,12 +52,11 @@ export async function createShareLink(
     };
   }
 
-  const rateLimitResult = await checkRateLimit(
-    "shareLink.create",
-    userId,
-    10,
-    60,
-  );
+  const rateLimitResult = await checkRateLimit({
+    operation: "shareLink.create",
+    identifier: userId,
+    rule: CREATE_SHARE_LINK_RATE_LIMIT,
+  });
   if (!rateLimitResult.success) {
     return { success: false, message: rateLimitResult.message };
   }

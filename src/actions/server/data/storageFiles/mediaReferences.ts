@@ -14,7 +14,7 @@ import type { PostStatus } from "@/db/schema";
 
 export type MediaReferenceScope = "in_use" | "any_row";
 
-const MEDIA_HOLDING_POST_STATUSES: PostStatus[] = [
+export const MEDIA_HOLDING_POST_STATUSES: PostStatus[] = [
   "scheduled",
   "queued",
   "processing",

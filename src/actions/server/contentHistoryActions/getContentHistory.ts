@@ -7,6 +7,7 @@ import { content_history, social_accounts } from "@/db/schema";
 import type { CreatedVia, Platform } from "@/db/schema";
 import type { ContentHistory } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { LIST_CONTENT_HISTORY_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
 export async function getContentHistory(
   principalId: string,
@@ -20,12 +21,11 @@ export async function getContentHistory(
 }> {
   const rateLimitScope = `${source}_content_history`;
 
-  const rateLimitResult = await checkRateLimit(
-    rateLimitScope,
-    principalId,
-    60,
-    60,
-  );
+  const rateLimitResult = await checkRateLimit({
+    operation: rateLimitScope,
+    identifier: principalId,
+    rule: LIST_CONTENT_HISTORY_RATE_LIMIT,
+  });
 
   if (!rateLimitResult.success) {
     console.error(

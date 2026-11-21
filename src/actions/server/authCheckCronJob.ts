@@ -3,7 +3,6 @@ import "server-only";
 import { timingSafeEqualSecret } from "@/lib/utils/timingSafeEqualSecret";
 
 export async function authCheckCronJob(
-  userId: string | null,
   cronSecret: string | undefined,
 ): Promise<boolean> {
   const expectedCronSecret = process.env.CRON_SECRET_KEY;

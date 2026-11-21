@@ -19,7 +19,7 @@ const NOT_FOUND_MESSAGE =
  * telling a user that a leaked key is already dead when it still works is
  * the worst answer this can give.
  *
- * Called by revokeRestApiKey (kind 'rest') and revokeApiKey (kind 'mcp').
+ * Called by revokeApiKey (src/actions/server/api/apiKeys.ts) for both kinds.
  */
 export async function revokeApiKeyForPrincipal(
   principalId: string,

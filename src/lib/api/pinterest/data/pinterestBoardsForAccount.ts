@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { and, eq, isNull } from "drizzle-orm";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { CREATE_PINTEREST_BOARD_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
@@ -15,8 +16,6 @@ import {
 } from "./getPinterestBoards";
 
 /** createPinterestBoardForAccount calls per user per minute. */
-const CREATE_BOARD_RATE_LIMIT = 10;
-const CREATE_BOARD_RATE_WINDOW_SECONDS = 60;
 
 type ResolvedPinterestAccount =
   | { success: true; accessToken: string; userId: string }
@@ -137,12 +136,11 @@ export async function createPinterestBoardForAccount(
     return { success: false, message: resolved.message };
   }
 
-  const rateCheck = await checkRateLimit(
-    "createPinterestBoard",
-    resolved.userId,
-    CREATE_BOARD_RATE_LIMIT,
-    CREATE_BOARD_RATE_WINDOW_SECONDS,
-  );
+  const rateCheck = await checkRateLimit({
+    operation: "createPinterestBoard",
+    identifier: resolved.userId,
+    rule: CREATE_PINTEREST_BOARD_RATE_LIMIT,
+  });
   if (!rateCheck.success) {
     return { success: false, message: rateCheck.message };
   }

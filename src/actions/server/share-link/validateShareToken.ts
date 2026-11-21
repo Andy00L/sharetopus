@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { share_links } from "@/db/schema";
 import { hashToken } from "@/lib/api/tokens";
+import { isShareTokenFormat } from "./lib/token";
 
 type ShareLinkRow = typeof share_links.$inferSelect;
 
@@ -28,12 +29,10 @@ type ValidateFailure = {
 
 export type ValidateShareTokenResult = ValidateSuccess | ValidateFailure;
 
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
-
 export async function validateShareToken(
   token: string,
 ): Promise<ValidateShareTokenResult> {
-  if (!TOKEN_PATTERN.test(token)) {
+  if (!isShareTokenFormat(token)) {
     return { success: false, reason: "invalid_format" };
   }
 
@@ -89,7 +88,7 @@ function evaluateShareLink(
 
   if (
     shareLink.expires_at !== null &&
-    new Date(shareLink.expires_at) < new Date()
+    new Date(shareLink.expires_at) <= new Date()
   ) {
     return { success: false, reason: "expired" };
   }

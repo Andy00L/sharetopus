@@ -2,157 +2,121 @@ import "server-only";
 
 import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
 
+import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { db, runQuery } from "@/db/client";
-import { scheduled_posts, stripe_subscriptions } from "@/db/schema";
+import { scheduled_posts } from "@/db/schema";
+import { resumeCancelledPostsOnResubscribe } from "./resumeCancelledPostsOnResubscribe";
 
 export type CleanupResult =
   | {
       success: true;
-      candidatesFound: number;
+      principalsChecked: number;
+      principalsResumed: number;
+      resumedPosts: number;
       deleted: number;
-      skippedDueToResubscribe: number;
-      skippedDueToCheckError: number;
     }
   | { success: false; message: string };
 
 const GRACE_DAYS = 7;
-const MAX_DELETE_PER_RUN = 2000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_PRINCIPALS_PER_RUN = 500;
 
-export async function cleanupCancelledPostsAfterGrace(): Promise<CleanupResult> {
-  try {
-    const cutoff = new Date(
-      Date.now() - GRACE_DAYS * 24 * 60 * 60 * 1000
-    ).toISOString();
+export async function cleanupCancelledPostsAfterGrace(
+  now: Date = new Date(),
+): Promise<CleanupResult> {
+  const cutoffIso = new Date(now.getTime() - GRACE_DAYS * MS_PER_DAY).toISOString();
 
-    const { data: candidates, error: queryErr } = await runQuery(
-      db
-        .select({
-          id: scheduled_posts.id,
-          principal_id: scheduled_posts.principal_id,
-        })
-        .from(scheduled_posts)
-        .where(
-          and(
-            eq(scheduled_posts.status, "cancelled"),
-            isNotNull(scheduled_posts.cancelled_by_sub_at),
-            lt(scheduled_posts.cancelled_by_sub_at, cutoff),
-          ),
-        )
-        .limit(MAX_DELETE_PER_RUN),
-    );
-
-    if (queryErr) {
-      return {
-        success: false,
-        message: `[cleanupCancelledPostsAfterGrace] Candidate query failed: ${queryErr.message}`,
-      };
-    }
-
-    if (candidates.length === 0) {
-      return {
-        success: true,
-        candidatesFound: 0,
-        deleted: 0,
-        skippedDueToResubscribe: 0,
-        skippedDueToCheckError: 0,
-      };
-    }
-
-    const postIdsByPrincipal = groupPostIdsByPrincipal(candidates);
-    const principalIds = [...postIdsByPrincipal.keys()];
-
-    const { data: activeSubscriptionRows, error: subscriptionError } =
-      await runQuery(
-        db
-          .selectDistinct({ user_id: stripe_subscriptions.user_id })
-          .from(stripe_subscriptions)
-          .where(
-            and(
-              inArray(stripe_subscriptions.user_id, principalIds),
-              inArray(stripe_subscriptions.status, ["active", "trialing"]),
-            ),
-          ),
-      );
-
-    if (subscriptionError) {
-      console.error(
-        `[cleanupCancelledPostsAfterGrace] Subscription check failed, keeping ${candidates.length} posts: ${subscriptionError.message}`
-      );
-      return {
-        success: true,
-        candidatesFound: candidates.length,
-        deleted: 0,
-        skippedDueToResubscribe: 0,
-        skippedDueToCheckError: candidates.length,
-      };
-    }
-
-    const resubscribedPrincipals = new Set(
-      activeSubscriptionRows.map((subscriptionRow) => subscriptionRow.user_id)
-    );
-    const deletablePostIds: string[] = [];
-    let skipped = 0;
-    for (const [principalId, postIds] of postIdsByPrincipal) {
-      if (resubscribedPrincipals.has(principalId)) {
-        console.log(
-          `[cleanupCancelledPostsAfterGrace] Skipping ${postIds.length} posts for ${principalId} (resubscribed)`
-        );
-        skipped += postIds.length;
-        continue;
-      }
-      deletablePostIds.push(...postIds);
-    }
-
-    let deleted = 0;
-    if (deletablePostIds.length > 0) {
-      const { data: deletedRows, error: deleteErr } = await runQuery(
-        db
-          .delete(scheduled_posts)
-          .where(
-            and(
-              inArray(scheduled_posts.id, deletablePostIds),
-              eq(scheduled_posts.status, "cancelled"),
-              lt(scheduled_posts.cancelled_by_sub_at, cutoff),
-            ),
-          )
-          .returning({ id: scheduled_posts.id }),
-      );
-
-      if (deleteErr) {
-        return {
-          success: false,
-          message: `[cleanupCancelledPostsAfterGrace] Delete failed: ${deleteErr.message}`,
-        };
-      }
-      deleted = deletedRows.length;
-    }
-    console.log(
-      `[cleanupCancelledPostsAfterGrace] candidates=${candidates.length} deleted=${deleted} skipped=${skipped}`
-    );
-
-    return {
-      success: true,
-      candidatesFound: candidates.length,
-      deleted,
-      skippedDueToResubscribe: skipped,
-      skippedDueToCheckError: 0,
-    };
-  } catch (err) {
+  const { data: principalRows, error: principalsError } = await runQuery(
+    db
+      .selectDistinct({ principal_id: scheduled_posts.principal_id })
+      .from(scheduled_posts)
+      .where(isCancelledBySubscription())
+      .limit(MAX_PRINCIPALS_PER_RUN),
+  );
+  if (principalsError) {
     return {
       success: false,
-      message: `[cleanupCancelledPostsAfterGrace] Unexpected: ${err instanceof Error ? err.message : String(err)}`,
+      message: `[cleanupCancelledPostsAfterGrace] Principal query failed: ${principalsError.message}`,
     };
   }
+
+  const lapsedPrincipalIds: string[] = [];
+  const failures: string[] = [];
+  let principalsResumed = 0;
+  let resumedPosts = 0;
+
+  for (const { principal_id: principalId } of principalRows) {
+    const access = await checkActiveSubscription(principalId);
+    if (access.status === "unavailable") {
+      failures.push(`access check failed for ${principalId}`);
+      continue;
+    }
+    if (!access.isActive) {
+      lapsedPrincipalIds.push(principalId);
+      continue;
+    }
+    const resumeResult = await resumeCancelledPostsOnResubscribe(principalId);
+    if (!resumeResult.success) {
+      failures.push(resumeResult.message);
+      continue;
+    }
+    principalsResumed++;
+    resumedPosts += resumeResult.resumed;
+  }
+
+  const deletion = await deleteLapsedPostsPastGrace(lapsedPrincipalIds, cutoffIso);
+  if (!deletion.success) return deletion;
+
+  console.log(
+    `[cleanupCancelledPostsAfterGrace] principals=${principalRows.length} resumedPrincipals=${principalsResumed} resumedPosts=${resumedPosts} deleted=${deletion.deleted} failures=${failures.length}`,
+  );
+
+  if (failures.length > 0) {
+    return {
+      success: false,
+      message: `[cleanupCancelledPostsAfterGrace] ${failures.length} principal(s) not reconciled, first: ${failures[0]}`,
+    };
+  }
+
+  return {
+    success: true,
+    principalsChecked: principalRows.length,
+    principalsResumed,
+    resumedPosts,
+    deleted: deletion.deleted,
+  };
 }
 
-function groupPostIdsByPrincipal(
-  candidates: { id: string; principal_id: string }[]
-): Map<string, string[]> {
-  const postIdsByPrincipal = new Map<string, string[]>();
-  for (const candidate of candidates) {
-    const postIds = postIdsByPrincipal.get(candidate.principal_id) ?? [];
-    postIds.push(candidate.id);
-    postIdsByPrincipal.set(candidate.principal_id, postIds);
+function isCancelledBySubscription() {
+  return and(
+    eq(scheduled_posts.status, "cancelled"),
+    isNotNull(scheduled_posts.cancelled_by_sub_at),
+  );
+}
+
+async function deleteLapsedPostsPastGrace(
+  lapsedPrincipalIds: string[],
+  cutoffIso: string,
+): Promise<{ success: true; deleted: number } | { success: false; message: string }> {
+  if (lapsedPrincipalIds.length === 0) return { success: true, deleted: 0 };
+
+  const { data: deletedRows, error } = await runQuery(
+    db
+      .delete(scheduled_posts)
+      .where(
+        and(
+          inArray(scheduled_posts.principal_id, lapsedPrincipalIds),
+          isCancelledBySubscription(),
+          lt(scheduled_posts.cancelled_by_sub_at, cutoffIso),
+        ),
+      )
+      .returning({ id: scheduled_posts.id }),
+  );
+  if (error) {
+    return {
+      success: false,
+      message: `[cleanupCancelledPostsAfterGrace] Delete failed: ${error.message}`,
+    };
   }
-  return postIdsByPrincipal;
+  return { success: true, deleted: deletedRows.length };
 }

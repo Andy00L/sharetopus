@@ -16,7 +16,7 @@ export async function deleteSupabaseFileAction(
   );
 
   if (cronSecret) {
-    const authResult = await authCheckCronJob(userId, cronSecret);
+    const authResult = await authCheckCronJob(cronSecret);
     if (!authResult) {
       return {
         success: false,

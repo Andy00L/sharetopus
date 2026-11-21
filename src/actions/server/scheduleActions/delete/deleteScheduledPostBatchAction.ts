@@ -14,7 +14,7 @@ export async function deleteScheduledPostBatchAction(
   cronSecret?: string,
 ): Promise<DeleteScheduledPostBatchResult> {
   if (cronSecret) {
-    const ok = await authCheckCronJob(userId, cronSecret);
+    const ok = await authCheckCronJob(cronSecret);
     if (!ok) {
       return {
         success: false,

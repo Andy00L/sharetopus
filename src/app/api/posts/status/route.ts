@@ -7,6 +7,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { POSTS_STATUS_POLL_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import type {
   PostStatusJob,
   PostStatusJobStatus,
@@ -50,13 +51,11 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json(body, { status: 401 });
   }
 
-  const rateCheck = await checkRateLimit(
-    "postsStatusPoll",
-    userId,
-    240,
-    60,
-    undefined,
-  );
+  const rateCheck = await checkRateLimit({
+    operation: "postsStatusPoll",
+    identifier: userId,
+    rule: POSTS_STATUS_POLL_RATE_LIMIT,
+  });
   if (!rateCheck.success) {
     const body: PostStatusResponse = {
       success: false,

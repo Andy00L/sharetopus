@@ -29,6 +29,12 @@ type SubscriptionEvent =
   | Stripe.CustomerSubscriptionUpdatedEvent
   | Stripe.CustomerSubscriptionDeletedEvent;
 
+type InvoiceOutcomeEvent =
+  | Stripe.InvoicePaymentSucceededEvent
+  | Stripe.InvoicePaidEvent
+  | Stripe.InvoicePaymentFailedEvent
+  | Stripe.InvoiceMarkedUncollectibleEvent;
+
 function ok(body: Record<string, unknown> = {}) {
   return NextResponse.json({ received: true, ...body }, { status: 200 });
 }
@@ -123,8 +129,10 @@ function selectEventHandler(
     case "customer.subscription.deleted":
       return () => handleSubscriptionEvent(event);
     case "invoice.payment_succeeded":
+    case "invoice.paid":
       return () => handleInvoiceEvent(event, "succeeded");
     case "invoice.payment_failed":
+    case "invoice.marked_uncollectible":
       return () => handleInvoiceEvent(event, "failed");
     default:
       return null;
@@ -276,7 +284,7 @@ async function revokeSubscriberAccess(userId: string): Promise<void> {
 }
 
 async function handleInvoiceEvent(
-  event: Stripe.InvoicePaymentSucceededEvent | Stripe.InvoicePaymentFailedEvent,
+  event: InvoiceOutcomeEvent,
   outcome: InvoicePaymentOutcome,
 ) {
   const invoice = event.data.object;

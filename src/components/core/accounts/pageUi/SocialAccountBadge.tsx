@@ -21,10 +21,9 @@ import { toast } from "sonner";
 
 interface Props {
   readonly account: ClientSocialAccount;
-  readonly userId: string;
 }
 
-export default function SocialAccountBadge({ account, userId }: Props) {
+export default function SocialAccountBadge({ account }: Props) {
   const router = useRouter();
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -35,7 +34,7 @@ export default function SocialAccountBadge({ account, userId }: Props) {
     try {
       setIsDisconnecting(true);
 
-      const result = await disconnectAccountAction(account.id, userId);
+      const result = await disconnectAccountAction(account.id);
 
       if (result.success) {
         toast.success(result.message);

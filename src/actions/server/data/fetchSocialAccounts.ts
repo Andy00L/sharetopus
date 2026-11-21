@@ -7,6 +7,7 @@ import { social_accounts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { FETCH_SOCIAL_ACCOUNTS_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 
 export async function fetchSocialAccounts(
   principalId: string,
@@ -24,12 +25,11 @@ export async function fetchSocialAccounts(
       `Source: ${source}`,
     );
 
-    const rateCheck = await checkRateLimit(
-      `${source}_fetch_social_accounts`,
-      principalId,
-      30,
-      60,
-    );
+    const rateCheck = await checkRateLimit({
+      operation: `${source}_fetch_social_accounts`,
+      identifier: principalId,
+      rule: FETCH_SOCIAL_ACCOUNTS_RATE_LIMIT,
+    });
 
     if (!rateCheck.success) {
       return {

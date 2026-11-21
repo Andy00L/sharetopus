@@ -9,6 +9,7 @@ import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts
 import { z } from "zod";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
+import { PINTEREST_BOARDS_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { readStringField } from "@/lib/platforms/providers/_shared/providerFetch";
 
 /** One page of GET /v5/boards (items plus a bookmark cursor); board fields are read leniently below. */
@@ -63,7 +64,11 @@ export async function getPinterestBoards(
     return { success: false, failure: "token_missing" };
   }
 
-  const rateCheck = await checkRateLimit("getPinterestBoards", userId, 15, 60);
+  const rateCheck = await checkRateLimit({
+    operation: "getPinterestBoards",
+    identifier: userId,
+    rule: PINTEREST_BOARDS_RATE_LIMIT,
+  });
   if (!rateCheck.success) {
     console.warn(
       `[GetPinterestBoards] Rate limit refused (${rateCheck.reason}) for user: ${userId}`

@@ -4,16 +4,8 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { referral_reward_grants, referrals, users } from "@/db/schema";
-import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
-
-export type ReferralProgressResult =
-  | {
-      success: true;
-      towardNextWeek: number;
-      weeksEarned: number;
-      capReached: boolean;
-    }
-  | { success: false; message: string };
+import { MAX_REFERRAL_WEEKS, REFERRALS_PER_FREE_WEEK } from "./referralRules";
+import { triggerReferralGrant } from "./triggerReferralGrant";
 
 export type ReferralStanding = {
   verifiedCount: number;
@@ -22,12 +14,39 @@ export type ReferralStanding = {
   creatorAccessUntil: string | null;
 };
 
-export async function loadReferralStanding(
-  userId: string,
-): Promise<
+export type ReferralStandingResult =
   | { success: true; standing: ReferralStanding | null }
-  | { success: false; message: string }
-> {
+  | { success: false; message: string };
+
+export function hasUnclaimedReferralWeek(standing: ReferralStanding): boolean {
+  return (
+    standing.verifiedCount >= REFERRALS_PER_FREE_WEEK &&
+    standing.weeksEarned < MAX_REFERRAL_WEEKS
+  );
+}
+
+export async function loadSettledReferralStanding(
+  userId: string,
+): Promise<ReferralStandingResult> {
+  const standingResult = await loadReferralStanding(userId);
+  if (
+    !standingResult.success ||
+    !standingResult.standing ||
+    !hasUnclaimedReferralWeek(standingResult.standing)
+  ) {
+    return standingResult;
+  }
+
+  const grantResult = await triggerReferralGrant(userId);
+  if (!grantResult.success || grantResult.weeksGranted === 0) {
+    return standingResult;
+  }
+  return loadReferralStanding(userId);
+}
+
+async function loadReferralStanding(
+  userId: string,
+): Promise<ReferralStandingResult> {
   const { data: standingRows, error } = await runQuery(
     db
       .select({
@@ -55,18 +74,4 @@ export async function loadReferralStanding(
     return { success: false, message: "Failed to load referral progress" };
   }
   return { success: true, standing: standingRows[0] ?? null };
-}
-
-export async function loadReferralProgress(userId: string): Promise<ReferralProgressResult> {
-  const standingResult = await loadReferralStanding(userId);
-  if (!standingResult.success) return standingResult;
-
-  const verifiedCount = standingResult.standing?.verifiedCount ?? 0;
-  const weeksEarned = standingResult.standing?.weeksEarned ?? 0;
-  return {
-    success: true,
-    towardNextWeek: verifiedCount,
-    weeksEarned,
-    capReached: weeksEarned >= MAX_REFERRAL_WEEKS,
-  };
 }

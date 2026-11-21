@@ -47,13 +47,6 @@ export default function PricingSection() {
   const featuredPlan = planPrices.find((plan) => plan.popular);
   const badgePct = featuredPlan ? savingsPct(featuredPlan) : 40;
 
-  /* CTA handler. Routes through existing Stripe server actions.
-     Unauthenticated users go to /create (Clerk redirects to sign-in).
-     Already-subscribed users go to the Stripe customer portal.
-     New subscribers go to Stripe checkout. The portal action answers
-     "no_subscription" for users with nothing to manage; any other failure,
-     a subscription it could not check included, stops here, so a paying
-     user is never sent to a second checkout. */
   const handleSubscribe = async (plan: Plan) => {
     if (!isLoaded) return;
 
@@ -65,27 +58,25 @@ export default function PricingSection() {
         return;
       }
 
+      const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
+      const session = await checkOutSession(priceId);
+      if (session.success) {
+        window.location.assign(session.data);
+        return;
+      }
+      if (session.reason !== "already_subscribed") {
+        toast.error(session.message);
+        setLoadingPlan(null);
+        return;
+      }
+
       const portal = await createCustomerPortal();
       if (portal.success) {
         window.location.assign(portal.data);
         return;
       }
-      if (portal.reason !== "no_subscription") {
-        toast.error(portal.message);
-        setLoadingPlan(null);
-        return;
-      }
-
-      const priceId = isYearly ? plan.priceIdYearly : plan.priceIdMonthly;
-      const session = await checkOutSession(priceId);
-      if (!session.success) {
-        toast.error(session.message);
-        setLoadingPlan(null);
-        return;
-      }
-      if (session.data) {
-        window.location.assign(session.data);
-      }
+      toast.error(portal.message);
+      setLoadingPlan(null);
     } catch (error) {
       console.error("[PricingSection] Subscription error:", error);
       toast.error("Unable to process request. Please try again.");

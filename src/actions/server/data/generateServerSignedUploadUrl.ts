@@ -17,7 +17,6 @@ import { randomUUID } from "crypto";
 const ALLOWED_UPLOAD_TYPES: ReadonlyArray<string> = [
   ...ALLOWED_IMAGE_TYPES,
   ...ALLOWED_VIDEO_TYPES,
-  "video/quicktime",
 ];
 
 export interface GenerateUploadUrlInput {

@@ -22,6 +22,8 @@ import {
   type PgTableExtraConfigValue,
 } from "drizzle-orm/pg-core";
 
+import type Stripe from "stripe";
+
 import { decryptToken, encryptToken } from "../lib/crypto/tokenEncryption";
 
 /**
@@ -114,6 +116,10 @@ export const REST_AUDIT_OUTCOMES = ["success", "validation_error", "auth_error",
 
 export const X402_RECONCILIATION_KINDS = ["settle_unrecorded", "settle_indeterminate", "refund_failed"] as const;
 
+export const STRIPE_SUBSCRIPTION_STATUSES = ["incomplete", "incomplete_expired", "trialing", "active", "past_due", "canceled", "unpaid", "paused"] as const satisfies readonly Stripe.Subscription.Status[];
+
+export const ACCESS_GRANTING_SUBSCRIPTION_STATUSES = ["active", "trialing"] as const satisfies readonly (typeof STRIPE_SUBSCRIPTION_STATUSES)[number][];
+
 export type Platform = (typeof SOCIAL_PLATFORMS)[number];
 export type PostStatus = (typeof POST_STATUSES)[number];
 export type MediaType = (typeof MEDIA_TYPES)[number];
@@ -122,6 +128,7 @@ export type TrustLevel = (typeof OAUTH_CLIENT_TRUST_LEVELS)[number];
 export type WalletChain = (typeof WALLET_CHAINS)[number];
 export type SanctionsStatus = (typeof SANCTIONS_STATUSES)[number];
 export type PricingRecurrence = (typeof PRICING_RECURRENCES)[number];
+export type StripeSubscriptionStatus = (typeof STRIPE_SUBSCRIPTION_STATUSES)[number];
 
 export const referral_status = pgEnum("referral_status", ["pending", "verified", "redeemed", "void"]);
 
@@ -580,7 +587,7 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   stripe_customer_id: text().notNull(),
   stripe_price_id: text(),
   plan: text(),
-  status: text().notNull(),
+  status: text({ enum: STRIPE_SUBSCRIPTION_STATUSES }).notNull(),
   start_date: timestamptz().notNull(),
   end_date: timestamptz(),
   current_period_end: timestamptz(),
@@ -589,7 +596,7 @@ export const stripe_subscriptions = pgTable("stripe_subscriptions", {
   created_at: timestamptz().default(sql`now()`).notNull(),
   updated_at: timestamptz().default(sql`now()`).notNull(),
 }, (table) => [
-  index("idx_stripe_subs_user_active").on(table.user_id).where(sql`(status = ANY (ARRAY['active'::text, 'trialing'::text]))`),
+  index("idx_stripe_subs_user_active").on(table.user_id).where(sql`(${isOneOf("status", ACCESS_GRANTING_SUBSCRIPTION_STATUSES)})`),
   foreignKey({
     columns: [table.user_id],
     foreignColumns: [users.id],

@@ -8,6 +8,7 @@ import { users } from "@/db/schema";
 import stripe from "@/lib/stripe";
 import { auth } from "@clerk/nextjs/server";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { CUSTOMER_PORTAL_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 
 export type CustomerPortalResult =
@@ -41,12 +42,11 @@ export async function createCustomerPortal(): Promise<CustomerPortalResult> {
     console.log(
       `[CreateCustomerPortal]: Checking rate limits for user: ${userId}`
     );
-    const rateCheck = await checkRateLimit(
-      "createCustomerPortal",
-      userId,
-      20,
-      60
-    );
+    const rateCheck = await checkRateLimit({
+      operation: "createCustomerPortal",
+      identifier: userId,
+      rule: CUSTOMER_PORTAL_RATE_LIMIT,
+    });
     if (!rateCheck.success) {
       console.warn(
         `[CreateCustomerPortal]: Rate limit exceeded for user: ${userId}. Reset in: ${
