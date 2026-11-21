@@ -211,7 +211,7 @@ The proxy mode works without additional infrastructure. The direct mode avoids t
 
 ### Allowed content types
 
-| Category | Web + MCP upload                            | attach_media_from_url additionally |
+| Category | Web + MCP upload                            | attach_media_from_url also accepts |
 | -------- | ------------------------------------------- | ---------------------------------- |
 | Image    | `image/jpeg`, `image/png`                   | `image/gif`, `image/webp`          |
 | Video    | `video/mp4`, `video/quicktime` (`video/mov` accepted as an alias) | `video/webm`                       |
@@ -264,18 +264,20 @@ flowchart TD
 
 **Max files per run:** 10,000 (pagination: 1,000 per folder page).
 
-**Idempotency:** Partial failures are logged. Failed files remain eligible for the next run due to the 24-hour cutoff.
+**Idempotency:** The sweep is one Inngest step that returns counts only (`Retries: 2`). Failed deletes are counted and remain eligible for the next run due to the 24-hour cutoff. A failed folder listing ends the run with `NonRetriableError` after the deletes, so the run shows as failed.
 
 ## Reference-aware cleanup
 
-Outside the orphan sweep, files are deleted individually by `deleteSupabaseFile` (called when deleting scheduled posts or disconnecting accounts). Before deleting, it checks all 4 reference tables:
+Outside the orphan sweep, files are deleted individually by `deleteSupabaseFile` (called when deleting scheduled posts, disconnecting accounts, and by the Inngest workers after a publish through `cleanupMediaIfUnreferenced`). Before deleting, it checks all 4 reference tables (`findReferencedMediaPaths` in `src/actions/server/data/storageFiles/mediaReferences.ts`, scope `in_use`):
 
-- `scheduled_posts` where status IN (scheduled, processing)
+- `scheduled_posts` where status IN (scheduled, queued, processing, cancelled) (`MEDIA_HOLDING_POST_STATUSES`), or a `posted` TikTok post whose pull has not finished
 - `failed_posts`
 - `pending_tiktok_pulls` where status = pending
 - `pending_direct_posts` where status = processing
 
-If any reference exists, the file is preserved. On database error during the check, the file is also preserved (conservative default).
+If any reference exists, the file is preserved, and the result says so (`removed: false`). On database error during the check, the file is also preserved (conservative default).
+
+The workers skip the cleanup when the post may be live on a platform that still reads our file: TikTok (its pull finalize deletes the file once the pull settles) and platforms that hotlink the signed URL (`shouldDeleteMediaAfterPublish` in `src/inngest/functions/publishToPlatform.ts`).
 
 ## Cover image timestamps
 
@@ -288,9 +290,9 @@ Platform-specific timestamp formats for video cover images:
 
 ## Security considerations
 
-- **Path isolation:** Every file operation validates `path.startsWith(authenticatedPrincipalId/)`. No path can cross user boundaries.
+- **Path isolation:** File operations check `isOwnedMediaPath(path, principalId)` (`src/lib/storage/mediaPath.ts`): the path must start with the principal's folder and contain no `..`, empty or forbidden segment. The media proxy, the REST media route, deletes, video reads and the batch cores (`validatePostFields`, before a worker downloads and publishes the file) use it. No path can cross user boundaries.
 - **SSRF protection:** `safeUserFetch` blocks private IP ranges, non-http(s) schemes, and 3xx redirects for `attach_media_from_url`.
-- **Signed URLs:** All upload and view URLs are time-limited (upload: 2h, view: 5min default, proxy upstream: 10min).
+- **Signed URLs:** All upload and view URLs are time-limited (upload: 2h, view: 5min default, 30 days for platforms that hotlink the URL, proxy upstream: 10min).
 - **HMAC integrity:** Media proxy URLs are signed with SHA-256 HMAC and verified with `crypto.timingSafeEqual` to prevent timing attacks.
 - **No Content-Length trust:** Stream-based byte counting prevents oversized uploads even when Content-Length lies.
 - **Conservative deletion:** `deleteSupabaseFile` preserves files on any database error during reference checks.
@@ -310,11 +312,13 @@ Platform-specific timestamp formats for video cover images:
 | `src/lib/storage/mediaBucket.ts` | `MEDIA_BUCKET`, the one bucket name every storage call uses |
 | `src/lib/mcp/_shared/enforceStorageQuota.ts` | Storage quota enforcement (all 3 upload paths) |
 | `src/lib/mcp/_shared/safeUserFetch.ts` | SSRF-guarded HTTP fetch |
-| `src/lib/mcp/tools/request_upload_url.ts` | MCP upload URL tool |
-| `src/lib/mcp/tools/attach_media_from_url.ts` | MCP server-side media attach tool |
+| `src/lib/mcp/tools/requestUploadUrl.ts` | MCP upload URL tool |
+| `src/lib/mcp/tools/attachMediaFromUrl.ts` | MCP server-side media attach tool |
+| `src/lib/storage/mediaPath.ts` | `isOwnedMediaPath`, the one owner and traversal check |
+| `src/actions/server/data/storageFiles/mediaReferences.ts` | Media reference check for deletes and the orphan sweep |
 | `src/lib/api/tiktok/buildProxiedTikTokMediaUrl.ts` | HMAC-signed proxy URL builder for TikTok |
 | `src/lib/types/plans.ts` | STORAGE_LIMITS and plan definitions |
-| `src/inngest/functions/sweep-orphan-storage-files.ts` | Daily orphan file cleanup cron |
+| `src/inngest/functions/sweepOrphanStorageFiles.ts` | Daily orphan file cleanup cron |
 | `src/app/api/v1/media/upload-url/route.ts` | REST API signed upload URL endpoint |
 | `src/app/api/v1/media/attach-from-url/route.ts` | REST API server-side media attach endpoint |
 | `src/app/api/v1/media/[...path]/route.ts` | REST API media serve and delete endpoint |

@@ -240,7 +240,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `FRONTEND_URL` | Yes | Default: `http://localhost:3000` |
 | `NEXT_PUBLIC_BASE_URL` | No | Default: `https://sharetopus.com` |
 | `NEXT_PUBLIC_APP_URL` | No | Origin for share links and OAuth callback redirects. Default: `NEXT_PUBLIC_BASE_URL` |
-| `MAX_FILE_MB`, `POLL_WINDOW_S`, `WORKER_MAX_RETRIES`, `DISPATCHER_BATCH_SIZE`, `SIGNED_URL_TTL_S` | No | Background job tuning, see [INNGEST.md](./INNGEST.md#runtime-configuration) |
+| `WORKER_MAX_RETRIES`, `DISPATCHER_BATCH_SIZE`, `SIGNED_URL_TTL_S`, `PER_ACCOUNT_THROTTLE_PER_MIN`, `VERCEL_INSTANCE_MEMORY_MB` | No | Background job tuning, see [INNGEST.md](./INNGEST.md#runtime-configuration) |
 | `CRON_SECRET_KEY` | Yes | Shared secret for cron auth bypass |
 | `MEDIA_PROXY_HMAC_SECRET` | Yes | 64 hex chars. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `MCP_IP_HASH_SALT` | Prod | 32 bytes base64. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
@@ -252,7 +252,8 @@ All variables are documented in `.env.example`. The tables below group them by s
 | `bun run dev` | Start dev server with Turbopack (`next dev --turbopack`) |
 | `bun run build` | Production build (`next build`) |
 | `bun run start` | Start production server (`next start`) |
-| `bun run lint` | Run ESLint (`next lint`) |
+| `bun run lint` | Run ESLint (`eslint`, flat config in `eslint.config.mjs`; `useEffect` is banned) |
+| `bun run test` | Run the Bun tests, each file in its own module scope (`bun test --isolate`) |
 | `bun run db:generate` | Write a SQL migration into `drizzle/` from edits to `src/db/schema.ts` |
 | `bun run db:migrate` | Apply pending migrations (see [DATABASE.md](./DATABASE.md#schema-changes)) |
 | `bun run db:pull` | Read the live schema into `drizzle/`, to check for drift |
@@ -271,7 +272,7 @@ Pages in `src/content/docs/*.mdx` are served at `/docs/<slug>`. The `@next/mdx` 
 
 ### Build-time type checking
 
-`typescript.ignoreBuildErrors: true` is set in `next.config.ts`. tsc runs in CI and pre-commit hooks, not during Vercel builds (OOM mitigation). Always run `bunx tsc --noEmit` locally before pushing.
+`typescript.ignoreBuildErrors: true` is set in `next.config.ts`, so Vercel builds skip type checking (OOM mitigation). The repo has no CI workflow or pre-commit hook that runs it either. Always run the type check locally before pushing.
 
 ## Type checking
 
@@ -285,7 +286,7 @@ bunx tsc --noEmit
 cd scripts/x402-smoke && bunx tsc -p tsconfig.json
 ```
 
-No test framework is configured. Type checking is the primary automated verification step.
+Tests use Bun's test runner: `*.test.ts` files sit next to the code they test (no network, no database). Run them with `bun run test`. `--isolate` matters: several files mock modules partially, and in one shared process a partial mock leaks into the next file.
 
 ## Code conventions
 
@@ -297,7 +298,7 @@ Server actions return a result object instead of throwing:
 { success: boolean; message: string; data?: T; resetIn?: number }
 ```
 
-Inngest workers throw only for retryable errors. Non-retryable failures are returned as values.
+Inngest functions throw inside a step for any failure that should be retried (a failed database read or write, a retryable platform failure), since Inngest retries only a step that throws. Final failures are returned as values. See [INNGEST.md](./INNGEST.md#retries-and-steps).
 
 ### Log prefixes
 

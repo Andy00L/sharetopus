@@ -103,14 +103,15 @@ sequenceDiagram
 
 **Public routes** (no auth required, MCP does its own Bearer token auth):
 - `/api/mcp/(.*)`
-- `/api/x402/(.*)`
 - `/.well-known/oauth-protected-resource(.*)`
 - `/.well-known/oauth-authorization-server(.*)`
 
 **Protected routes** (auth required, redirect to sign-in if no session):
 - `/accounts`, `/config`, `/connections`, `/create`, `/dashboard`
 - `/posts`, `/posted`, `/scheduled`, `/schedule`
-- `/studio`, `/userProfile`, `/integrations`
+- `/studio`, `/userProfile`, `/integrations`, `/referral`
+
+**Routes the proxy never runs on** (`config.matcher`): `/api/x402`, `/api/actions`, `/api/inngest`, `/api/webhooks`, `/api/v1`, `/api/media`, `/api/docs`, `/api/oauth/callback`, `/actions.json`, and static files (including `.txt`, `.xml`, `.mp4`, `.webm`, `.mp3`, `.pdf`, `.avif`). These routes authenticate with a Bearer token, a signature or a payment, and no code they reach calls `auth()`, so Clerk is skipped for them. A `?ref=` code on those URLs does not set the referral cookie.
 
 ### Clerk webhooks
 
@@ -260,7 +261,8 @@ stateDiagram-v2
 
 - Maximum **10 active keys per kind** per user: 10 MCP and 10 REST (`checkActiveApiKeyCap`, `src/lib/api/checkActiveApiKeyCap.ts`). A failed count refuses with a retry message.
 - Creating a key is rate limited to 10 per minute per user, for both kinds
-- Creating an MCP key requires an **active Stripe subscription**. A REST key is gated when it is used (`resolveRestApiKey`), and the integrations page that creates it is gated too
+- Creating a key of either kind requires an **active subscription or referral weeks** (`checkActiveSubscription` in `createApiKey`); an unreadable plan asks for a retry. A REST key is also gated each time it is used (`resolveRestApiKey`)
+- A key created without `expiresInDays` gets `DEFAULT_API_KEY_EXPIRY_DAYS`
 - Revocation is a soft delete (`revoked_at` set, row kept for audit). REST and MCP keys both go through `revokeApiKeyForPrincipal`, one UPDATE that checks ownership and revokes. When the database fails, the answer says the key may still work and asks for a retry; it never claims the key is already revoked
 - `last_used_at` and `last_used_ip` are updated via `waitUntil` (fire-and-forget, does not block the auth response)
 
@@ -292,7 +294,7 @@ The `mcp_oauth_clients` table tracks every OAuth client that has authenticated a
 
 **First sight (new client_id):** The system upserts a row into `mcp_oauth_clients`. If the registering user has fewer than 5 verified clients, the new client is auto-verified. Otherwise, or when the count cannot be read, it is inserted as unverified.
 
-**Subscription cancel:** When a `customer.subscription.deleted` event leaves the user without access, all `verified` clients belonging to the user are demoted to `unverified` (see `demoteOauthClientsOnCancel`). Revoked clients (`revoked_at IS NOT NULL`) are excluded from demotion.
+**Subscription cancel:** When any subscription event (`created`, `updated` or `deleted`) leaves the user without access, all `verified` clients belonging to the user are demoted to `unverified` (see `demoteOauthClientsOnCancel`). Revoked clients (`revoked_at IS NOT NULL`) are excluded from demotion.
 
 **Resubscribe:** When a subscription event leaves the user with access, unverified clients are promoted back to `verified`, filling available slots up to the 5-client-per-user cap. Blocked clients are never auto-promoted (requires admin intervention). Revoked clients are excluded from promotion.
 
@@ -326,7 +328,7 @@ A limiter outage lets the request through. Limit hits are logged to the `rate_li
 | `plan_too_low` | User's tier does not meet the tool's minimum |
 | `monthly_quota` | Monthly cap reached for this tool |
 | `platform_quota` | Tool has a zero cap on this tier (not available) |
-| `infra_error` | DB/RPC error (fails open to avoid blocking paying users) |
+| `infra_error` | The quota RPC failed. The call is denied with a retry message (fail-closed), so a quota that cannot be read is never exceeded |
 
 ### Sample monthly caps (Creator tier)
 
@@ -407,8 +409,8 @@ EVM: Base, Base Sepolia, Polygon, Arbitrum. Solana: mainnet, devnet. Default: Ba
 | `src/lib/mcp/apiKeyExpiry.ts` | `API_KEY_EXPIRY_DAYS_OPTIONS`, expiry validation |
 | `src/lib/mcp/ipHash.ts` | `hashClientIp()`, salt handling |
 | `src/lib/mcp/tokens.ts` | `isMcpApiKeyToken()`, `hashToken()`, `generateMcpApiKey()` |
-| `src/actions/server/mcp/createApiKey.ts` | API key creation server action |
-| `src/lib/api/revokeApiKeyForPrincipal.ts` | Key revocation shared by `revokeApiKey` (MCP) and `revokeRestApiKey` |
+| `src/actions/server/api/apiKeys.ts` | `createApiKey`, `listApiKeys`, `revokeApiKey` server actions (MCP and REST keys) |
+| `src/lib/api/revokeApiKeyForPrincipal.ts` | Key revocation for both kinds, called by `revokeApiKey` |
 | `src/actions/server/data/demoteOauthClientsOnCancel.ts` | Demote verified clients on subscription cancel |
 | `src/inngest/functions/sweepStaleOauthClientsCron.ts` | Daily stale OAuth client cleanup |
 | `src/app/.well-known/oauth-protected-resource/route.ts` | RFC 9728 OAuth discovery |

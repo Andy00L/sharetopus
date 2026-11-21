@@ -22,6 +22,8 @@ Stripe handles subscriptions and payments. Three tiers with monthly and yearly p
   - [Cancel](#cancel-period_end-customersubscriptiondeleted)
   - [Resubscribe](#resubscribe-customersubscriptioncreated)
   - [Grace period](#grace-period-7-days)
+  - [Publish-time access gate](#publish-time-access-gate)
+- [Referral weeks](#referral-weeks)
 - [x402 Pay-Per-Call](#x402-pay-per-call)
 - [Source files referenced](#source-files-referenced)
 
@@ -61,7 +63,7 @@ sequenceDiagram
     Webhook->>DB: User has access: resume cancelled posts, promote OAuth clients
     Webhook->>Webhook: Invalidate caches
     Webhook->>DB: Log the event as processed
-    Stripe->>Webhook: invoice.payment_succeeded
+    Stripe->>Webhook: invoice.payment_succeeded or invoice.paid
     Webhook->>DB: Record the payment in stripe_invoices
 ```
 
@@ -71,18 +73,17 @@ Stripe does not deliver events in order. A subscription event therefore stores t
 
 ## Webhook events
 
-`src/app/api/webhooks/stripe/route.ts` processes five event types:
+`src/app/api/webhooks/stripe/route.ts` processes seven event types:
 
 | Event | Action |
 |-------|--------|
-| `customer.subscription.created`, `customer.subscription.updated` | Upsert `stripe_subscriptions` from the retrieved subscription, invalidate caches. If the user has access afterwards, resume system-cancelled posts and promote OAuth clients. |
-| `customer.subscription.deleted` | Same upsert (the retrieved status is `canceled`). If the user has no access left, demote OAuth clients and cancel future scheduled posts. |
-| `invoice.payment_succeeded` | Record the payment in `stripe_invoices` with `amount_paid_cents`. It replaces an earlier `failed` row for the same invoice. |
-| `invoice.payment_failed` | Record `failed` in `stripe_invoices`, unless the invoice already has a row: a failure never replaces a success. |
+| `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` | Upsert `stripe_subscriptions` from the retrieved subscription, invalidate caches, then act on the user's access. With access: resume system-cancelled posts and promote OAuth clients. Without access: demote OAuth clients and pause future scheduled posts. |
+| `invoice.payment_succeeded`, `invoice.paid` | Record `succeeded` in `stripe_invoices` with `amount_paid_cents`. It replaces an earlier `failed` row for the same invoice. `invoice.paid` also covers an invoice paid out of band. |
+| `invoice.payment_failed`, `invoice.marked_uncollectible` | Record `failed` in `stripe_invoices`, unless the invoice already has a row: a failure never replaces a success. |
 
-What happens to posts and OAuth clients follows the user's access after the write (`checkActiveSubscription`), not the event type. A late `deleted` for a subscription the user already replaced leaves the new plan's posts alone, and a `created` for a subscription still waiting on its first payment (`incomplete`) grants nothing until the `updated` event that makes it active. A failed access check answers 500.
+What happens to posts and OAuth clients follows the user's access after the write (`checkActiveSubscription`), not the event type. Any subscription event that leaves the user without access (`past_due`, `unpaid`, `paused`, `canceled`, `incomplete`, `incomplete_expired`) pauses their posts, not only `deleted`. A late `deleted` for a subscription the user already replaced leaves the new plan's posts alone, and a `created` for a subscription still waiting on its first payment (`incomplete`) grants nothing until the `updated` event that makes it active. A failed access check answers 500.
 
-`recordInvoicePayment` (`src/actions/server/stripe/recordInvoicePayment.ts`) writes invoices for both the webhook and the `ensureUserExists` sync. The sync records paid invoices and invoices whose payment was tried and failed (`uncollectible`, or `open` after an attempt); drafts, voided invoices and open ones not charged yet are skipped.
+`recordInvoicePayment` (`src/actions/server/stripe/recordInvoicePayment.ts`) writes invoices for the webhook. The webhook is the only writer of `stripe_subscriptions` and `stripe_invoices`.
 
 ## Subscription status
 
@@ -101,7 +102,9 @@ A failed database read returns `isActive=false` with status `unavailable`. The t
 - MCP and REST answer 503 (see [AUTH.md](./AUTH.md#fail-closed-design)), `list_billing_summary` returns a tool error, `GET /v1/usage` answers 500, and the MCP subscription gate does not cache the failure.
 - A share link checks its owner through `checkShareLinkOwnerCapacity`: a lapsed plan reads as `owner_subscription_inactive`, and a failed read as a retry. Both used to read as "the owner reached their account limit".
 
-It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code asks through `createCustomerPortal`, which reads the id from the Clerk session.
+It is server-only. It trusts the user id it is given, so as a server action any browser could read any user's plan and billing dates by id. Browser code reaches it only through actions that read the id from the Clerk session: the pricing section calls `checkOutSession`, which refuses `active` and `trialing` subscribers with `reason: "already_subscribed"`, and only then opens `createCustomerPortal`; the sidebar Billing item opens the portal directly.
+
+`findPrincipalsWithAccess(principalIds, now)` in the same file applies the same rule to many principals in two reads (the grace cron uses it), and returns `success: false` on any failed read, never a partial set.
 
 ## Plan gating
 
@@ -126,7 +129,7 @@ All 10 MCP tools are gated by `ACTION_PLAN_GATE`, which requires Creator minimum
 | Creator | All 10 tools | Subject to monthly quotas (see below). |
 | Pro | All 10 tools | Unlimited usage (no quotas). |
 
-REST API endpoints share the same quota system and plan gates. The `withRestEndpoint` middleware resolves the principal's plan and enforces the same tier and quota checks that MCP uses.
+REST API keys need an active subscription or referral weeks, at any tier: `resolveRestApiKey` runs the same subscription gate as MCP (`applySubscriptionGate`). REST calls have no tier gate and no monthly quota; `withRestEndpoint` rate limits them per principal and per endpoint (`REST_ENDPOINT_RATE_LIMIT`, 20 per 60 s).
 
 ### Storage quotas
 
@@ -163,7 +166,7 @@ All plans share the same per-file size caps:
 
 `createCustomerPortal` creates a Stripe Billing Portal session. Rate limited at 20 requests per 60 seconds. Requires an active subscription. Return URL: `/create`.
 
-A failure carries a `reason`: `no_subscription` when the user has nothing to manage, `failed` otherwise (a subscription it could not check included). The pricing buttons open checkout, and the sidebar billing entry opens the pricing section, only on `no_subscription`, so a paying user is never sent to a second checkout.
+A failure carries a `reason`: `no_subscription` when the user has no access, `failed` otherwise (a subscription it could not check included). The sidebar billing entry opens the pricing section only on `no_subscription`. The pricing buttons try checkout first and open the portal only when `checkOutSession` answers `already_subscribed`, so a paying user is never sent to a second checkout.
 
 ## Usage tracking
 
@@ -182,13 +185,12 @@ Incremented atomically by `atomic_increment_quota` on every quota-gated MCP tool
 
 ### Cancel (period_end, customer.subscription.deleted)
 
-When a user's Stripe subscription reaches period_end, the webhook handler:
+When a user's Stripe subscription reaches period_end, or any subscription event leaves the user without access, the webhook handler:
 
-1. Stores the subscription with Stripe's status, `canceled`
-2. Checks the user's access. With another active subscription or banked referral weeks, it stops here.
-3. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`)
-4. Cancels all future scheduled posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
-5. Invalidates subscription and entitlement caches
+1. Stores the subscription with Stripe's status (`canceled`, `past_due`, ...)
+2. Invalidates the subscription cache and checks the user's access. With another active subscription or banked referral weeks, it resumes and promotes instead (see below).
+3. Demotes the user's verified OAuth clients to unverified (`demoteOauthClientsOnCancel`) and invalidates the OAuth client cache
+4. Pauses all future `scheduled` posts, tagging each with `cancelled_by_sub_at = now()` (`cancelFutureScheduledPostsOnSubCancel`)
 
 The user retains access to the dashboard and can resubscribe. Manual cancellations of posts made before the sub cancel are left untouched (they have `cancelled_by_sub_at IS NULL`). A manual cancel, resume or reschedule clears the tag, so a post the user handled after the lapse is never removed by the grace cleanup.
 
@@ -202,23 +204,46 @@ When a subscription event leaves the user with access (a new subscription, or on
 
 ### Grace period (7 days)
 
-If the user does not resubscribe within 7 days, the daily cron `cleanup-cancelled-posts-after-grace` (05:00 UTC) deletes their system-cancelled posts. Orphan media in storage is picked up by `sweep-orphan-storage-files` (03:00 UTC) the following day.
+The daily cron `cleanup-cancelled-posts-after-grace` (05:00 UTC) reads the principals that own paused posts (`cancelled_by_sub_at` set) and checks their access in one batch:
 
-The cron re-checks subscription status before deletion as a guard against webhook delivery failures. When that check fails, it keeps the posts and the next daily run checks again. The delete itself repeats the selection criteria, so a post resumed during the run is not removed.
+- With access again, at any age of the pause: it runs the same resume as a resubscribe. This is how posts come back when referral weeks are granted again, since that fires no Stripe event.
+- Without access: it deletes their posts paused more than 7 days ago. Orphan media in storage is picked up by `sweep-orphan-storage-files` (03:00 UTC) the following day.
+
+A failed access read or delete fails the run, and Inngest retries it; the posts stay paused meanwhile. The delete repeats the selection criteria, so a post resumed during the run is not removed.
 
 ```mermaid
 flowchart TD
-    A[Subscription cancelled] --> B[Webhook fires]
-    B --> C[Mark status cancelled]
+    A[Subscription event without access] --> B[Webhook fires]
+    A2[Referral weeks run out] --> P[Post comes due: access gate pauses it]
+    B --> C[Store subscription status]
     B --> D[Demote OAuth clients]
-    B --> E[Cancel future posts<br>cancelled_by_sub_at = now]
-    E --> F{User resubscribes<br>within 7 days?}
-    F -- Yes --> G[Resume cancelled posts]
-    G --> H[Bump past dates to now + 1hr]
-    F -- Yes --> I[Re-promote OAuth clients<br>up to cap of 5]
-    F -- No --> J[cleanup-cancelled-posts-after-grace<br>deletes posts at 05:00 UTC]
+    B --> E[Pause future posts<br>cancelled_by_sub_at = now]
+    E --> F{Access back?}
+    P --> F
+    F -- Stripe event with access --> G[Resume paused posts]
+    G --> H[Bump past dates to now + 1hr<br>send post.due]
+    F -- Stripe event with access --> I[Re-promote OAuth clients<br>up to cap of 5]
+    F -- Referral weeks granted --> G2[Grace cron resumes them at 05:00 UTC]
+    G2 --> H
+    F -- No, after 7 days --> J[cleanup-cancelled-posts-after-grace<br>deletes posts at 05:00 UTC]
     J --> K[sweep-orphan-storage-files<br>cleans media at 03:00 UTC next day]
 ```
+
+### Publish-time access gate
+
+Every scheduled post is checked again when it comes due: `process-single-post` reads `checkActiveSubscription` for the owner and pauses the post (same two columns as the webhook) when the owner has no access. This covers referral weeks that ran out and posts already due when access ended. Posts created through x402 (`created_via = 'x402'`) are exempt: a wallet principal has no plan and pays per post. An unreadable access state retries the step; a post never publishes on an unknown. Details in [SCHEDULING.md](./SCHEDULING.md#publish-time-access-gate).
+
+Bringing a paused or cancelled post back needs access too: Resume, and a reschedule that includes a cancelled post, refuse without it ("Bringing back a cancelled post needs an active plan or referral weeks. Renew your subscription, then try again."), unless every post is an x402 post. The web post-now action checks access before it dispatches; MCP and REST check it at authentication.
+
+## Referral weeks
+
+A user who signs up through a referral link (`/?ref=CODE`) earns their referrer free Creator weeks.
+
+1. The proxy (`src/proxy.ts`) stores a valid `?ref=` code (`REFERRAL_CODE_PATTERN`) in the `stx_ref` cookie for 30 days, on a request the proxy runs for and only when no cookie is set yet. Routes the proxy skips (`/api/v1`, webhooks, media, static files) do not set it.
+2. `ensureUserExists` sends `referral.signup` (id `referral-signup-{userId}`) in `after()` when a new user has the cookie.
+3. The Inngest function `record-referral-signup` records the referral as `verified` (`recordReferralOnSignup`; unknown codes and self-referrals by id or email are not attributed), then runs `triggerReferralGrant`, which calls the `grant_referral_rewards` Postgres function: every 3 verified referrals become 1 free week (`REFERRALS_PER_FREE_WEEK`), extending `users.creator_access_until`. Each step retries 3 times.
+
+The sidebar only reads referral progress; it no longer retries the grant. Banked weeks count as Creator access in `checkActiveSubscription` (status `referral_grant`).
 
 ## x402 Pay-Per-Call
 
@@ -245,13 +270,27 @@ Prices are stored in the `pricing_actions` table (this table matches it on 2026-
 ### Refund Policy
 
 - **Checked before settlement, nothing charged:** account ownership, post eligibility, caption length, the platform's daily cap, a reused `idempotency_key`, and the upload's content type, size and storage quota. A request that fails these never settles.
-- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund.
+- **Refundable:** a failure after on-chain settlement (dispatch, scheduling, connection insert, upload URL mint) sends an on-chain USDC refund. Before the send, the charge gets `error_message = 'action_failed: <reason>'`, so a function stopped mid-refund still leaves the money owed visible to the reconciliation sweep.
 - **Non-refundable:** Publish failures at Inngest execute time (post.text, post.image, post.video). Pay-per-attempt model.
-- Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response.
+- Refund records are stored in `x402_refunds` once the chain confirms the refund. The refund tx hash is included in the error response. A refund whose send outcome is unknown (a timed-out send) is not sent again by the code: it gets a `refund_failed` reconciliation row, and when no refund tx hash is known, the sender wallet's outgoing transfers decide whether it went out.
 
 ### Charge Lifecycle
 
-Status flow: `pending` (inserted before settlement; the UNIQUE nonce blocks a replay) -> `settled` (facilitator confirmed) -> `refunded` (refund confirmed on-chain) or `failed` (definitive settle rejection, non-refundable handler error, or a refund that could not be sent). An indeterminate settle stays `pending` and an unconfirmed refund stays `settled`; both get an `x402_reconciliation` row that the hourly `sweep-x402-reconciliation` Inngest function resolves or reports as a failed run.
+Status flow: `pending` (inserted before settlement; the UNIQUE nonce blocks a replay) -> `settled` (facilitator confirmed) -> `refunded` (refund confirmed on-chain), or `pending` -> `failed` (definitive settle rejection only). A paid action that fails after settlement keeps the charge `settled` with `error_message = 'action_failed: <reason>'` until the refund confirms (`refunded`); an unconfirmed or unsent refund also gets an `x402_reconciliation` row. An indeterminate settle stays `pending` and gets a row too. The DB trigger `x402_status_guard` refuses any other transition.
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending : insert before settlement (UNIQUE nonce)
+    pending --> settled : facilitator confirmed
+    pending --> failed : definitive settle rejection
+    pending --> pending : indeterminate settle (reconciliation row)
+    settled --> settled : action failed (error_message action_failed), refund unconfirmed or unsent (reconciliation row)
+    settled --> refunded : refund confirmed on-chain (x402_refunds row)
+    failed --> [*]
+    refunded --> [*]
+```
+
+The hourly `sweep-x402-reconciliation` Inngest function (`:20`) reads the reconciliation rows, charges still `pending` 15 minutes after creation, and `settled` charges marked `action_failed` with neither a refund nor a reconciliation row (a function stopped between the marker and the row), over the last 30 days. It resolves what the chain confirms and ends the run with `NonRetriableError` listing every item still open, so open money items show as a failed run.
 
 ### Storage
 
@@ -264,9 +303,13 @@ Wallet users get 5 GB aggregate storage (same as Starter tier, independent const
 | `src/lib/types/plans.ts` | Plan tier definitions, price ID mappings, `priceIdToTier()` |
 | `src/app/api/webhooks/stripe/route.ts` | Stripe webhook handler |
 | `src/actions/server/stripe/stripeEventLog.ts` | `isStripeEventProcessed`, `markStripeEventProcessed`: the processed-event log |
-| `src/actions/server/stripe/recordInvoicePayment.ts` | Writes an invoice's payment outcome, for the webhook and the `ensureUserExists` sync |
-| `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by both the webhook and the `ensureUserExists` sync |
-| `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, the server-only subscription reader |
+| `src/actions/server/stripe/recordInvoicePayment.ts` | Writes an invoice's payment outcome for the webhook |
+| `src/actions/server/stripe/toSubscriptionRow.ts` | The `stripe_subscriptions` row for a Stripe subscription, written by the webhook |
+| `src/actions/server/stripe/checkOutSession.ts` | Stripe Checkout session; refuses `active` and `trialing` subscribers |
+| `src/actions/checkActiveSubscription.ts` | `checkActiveSubscription`, `findPrincipalsWithAccess`, `needsOwnerAccessToPublish` |
+| `src/actions/server/data/cleanupCancelledPostsAfterGrace.ts` | Grace cron logic: resume with access, delete after 7 days without |
+| `src/inngest/functions/recordReferralSignup.ts` | Records a referral and grants the referrer's weeks |
+| `src/lib/referral/` | `referralRules`, `recordReferralOnSignup`, `triggerReferralGrant` |
 | `src/actions/server/stripe/customerPortal.ts` | `createCustomerPortal`, Stripe Billing Portal session |
 | `src/actions/server/connections/checkAccountLimits.ts` | Account limit enforcement per tier |
 | `src/lib/mcp/entitlement.ts` | `MONTHLY_CAPS`, `ACTION_PLAN_GATE`, MCP tier gating |

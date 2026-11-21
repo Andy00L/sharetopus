@@ -9,6 +9,7 @@ How posts move from creation to publication. Covers the scheduled post state mac
 - [State machine](#state-machine)
 - [Full lifecycle](#full-lifecycle)
 - [Status transitions](#status-transitions)
+- [Publish-time access gate](#publish-time-access-gate)
 - [created_via](#created_via)
 - [Direct posting (post now)](#direct-posting-post-now)
 - [Cross-platform fan-out](#cross-platform-fan-out)
@@ -24,24 +25,29 @@ How posts move from creation to publication. Covers the scheduled post state mac
 
 ## State machine
 
-The `scheduled_posts.status` column drives all lifecycle transitions. Retryable errors do not produce a status change. The worker throws an exception and Inngest retries the same row.
+The `scheduled_posts.status` column drives all lifecycle transitions. Retryable errors do not produce a status change: the worker throws inside the publish step and Inngest retries that step with the row still `processing`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> scheduled : schedulePostBatch (web, MCP publish_posts, REST, x402)
-    scheduled --> queued : scheduled-posts-tick cron (every 5 min, batch ≤ 200)
-    scheduled --> cancelled : update_scheduled_posts cancel
-    cancelled --> scheduled : update_scheduled_posts resume (past dates bumped to now + 1h)
-    queued --> processing : process-single-post claims row (CAS UPDATE WHERE status=queued)
+    scheduled --> processing : process-single-post claim at scheduled_at (CAS on id, status, scheduled_at)
+    queued --> processing : legacy rows only (claim accepts queued)
+    scheduled --> cancelled : cancel (user)
+    scheduled --> cancelled : pause on access loss (cancelled_by_sub_at = now)
+    cancelled --> scheduled : resume or reschedule (needs access unless x402)
+    cancelled --> scheduled : resume on resubscribe or grace cron (past times bumped to now + 1h)
+    cancelled --> [*] : grace cron deletes posts paused more than 7 days without access
     processing --> posted : platform publish success (posted_at = now, content_history inserted)
-    processing --> failed : terminal error (error_message recorded, failed_posts row inserted)
+    processing --> failed : final error or retries exhausted (error_message, failed_posts row)
+    posted --> failed : TikTok rejects the pull after content/init
     posted --> [*]
     failed --> [*]
 
-    note right of queued : Dispatcher dedup via eventId = post.due-{postId}-{scheduledAt} (24h window)
-    note right of processing : Retryable errors (auth_expired, rate_limited, transient) throw for Inngest retry (max 3)
-    note left of failed : Terminal errors also insert into failed_posts table
+    note right of scheduled : post.due sent with ts = scheduled_at when due within 2 h, the hourly safety net re-sends
+    note right of processing : rate_limited and transient with mayHavePublished false are retried (max 3)
 ```
+
+`queued` is a legacy state: the claim and the safety net still accept it, nothing writes it any more.
 
 ## Full lifecycle
 
@@ -59,20 +65,24 @@ flowchart TD
     H --> G
 
     G --> I["scheduled_posts row (status=scheduled, created_via set)"]
-    I --> J["scheduled-posts-tick cron (every 5 min)"]
-    J --> K{"scheduled_at <= now?"}
-    K -- no --> J
-    K -- yes --> L["UPDATE status=queued, dispatch Inngest post.due event"]
-    L --> M["process-single-post worker"]
-    M --> N{"Platform call result?"}
-    N -- success --> O["UPDATE status=posted, INSERT content_history"]
-    N -- terminal error --> P["UPDATE status=failed, INSERT failed_posts"]
-    N -- retryable error --> Q["throw for Inngest retry (max 3)"]
-    Q --> M
+    I --> J{"Due within 2 h?"}
+    J -- yes --> K["sendPostDueEvents: post.due with ts = scheduled_at"]
+    J -- no --> T["scheduled-posts-tick (hourly safety net) sends it once due within 2 h"]
+    T --> M
+    K --> M["process-single-post starts at scheduled_at"]
+    M --> AG{"Owner has access, or x402 post?"}
+    AG -- no --> PA["Pause: status=cancelled, cancelled_by_sub_at=now"]
+    AG -- unknown --> RT["Step retried, post stays scheduled"]
+    AG -- yes --> CL["Claim: status=processing"]
+    CL --> N{"Platform call result?"}
+    N -- success --> O["UPDATE status=posted, content_history row"]
+    N -- final error --> P["UPDATE status=failed, INSERT failed_posts"]
+    N -- "rate_limited or transient, not published" --> Q["throw inside the step, Inngest retries (max 3)"]
+    Q --> N
     O --> R["cleanupMediaIfUnreferenced"]
     P --> R
-    R --> S{"Other refs to media?"}
-    S -- no --> T["storage.remove file"]
+    R --> S{"Other refs to media, or platform still reads it?"}
+    S -- no --> U2["storage.remove file"]
     S -- yes --> U["Keep file (orphan sweeper handles later)"]
 ```
 
@@ -80,13 +90,26 @@ flowchart TD
 
 | From | To | Trigger | Notes |
 |------|-----|---------|-------|
-| (new) | scheduled | schedulePostBatch | `created_via` set at insert time |
-| scheduled | queued | scheduled-posts-tick cron | Batch up to 200. Status updated before event dispatch. |
-| scheduled | cancelled | update_scheduled_posts `cancel` | Only `scheduled` status can be cancelled |
-| cancelled | scheduled | update_scheduled_posts `resume` | Past dates bumped to now + 1 hour via `bumpPastScheduleToFuture` |
-| queued | processing | process-single-post | Compare-and-swap (`WHERE status=queued`) prevents double-processing |
-| processing | posted | Platform publish success | `posted_at` set to `now()`. Content history inserted. |
-| processing | failed | Terminal platform error | Error recorded in `error_message`. `failed_posts` row inserted. |
+| (new) | scheduled | schedulePostBatch | `created_via` set at insert time. `post.due` sent when due within 2 hours. |
+| scheduled (or legacy queued) | processing | process-single-post claim | Compare-and-set on `id`, status `scheduled` or `queued`, and the event's `scheduled_at`, so a stale event for a rescheduled post claims nothing. Runs only after the access gate opens. |
+| scheduled (or legacy queued) | cancelled | process-single-post access gate | Owner without access at publish time (x402 posts exempt). Sets `cancelled_by_sub_at`. Same CAS condition as the claim. |
+| scheduled | cancelled | cancel | Only `scheduled` status can be cancelled. Clears `cancelled_by_sub_at`. |
+| scheduled | cancelled | Stripe subscription event without access | Future posts only. Sets `cancelled_by_sub_at`. |
+| cancelled | scheduled | resume or reschedule | Refused without access (x402 posts exempt). Past dates bumped to now + 1 hour on resume. Sends `post.due`. |
+| cancelled | scheduled | resume on resubscribe, grace cron | Only rows with `cancelled_by_sub_at`. Past dates bumped to now + 1 hour. Sends `post.due`. |
+| processing | posted | Platform publish success | `posted_at` set to `now()`. Content history inserted. `post.published` webhook. |
+| processing | failed | Final platform error, or retries exhausted with no `content_history` row | Error recorded in `error_message`. `failed_posts` row inserted. `post.failed` webhook. |
+| processing or posted | failed | TikTok pull finalized as failed | `finalizeTikTokPostByPublishId`, then `post.failed` webhook. |
+
+## Publish-time access gate
+
+A scheduled post publishes only while its owner has access: an `active` or `trialing` Stripe subscription, or referral weeks (`users.creator_access_until` in the future). `process-single-post` checks it inside the claim step, after waiting for `scheduled_at` (`gatePostOnOwnerAccess` in `src/inngest/functions/processSinglePostHelpers.ts`):
+
+- x402 posts (`created_via = 'x402'`) skip the check (`needsOwnerAccessToPublish` in `src/actions/checkActiveSubscription.ts`): a wallet principal has no plan and pays per post.
+- No access: the post is paused exactly like a lost subscription (`status = 'cancelled'`, `cancelled_by_sub_at = now`, `buildAccessPauseValues`), and the run ends with `paused-without-access`. It comes back when access returns and is deleted after 7 days without it (see [Subscription-triggered cancel](#subscription-triggered-cancel)).
+- Access read unavailable: the step throws, Inngest retries it, and the post stays unclaimed. If every retry fails, `onFailure` marks it failed. A post is never published on an unknown.
+
+The gate reads the database each time, not the 60 s per-instance subscription cache, since a cached "active" could open it up to 60 s after access ended.
 
 ## created_via
 
@@ -96,7 +119,7 @@ Every post-related table (`scheduled_posts`, `failed_posts`, `content_history`) 
 |-------|---------|
 | `web` | Created through the web UI (`handleSocialMediaPost`) |
 | `mcp` | Created through an MCP tool call |
-| `x402` | Created through x402 anonymous wallet |
+| `x402` | Created through an x402 wallet payment or the Solana Blink (paid per post, exempt from the access gate) |
 | `api` | Created through REST API |
 
 REST API creates posts with `created_via = 'api'`. Webhook events (`post.scheduled`, `post.published`, `post.failed`) are dispatched on post lifecycle transitions via `src/lib/api/rest/webhooks/dispatch.ts`.
@@ -105,31 +128,42 @@ REST API creates posts with `created_via = 'api'`. Webhook events (`post.schedul
 
 Direct posts bypass the `scheduled_posts` table entirely. The flow uses `pending_direct_posts` as a lock table so media cleanup cannot race with in-flight publishes.
 
-The lock row is inserted BEFORE the Inngest event is dispatched. This guarantees the row exists when the worker starts, even if Inngest picks up the event immediately.
+The lock row is inserted BEFORE the Inngest event is dispatched. This guarantees the row exists when the worker starts, even if Inngest picks up the event immediately. Every entry point checks access before it dispatches: the web action `handleSocialMediaPost` calls `checkActiveSubscription` for the signed-in user, MCP and REST pass the subscription gate at authentication, x402 and the Solana Blink are paid per post. The worker itself checks no access.
 
 ```mermaid
 sequenceDiagram
     participant Handler as handleSocialMediaPost / directPostBatch
+    participant Dispatch as dispatchPostNowEvents
     participant DB as Supabase
     participant Inngest as Inngest
     participant Worker as process-direct-post
 
-    Handler->>DB: INSERT pending_direct_posts (status=processing)
-    Note over Handler,DB: Row inserted BEFORE event dispatch
-    Handler->>Inngest: Send post.now event
+    Handler->>Dispatch: post.now payloads
+    Dispatch->>Dispatch: Validate each payload, refuse only the invalid ones
+    Dispatch->>DB: INSERT pending_direct_posts (status=processing) ON CONFLICT DO NOTHING
+    Note over Dispatch,DB: Row inserted BEFORE event dispatch
+    Dispatch->>Inngest: Send post.now (id post.now-{dispatch_id})
+    alt Send failed
+        Dispatch->>DB: Release the locks just inserted
+    end
     Inngest->>Worker: Trigger worker
-    Worker->>Worker: Fetch social account, post to platform
-    alt Success
+    Worker->>DB: Read lock, and on a retry check content_history (publish guard)
+    Worker->>Worker: Load account, mint media URLs, publishToPlatform
+    alt rate_limited or transient, not published
+        Worker->>Inngest: throw inside the step (retried, max 3)
+    else Success
         Worker->>DB: finalizePendingDirectPost (status=completed)
-        Worker->>DB: INSERT content_history
         Worker->>Worker: Cleanup media if unreferenced
-    else Failure
+    else Final failure
         Worker->>DB: finalizePendingDirectPost (status=failed, failure_reason set)
+        Worker->>Worker: Cleanup media if unreferenced
     end
     Note over Worker: finalizePendingDirectPost only updates rows with status=processing (idempotent)
 ```
 
-TikTok is a special case. On successful content/init, media cleanup is deferred to the poll or webhook worker because TikTok pulls the media asynchronously.
+The adapter writes the `content_history` row when the platform accepts the post. When every retry fails, `onFailure` finalizes the lock: `completed` when the publish guard finds a `content_history` row, `failed` otherwise.
+
+TikTok is a special case. On successful content/init, media cleanup is deferred to the poll or webhook worker because TikTok pulls the media asynchronously. Platforms that hotlink our signed URL keep the media too, since the live post may still read it.
 
 ## Cross-platform fan-out
 
@@ -140,7 +174,7 @@ A single user action can target multiple platforms. One `batch_id` groups all th
 | `directPostBatch` (post now) | 30 | 20 per 60 seconds |
 | `schedulePostBatch` (schedule) | 50 | 10 per 60 seconds |
 
-A daily cap of 50 posts per platform is enforced using a 24-hour lookback window.
+`schedulePostBatch` also enforces a daily cap per principal and platform: posts in `scheduled`, `queued` or `processing` due within the next 24 hours, plus the new ones, may not exceed `platform_quotas.daily_cap` for that platform, 50 when the table has no row (`DEFAULT_PLATFORM_DAILY_CAP`).
 
 ## Lock tables
 
@@ -187,7 +221,7 @@ Tracks TikTok async publish operations. TikTok's pull model means the publish ca
 
 Both batch cores support idempotent retries. This protects against duplicate posts when an agent retries after a network error or timeout.
 
-`schedulePostBatch` inserts with `ON CONFLICT DO NOTHING` and counts a skipped row in `duplicates`; `directPostBatch` looks the key up before dispatching. The key is optional. Omitting it means no dedup (every call creates a new row).
+`schedulePostBatch` inserts with `ON CONFLICT DO NOTHING` and counts a skipped row in `duplicates`; `directPostBatch` inserts its lock rows the same way, finds the existing lock by key for each conflict, and sends no second event. The key is optional. Omitting it means no dedup (every call creates a new row).
 
 ```mermaid
 sequenceDiagram
@@ -214,94 +248,111 @@ sequenceDiagram
 | REST `POST /v1/posts`, x402 | `idempotency_key` param (optional, 1-200 chars) | the table of the path taken | Same |
 | REST `POST /v1/posts/bulk` | `idempotency_key` per post, else `${batch_id}:${index}` | `scheduled_posts` | Same |
 
-The `scheduled-posts-tick` dispatcher also deduplicates at the Inngest layer. It sets `eventId = post.due-${postId}-${scheduledAt}` with a 24-hour dedup window, preventing duplicate dispatch if the cron fires twice for the same batch.
+`post.due` events also deduplicate at the Inngest layer: the id `post.due-{postId}-{scheduledAtEpochMs}` is the same for every send of one `scheduled_at`, and Inngest drops a repeated id for 24 hours, so a writer and the hourly safety net never start two runs for one post. Only a post overdue by more than 15 minutes is re-sent under a fresh `-late-{nowMs}` id. A duplicate run that slips through still finds the claim taken. `post.now` events use the id `post.now-{dispatch_id}`.
 
 ## Retry strategy
 
-`process-single-post` retries on transient failures. `process-direct-post` does not retry (0 retries, fire-and-forget from the user's perspective).
+Both workers retry, and both publish through `publishToPlatform`. Each platform returns a typed failure `{ reason, mayHavePublished }` (`PlatformFailureReason` in `src/lib/api/_shared/platformFailure.ts`), classified from the platform's own error codes.
 
-**Scheduled post retries:**
+**Retries (both workers):**
 
 - Max retries: `RUNTIME.maxRetries` (default 3, capped at 20)
 - Backoff: Inngest default exponential backoff
 - Throttle: 5 per minute per `social_account_id`
+- Publish guard: before publishing again, the step looks for a `content_history` row from an earlier attempt, so a retry never posts twice
 
-**Error classification:**
+**Error classification (`isSafeToRetryPost` in `src/inngest/functions/platformErrors.ts`):**
 
-| Reason | Retryable | Example |
+| Reason | Retried | Example |
 |--------|-----------|---------|
-| `auth_expired` | Yes | Token expired, refresh failed |
-| `rate_limited` | Yes | Platform 429 response |
-| `transient` | Yes | Network timeout, connection reset |
+| `rate_limited` | Yes, when `mayHavePublished` is false | Platform 429 response |
+| `transient` | Yes, when `mayHavePublished` is false | Network timeout, connection reset |
+| `auth_expired` | No | Token expired, refresh refused |
 | `policy_rejected` | No | Pinterest domain block, TikTok policy violation |
-| `invalid_input` | No | Text post to Pinterest, missing board ID |
+| `invalid_input` | No | Text post to Pinterest, missing board ID, media file gone |
 | `unknown` | No | Unmapped error |
 
-Terminal failures: `error_message` is recorded on the `scheduled_posts` row and a `failed_posts` row is inserted.
+A failure with `mayHavePublished: true` is never retried, whatever its reason, since the platform may have accepted the post.
 
-Retryable failures: the worker throws an exception, Inngest catches it and retries with backoff.
+Final failures: `error_message` is recorded on the `scheduled_posts` row and a `failed_posts` row is inserted. A `post.failed` webhook fires, plus `connection.expired` for `auth_expired`.
+
+Retried failures: the worker throws inside the publish step, Inngest retries that step with backoff. When every retry fails, `onFailure` records `posted` if the publish guard finds a `content_history` row and `failed` otherwise.
 
 ## Cancel, resume, reschedule, delete
 
 | Operation | Behavior |
 |-----------|----------|
 | **Cancel** | Only posts with `status=scheduled` can be cancelled. Sets `status=cancelled` and clears `cancelled_by_sub_at`. |
-| **Resume** | Moves `cancelled` posts back to `scheduled` and clears `cancelled_by_sub_at`. Past dates are bumped to now + 1 hour via `bumpPastScheduleToFuture`. |
-| **Reschedule** | Changes `scheduled_at` for 1 to 50 posts. Automatically resumes cancelled posts (no separate resume call needed), clearing `cancelled_by_sub_at` like Resume. |
-| **Delete** | Permanent removal. Orphan media is cleaned up. |
+| **Resume** | Moves `cancelled` posts back to `scheduled` and clears `cancelled_by_sub_at`. Past dates are bumped to now + 1 hour via `bumpPastScheduleToFuture`. Sends `post.due`. Refused without access unless every post is an x402 post: "Bringing back a cancelled post needs an active plan or referral weeks. Renew your subscription, then try again." |
+| **Reschedule** | Changes `scheduled_at` for 1 to 50 posts in `scheduled` or `cancelled`. Automatically resumes cancelled posts (no separate resume call needed), clearing `cancelled_by_sub_at` like Resume, and sends `post.due`. When the batch holds a cancelled post that needs access and the owner has none, the batch is refused with `failure: "access_required"` (REST answers 403 `forbidden`); moving a post that is still `scheduled` needs no access check. |
+| **Delete** | Permanent removal, any status. Media no other row references is deleted (`deleteUnreferencedMediaFiles`). |
+
+The access checks for Resume and Reschedule live in the batch functions (`checkAccessToRevivePosts`), so the web actions, MCP `update_scheduled_posts`, REST `PATCH /v1/posts/{id}` and the x402 reschedule route all apply them. An unreadable plan refuses with "Could not check your plan, so nothing changed. Please try again." (`failure: "unavailable"` on reschedule).
 
 All four answer "Could not load your posts. Please try again." when reading the posts fails; "No posts found" means the ids matched no row.
 
 ## Subscription-triggered cancel
 
-When a user cancels their subscription, the system automatically cancels their future scheduled posts and provides a grace period before cleanup.
+When a user loses access, the system pauses their future scheduled posts and provides a grace period before cleanup.
 
-1. `cancelFutureScheduledPostsOnSubCancel` sets `status=cancelled` and `cancelled_by_sub_at=now()` for all future scheduled posts belonging to that user.
-2. The `cleanup-cancelled-posts-after-grace` cron runs after a 7-day grace period to permanently remove system-cancelled posts.
-3. If the user resubscribes within the grace period, `resumeCancelledPostsOnResubscribe` resumes all system-cancelled posts. Past dates are bumped forward.
+1. Any Stripe subscription event (`customer.subscription.created`, `updated` or `deleted`) that leaves the user without access runs `cancelFutureScheduledPostsOnSubCancel`: `status=cancelled` and `cancelled_by_sub_at=now()` for all future `scheduled` posts of that user (`src/app/api/webhooks/stripe/route.ts`, `revokeSubscriberAccess`).
+2. Referral weeks run out without any event. The publish-time access gate pauses each such post when it comes due, with the same two columns.
+3. A Stripe event with access runs `resumeCancelledPostsOnResubscribe`: every `cancelled` row with `cancelled_by_sub_at` goes back to `scheduled`, past dates are bumped one hour ahead, and `post.due` is sent.
+4. The `cleanup-cancelled-posts-after-grace` cron (daily 05:00 UTC) resumes the paused posts of every principal who has access again (this is how posts come back when referral weeks are granted again), and deletes posts paused more than 7 days ago for principals still without access.
 
-Only the subscription lapse sets `cancelled_by_sub_at`; a manual cancel, resume or reschedule clears it. The tag therefore marks a post whose latest cancellation came from the lapse. Before this rule, a post resumed by hand kept its tag, and cancelling it again later let the grace cleanup delete it.
+Only an access loss sets `cancelled_by_sub_at`; a manual cancel, resume or reschedule clears it. The tag therefore marks a post whose latest cancellation came from the access loss. Before this rule, a post resumed by hand kept its tag, and cancelling it again later let the grace cleanup delete it.
 
 ## Sweep crons
 
-Two crons clean up stuck or orphaned data.
+Three crons recover stuck or orphaned data.
 
 | Cron | Schedule | Behavior |
 |------|----------|----------|
-| `sweep-stuck-direct-posts` | Every 5 minutes | Marks `pending_direct_posts` rows stuck in `processing` for over 10 minutes as `failed` |
+| `scheduled-posts-tick` | Hourly at :00 | Re-sends `post.due` for unclaimed posts (`scheduled` or legacy `queued`) due within 2 hours; posts overdue by more than 15 minutes get a fresh event id |
+| `sweep-stuck-direct-posts` | Hourly at :15 | Marks `pending_direct_posts` rows still `processing` 60 minutes after `created_at` as `failed` |
 | `sweep-orphan-storage-files` | Daily at 03:00 UTC | Deletes storage files older than 24 hours that are not referenced by any of the 4 media tables |
 
 ## Post options
 
-Platform-specific options are stored in the `post_options` JSONB column on `scheduled_posts`.
+Platform-specific options are stored in the `post_options` JSONB column on `scheduled_posts`, flat. `decodeStoredPostOptions` in `src/inngest/events/postOptions.ts` is the schema the worker reads them with; a row with an unknown type for a known key fails as `invalid_input`.
 
 | Platform | Fields |
 |----------|--------|
-| Pinterest | `pinterest_board_id`, `pinterest_board_name`, `pinterest_link` |
+| Pinterest | `board`, `boardName`, `link`, `privacyLevel` |
+| LinkedIn | `link`, `visibility` |
+| YouTube | `privacyStatus` (`public`, `unlisted`, `private`) |
 | TikTok | `privacyLevel` (web composer only; API, MCP and x402 posts are always public), `disableComment`, `disableDuet`, `disableStitch`, `brandContentToggle`, `yourBrand`, `brandedContent`, `isAigc` |
+| Registry providers | Their own keys, checked by `publishViaRegistry` |
 
 ## Source files referenced
 
 | File | What it does |
 |------|-------------|
-| `src/inngest/functions/scheduledPostsTick.ts` | Cron that moves `scheduled` to `queued` (batch up to 200) |
-| `src/inngest/functions/processSinglePost.ts` | Worker that claims and publishes a queued post |
-| `src/inngest/functions/processDirectPost.ts` | Worker for direct "post now" operations (0 retries) |
-| `src/inngest/functions/platformErrors.ts` | Error classification (retryable vs terminal) |
+| `src/inngest/events/postDue.ts` | `post.due` schema, 2-hour lookahead, event ids (`planPostDueEvents`) |
+| `src/inngest/dispatch/sendPostDueEvents.ts` | Sends `post.due` from every writer of `scheduled_at` |
+| `src/inngest/functions/scheduledPostsTick.ts` | Hourly safety net over unclaimed posts due within 2 hours |
+| `src/inngest/functions/processSinglePost.ts` | Worker that gates on access, claims and publishes a scheduled post |
+| `src/inngest/functions/processSinglePostHelpers.ts` | Load, access gate, claim, publish guard, status write, media cleanup |
+| `src/inngest/functions/processDirectPost.ts` | Worker for direct "post now" operations (3 retries) |
+| `src/inngest/dispatch/dispatchPostNowEvents.ts` | Locks and sends `post.now`, releases the locks on a failed send |
+| `src/inngest/functions/publishToPlatform.ts` | One publish path for adapters and registry providers, media URL minting |
+| `src/inngest/functions/platformErrors.ts` | Retry rule (`isSafeToRetryPost`) |
 | `src/inngest/functions/sweepStuckDirectPosts.ts` | Sweep for stuck `pending_direct_posts` rows |
 | `src/inngest/functions/sweepOrphanStorageFiles.ts` | Daily cleanup of unreferenced storage files |
-| `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | 7-day grace period cleanup after subscription cancel |
-| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | Core scheduling logic, fan-out for scheduled posts (max 50, rate limited) |
+| `src/inngest/functions/cleanupCancelledPostsAfterGraceCron.ts` | Daily resume or 7-day grace deletion of paused posts |
+| `src/actions/checkActiveSubscription.ts` | Access rule (`checkActiveSubscription`, `findPrincipalsWithAccess`, `needsOwnerAccessToPublish`) |
+| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | Core scheduling logic, fan-out for scheduled posts (max 50, rate limited, daily cap) |
 | `src/actions/server/directPostActions/directPostBatch.ts` | Fan-out for direct posts (max 30, rate limited) |
-| `src/actions/server/data/pendingDirectPosts.ts` | Idempotent finalization of direct post lock rows |
+| `src/actions/server/data/pendingDirectPosts.ts` | Lock insert, release and idempotent finalization of direct post lock rows |
 | `src/actions/server/scheduleActions/cancel/cancelScheduledPostBatch.ts` | Cancel scheduled posts |
 | `src/actions/server/scheduleActions/resume/resumeScheduledPostBatch.ts` | Resume cancelled posts |
+| `src/actions/server/scheduleActions/resume/_shared/checkAccessToRevivePosts.ts` | Access check before a cancelled post comes back |
 | `src/actions/server/scheduleActions/reschedule/updateScheduledTimeBatch.ts` | Reschedule posts |
 | `src/actions/server/scheduleActions/delete/deleteScheduledPostBatch.ts` | Delete scheduled posts |
-| `src/actions/server/data/cancelFutureScheduledPostsOnSubCancel.ts` | Subscription-triggered cancel |
+| `src/actions/server/data/cancelFutureScheduledPostsOnSubCancel.ts` | Pause on access loss (`buildAccessPauseValues`) |
 | `src/actions/server/data/resumeCancelledPostsOnResubscribe.ts` | Resume posts on resubscribe |
-| `src/actions/server/data/storageFiles/deleteSupabaseFile.ts` | Checks both lock tables before deleting media |
-| `src/inngest/functions/processSinglePostHelpers.ts` | Cross-table reference check before media removal |
+| `src/actions/server/data/storageFiles/deleteSupabaseFile.ts` | Checks every media reference before deleting media |
+| `src/actions/server/data/storageFiles/mediaReferences.ts` | Cross-table reference check before media removal |
 | `src/lib/api/rest/webhooks/dispatch.ts` | REST webhook event dispatch on post lifecycle transitions |
 
 ---

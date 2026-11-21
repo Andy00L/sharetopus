@@ -157,7 +157,7 @@ Error codes:
 | Code | HTTP Status | Description |
 |------|------------|-------------|
 | `unauthorized` | 401 | Invalid, expired, or revoked API key |
-| `forbidden` | 403 | Valid key but insufficient permissions |
+| `forbidden` | 403 | Valid key but insufficient permissions, or a reschedule that would bring back a cancelled post while the owner has no active plan or referral weeks (`access_required`) |
 | `not_found` | 404 | Resource does not exist or not owned by principal, including the social account a post names |
 | `conflict` | 409 | The post's status does not allow the change: only a scheduled post can be cancelled, and only a scheduled or cancelled post can be rescheduled |
 | `validation_error` | 400 | Request body or parameters failed validation, or a post breaks a platform rule (media type, required title or target, caption length, account on another platform) |
@@ -169,13 +169,13 @@ Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
 When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
 
-`PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel.
+`PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 403 (a cancelled post comes back only with access), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel.
 
 ---
 
 ## Rate limiting
 
-Per-principal rate limits via Upstash Redis sliding window. Limits vary by endpoint. When exceeded, the API returns 429 with `retry_after_seconds`. When the limiter itself cannot answer (Redis unreachable), the API returns 503 `service_unavailable` with `retry_after_seconds: 30` instead: the request did not run, and the client should retry, not slow down.
+Per-principal rate limits via Upstash Redis sliding window. Every endpoint has its own budget of 20 requests per 60 seconds (`REST_ENDPOINT_RATE_LIMIT` in `src/actions/server/rateLimit/rateLimitRules.ts`, keyed on the endpoint's `rateLimitAction` and the principal); the batch cores add their own limits on top (scheduling 10 per 60 s, post now 20 per 60 s, reschedule, cancel, delete and resume 30 per 60 s). When exceeded, the API returns 429 with `retry_after_seconds`. When the limiter itself cannot answer (Redis unreachable), the API returns 503 `service_unavailable` with `retry_after_seconds: 30` instead: the request did not run, and the client should retry, not slow down.
 
 Rate limit state is tracked per `principal_id`, not per API key. Multiple keys for the same principal share the same rate limit pool.
 

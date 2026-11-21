@@ -25,7 +25,7 @@ Social media scheduling and publishing from one dashboard, one MCP server, one R
 
 ## 📦 What is Sharetopus
 
-Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, and Pinterest. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 10 MCP tools and a 31-endpoint REST API. Agents without a subscription pay per action in USDC through x402. Background jobs (18 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
+Sharetopus is a SaaS tool for scheduling and publishing social media posts across LinkedIn, TikTok, and Pinterest. You create a post once, customize it per platform, and publish immediately or schedule it for later. Subscribers on Creator plans and above get access to 10 MCP tools and a 31-endpoint REST API. Agents without a subscription pay per action in USDC through x402. Background jobs (23 Inngest functions) handle dispatch, polling, webhook delivery, token encryption, and storage and log cleanup.
 
 ## ✨ Surfaces
 
@@ -107,28 +107,33 @@ Streamable HTTP at `/api/mcp/mcp`, stateless: mcp-handler 2.x serves protocol 20
 
 ## ⚡ Background Jobs
 
-18 Inngest functions handle scheduling, posting, polling, webhook delivery, token encryption, and cleanup:
+23 Inngest functions handle scheduling, posting, polling, token refresh, webhook delivery, encryption, and cleanup:
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
-| scheduled-posts-tick | Cron `*/5 * * * *` | Dispatch due scheduled posts (batch 200) |
-| process-single-post | Event `post.due` | Process one scheduled post (retries 3) |
-| process-direct-post | Event `post.now` | Process one direct post (no retry) |
-| tiktok-publish-status-poll | Event `tiktok.publish.poll` | Poll TikTok for publish completion (60 attempts, 60s interval) |
-| process-tiktok-publish-webhook | Event `tiktok.publish.webhook.received` | Process TikTok webhook events (retries 3) |
-| deliver-webhook | Event `webhook.dispatch.v1` | Deliver one webhook event to a subscriber (HMAC signed, retries 3) |
-| sweep-stuck-direct-posts | Cron `*/5 * * * *` | Recover stuck pending posts (>10 min) |
-| sweep-orphan-storage-files | Cron daily 03:00 UTC | Delete unreferenced storage files (>24h) |
-| sweep-stale-oauth-clients | Cron daily 04:00 UTC | Purge unverified OAuth clients (>90 days) |
-| cleanup-cancelled-posts-after-grace | Cron daily 05:00 UTC | Delete system-cancelled posts (>7 days) |
-| cleanup-stripe-webhook-events | Cron daily 03:00 UTC | Prune webhook idempotency log (>90 days) |
-| cleanup-mcp-audit-log | Cron daily 04:00 UTC | Prune audit log (>90 days) |
-| cleanup-x402-access-log | Cron daily 06:00 UTC | Prune x402 access log (>90 days) |
-| cleanup-rest-audit-log | Cron daily 07:00 UTC | Prune REST audit log (>90 days) |
-| cleanup-tiktok-webhook-events | Cron daily 08:00 UTC | Prune TikTok webhook event log (>90 days) |
-| cleanup-social-connections | Cron daily 02:00 UTC | Delete stale pending, failed and expired OAuth connections (>30 days) |
-| sweep-x402-reconciliation | Cron hourly at :20 | Resolve or report x402 payments that need a manual look |
-| encrypt-social-tokens | Cron daily 09:00 UTC, event `social-tokens.encrypt` | Encrypt social account tokens still stored in plaintext |
+| scheduled-posts-tick | Cron `0 * * * *` | Hourly safety net: re-sends `post.due` for unclaimed posts due within 2 h |
+| process-single-post | Event `post.due` | Publish one scheduled post (retries 3, `WORKER_MAX_RETRIES`, capped at 20) |
+| process-direct-post | Event `post.now` | Publish one "post now" item (retries 3, `WORKER_MAX_RETRIES`, capped at 20) |
+| tiktok-publish-status-poll | Event `tiktok.publish.poll` | Poll TikTok until a publish completes or fails (retries 3) |
+| repoll-stalled-tiktok-pulls | Cron `40 * * * *` | Re-send the poll for pending TikTok pulls nobody polled for 10 min |
+| process-tiktok-publish-webhook | Event `tiktok.publish.webhook.received` | Handle TikTok publish webhook callbacks (retries 3) |
+| sweep-stuck-direct-posts | Cron `15 * * * *` | Fail `pending_direct_posts` rows still `processing` 60 min after creation |
+| sweep-orphan-storage-files | Cron `0 3 * * *` | Delete unreferenced storage files (>24h) |
+| sweep-stale-oauth-clients | Cron `0 4 * * *` | Remove unverified OAuth clients (>90 days, no activity) |
+| cleanup-cancelled-posts-after-grace | Cron `0 5 * * *` | Resume paused posts of owners with access, delete them 7 days after the pause for owners without |
+| cleanup-stripe-webhook-events | Cron `0 3 * * *` | Purge processed Stripe webhook events (>90 days) |
+| cleanup-mcp-audit-log | Cron `0 4 * * *` | Delete MCP audit log rows (>90 days) |
+| cleanup-x402-access-log | Cron `0 6 * * *` | Delete x402 access log rows (>90 days) |
+| cleanup-rest-audit-log | Cron `0 7 * * *` | Delete REST audit log rows (>90 days) |
+| cleanup-tiktok-webhook-events | Cron `0 8 * * *` | Purge logged TikTok webhook events (>90 days) |
+| cleanup-finished-tiktok-pulls | Cron `30 8 * * *` | Delete finished TikTok pulls finalized more than 90 days ago |
+| cleanup-social-connections | Cron `0 2 * * *` | Delete pending, failed and expired OAuth connection rows (>30 days) |
+| sweep-x402-reconciliation | Cron `20 * * * *` | Resolve or report x402 payments that need a manual look |
+| encrypt-plaintext-secrets | Cron `0 9 * * *`, Event `secrets.encrypt-plaintext` | Encrypt social account tokens, webhook secrets and share-link tokens still stored in plaintext (retries 1) |
+| refresh-expiring-tokens | Cron `0 1 * * *` | Request a refresh for every account whose token expires within 7 days |
+| refresh-social-account-token | Event `social-account.token.refresh` | Refresh one account's token, or flag it for reconnect (retries 3) |
+| deliver-webhook | Event `webhook.dispatch.v1` | Deliver one webhook event to a subscriber (HMAC signed, retries 3 per step) |
+| record-referral-signup | Event `referral.signup` | Record a referred signup and grant the referrer's reward (retries 3) |
 
 See [docs/INNGEST.md](./docs/INNGEST.md).
 

@@ -65,12 +65,10 @@ sequenceDiagram
     participant Worker as deliver-webhook
     participant Endpoint as Subscriber URL
 
-    Caller->>Dispatch: dispatchWebhook(principalId, eventType, payload)
+    Caller->>Dispatch: dispatchWebhook(principalId, eventType, payload) or dispatchWebhooks(..., payloads)
     Dispatch->>DB: SELECT webhook_subscriptions WHERE active=true AND events @> [eventType]
     DB-->>Dispatch: matching subscriptions (0..N)
-    loop Each subscription
-        Dispatch->>Inngest: send webhook.dispatch.v1 event
-    end
+    Dispatch->>Inngest: one send: a webhook.dispatch.v1 event per (payload, subscription)
 
     Inngest->>Worker: trigger deliver-webhook
     Worker->>DB: Load subscription (verify still active)
@@ -91,7 +89,7 @@ sequenceDiagram
     end
 ```
 
-`dispatchWebhook()` in `src/lib/api/rest/webhooks/dispatch.ts` is fire-and-forget. It never throws. If no subscriptions match, it returns silently. Each matching subscription gets its own Inngest event so retries and failures are per-subscription.
+`dispatchWebhook()` and `dispatchWebhooks()` in `src/lib/api/rest/webhooks/dispatch.ts` are fire-and-forget. They never throw: a failed read or send is logged. If no subscriptions match, they return silently. `dispatchWebhooks` takes a list of payloads and makes one subscription read and one Inngest send for the whole list; each payload gets its own `event_id`, and each (payload, subscription) pair its own Inngest event, so retries and failures are per subscription. The work is registered with `waitUntil` (`@vercel/functions`), so a caller that does not await it still has the send finish before the function is frozen.
 
 ---
 
@@ -164,7 +162,7 @@ Limits:
 
 ## Auto-disable
 
-Subscriptions are automatically disabled after 10 consecutive delivery failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`). The worker increments `failure_count` in a single UPDATE from the stored value, so concurrent deliveries do not overwrite each other's counts, and a subscription the user disabled while a delivery was running stays disabled.
+Subscriptions are automatically disabled after 10 failed deliveries in a row (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`). A delivery counts once, after its last attempt, not once per POST. The worker increments `failure_count` in a single UPDATE from the stored value, so concurrent deliveries do not overwrite each other's counts, and a subscription the user disabled while a delivery was running stays disabled.
 
 When disabled:
 - `active` is set to `false`
@@ -252,15 +250,16 @@ Two tables in Supabase:
 
 ## Dispatch integration points
 
-`dispatchWebhook()` is called from these locations:
+`dispatchWebhook()` and `dispatchWebhooks()` are called from these locations:
 
 | Location | Event dispatched |
 |----------|-----------------|
-| `src/inngest/functions/processSinglePostHelpers.ts` | `post.published`, `post.failed` (after scheduled post processing) |
-| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | `post.scheduled` (after scheduling) |
-| `src/lib/x402/oauth/callback/handleOAuthCallback.ts` | `connection.connected` (after OAuth callback) |
+| `src/inngest/functions/processSinglePostHelpers.ts` (`recordPostStatus`) | `post.published`, `post.failed` (after a scheduled post is recorded `posted` or `failed`), `connection.expired` (when that failure is `auth_expired`) |
+| `src/inngest/functions/tikTokPullFinalizeSteps.ts` | `post.failed` (TikTok rejected a scheduled post after content/init) |
+| `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | `post.scheduled` (one `dispatchWebhooks` call for every inserted row) |
+| `src/lib/x402/oauth/callback/handleOAuthCallback.ts` | `connection.connected` (after the REST, MCP, share-link or x402 OAuth callback) |
 
-Connection expiry events (`connection.expired`) are dispatched when token refresh fails during post processing.
+Only scheduled posts fire post events: a "post now" publish fires none, and a connection made from the web app fires no `connection.connected`.
 
 ---
 

@@ -48,12 +48,12 @@ MCP route-level rate limiting (1000/60s per IP, a flood guard) runs before auth 
 
 | # | Attack | Defense | Implementation |
 |---|--------|---------|----------------|
-| 1 | Duplicate posts from MCP retry | `idempotency_key` + DB UNIQUE constraint | `schedulePost.ts`, `postNow.ts`, `bulkPostNow.ts`, `bulkSchedule.ts` |
+| 1 | Duplicate posts from MCP retry | `idempotency_key` + DB UNIQUE constraint; worker publish guard on `content_history` | `schedulePostBatch.ts`, `pendingDirectPosts.ts` (`lockPendingDirectPosts`), `processSinglePost.ts`, `processDirectPost.ts` |
 | 2 | SSRF via `attach_media_from_url` (e.g. cloud metadata at 169.254.169.254) | `safeUserFetch` with 14 IP ranges blocked | `safeUserFetch.ts` |
 | 3 | Oversized file with fake Content-Length | Stream-based byte counter (Content-Length never trusted) | `safeUserFetch.ts` |
 | 4 | Storage quota bypass | `enforceStorageQuota` via `get_user_storage_bytes` RPC | `enforceStorageQuota.ts` |
 | 5 | `attach_media_from_url` flood | 10/60s rate limit + monthly cap per tier | `attachMediaFromUrl.ts` |
-| 6 | Cross-user storage access | Path `startsWith(principalId/)` check | `/api/media` |
+| 6 | Cross-user storage access | `isOwnedMediaPath`: owner prefix plus no `..`, empty or forbidden segments | `src/lib/storage/mediaPath.ts`, `/api/media` |
 | 7 | TikTok media URL forgery | HMAC-SHA256 + 30-min expiry | `buildProxiedTikTokMediaUrl.ts` |
 | 8 | Media proxy path traversal | Block `..`, `//`, leading `/` | `/api/media/route.ts` |
 | 9 | Audit log tampering | Append-only table (`reject_mutation` DB trigger refuses UPDATE and DELETE, except retention deletes and ON DELETE SET NULL detaching a deleted principal) | `mcp_audit_log` table |
@@ -219,6 +219,7 @@ flowchart TD
     I -- no --> J{Content-type in allowlist?}
     J -- no --> X5[reject: content_type_not_allowed]
     J -- yes --> K[Stream body with byte counter]
+    H -. connects only to the vetted IPs .- P[acquirePinnedDispatcher]
     K --> L{Bytes exceed maxBytes?}
     L -- yes --> X6[abort: too_large]
     L -- no --> M[Return Buffer + metadata]
@@ -263,6 +264,7 @@ flowchart TD
 ### Additional guards
 
 - **Scheme validation.** Only `http:` and `https:` are allowed. `file:`, `ftp:`, `data:`, `gopher:` are rejected.
+- **Pinned connection.** The fetch runs through `acquirePinnedDispatcher(resolution.addresses)` (`src/lib/net/pinnedFetch.ts`), an undici dispatcher whose lookup answers only with the first vetted address, so a second DNS answer (DNS rebinding) cannot send the request elsewhere. One dispatcher per pinned IP is kept in a bounded cache and reused across requests. The same pinned path serves outbound webhook delivery (`deliverSignedWebhook.ts`) and registry provider calls to user-supplied hosts (`providerFetch.ts`, `nostr.ts`).
 - **Redirect blocking.** `fetch` is called with `redirect: "manual"`. Any 3xx response is rejected. This prevents TOCTOU attacks where DNS resolves to a safe IP but the redirect target is internal.
 - **Content-type validation.** Response content-type is checked against an allowlist (prefix match + exact match). Strips parameters before comparison.
 - **Stream-based byte counter.** Body is read chunk-by-chunk via `response.body.getReader()`. A running `byteCount` is compared against `maxBytes` on each chunk. If exceeded, the fetch is aborted. The Content-Length header is never trusted.
@@ -344,8 +346,7 @@ sequenceDiagram
     TikTok->>Proxy: GET /api/media?file=...&user=...&expires=...&sig=...
     Proxy->>Proxy: 1. Verify HMAC signature (timingSafeEqual)
     Proxy->>Proxy: 2. Check expiry (410 Gone if expired)
-    Proxy->>Proxy: 3. Check path startsWith user/ (403 if not)
-    Proxy->>Proxy: 4. Block ".." and "//" (400 if traversal)
+    Proxy->>Proxy: 3. isOwnedMediaPath(file, user): owner prefix, no traversal (403 if not)
     Proxy->>SB: createSignedUrl(path, 600s TTL)
     SB-->>Proxy: Signed URL
     Proxy->>Proxy: Fetch file from signed URL
@@ -383,8 +384,9 @@ User-created webhook subscriptions receive HMAC-SHA256 signed deliveries. Each s
 - **Header:** `X-Sharetopus-Signature: sha256=<hex digest>`
 - **Additional headers:** `X-Sharetopus-Event` (event type), `X-Sharetopus-Delivery` (delivery UUID), `User-Agent: Sharetopus-Webhook/1.0`
 - **Delivery timeout:** 10 seconds
-- **Retries:** 3 (via Inngest backoff) for retryable failures (5xx, 408, 429, network errors)
-- **Auto-disable:** subscriptions are disabled after 10 consecutive failures (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`)
+- **Retries:** at most 4 POSTs per event, 30 s, 2 min and 10 min apart, for retryable failures (408, 429, 500, 502, 503, 504, network errors); see [WEBHOOKS.md](./WEBHOOKS.md#retry-behavior)
+- **Destination:** the subscriber URL is resolved and the connection pinned to the vetted IPs, like `safeUserFetch`
+- **Auto-disable:** subscriptions are disabled after 10 failed deliveries in a row (`AUTO_DISABLE_THRESHOLD` in `deliverWebhook.ts`)
 - **Re-enable:** PATCH `/api/v1/webhooks/:id` with `{"active": true}` resets `failure_count` to 0
 
 Verification: recipients should compute `HMAC-SHA256(rawBody, subscription_secret)` and compare with constant-time comparison against the `sha256=` value in the `X-Sharetopus-Signature` header.
@@ -437,8 +439,8 @@ Three kinds of stored value would let a reader act as a user. `social_accounts.a
 - **Key:** `SOCIAL_TOKEN_ENCRYPTION_KEY`, 32 random bytes in base64, set in the deployment and never stored in the database. Without it, every query that reads or writes a token fails instead of storing plaintext.
 - **Format:** `enc:v1:<iv>:<ciphertext>:<tag>`, with a fresh 96-bit IV per write. The `v1` tag leaves room for a key rotation.
 - **Tampering:** a modified value or the wrong key fails the GCM tag check, and the query fails.
-- **Older rows:** values written before encryption shipped read back unchanged. The `encrypt-social-tokens` Inngest job, which covers all three tables, (daily at 09:00 UTC, or on demand with the `social-tokens.encrypt` event) rewrites them inside the deployment, so the backfill always uses the deployment's key.
-- **No value comparisons:** each write uses a new IV, so SQL cannot compare these columns to a value. A guard compares another column instead (`handleRejectedRefresh` guards on `token_expires_at`), and code that must see the stored text selects it through an `sql` template. Share links are looked up by `share_links.token_hash`, the SHA-256 hex of the token (`hashToken`), which is unique; the encrypted token stays so the owner can copy the link again.
+- **Older rows:** values written before encryption shipped read back unchanged. The `encrypt-plaintext-secrets` Inngest job, which covers all four encrypted columns (daily at 09:00 UTC, or on demand with the `secrets.encrypt-plaintext` event), rewrites them inside the deployment, so the backfill always uses the deployment's key.
+- **No value comparisons:** each write uses a new IV, so SQL cannot compare these columns to a value. A guard compares another column instead (`settleRefusedRefresh` guards on `token_expires_at`), and code that must see the stored text selects it through an `sql` template. Share links are looked up by `share_links.token_hash`, the SHA-256 hex of the token (`hashToken`), which is unique; the encrypted token stays so the owner can copy the link again.
 - **Losing the key** makes every stored token and secret unreadable: every account would need a reconnect, every webhook subscription a recreate, and every share link a new link. Keep a copy in the team's secret store.
 
 ### OAuth tokens and Inngest
