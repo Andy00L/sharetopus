@@ -21,16 +21,19 @@ async function SocialPostFormWithData({
   readonly initialSchedule: SchedulePrefill | null;
 }) {
   const { userId } = await auth();
-  const subscription = await checkActiveSubscription(userId);
+  if (!userId) {
+    return <InactiveSubscriptionNotice status="none" />;
+  }
+  const [subscription, accounts] = await Promise.all([
+    checkActiveSubscription(userId),
+    fetchSocialAccounts(userId, "web", false),
+  ]);
   if (!subscription.isActive) {
     return <InactiveSubscriptionNotice status={subscription.status} />;
   }
-  if (!userId || !subscription.tier) {
+  if (!subscription.tier) {
     redirect("/create");
   }
-
-  const accounts = await fetchSocialAccounts(userId, "web", false);
-
   if (!accounts.success) {
     return <AccountsLoadError resetIn={accounts.resetIn} />;
   }

@@ -42,18 +42,20 @@ const AccountsPageWithData = async () => {
   if (!userId) {
     redirect("/sign-in");
   }
-  const subscriptionCheck = await checkActiveSubscription(userId);
+  const [subscriptionCheck, fetchResult] = await Promise.all([
+    checkActiveSubscription(userId),
+    fetchSocialAccounts(userId, "web", false),
+  ]);
   if (!subscriptionCheck.isActive) {
     return <InactiveSubscriptionNotice status={subscriptionCheck.status} />;
   }
-  const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
-  const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
-  const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
-
-  const fetchResult = await fetchSocialAccounts(userId, "web", false);
   if (!fetchResult.success) {
     return <AccountsLoadError resetIn={fetchResult.resetIn} />;
   }
+
+  const limitsCheck = await checkAccountLimits(userId, subscriptionCheck.tier);
+  const canAddMoreAccounts = limitsCheck.success && limitsCheck.canAddMore;
+  const isCreatorOrHigher = tierMeets(subscriptionCheck.tier, "creator");
 
   // Client-safe projection: full rows would serialize token columns into the RSC payload.
   const accounts = (fetchResult.data ?? []).map(toClientSocialAccount);

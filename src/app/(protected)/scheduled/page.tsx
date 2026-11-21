@@ -16,10 +16,6 @@ import ScheduledPostsSkeleton from "@/components/suspense/scheduled/ScheduledPos
 import { Button } from "@/components/ui/button";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 
-async function ScheduledPostsWithData() {
-  return <PostsGrid />;
-}
-
 /**
  * Calendar data path: unlike the list, it also loads posted rows so
  * published posts stay visible in place on the grid.
@@ -71,7 +67,7 @@ export default async function ScheduledPostsPage({
       </SidebarGroup>
       {isListView ? (
         <Suspense fallback={<ScheduledPostsSkeleton />}>
-          <ScheduledPostsWithData />
+          <PostsGrid />
         </Suspense>
       ) : (
         <Suspense fallback={<ScheduleCalendarSkeleton />}>

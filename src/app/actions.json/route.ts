@@ -19,6 +19,7 @@ import {
  */
 
 export const runtime = "nodejs";
+export const dynamic = "force-static";
 
 const ACTIONS_JSON = {
   rules: [{ pathPattern: "/api/actions/**", apiPath: "/api/actions/**" }],

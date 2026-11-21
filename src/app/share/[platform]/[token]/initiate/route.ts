@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
@@ -121,60 +121,6 @@ export async function POST(
   );
 
   if (insertError) {
-    // Handle oauth_state unique constraint collision: retry once with new state
-    if (insertError.code === "23505") {
-      const retryState = generateOAuthState();
-      const retryOauthUrl = buildOAuthUrl({
-        platform: "tiktok",
-        state: retryState,
-        redirectUri,
-      });
-      if (!retryOauthUrl.ok) {
-        return redirectToError(platform, "configuration_error");
-      }
-
-      const { error: retryError } = await runQuery(
-        db.insert(social_connections).values({
-          id: randomUUID(),
-          principal_id: shareLink.owner_principal_id,
-          platform: "tiktok",
-          oauth_state: retryState,
-          initiated_via: "share_link",
-          share_link_id: shareLink.id,
-          redirect_uri: redirectUri,
-          status: "pending",
-          expires_at: expiresAt,
-          metadata: {
-            source: "share_link",
-            share_link_id: shareLink.id,
-            friend_ip_hash: ipHash,
-            friend_user_agent: userAgent,
-          },
-        }),
-      );
-
-      if (retryError) {
-        console.error(
-          `[share/initiate] social_connections insert retry failed: ${retryError.message}`,
-        );
-        return redirectToError(platform, "internal_error");
-      }
-
-      // 7. Audit log
-      logX402Call({
-        principal: null,
-        action: "share_link.use_initiated",
-        endpoint: `/share/${platform}/${token}/initiate`,
-        chargeId: null,
-        resultStatus: "ok",
-        latencyMs: Math.round(performance.now() - startMs),
-        ipHash,
-        userAgent,
-      });
-
-      return NextResponse.redirect(retryOauthUrl.url, 302);
-    }
-
     console.error(
       `[share/initiate] social_connections insert failed: ${insertError.message}`,
     );
@@ -182,16 +128,19 @@ export async function POST(
   }
 
   // 7. Audit log
-  logX402Call({
-    principal: null,
-    action: "share_link.use_initiated",
-    endpoint: `/share/${platform}/${token}/initiate`,
-    chargeId: null,
-    resultStatus: "ok",
-    latencyMs: Math.round(performance.now() - startMs),
-    ipHash,
-    userAgent,
-  });
+  const latencyMs = Math.round(performance.now() - startMs);
+  after(() =>
+    logX402Call({
+      principal: null,
+      action: "share_link.use_initiated",
+      endpoint: `/share/${platform}/${token}/initiate`,
+      chargeId: null,
+      resultStatus: "ok",
+      latencyMs,
+      ipHash,
+      userAgent,
+    }),
+  );
 
   // 8. Redirect to TikTok OAuth
   return NextResponse.redirect(oauthUrlResult.url, 302);

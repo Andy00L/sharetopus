@@ -5,18 +5,9 @@ import { ApiKeysCard } from "@/components/integrations/ApiKeysCard";
 import { McpDocsCard } from "@/components/integrations/McpDocsCard";
 import { SidebarContent, SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
+import { Suspense } from "react";
 
-/** /integrations: MCP and REST API key management for subscribed users. */
-export default async function IntegrationsPage() {
-  const { userId } = await auth();
-
-  const sub = await checkActiveSubscription(userId ?? null);
-  if (!sub.isActive) {
-    return <InactiveSubscriptionNotice status={sub.status} />;
-  }
-
-  const keysResult = await listApiKeys();
-
+function IntegrationsPageShell({ children }: { readonly children?: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <SidebarContent className="px-4 py-6">
@@ -29,6 +20,23 @@ export default async function IntegrationsPage() {
           </div>
         </SidebarGroup>
       </SidebarContent>
+      {children}
+    </div>
+  );
+}
+
+async function IntegrationsForSubscriber() {
+  const { userId } = await auth();
+
+  const sub = await checkActiveSubscription(userId ?? null);
+  if (!sub.isActive) {
+    return <InactiveSubscriptionNotice status={sub.status} />;
+  }
+
+  const keysResult = await listApiKeys();
+
+  return (
+    <IntegrationsPageShell>
       {keysResult.success ? (
         <>
           <ApiKeysCard kind="mcp" initialKeys={keysResult.keysByKind.mcp} />
@@ -40,6 +48,15 @@ export default async function IntegrationsPage() {
         </p>
       )}
       <McpDocsCard />
-    </div>
+    </IntegrationsPageShell>
+  );
+}
+
+/** /integrations: MCP and REST API key management for subscribed users. */
+export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={<IntegrationsPageShell />}>
+      <IntegrationsForSubscriber />
+    </Suspense>
   );
 }

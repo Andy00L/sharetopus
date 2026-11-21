@@ -6,16 +6,7 @@ import { SidebarGroup } from "@/components/ui/sidebar";
 import { auth } from "@clerk/nextjs/server";
 import { Suspense } from "react";
 
-// Main component with suspense boundary
-export default async function page() {
-  const { userId } = await auth();
-  const subscription = await checkActiveSubscription(userId);
-  if (!subscription.isActive) {
-    return <InactiveSubscriptionNotice status={subscription.status} />;
-  }
-  async function PostsContent() {
-    return <RenderPosts />;
-  }
+function PostedPageShell({ children }: { readonly children: React.ReactNode }) {
   return (
     <div className="px-4 py-6">
       <SidebarGroup className="mb-6">
@@ -24,9 +15,34 @@ export default async function page() {
           View the history of all content posted to your social platforms
         </p>
       </SidebarGroup>
-      <Suspense fallback={<ContentHistorySkeleton />}>
-        <PostsContent />
-      </Suspense>
+      {children}
     </div>
+  );
+}
+
+async function PostedContentForSubscriber() {
+  const { userId } = await auth();
+  const subscription = await checkActiveSubscription(userId);
+  if (!subscription.isActive) {
+    return <InactiveSubscriptionNotice status={subscription.status} />;
+  }
+  return (
+    <PostedPageShell>
+      <RenderPosts />
+    </PostedPageShell>
+  );
+}
+
+export default function PostedPage() {
+  return (
+    <Suspense
+      fallback={
+        <PostedPageShell>
+          <ContentHistorySkeleton />
+        </PostedPageShell>
+      }
+    >
+      <PostedContentForSubscriber />
+    </Suspense>
   );
 }

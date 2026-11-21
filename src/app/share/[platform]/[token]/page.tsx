@@ -38,7 +38,6 @@ export default async function ShareLinkLandingPage({
     redirect(`/share/${platform}/error?reason=unsupported_platform`);
   }
 
-  // 1. Validate the share link token
   const validation = await validateShareToken(token);
   if (!validation.success) {
     redirect(`/share/${platform}/error?reason=${validation.reason}`);
@@ -46,8 +45,14 @@ export default async function ShareLinkLandingPage({
 
   const shareLink = validation.data;
 
-  // 2. Look up creator display info
-  const { data: creatorRows } = await runQuery(
+  const ownerCapacity = await checkShareLinkOwnerCapacity(
+    shareLink.owner_principal_id,
+  );
+  if (!ownerCapacity.ok) {
+    redirect(`/share/${platform}/error?reason=${ownerCapacity.reason}`);
+  }
+
+  const { data: creatorRows, error: creatorLookupError } = await runQuery(
     db
       .select({
         first_name: users.first_name,
@@ -58,21 +63,18 @@ export default async function ShareLinkLandingPage({
       .where(eq(users.id, shareLink.owner_principal_id))
       .limit(1),
   );
+  if (creatorLookupError) {
+    console.error(
+      `[ShareLinkLandingPage] Creator lookup failed for share link ${shareLink.id}:`,
+      creatorLookupError.message,
+    );
+  }
   const creatorUser = creatorRows?.[0];
 
   const displayIdentity = creatorUser
     ? buildDisplayIdentity(creatorUser)
     : "A Sharetopus user";
 
-  // 3. Pre-check the owner's plan and account limit
-  const ownerCapacity = await checkShareLinkOwnerCapacity(
-    shareLink.owner_principal_id,
-  );
-  if (!ownerCapacity.ok) {
-    redirect(`/share/${platform}/error?reason=${ownerCapacity.reason}`);
-  }
-
-  // 4. Render the landing card
   const initiateUrl = `/share/${platform}/${token}/initiate`;
 
   return (

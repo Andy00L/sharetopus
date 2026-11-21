@@ -8,9 +8,33 @@ import {
 import { auth } from "@clerk/nextjs/server";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
+
+function ReferralPageShell({ children }: { readonly children?: React.ReactNode }) {
+  return (
+    <SidebarContent className="px-4 py-6">
+      <SidebarGroup className="mb-8">
+        <h1 className="text-2xl font-bold mb-2">Refer & Earn</h1>
+        <p className="text-muted-foreground mb-6">
+          Refer {REFERRALS_PER_FREE_WEEK} people to earn 1 free week of Creator
+          access. Up to {MAX_REFERRAL_WEEKS} weeks total.
+        </p>
+        {children}
+      </SidebarGroup>
+    </SidebarContent>
+  );
+}
 
 /** /referral: the user's referral link, progress and earned weeks. */
-export default async function ReferralPage() {
+export default function ReferralPage() {
+  return (
+    <Suspense fallback={<ReferralPageShell />}>
+      <ReferralSummaryForUser />
+    </Suspense>
+  );
+}
+
+async function ReferralSummaryForUser() {
   const { userId } = await auth();
   if (!userId) {
     redirect("/sign-in");
@@ -40,77 +64,69 @@ export default async function ReferralPage() {
     new Date(summary.creatorAccessUntil) > new Date();
 
   return (
-    <SidebarContent className="px-4 py-6">
-      <SidebarGroup className="mb-8">
-        <h1 className="text-2xl font-bold mb-2">Refer & Earn</h1>
-        <p className="text-muted-foreground mb-6">
-          Refer {REFERRALS_PER_FREE_WEEK} people to earn 1 free week of Creator
-          access. Up to {MAX_REFERRAL_WEEKS} weeks total.
-        </p>
-
-        {/* Share link */}
-        <div className="rounded-lg border p-4 mb-6">
-          <p className="text-sm font-medium mb-2">Your referral link</p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 rounded bg-muted px-3 py-2 text-sm font-mono truncate">
-              {summary.shareLink}
-            </code>
-            <CopyLinkButton link={summary.shareLink} />
-          </div>
+    <ReferralPageShell>
+      {/* Share link */}
+      <div className="rounded-lg border p-4 mb-6">
+        <p className="text-sm font-medium mb-2">Your referral link</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 rounded bg-muted px-3 py-2 text-sm font-mono truncate">
+            {summary.shareLink}
+          </code>
+          <CopyLinkButton link={summary.shareLink} />
         </div>
+      </div>
 
-        {/* Progress */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-          <div className="rounded-lg border p-4 text-center">
-            <p className="text-3xl font-bold text-[#FF4A20]">
-              {summary.towardNextWeek}/{REFERRALS_PER_FREE_WEEK}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Toward next week
-            </p>
-          </div>
-          <div className="rounded-lg border p-4 text-center">
-            <p className="text-3xl font-bold">
-              {summary.totalVerified}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Total referrals
-            </p>
-          </div>
-          <div className="rounded-lg border p-4 text-center">
-            <p className="text-3xl font-bold">
-              {summary.weeksEarned}
-            </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Weeks earned
-            </p>
-          </div>
+      {/* Progress */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <div className="rounded-lg border p-4 text-center">
+          <p className="text-3xl font-bold text-[#FF4A20]">
+            {summary.towardNextWeek}/{REFERRALS_PER_FREE_WEEK}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Toward next week
+          </p>
         </div>
+        <div className="rounded-lg border p-4 text-center">
+          <p className="text-3xl font-bold">
+            {summary.totalVerified}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Total referrals
+          </p>
+        </div>
+        <div className="rounded-lg border p-4 text-center">
+          <p className="text-3xl font-bold">
+            {summary.weeksEarned}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Weeks earned
+          </p>
+        </div>
+      </div>
 
-        {/* Status messages */}
-        {hasActiveReferralAccess && (
-          <div className="rounded-lg border border-[#FF4A20]/30 bg-[#FF4A20]/5 p-4 mb-4">
-            <p className="text-sm font-medium">
-              Creator access from referrals until{" "}
-              <span className="font-bold">
-                {new Date(summary.creatorAccessUntil!).toLocaleDateString(
-                  undefined,
-                  { year: "numeric", month: "long", day: "numeric" },
-                )}
-              </span>
-            </p>
-          </div>
-        )}
+      {/* Status messages */}
+      {hasActiveReferralAccess && (
+        <div className="rounded-lg border border-[#FF4A20]/30 bg-[#FF4A20]/5 p-4 mb-4">
+          <p className="text-sm font-medium">
+            Creator access from referrals until{" "}
+            <span className="font-bold">
+              {new Date(summary.creatorAccessUntil!).toLocaleDateString(
+                undefined,
+                { year: "numeric", month: "long", day: "numeric" },
+              )}
+            </span>
+          </p>
+        </div>
+      )}
 
-        {summary.capReached && (
-          <div className="rounded-lg border p-4">
-            <p className="text-sm font-medium text-muted-foreground">
-              You have earned the maximum {MAX_REFERRAL_WEEKS} free weeks. Thank
-              you for spreading the word!
-            </p>
-          </div>
-        )}
-      </SidebarGroup>
-    </SidebarContent>
+      {summary.capReached && (
+        <div className="rounded-lg border p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            You have earned the maximum {MAX_REFERRAL_WEEKS} free weeks. Thank
+            you for spreading the word!
+          </p>
+        </div>
+      )}
+    </ReferralPageShell>
   );
 }

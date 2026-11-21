@@ -44,15 +44,20 @@ const REASON_MESSAGES: Record<string, string> = {
 const DEFAULT_MESSAGE =
   "Something went wrong. Please contact the person who shared this link.";
 
+function describeShareError(reason: string | undefined): string {
+  if (reason === undefined || !Object.hasOwn(REASON_MESSAGES, reason)) {
+    return DEFAULT_MESSAGE;
+  }
+  return REASON_MESSAGES[reason];
+}
+
 export default async function ShareErrorPage({
   searchParams,
 }: {
   searchParams: Promise<{ reason?: string }>;
 }) {
   const { reason } = await searchParams;
-
-  const message =
-    reason && REASON_MESSAGES[reason] ? REASON_MESSAGES[reason] : DEFAULT_MESSAGE;
+  const message = describeShareError(reason);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">

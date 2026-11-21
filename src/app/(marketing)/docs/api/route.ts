@@ -6,6 +6,8 @@ import { ApiReference } from "@scalar/nextjs-api-reference";
  * Uses the route handler pattern required by @scalar/nextjs-api-reference.
  * Points at the public OpenAPI 3.1 spec endpoint.
  */
+export const dynamic = "force-static";
+
 export const GET = ApiReference({
   spec: { url: "/api/v1/openapi.json" },
 });

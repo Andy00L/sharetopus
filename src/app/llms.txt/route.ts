@@ -6,6 +6,8 @@ import { buildLlmsTxt } from "@/lib/docs/buildLlmsTxt";
  * (llmstxt.org format). Points agents at the markdown docs
  * (/docs/*.md) and the OpenAPI spec.
  */
+export const dynamic = "force-static";
+
 export function GET() {
   return new NextResponse(buildLlmsTxt(), {
     headers: {

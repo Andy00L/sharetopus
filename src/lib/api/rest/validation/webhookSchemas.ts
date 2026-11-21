@@ -1,7 +1,9 @@
 import { z } from "zod";
 
-import { WebhookEventTypeEnum } from "@/lib/api/rest/webhooks/eventTypes";
+import { WEBHOOK_EVENT_TYPES } from "@/lib/api/rest/webhooks/eventTypes";
 import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
+
+const WebhookEventTypeEnum = z.enum(WEBHOOK_EVENT_TYPES);
 
 /**
  * Body schema for POST /v1/webhooks (create subscription).
