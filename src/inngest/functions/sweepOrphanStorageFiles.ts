@@ -1,3 +1,5 @@
+import { NonRetriableError } from "inngest";
+
 import { inngest } from "@/inngest/client";
 import {
   listAgedStorageFiles,
@@ -18,6 +20,7 @@ type SweepOutcome =
       deleted: number;
       failed: number;
       bytesFreed: number;
+      failedFolders: number;
       truncated: boolean;
     }
   | { ok: false; reason: string };
@@ -47,8 +50,16 @@ export const sweepOrphanStorageFiles = inngest.createFunction(
     console.log(
       `[sweepOrphanStorageFiles] scanned=${outcome.scanned} referenced=${outcome.referenced} ` +
         `orphans=${outcome.orphansFound} deleted=${outcome.deleted} failed=${outcome.failed} ` +
-        `bytesFreed=${outcome.bytesFreed} truncated=${outcome.truncated}`,
+        `bytesFreed=${outcome.bytesFreed} failedFolders=${outcome.failedFolders} truncated=${outcome.truncated}`,
     );
+    // The step already deleted what it could, so a retry would only replay
+    // its stored result; NonRetriableError fails the run without one:
+    // https://www.inngest.com/docs/guides/error-handling
+    if (outcome.failedFolders > 0) {
+      throw new NonRetriableError(
+        `[sweepOrphanStorageFiles] ${outcome.failedFolders} folder listing(s) failed; their files were not checked.`,
+      );
+    }
     return outcome;
   },
 );
@@ -76,6 +87,7 @@ async function sweepOrphans(cutoffIso: string): Promise<SweepOutcome> {
     deleted: 0,
     failed: 0,
     bytesFreed: 0,
+    failedFolders: listResult.failedFolderCount,
     truncated: listResult.truncated,
   };
   if (listResult.paths.length === 0) return emptyCounts;

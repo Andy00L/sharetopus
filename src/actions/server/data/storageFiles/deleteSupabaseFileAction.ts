@@ -1,16 +1,16 @@
 "use server";
 import { authCheck } from "@/actions/server/authCheck";
 import { authCheckCronJob } from "../../authCheckCronJob";
-import { deleteSupabaseFile } from "./deleteSupabaseFile";
+import { deleteSupabaseFile, type DeleteSupabaseFileResult } from "./deleteSupabaseFile";
 
 export async function deleteSupabaseFileAction(
   userId: string | null,
   filePath: string | null,
   forceDelete: boolean = false,
   cronSecret?: string,
-): Promise<{ success: boolean; message: string }> {
+): Promise<DeleteSupabaseFileResult> {
   console.log(
-    `[deleteSupabaseFile]: Starting deletion process for user: ${userId}, path: ${
+    `[deleteSupabaseFileAction]: Starting deletion process for user: ${userId}, path: ${
       filePath ?? "entire folder"
     }`,
   );

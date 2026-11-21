@@ -16,6 +16,7 @@ export async function listAgedStorageFiles(input: {
       paths: string[];
       pathSizes: Record<string, number>;
       folderCount: number;
+      failedFolderCount: number;
       truncated: boolean;
     }
   | { success: false; message: string }
@@ -30,6 +31,7 @@ export async function listAgedStorageFiles(input: {
   const paths: string[] = [];
   const pathSizes: Record<string, number> = {};
   let folderCount = 0;
+  let failedFolderCount = 0;
   let truncated = false;
 
   for (const entry of topLevel) {
@@ -52,6 +54,7 @@ export async function listAgedStorageFiles(input: {
     );
 
     if (!folderResult.success) {
+      failedFolderCount++;
       console.error(
         `[listAgedStorageFiles] Failed to list folder ${entry.name}:`,
         folderResult.message
@@ -70,7 +73,7 @@ export async function listAgedStorageFiles(input: {
     }
   }
 
-  return { success: true, paths, pathSizes, folderCount, truncated };
+  return { success: true, paths, pathSizes, folderCount, failedFolderCount, truncated };
 }
 
 async function listBucketRoot(
@@ -194,15 +197,10 @@ export async function batchDeleteStorageFiles(input: {
       continue;
     }
 
-    const deleted = data?.length ?? 0;
-    deletedCount += deleted;
-
-    if (deleted < batch.length) {
-      failedCount += batch.length - deleted;
-    }
-
-    for (const deletedPath of batch.slice(0, deleted)) {
-      bytesFreed += pathSizes[deletedPath] ?? 0;
+    deletedCount += data.length;
+    failedCount += batch.length - data.length;
+    for (const removedFile of data) {
+      bytesFreed += pathSizes[removedFile.name] ?? 0;
     }
   }
 

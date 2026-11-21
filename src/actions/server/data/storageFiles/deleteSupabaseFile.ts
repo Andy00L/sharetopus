@@ -2,17 +2,22 @@ import "server-only";
 
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 import { findReferencedMediaPaths } from "./mediaReferences";
 
 const PAGE_SIZE = 1000;
 
 const REMOVE_BATCH_SIZE = 1000;
 
+export type DeleteSupabaseFileResult =
+  | { success: true; removed: boolean; message: string }
+  | { success: false; message: string };
+
 export async function deleteSupabaseFile(
   principalId: string,
   filePath: string | null,
   forceDelete: boolean = false,
-): Promise<{ success: boolean; message: string }> {
+): Promise<DeleteSupabaseFileResult> {
   console.log(
     `[deleteSupabaseFile]: Starting deletion for principal: ${principalId}, path: ${
       filePath ?? "entire folder"
@@ -28,7 +33,7 @@ export async function deleteSupabaseFile(
       `[deleteSupabaseFile]: Initiating single file deletion: ${filePath}`,
     );
 
-    if (!filePath.startsWith(`${principalId}/`)) {
+    if (!isOwnedMediaPath(filePath, principalId)) {
       console.warn(
         `[deleteSupabaseFile]: Security violation, principal ${principalId} attempted to delete: ${filePath}`,
       );
@@ -56,6 +61,7 @@ export async function deleteSupabaseFile(
         );
         return {
           success: true,
+          removed: false,
           message:
             "Cannot delete: This file is still used by a post or a publish in progress.",
         };
@@ -67,7 +73,7 @@ export async function deleteSupabaseFile(
     }
 
     console.log(`[deleteSupabaseFile]: Executing file deletion: ${filePath}`);
-    const { error } = await adminSupabase.storage
+    const { data: removedFiles, error } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
       .remove([filePath]);
 
@@ -82,8 +88,13 @@ export async function deleteSupabaseFile(
       };
     }
 
+    if (removedFiles.length === 0) {
+      console.log(`[deleteSupabaseFile]: No stored file at ${filePath}`);
+      return { success: true, removed: false, message: "No file at this path." };
+    }
+
     console.log(`[deleteSupabaseFile]: File deleted successfully: ${filePath}`);
-    return { success: true, message: "File deleted successfully." };
+    return { success: true, removed: true, message: "File deleted successfully." };
   } catch (err) {
     console.error(
       `[deleteSupabaseFile]: Unexpected error during file deletion:`,
@@ -108,7 +119,7 @@ export async function deleteUnreferencedMediaFiles(
   const ownedPaths = [
     ...new Set(
       filePaths.filter(
-        (filePath) => filePath.length > 0 && filePath.startsWith(`${principalId}/`),
+        (filePath) => isOwnedMediaPath(filePath, principalId),
       ),
     ),
   ];
@@ -160,7 +171,7 @@ async function removeStorageFiles(
     if (error) {
       return { success: false, message: error.message };
     }
-    removedCount += removedFiles?.length ?? 0;
+    removedCount += removedFiles.length;
   }
   return { success: true, removedCount };
 }
@@ -168,7 +179,7 @@ async function removeStorageFiles(
 async function deletePrincipalFolder(
   principalId: string,
   forceDelete: boolean,
-): Promise<{ success: boolean; message: string }> {
+): Promise<DeleteSupabaseFileResult> {
   console.log(
     `[deletePrincipalFolder]: Initiating folder deletion for principal: ${principalId}`,
   );
@@ -206,6 +217,7 @@ async function deletePrincipalFolder(
     );
     return {
       success: true,
+      removed: false,
       message: "No files found in your folder to delete.",
     };
   }
@@ -247,6 +259,7 @@ async function deletePrincipalFolder(
     );
     return {
       success: true,
+      removed: false,
       message:
         "All files are currently in use by scheduled posts and cannot be deleted.",
     };
@@ -265,10 +278,11 @@ async function deletePrincipalFolder(
   }
 
   console.log(
-    `[deletePrincipalFolder]: Successfully deleted ${filesToDelete.length} files for principal ${principalId}`,
+    `[deletePrincipalFolder]: Deleted ${removed.removedCount} of ${filesToDelete.length} files for principal ${principalId}`,
   );
   return {
     success: true,
-    message: `Successfully deleted ${filesToDelete.length} files from your folder.`,
+    removed: removed.removedCount > 0,
+    message: `Successfully deleted ${removed.removedCount} files from your folder.`,
   };
 }

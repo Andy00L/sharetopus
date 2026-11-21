@@ -10,6 +10,7 @@ import { markChargeRefunded } from "@/lib/x402/charges/chargeTransitions";
 import { getNetworkConfig } from "@/lib/x402/networks";
 
 import { inngest } from "../client";
+import { decideReconciliationRow } from "./x402ReconciliationDecision";
 
 const LOOKBACK_DAYS = 30;
 
@@ -42,7 +43,7 @@ export const sweepX402ReconciliationCron = inngest.createFunction(
   {
     id: "sweep-x402-reconciliation",
     name: "Sweep x402 reconciliation rows and stuck pending charges",
-    retries: 0,
+    retries: 2,
     triggers: [{ cron: "20 * * * *" }],
   },
   async ({ step }) => {
@@ -108,7 +109,10 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   ];
   const chargesById = new Map<
     string,
-    { id: string; status: string; network: string; amount_usdc: number; principal_id: string }
+    Pick<
+      typeof x402_charges.$inferSelect,
+      "id" | "status" | "network" | "amount_usdc" | "principal_id"
+    >
   >();
   const refundedChargeIds = new Set<string>();
   if (chargeIds.length > 0) {
@@ -172,24 +176,17 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       continue;
     }
 
-    if (row.kind === "settle_indeterminate" || row.kind === "settle_unrecorded") {
-      if (charge.status === "pending") {
-        markOpen({ ...openItem, note: "Charge still pending: decide whether the money moved and refund if so." });
-      } else {
-        summary.resolved += 1;
-      }
-      continue;
-    }
-
-    if (refundedChargeIds.has(charge.id)) {
+    const decision = decideReconciliationRow({
+      row,
+      chargeStatus: charge.status,
+      isRefundRecorded: refundedChargeIds.has(charge.id),
+    });
+    if (decision.kind === "resolved") {
       summary.resolved += 1;
       continue;
     }
-    if (!row.tx_hash) {
-      markOpen({
-        ...openItem,
-        note: "No refund transaction hash was recorded. Check the sender wallet's outgoing transfers to the payer before refunding by hand.",
-      });
+    if (decision.kind === "open") {
+      markOpen({ ...openItem, note: decision.note });
       continue;
     }
 
@@ -198,13 +195,13 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       markOpen({ ...openItem, note: `Unknown network "${charge.network}" on the charge.` });
       continue;
     }
-    const confirmation = await confirmTransaction({ network, txHash: row.tx_hash, mode: "check" });
+    const confirmation = await confirmTransaction({ network, txHash: decision.txHash, mode: "check" });
     if (confirmation.status !== "confirmed") {
       markOpen({ ...openItem, note: `Refund transaction is ${confirmation.status}.` });
       continue;
     }
 
-    const recorded = await recordConfirmedRefund(charge, row.tx_hash);
+    const recorded = await recordConfirmedRefund(charge, decision.txHash);
     if (recorded) {
       summary.recordedRefunds += 1;
       summary.resolved += 1;

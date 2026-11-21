@@ -16,7 +16,12 @@ export type HostResolution =
 
 const PINNED_DISPATCHER_CACHE_LIMIT = 64;
 
-const pinnedDispatchersByAddress = new Map<string, Agent>();
+class SharedPinnedDispatcher extends Agent {
+  declare readonly close: never;
+  declare readonly destroy: never;
+}
+
+const pinnedDispatchersByAddress = new Map<string, SharedPinnedDispatcher>();
 
 export async function resolveHostToPublicAddresses(
   host: string,
@@ -80,7 +85,9 @@ export function buildPinnedAgent(addresses: ValidatedAddresses): Agent {
  * sourceRef: node_modules/undici/lib/dispatcher/agent.js (clients keyed by
  * origin), node_modules/undici/lib/dispatcher/client.js (keepAliveTimeout).
  */
-export function acquirePinnedDispatcher(addresses: ValidatedAddresses): Agent {
+export function acquirePinnedDispatcher(
+  addresses: ValidatedAddresses,
+): SharedPinnedDispatcher {
   const pinnedAddress = addresses[0];
   const cacheKey = `${pinnedAddress.family}/${pinnedAddress.address}`;
 
@@ -91,7 +98,9 @@ export function acquirePinnedDispatcher(addresses: ValidatedAddresses): Agent {
     return cachedDispatcher;
   }
 
-  const pinnedDispatcher = buildPinnedAgent(addresses);
+  const pinnedDispatcher = new SharedPinnedDispatcher({
+    connect: { lookup: buildPinnedLookup(pinnedAddress) },
+  });
   pinnedDispatchersByAddress.set(cacheKey, pinnedDispatcher);
 
   if (pinnedDispatchersByAddress.size > PINNED_DISPATCHER_CACHE_LIMIT) {

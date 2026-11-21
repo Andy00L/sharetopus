@@ -1,7 +1,10 @@
 import type { FailureEventPayload, GetStepTools } from "inngest";
-import { z } from "zod";
 
 import { inngest } from "@/inngest/client";
+import {
+  TikTokPublishPollEventDataSchema,
+  tikTokPublishPollEvent,
+} from "@/inngest/events/tikTokPublishPoll";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { getTikTokPublishStatus } from "@/lib/api/tiktok/getTikTokPublishStatus";
 import {
@@ -13,11 +16,6 @@ import type { PendingTikTokPull } from "@/lib/types/dbTypes";
 import { classifyTikTokFailReason } from "./tikTokFailReason";
 import { finalizeTikTokPullInSteps } from "./tikTokPullFinalizeSteps";
 import { resolveTikTokAccessTokenForAccount } from "./tikTokPublishStatusPollHelpers";
-
-const PollEventDataSchema = z.object({
-  publish_id: z.string(),
-  social_account_id: z.string(),
-});
 
 const MAX_CONSECUTIVE_POLL_ERRORS = 5;
 
@@ -38,19 +36,12 @@ export const tikTokPublishStatusPollWorker = inngest.createFunction(
     name: "TikTok publish status poll",
     concurrency: { limit: 5, key: "event.data.social_account_id" },
     retries: 3,
-    triggers: [{ event: "tiktok.publish.poll" }],
+    triggers: [tikTokPublishPollEvent],
     onFailure: async ({ event, error, step }) =>
       finalizeAbandonedPoll({ failureEvent: event, error, step }),
   },
   async ({ event, step }) => {
-    const eventData = PollEventDataSchema.safeParse(event.data);
-    if (!eventData.success) {
-      console.error(
-        "[tiktokPublishStatusPollWorker] Event data has no publish_id or social_account_id",
-      );
-      return { outcome: "skipped", reason: "invalid_event_data" };
-    }
-    const { publish_id, social_account_id } = eventData.data;
+    const { publish_id, social_account_id } = event.data;
 
     const maxAttempts = RUNTIME.tikTokPublishPollMaxAttempts;
     const intervalMs = RUNTIME.tikTokPublishPollIntervalMs;
@@ -187,7 +178,9 @@ async function finalizeAbandonedPoll(input: {
   error: Error;
   step: GetStepTools<typeof inngest>;
 }): Promise<{ finalized: boolean }> {
-  const eventData = PollEventDataSchema.safeParse(input.failureEvent.data.event.data);
+  const eventData = TikTokPublishPollEventDataSchema.safeParse(
+    input.failureEvent.data.event.data,
+  );
   if (!eventData.success) {
     console.error("[finalizeAbandonedPoll] Failure event carried no publish_id");
     return { finalized: false };

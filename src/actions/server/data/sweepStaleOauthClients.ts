@@ -4,6 +4,7 @@ import { and, eq, gt, inArray, lt } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { mcp_audit_log, mcp_oauth_clients } from "@/db/schema";
+import { computeRetentionCutoff } from "@/lib/jobs/retention";
 
 export type SweepResult =
   | {
@@ -16,14 +17,11 @@ export type SweepResult =
       message: string;
     };
 
-const STALE_DAYS = 90;
 const MAX_DELETE_PER_RUN = 1000;
 
 export async function sweepStaleOauthClients(): Promise<SweepResult> {
   try {
-    const cutoff = new Date(
-      Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000
-    ).toISOString();
+    const { cutoffIso: cutoff } = computeRetentionCutoff(new Date());
 
     const { data: candidates, error: queryErr } = await runQuery(
       db
