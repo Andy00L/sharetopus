@@ -24,11 +24,16 @@ import { getBaseUrl } from "@/lib/x402/config";
 import {
   verifyPayment,
   type SettlePaymentError,
+  type VerifiedPayment,
   type VerifyPaymentError,
 } from "@/lib/x402/facilitator";
 import { buildPaymentRequired, readPaymentHeader } from "@/lib/x402/http/paymentHttp";
 import { describeRateLimitRejection } from "@/lib/x402/http/rateLimitRejection";
 import { resolveRequestNetwork } from "@/lib/x402/http/resolveRequestNetwork";
+import {
+  KEY_RESERVATION_TTL_MS,
+  reserveIdempotencyKey,
+} from "@/lib/x402/middleware/idempotencyKeyReservation";
 import type { NetworkConfig } from "@/lib/x402/networks";
 import {
   readActionPrice,
@@ -39,6 +44,8 @@ import { buildPaymentRequiredResponse } from "@/lib/x402/responses/buildPaymentR
 import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessResponse";
 
 const RATE_LIMIT_WINDOW_SECONDS = 60;
+const KEY_IN_PROGRESS_RETRY_AFTER_SECONDS = 5;
+const KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS = 60;
 
 export type ActionResolver<TBody> = (
   body: TBody,
@@ -80,6 +87,8 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
   >;
 
   precheck?: X402Precheck<TBody>;
+
+  idempotencyKey?: (body: TBody) => string | undefined;
 
   handler: X402Handler<TBody, TResult>;
 
@@ -352,10 +361,80 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
     }
     const principal = walletResult.principal;
 
-    if (options.precheck) {
-      const precheckResult = await options.precheck({ body, principal, network });
-      if (!precheckResult.ok) {
-        return context.fail({
+    const reservation = await reserveIdempotencyKey({
+      endpointPath: options.endpointPath,
+      principalId: principal.principalId,
+      idempotencyKey: options.idempotencyKey?.(body),
+      requestId,
+    });
+    if (reservation.kind === "held") {
+      return context.fail({
+        principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 409,
+        errorKind: "idempotency_key_in_progress",
+        message: `Another paid call with this idempotency_key is running, or ended less than ${KEY_RESERVATION_TTL_MS / 1000} seconds ago without a known payment outcome. No payment was taken.`,
+        retryAfterSeconds: KEY_IN_PROGRESS_RETRY_AFTER_SECONDS,
+      });
+    }
+    if (reservation.kind === "unavailable") {
+      console.error(`[x402PaidEndpoint] Idempotency key reservation failed: ${reservation.message}`);
+      return context.fail({
+        principal,
+        action: actionKey,
+        chargeId: null,
+        resultStatus: "error",
+        httpStatus: 503,
+        errorKind: "idempotency_check_unavailable",
+        message: "The idempotency_key could not be checked. No payment was taken. Retry shortly.",
+        retryAfterSeconds: KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS,
+      });
+    }
+
+    const paidCall = await chargeAndRunAction({
+      req,
+      options,
+      body,
+      actionKey,
+      principal,
+      paymentHeader,
+      verified: verifyResult,
+      prepared,
+      requestId,
+      context,
+    });
+    if (reservation.kind === "reserved" && !paidCall.mayHoldUnusedPayment) {
+      await reservation.release();
+    }
+    return paidCall.response;
+  };
+}
+
+type PaidCallOutcome = { response: Response; mayHoldUnusedPayment: boolean };
+
+async function chargeAndRunAction<TBody, TResult extends Json>(params: {
+  req: NextRequest;
+  options: X402PaidEndpointOptions<TBody, TResult>;
+  body: TBody;
+  actionKey: PurchasableX402Action;
+  principal: WalletPrincipal;
+  paymentHeader: string;
+  verified: VerifiedPayment;
+  prepared: Extract<PreparedRequest, { ok: true }>;
+  requestId: string;
+  context: RequestContext;
+}): Promise<PaidCallOutcome> {
+  const { req, options, body, actionKey, principal, paymentHeader, verified, requestId, context } =
+    params;
+  const { network, recipientAddress, usdcPrice } = params.prepared;
+
+  if (options.precheck) {
+    const precheckResult = await options.precheck({ body, principal, network });
+    if (!precheckResult.ok) {
+      return {
+        response: context.fail({
           principal,
           action: actionKey,
           chargeId: null,
@@ -363,38 +442,44 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
           httpStatus: precheckResult.httpStatus,
           errorKind: precheckResult.errorKind,
           message: `${precheckResult.message} No payment was taken.`,
-        });
-      }
+        }),
+        mayHoldUnusedPayment: false,
+      };
     }
+  }
 
-    const chargeResult = await settleCharge({
-      paymentHeader,
-      network,
-      verified: verifyResult,
-      principal,
-      action: actionKey,
-      amountUsdc: usdcPrice,
-      requestId,
-      recipientAddress,
-    });
-    if (!chargeResult.ok) {
-      switch (chargeResult.reason) {
-        case "replay":
-          return respondToReplay({
+  const chargeResult = await settleCharge({
+    paymentHeader,
+    network,
+    verified,
+    principal,
+    action: actionKey,
+    amountUsdc: usdcPrice,
+    requestId,
+    recipientAddress,
+  });
+  if (!chargeResult.ok) {
+    switch (chargeResult.reason) {
+      case "replay":
+        return {
+          response: await respondToReplay({
             replay: chargeResult.replay,
             req,
             options,
             body,
             principal,
             network,
-            amountAtomic: verifyResult.requirements.amount,
-            payerAddress: verifyResult.payerAddress,
+            amountAtomic: verified.requirements.amount,
+            payerAddress: verified.payerAddress,
             actionKey,
             requestId,
             context,
-          });
-        case "charge_insert_failed":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: false,
+        };
+      case "charge_insert_failed":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: null,
@@ -402,9 +487,12 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: 500,
             errorKind: "charge_insert_failed",
             message: `${chargeResult.message} No payment was taken.`,
-          });
-        case "settle_failed":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: false,
+        };
+      case "settle_failed":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: chargeResult.chargeId,
@@ -412,9 +500,12 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: mapSettleErrorToHttpStatus(chargeResult.error.kind),
             errorKind: chargeResult.error.kind,
             message: chargeResult.error.message,
-          });
-        case "settled_unrecorded":
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: mayHaveSettled(chargeResult.error.kind),
+        };
+      case "settled_unrecorded":
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: chargeResult.chargeId,
@@ -423,11 +514,14 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             errorKind: "charge_update_failed",
             message:
               "Payment settled but could not be recorded. It is queued for reconciliation; do not retry this payment.",
-          });
-        default: {
-          const unhandledResult: never = chargeResult;
-          console.error(`[x402PaidEndpoint] Unhandled charge result: ${JSON.stringify(unhandledResult)}`);
-          return context.fail({
+          }),
+          mayHoldUnusedPayment: true,
+        };
+      default: {
+        const unhandledResult: never = chargeResult;
+        console.error(`[chargeAndRunAction] Unhandled charge result: ${JSON.stringify(unhandledResult)}`);
+        return {
+          response: context.fail({
             principal,
             action: actionKey,
             chargeId: null,
@@ -435,25 +529,28 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
             httpStatus: 500,
             errorKind: "internal_error",
             message: "Internal payment-state error.",
-          });
-        }
+          }),
+          mayHoldUnusedPayment: true,
+        };
       }
     }
-    const { chargeId, txHash } = chargeResult;
+  }
+  const { chargeId, txHash } = chargeResult;
 
-    const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
+  const handlerResult = await runHandler(options.handler, { body, principal, chargeId, requestId });
 
-    if (!handlerResult.success) {
-      const refundOutcome = await refundCharge({
-        chargeId,
-        settleTxHash: txHash,
-        payerAddress: verifyResult.payerAddress,
-        amountUsdc: usdcPrice,
-        network,
-        reason: handlerResult.message,
-        principalId: principal.principalId,
-      });
-      return context.fail({
+  if (!handlerResult.success) {
+    const refundOutcome = await refundCharge({
+      chargeId,
+      settleTxHash: txHash,
+      payerAddress: verified.payerAddress,
+      amountUsdc: usdcPrice,
+      network,
+      reason: handlerResult.message,
+      principalId: principal.principalId,
+    });
+    return {
+      response: context.fail({
         principal,
         action: actionKey,
         chargeId,
@@ -463,34 +560,54 @@ export function x402PaidEndpoint<TBody, TResult extends Json>(
         message: handlerResult.message,
         refundInitiated: refundOutcome.refundInitiated,
         refundTxHash: refundOutcome.refundTxHash,
-      });
-    }
-
-    const chargeRecord = handlerResult.chargeRecord ?? {};
-    const storedMetadata = {
-      ...(chargeRecord.metadata ?? {}),
-      ...(req.method === "GET" ? {} : { result: handlerResult.data }),
+      }),
+      mayHoldUnusedPayment: true,
     };
-    const recordWrite = await updateChargeRecord(chargeId, {
-      ...chargeRecord,
-      metadata: Object.keys(storedMetadata).length > 0 ? storedMetadata : undefined,
-    });
-    if (!recordWrite.ok) {
-      console.error(
-        `[x402PaidEndpoint] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers 409 and /proof shows no post for it.`,
-      );
-    }
+  }
 
-    context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
-    return buildSettledResponse({
+  const chargeRecord = handlerResult.chargeRecord ?? {};
+  const storedMetadata = {
+    ...(chargeRecord.metadata ?? {}),
+    ...(req.method === "GET" ? {} : { result: handlerResult.data }),
+  };
+  const recordWrite = await updateChargeRecord(chargeId, {
+    ...chargeRecord,
+    metadata: Object.keys(storedMetadata).length > 0 ? storedMetadata : undefined,
+  });
+  if (!recordWrite.ok) {
+    console.error(
+      `[chargeAndRunAction] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers 409 and /proof shows no post for it.`,
+    );
+  }
+
+  context.audit({ principal, action: actionKey, chargeId, resultStatus: "ok" });
+  return {
+    response: buildSettledResponse({
       data: handlerResult.data,
       txHash,
       chargeId,
       network,
-      payerAddress: verifyResult.payerAddress,
-      amountAtomic: verifyResult.requirements.amount,
-    });
+      payerAddress: verified.payerAddress,
+      amountAtomic: verified.requirements.amount,
+    }),
+    mayHoldUnusedPayment: false,
   };
+}
+
+function mayHaveSettled(kind: SettlePaymentError["kind"]): boolean {
+  switch (kind) {
+    case "not_verified":
+    case "insufficient_funds":
+      return false;
+    case "facilitator_error":
+    case "timeout":
+      return true;
+    default: {
+      const unhandledKind: never = kind;
+      console.error(`[mayHaveSettled] Unhandled kind: ${String(unhandledKind)}`);
+      return true;
+    }
+  }
 }
 
 export interface X402ChallengeGetOptions {

@@ -52,7 +52,7 @@ Keys are created at [/integrations](https://sharetopus.com/integrations). Key fo
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/posts` | Create/schedule a post |
+| POST | `/api/v1/posts` | Schedule a post (200, PostDTO), or publish it now when `scheduled_at` is omitted (202, PostDispatch) |
 | GET | `/api/v1/posts` | List posts (filtered by platform, status) |
 | GET | `/api/v1/posts/:id` | Get a single post |
 | PATCH | `/api/v1/posts/:id` | Update a scheduled post |
@@ -130,7 +130,7 @@ flowchart TD
     E -->|OK| G[Validate request body/query/params]
     G -->|Invalid| H[400 Validation Error + audit log]
     G -->|Valid| I[Execute handler]
-    I -->|Success| J[200/201 Response + audit log]
+    I -->|Success| J[200/201/202 Response + audit log]
     I -->|Error| K[Error Response + audit log]
 ```
 
@@ -168,6 +168,8 @@ Error codes:
 Rate limit and 503 responses include `retry_after_seconds` in `details`.
 
 When `POST /v1/posts` or `POST /v1/posts/bulk` refuses posts, `details.rejected` lists each one with `socialAccountId`, `code` (`invalid_input`, `not_owned`, `platform_mismatch`) and `reason`, and the status follows the first refusal. A client mistake never answers 500 (`restPostBatchFailureResponse`).
+
+`POST /v1/posts` without `scheduled_at` publishes now through `directPostBatch`, which writes a `pending_direct_posts` dispatch row and sends a `post.now` event; it writes no `scheduled_posts` row. The call answers 202 with `{ dispatch_id, batch_id, status: "processing", platform, social_account_id }`, built from the dispatch result without a database read. A retry with an `idempotency_key` that was already dispatched answers 202 with the first call's `dispatch_id` and `batch_id: null`, since the lock lookup returns only the dispatch id. The published post then appears in `GET /v1/content-history`. The post-now job fires no webhook, and no REST endpoint reads a dispatch, so a REST client cannot see a publish-now that failed. Before this change the route reread `scheduled_posts` by batch id, found nothing, and answered 500 after the post was dispatched.
 
 `PATCH` and `DELETE /v1/posts/{id}` answer 200 only when the change happened. Otherwise the same helper answers 404 (missing or another principal's post), 409 (status does not allow it), 403 (a cancelled post comes back only with access), 429 or 503. `DELETE` refuses a `hard` value other than `true` or `false` with 400 instead of falling back to a cancel.
 

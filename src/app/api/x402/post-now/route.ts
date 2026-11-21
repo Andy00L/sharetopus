@@ -89,6 +89,8 @@ export const POST = x402PaidEndpoint<PostNowBody, PostNowResult>({
     return { success: true, action: result.action };
   },
 
+  idempotencyKey: (body) => body.idempotency_key,
+
   precheck: ({ body, principal }) =>
     preflightDirectPost(toDirectPostData(body), principal.principalId),
 

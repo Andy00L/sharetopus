@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { withRestEndpoint } from "@/lib/api/rest/middleware/withRestEndpoint";
@@ -16,6 +16,7 @@ import {
   restInputToDirectPostData,
 } from "@/lib/api/rest/adapters/restInputToScheduledPost";
 import { toPostDTO } from "@/lib/api/rest/dto/toPostDTO";
+import type { PostDispatch } from "@/lib/api/rest/openapi/responseSchemas";
 import { restErrorResponse } from "@/lib/api/rest/errors/restErrorResponse";
 import { restPostBatchFailureResponse } from "@/lib/api/rest/errors/restPostBatchFailureResponse";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
@@ -71,44 +72,35 @@ export const POST = withRestEndpoint({
         return restPostBatchFailureResponse(batchResult, ctx.requestId);
       }
 
-      const { data: postRows, error: rowLookupError } = await runQuery(
-        db
-          .select()
-          .from(scheduled_posts)
-          .where(
-            and(
-              eq(scheduled_posts.batch_id, batchResult.batchId),
-              eq(scheduled_posts.principal_id, ctx.principal.principalId),
-            ),
-          )
-          .orderBy(desc(scheduled_posts.created_at))
-          .limit(1),
-      );
-
-      const postRow = postRows?.[0];
-      if (rowLookupError || !postRow) {
+      const [dispatchId] = batchResult.eventIds;
+      if (!dispatchId) {
         console.error(
-          `[v1/posts POST] direct post row lookup failed for batch_id=${batchResult.batchId}:`,
-          rowLookupError?.message ?? "no row",
+          `[v1/posts POST] dispatch for batch_id=${batchResult.batchId} succeeded without a dispatch id (request_id=${ctx.requestId})`,
         );
         return restErrorResponse(
           "internal_error",
-          "Created post could not be retrieved",
+          "The post was dispatched but its dispatch id is missing",
           ctx.requestId,
         );
       }
 
-      const directPostDto = toPostDTO(postRow);
+      const postDispatch = {
+        dispatch_id: dispatchId,
+        batch_id: batchResult.details.dispatched > 0 ? batchResult.batchId : null,
+        status: "processing",
+        platform: validatedInput.platform,
+        social_account_id: validatedInput.social_account_id,
+      } satisfies PostDispatch;
       return {
-        response: NextResponse.json(directPostDto, {
-          status: 200,
+        response: NextResponse.json(postDispatch, {
+          status: 202,
           headers: { "x-request-id": ctx.requestId },
         }),
         auditSummary: {
-          post_id: directPostDto.id,
+          dispatch_id: postDispatch.dispatch_id,
           scheduled: false,
-          platform: directPostDto.platform,
-          batch_id: directPostDto.batch_id,
+          platform: postDispatch.platform,
+          batch_id: postDispatch.batch_id,
         },
       };
     }

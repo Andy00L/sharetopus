@@ -115,6 +115,8 @@ export const POST = x402PaidEndpoint<ScheduleBody, ScheduleResult>({
     return { success: true, action: result.action };
   },
 
+  idempotencyKey: (body) => body.idempotency_key,
+
   precheck: ({ body, principal }) => preflightSchedulePost(toScheduleCandidate(body), principal.principalId),
 
   handler: async ({ body, principal, requestId }) => {

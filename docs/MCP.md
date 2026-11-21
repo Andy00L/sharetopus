@@ -607,7 +607,7 @@ sequenceDiagram
 | With `scheduled_at` | `scheduled_posts` | UNIQUE on `(principal_id, idempotency_key)` |
 | Without `scheduled_at` | `pending_direct_posts` | UNIQUE on `(principal_id, idempotency_key)` |
 
-A key that already exists is counted in `duplicates` instead of being inserted or dispatched again. Without a `batch_id` the server generates one and sets no keys, so a blind retry posts twice. See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
+A key that already exists is counted in `duplicates` instead of being inserted or dispatched again. Without a `batch_id` the server generates one and sets no keys, so a blind retry posts twice. MCP calls are not paid per call, so they take no Redis key reservation; the x402 post-now and schedule routes do, before payment ([docs/BILLING.md](./BILLING.md#refund-policy)). See [docs/SECURITY.md](./SECURITY.md#idempotency) for the full sequence diagram.
 
 ---
 
@@ -682,7 +682,7 @@ The auth resolver refuses both `blocked` trust level and `revoked_at IS NOT NULL
 
 - **Stateless only.** Neither protocol era keeps sessions, and no `subscriptions/listen` streams are served (`maxSubscriptions: 0`, `listChanged: false`: tools and prompts never change at runtime, and on Vercel each stream would hold a function open). Session IDs in the audit log are per-request UUIDs.
 - **TikTok posts are async.** After `publish_posts` for TikTok, the content appears in `content_history` but TikTok may still be processing. The `tiktok-publish-status-poll` Inngest function and webhook receiver poll for completion.
-- **REST equivalent.** `POST /api/v1/posts/bulk` schedules up to 30 posts through the same `schedulePostBatch`. See [docs/REST.md](./REST.md).
+- **REST equivalent.** `POST /api/v1/posts/bulk` schedules up to 30 posts through the same `schedulePostBatch`, and `POST /api/v1/posts` without `scheduled_at` publishes one post now through the same `directPostBatch` and answers 202 with its `dispatch_id`. See [docs/REST.md](./REST.md).
 - **Analytics data staleness.** `get_account_analytics` reads from `analytics_metrics`, which is not currently populated by any cron. The table exists but data depends on future implementation.
 - **Zod 4 only.** The v2 SDK converts tool schemas to JSON Schema with Zod 4.2 or later. Tool ids use `z.guid()`, as in the REST API, because Zod 4's strict UUID check rejects some Supabase-generated ids.
 

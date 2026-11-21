@@ -19,6 +19,14 @@ export const PostDTOSchema = z.object({
   created_at: z.string(),
 }).meta({ id: "PostDTO" });
 
+export const PostDispatchSchema = z.object({
+  dispatch_id: z.string(),
+  batch_id: z.string().nullable(),
+  status: z.literal("processing"),
+  platform: z.string(),
+  social_account_id: z.string(),
+}).meta({ id: "PostDispatch" });
+
 export const PostDeleteResultSchema = z.object({
   id: z.string(),
   action: z.enum(["cancelled", "deleted"]),
@@ -290,6 +298,7 @@ export const PaginatedDeliveriesSchema = z.object({
 }).meta({ id: "PaginatedDeliveries" });
 
 export type PostDTO = z.infer<typeof PostDTOSchema>;
+export type PostDispatch = z.infer<typeof PostDispatchSchema>;
 export type PostDeleteResult = z.infer<typeof PostDeleteResultSchema>;
 export type PostBulkResult = z.infer<typeof PostBulkResultSchema>;
 export type PostAnalyticsResult = z.infer<typeof PostAnalyticsResultSchema>;
