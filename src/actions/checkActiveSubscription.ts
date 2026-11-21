@@ -1,15 +1,18 @@
 import "server-only";
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import {
   ACCESS_GRANTING_SUBSCRIPTION_STATUSES,
   stripe_subscriptions,
   users,
+  type CreatedVia,
   type StripeSubscriptionStatus,
 } from "@/db/schema";
 import { priceIdToTier, type PlanTier } from "@/lib/types/plans";
+
+const PAID_PER_POST_CHANNEL: CreatedVia = "x402";
 
 type AccessGrantingStatus = (typeof ACCESS_GRANTING_SUBSCRIPTION_STATUSES)[number];
 
@@ -41,6 +44,10 @@ export type ActiveSubscription =
       currentPeriodEnd: null;
       startDate: null;
     };
+
+export type PrincipalsAccessLookup =
+  | { success: true; principalIdsWithAccess: Set<string> }
+  | { success: false; message: string };
 
 export async function checkActiveSubscription(
   userId: string | null,
@@ -94,8 +101,8 @@ export async function checkActiveSubscription(
       return inactiveSubscription("unavailable");
     }
 
-    const creatorAccessUntil = userRows[0]?.creator_access_until;
-    if (creatorAccessUntil && new Date(creatorAccessUntil) > new Date()) {
+    const creatorAccessUntil = userRows[0]?.creator_access_until ?? null;
+    if (creatorAccessUntil && hasReferralAccess(creatorAccessUntil, new Date())) {
       return {
         isActive: true,
         priceId: null,
@@ -120,6 +127,65 @@ export async function checkActiveSubscription(
     currentPeriodEnd: activeSubscription.current_period_end,
     startDate: activeSubscription.start_date,
   };
+}
+
+export async function findPrincipalsWithAccess(
+  principalIds: readonly string[],
+  now: Date = new Date(),
+): Promise<PrincipalsAccessLookup> {
+  const principalIdsWithAccess = new Set<string>();
+  if (principalIds.length === 0) return { success: true, principalIdsWithAccess };
+
+  const { data: subscribedRows, error: subscriptionsError } = await runQuery(
+    db
+      .selectDistinct({ user_id: stripe_subscriptions.user_id })
+      .from(stripe_subscriptions)
+      .where(
+        and(
+          inArray(stripe_subscriptions.user_id, [...principalIds]),
+          inArray(stripe_subscriptions.status, [...ACCESS_GRANTING_SUBSCRIPTION_STATUSES]),
+        ),
+      ),
+  );
+  if (subscriptionsError) {
+    return {
+      success: false,
+      message: `[findPrincipalsWithAccess] Subscription read failed: ${subscriptionsError.message}`,
+    };
+  }
+  for (const subscribedRow of subscribedRows) principalIdsWithAccess.add(subscribedRow.user_id);
+
+  const unsubscribedIds = principalIds.filter(
+    (principalId) => !principalIdsWithAccess.has(principalId),
+  );
+  if (unsubscribedIds.length === 0) return { success: true, principalIdsWithAccess };
+
+  const { data: referralRows, error: referralError } = await runQuery(
+    db
+      .select({ id: users.id, creator_access_until: users.creator_access_until })
+      .from(users)
+      .where(and(inArray(users.id, unsubscribedIds), isNotNull(users.creator_access_until))),
+  );
+  if (referralError) {
+    return {
+      success: false,
+      message: `[findPrincipalsWithAccess] Referral access read failed: ${referralError.message}`,
+    };
+  }
+  for (const referralRow of referralRows) {
+    if (referralRow.creator_access_until && hasReferralAccess(referralRow.creator_access_until, now)) {
+      principalIdsWithAccess.add(referralRow.id);
+    }
+  }
+  return { success: true, principalIdsWithAccess };
+}
+
+export function needsOwnerAccessToPublish(post: { created_via: CreatedVia }): boolean {
+  return post.created_via !== PAID_PER_POST_CHANNEL;
+}
+
+function hasReferralAccess(creatorAccessUntil: string, now: Date): boolean {
+  return new Date(creatorAccessUntil) > now;
 }
 
 function grantsAccess<Row extends { status: StripeSubscriptionStatus }>(

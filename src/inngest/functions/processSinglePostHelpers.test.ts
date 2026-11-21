@@ -1,7 +1,18 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 
-type StoredPost = { id: string; status: string; scheduled_at: string };
+type StoredPost = {
+  id: string;
+  status: string;
+  scheduled_at: string;
+  cancelled_by_sub_at: string | null;
+};
+
+type AccessRows = {
+  subscriptions: { stripe_price_id: string | null; status: string; current_period_end: string | null; start_date: string | null }[];
+  users: { creator_access_until: string | null }[];
+  isReadFailing: boolean;
+};
 
 type ColumnCondition = { column: string; allowedValues: unknown[] };
 
@@ -10,6 +21,8 @@ const FIRST_TIME = "2026-11-20T10:00:00+00:00";
 const SECOND_TIME = "2026-11-20T12:30:00+00:00";
 
 const postStore = new Map<string, StoredPost>();
+
+const accessRows: AccessRows = { subscriptions: [], users: [], isReadFailing: false };
 
 const WHERE_CONDITION_PATTERN =
   /"scheduled_posts"\."(\w+)" (?:= \$(\d+)|in \(([^)]*)\))/g;
@@ -85,12 +98,17 @@ function runUpdate(sql: string, params: unknown[]): { id: string }[] {
   return [...postStore.values()]
     .filter((storedPost) => matchesConditions(storedPost, conditions))
     .map((storedPost) => {
+      let updatedPost = storedPost;
       for (const [, column, paramIndex] of assignments) {
         const assignedValue = params[Number(paramIndex) - 1];
         if (column === "status" && typeof assignedValue === "string") {
-          postStore.set(storedPost.id, { ...storedPost, status: assignedValue });
+          updatedPost = { ...updatedPost, status: assignedValue };
+        }
+        if (column === "cancelled_by_sub_at" && typeof assignedValue === "string") {
+          updatedPost = { ...updatedPost, cancelled_by_sub_at: assignedValue };
         }
       }
+      postStore.set(storedPost.id, updatedPost);
       return { id: storedPost.id };
     });
 }
@@ -111,6 +129,13 @@ mock.module("@/db/client", () => ({
   db: drizzle.mock(),
   runQuery: async (query: unknown) => {
     const { sql, params } = readSqlStatement(query);
+    if (sql.includes('from "stripe_subscriptions"') || sql.includes('from "users"')) {
+      if (accessRows.isReadFailing) {
+        return { data: null, error: { message: "connection reset", code: "08006" } };
+      }
+      const rows = sql.includes('from "users"') ? accessRows.users : accessRows.subscriptions;
+      return { data: rows, error: null };
+    }
     if (!sql.startsWith('update "scheduled_posts"')) {
       throw new Error(`Unexpected statement: ${sql}`);
     }
@@ -118,12 +143,25 @@ mock.module("@/db/client", () => ({
   },
 }));
 
-const { claimPostForProcessing, cleanupMediaIfUnreferenced } = await import(
+const { claimPostForProcessing, cleanupMediaIfUnreferenced, gatePostOnOwnerAccess } = await import(
   "./processSinglePostHelpers"
 );
 
 function storePost(changes: Partial<StoredPost>): void {
-  postStore.set(POST_ID, { id: POST_ID, status: "scheduled", scheduled_at: FIRST_TIME, ...changes });
+  postStore.set(POST_ID, {
+    id: POST_ID,
+    status: "scheduled",
+    scheduled_at: FIRST_TIME,
+    cancelled_by_sub_at: null,
+    ...changes,
+  });
+}
+
+function gateForEventTime(eventScheduledAt: string, createdVia: "web" | "x402" = "web") {
+  return gatePostOnOwnerAccess({
+    post: { id: POST_ID, principal_id: "principal-1", created_via: createdVia },
+    dispatchedScheduledAt: eventScheduledAt,
+  });
 }
 
 async function claimForEventTime(eventScheduledAt: string): Promise<boolean> {
@@ -137,6 +175,9 @@ async function claimForEventTime(eventScheduledAt: string): Promise<boolean> {
 
 beforeEach(() => {
   postStore.clear();
+  accessRows.subscriptions = [];
+  accessRows.users = [];
+  accessRows.isReadFailing = false;
 });
 
 describe("a post.due run re-checks the row before it claims it", () => {
@@ -169,6 +210,56 @@ describe("a post.due run re-checks the row before it claims it", () => {
     expect(await claimForEventTime(FIRST_TIME)).toBe(true);
     expect(await claimForEventTime("2026-11-20T10:00:00.000Z")).toBe(false);
     expect(postStore.get(POST_ID)?.status).toBe("processing");
+  });
+});
+
+describe("the access gate before a claim", () => {
+  test("pauses the post like a subscription cancel when its owner has neither a plan nor referral weeks", async () => {
+    storePost({ status: "queued" });
+    accessRows.users = [{ creator_access_until: "2026-01-01T00:00:00.000Z" }];
+    const gate = await gateForEventTime(FIRST_TIME);
+    expect(gate).toEqual({ success: true, isOpen: false, isPaused: true });
+    const pausedPost = postStore.get(POST_ID);
+    expect(pausedPost?.status).toBe("cancelled");
+    expect(pausedPost?.cancelled_by_sub_at).not.toBeNull();
+  });
+
+  test("a past_due plan grants nothing, so the post is paused", async () => {
+    storePost({});
+    accessRows.subscriptions = [{ stripe_price_id: null, status: "past_due", current_period_end: null, start_date: null }];
+    expect(await gateForEventTime(FIRST_TIME)).toEqual({ success: true, isOpen: false, isPaused: true });
+  });
+
+  test("leaves the row alone and opens when the owner has an active plan or referral weeks", async () => {
+    storePost({});
+    accessRows.subscriptions = [{ stripe_price_id: null, status: "trialing", current_period_end: null, start_date: null }];
+    expect(await gateForEventTime(FIRST_TIME)).toEqual({ success: true, isOpen: true });
+
+    accessRows.subscriptions = [];
+    accessRows.users = [{ creator_access_until: new Date(Date.now() + 86_400_000).toISOString() }];
+    expect(await gateForEventTime(FIRST_TIME)).toEqual({ success: true, isOpen: true });
+    expect(postStore.get(POST_ID)?.status).toBe("scheduled");
+  });
+
+  test("an unreadable access state stays closed and changes nothing", async () => {
+    storePost({});
+    accessRows.isReadFailing = true;
+    const gate = await gateForEventTime(FIRST_TIME);
+    expect(gate.success).toBe(false);
+    expect(postStore.get(POST_ID)).toMatchObject({ status: "scheduled", cancelled_by_sub_at: null });
+  });
+
+  test("does not pause a post rescheduled since dispatch", async () => {
+    storePost({ scheduled_at: SECOND_TIME });
+    const gate = await gateForEventTime(FIRST_TIME);
+    expect(gate).toEqual({ success: true, isOpen: false, isPaused: false });
+    expect(postStore.get(POST_ID)?.status).toBe("scheduled");
+  });
+
+  test("an x402 post was paid for and opens without reading the owner's plan", async () => {
+    storePost({});
+    accessRows.isReadFailing = true;
+    expect(await gateForEventTime(FIRST_TIME, "x402")).toEqual({ success: true, isOpen: true });
   });
 });
 

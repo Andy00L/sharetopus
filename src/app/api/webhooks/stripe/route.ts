@@ -205,17 +205,13 @@ async function handleSubscriptionEvent(event: SubscriptionEvent) {
   // row. Other instances follow when their entry expires (60s).
   invalidateCachedSubscription(userId);
 
-  // Posts and OAuth clients follow the user's access after this write, not
-  // the event type: a late "deleted" for a replaced subscription must not
-  // cancel the posts of the subscription that replaced it, and a "created"
-  // for a subscription still waiting on its first payment grants nothing.
   const access = await checkActiveSubscription(userId);
   if (access.status === "unavailable") {
     throw new Error(`Access check failed for ${userId}`);
   }
   if (access.isActive) {
     await restoreSubscriberAccess(userId);
-  } else if (event.type === "customer.subscription.deleted") {
+  } else {
     await revokeSubscriberAccess(userId);
   }
 

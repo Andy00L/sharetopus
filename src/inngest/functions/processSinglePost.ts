@@ -16,6 +16,7 @@ import {
   claimPostForProcessing,
   cleanupMediaIfUnreferenced,
   findPublishedContentHistory,
+  gatePostOnOwnerAccess,
   loadPostForProcessing,
   recordPostStatus,
 } from "./processSinglePostHelpers";
@@ -26,6 +27,10 @@ import {
 } from "./publishToPlatform";
 
 const EARLY_START_TOLERANCE_MS = 10_000;
+
+type RowClaim =
+  | { claimed: true }
+  | { claimed: false; skipReason: "claimed-by-another-worker" | "paused-without-access" };
 
 // A step that wants to be retried throws inside itself: Inngest stores
 // completed step results, so a throw placed after a step never re-runs it.
@@ -62,17 +67,28 @@ export const processSinglePost = inngest.createFunction(
     }
     const post = loaded.post;
 
-    const claimRow = async (stepId: string): Promise<boolean> => {
-      const claim = await step.run(stepId, async () => {
+    const claimRow = (stepId: string): Promise<RowClaim> =>
+      step.run(stepId, async (): Promise<RowClaim> => {
+        const gate = await gatePostOnOwnerAccess({
+          post,
+          dispatchedScheduledAt: data.scheduled_at,
+        });
+        if (!gate.success) throw new Error(`access-check-failure: ${gate.message}`);
+        if (!gate.isOpen) {
+          return {
+            claimed: false,
+            skipReason: gate.isPaused ? "paused-without-access" : "claimed-by-another-worker",
+          };
+        }
         const claimResult = await claimPostForProcessing({
           scheduledPostId: data.scheduled_post_id,
           dispatchedScheduledAt: data.scheduled_at,
         });
         if (!claimResult.success) throw new Error(claimResult.message);
-        return claimResult;
+        return claimResult.claimed
+          ? { claimed: true }
+          : { claimed: false, skipReason: "claimed-by-another-worker" };
       });
-      return claim.claimed;
-    };
 
     const recordOutcome = async (
       stepId: string,
@@ -86,8 +102,9 @@ export const processSinglePost = inngest.createFunction(
     };
 
     if (loaded.kind === "account_missing") {
-      if (!(await claimRow("claim-account-missing"))) {
-        return { skipped: true, reason: "claimed-by-another-worker" };
+      const accountMissingClaim = await claimRow("claim-account-missing");
+      if (!accountMissingClaim.claimed) {
+        return { skipped: true, reason: accountMissingClaim.skipReason };
       }
       await recordOutcome(
         "record-account-missing",
@@ -98,15 +115,17 @@ export const processSinglePost = inngest.createFunction(
 
     const compat = checkPlatformCompatibility(data.platform, post.media_type);
     if (!compat.compatible) {
-      if (!(await claimRow("claim-incompatible"))) {
-        return { skipped: true, reason: "claimed-by-another-worker" };
+      const incompatibleClaim = await claimRow("claim-incompatible");
+      if (!incompatibleClaim.claimed) {
+        return { skipped: true, reason: incompatibleClaim.skipReason };
       }
       await recordOutcome("record-incompatible", buildInputRefusal(compat.reason));
       return { ok: false, reason: "invalid_input" };
     }
 
-    if (!(await claimRow("claim-post"))) {
-      return { skipped: true, reason: "claimed-by-another-worker" };
+    const postClaim = await claimRow("claim-post");
+    if (!postClaim.claimed) {
+      return { skipped: true, reason: postClaim.skipReason };
     }
 
     const result = await step.run("call-platform-direct-post", async () => {

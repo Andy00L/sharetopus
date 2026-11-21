@@ -2,13 +2,9 @@ import "server-only";
 
 import { and, eq, inArray, isNotNull, lt, min } from "drizzle-orm";
 
+import { findPrincipalsWithAccess } from "@/actions/checkActiveSubscription";
 import { db, runQuery } from "@/db/client";
-import {
-  ACCESS_GRANTING_SUBSCRIPTION_STATUSES,
-  scheduled_posts,
-  stripe_subscriptions,
-  users,
-} from "@/db/schema";
+import { scheduled_posts } from "@/db/schema";
 import { resumeCancelledPostsOnResubscribe } from "./resumeCancelledPostsOnResubscribe";
 
 export type CleanupResult =
@@ -19,10 +15,6 @@ export type CleanupResult =
       resumedPosts: number;
       deleted: number;
     }
-  | { success: false; message: string };
-
-type AccessLookup =
-  | { success: true; principalIdsWithAccess: Set<string> }
   | { success: false; message: string };
 
 const GRACE_DAYS = 7;
@@ -99,57 +91,6 @@ function isCancelledBySubscription() {
     eq(scheduled_posts.status, "cancelled"),
     isNotNull(scheduled_posts.cancelled_by_sub_at),
   );
-}
-
-async function findPrincipalsWithAccess(
-  principalIds: string[],
-  now: Date,
-): Promise<AccessLookup> {
-  const principalIdsWithAccess = new Set<string>();
-  if (principalIds.length === 0) return { success: true, principalIdsWithAccess };
-
-  const { data: subscribedRows, error: subscriptionsError } = await runQuery(
-    db
-      .selectDistinct({ user_id: stripe_subscriptions.user_id })
-      .from(stripe_subscriptions)
-      .where(
-        and(
-          inArray(stripe_subscriptions.user_id, principalIds),
-          inArray(stripe_subscriptions.status, [...ACCESS_GRANTING_SUBSCRIPTION_STATUSES]),
-        ),
-      ),
-  );
-  if (subscriptionsError) {
-    return {
-      success: false,
-      message: `[findPrincipalsWithAccess] Subscription read failed: ${subscriptionsError.message}`,
-    };
-  }
-  for (const row of subscribedRows) principalIdsWithAccess.add(row.user_id);
-
-  const unsubscribedIds = principalIds.filter(
-    (principalId) => !principalIdsWithAccess.has(principalId),
-  );
-  if (unsubscribedIds.length === 0) return { success: true, principalIdsWithAccess };
-
-  const { data: referralRows, error: referralError } = await runQuery(
-    db
-      .select({ id: users.id, creator_access_until: users.creator_access_until })
-      .from(users)
-      .where(and(inArray(users.id, unsubscribedIds), isNotNull(users.creator_access_until))),
-  );
-  if (referralError) {
-    return {
-      success: false,
-      message: `[findPrincipalsWithAccess] Referral access read failed: ${referralError.message}`,
-    };
-  }
-  for (const row of referralRows) {
-    if (row.creator_access_until && new Date(row.creator_access_until) > now) {
-      principalIdsWithAccess.add(row.id);
-    }
-  }
-  return { success: true, principalIdsWithAccess };
 }
 
 async function deleteLapsedPostsPastGrace(

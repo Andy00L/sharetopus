@@ -16,7 +16,7 @@ import {
   checkPostChangeRules,
   POST_CHANGE_ELIGIBLE_STATUSES,
 } from "../preflightScheduledPostChange";
-
+import { checkAccessToRevivePosts } from "../resume/_shared/checkAccessToRevivePosts";
 
 export type UpdateScheduledTimeBatchResult = {
   message: string;
@@ -91,6 +91,7 @@ export async function updateScheduledTimeBatch(
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
           status: scheduled_posts.status,
+          created_via: scheduled_posts.created_via,
         })
         .from(scheduled_posts)
         .where(inArray(scheduled_posts.id, postIds)),
@@ -135,12 +136,24 @@ export async function updateScheduledTimeBatch(
       }
     }
     const reschedulable = rules.eligiblePosts;
+    const cancelledPosts = reschedulable.filter((post) => post.status === "cancelled");
 
-    const cancelledIds = new Set(
-      reschedulable
-        .filter((post) => post.status === "cancelled")
-        .map((post) => post.id),
-    );
+    const reviveAccess = await checkAccessToRevivePosts({
+      principalId,
+      revivedPosts: cancelledPosts,
+    });
+    if (!reviveAccess.ok) {
+      console.warn(
+        `[updateScheduledTimeBatch] [req=${requestId ?? "?"}] Refused for ${principalId}: ${reviveAccess.failure}`,
+      );
+      return {
+        success: false,
+        failure: reviveAccess.failure === "unavailable" ? "unavailable" : "not_eligible",
+        message: reviveAccess.message,
+      };
+    }
+
+    const cancelledIds = new Set(cancelledPosts.map((post) => post.id));
 
     const { data: movedRows, error: updateError } = await runQuery(
       db

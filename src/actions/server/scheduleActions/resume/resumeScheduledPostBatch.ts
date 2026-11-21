@@ -19,6 +19,7 @@ import {
   buildResumeSchedule,
   countBumpedRows,
 } from "./_shared/bumpPastScheduleToFuture";
+import { checkAccessToRevivePosts } from "./_shared/checkAccessToRevivePosts";
 
 export async function resumeScheduledPostBatch(
   postIds: string[],
@@ -65,6 +66,7 @@ export async function resumeScheduledPostBatch(
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
           status: scheduled_posts.status,
+          created_via: scheduled_posts.created_via,
         })
         .from(scheduled_posts)
         .where(inArray(scheduled_posts.id, postIds)),
@@ -104,6 +106,16 @@ export async function resumeScheduledPostBatch(
           return unhandledViolation;
         }
       }
+    }
+    const reviveAccess = await checkAccessToRevivePosts({
+      principalId,
+      revivedPosts: rules.eligiblePosts,
+    });
+    if (!reviveAccess.ok) {
+      console.warn(
+        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Refused for ${principalId}: ${reviveAccess.failure}`,
+      );
+      return { success: false, message: reviveAccess.message };
     }
     const resumableIds = rules.eligiblePosts.map((post) => post.id);
 

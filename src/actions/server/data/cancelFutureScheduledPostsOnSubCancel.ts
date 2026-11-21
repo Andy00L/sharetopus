@@ -5,6 +5,13 @@ import { and, eq, gt } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 
+export function buildAccessPauseValues(nowIso: string) {
+  return {
+    status: "cancelled",
+    cancelled_by_sub_at: nowIso,
+  } satisfies Partial<typeof scheduled_posts.$inferInsert>;
+}
+
 export type CancelResult =
   | { success: true; cancelled: number }
   | { success: false; message: string };
@@ -18,10 +25,7 @@ export async function cancelFutureScheduledPostsOnSubCancel(
     const { data: cancelledRows, error } = await runQuery(
       db
         .update(scheduled_posts)
-        .set({
-          status: "cancelled",
-          cancelled_by_sub_at: nowIso,
-        })
+        .set(buildAccessPauseValues(nowIso))
         .where(
           and(
             eq(scheduled_posts.principal_id, principalId),

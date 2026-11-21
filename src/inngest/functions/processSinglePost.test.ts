@@ -48,8 +48,17 @@ type LoadResult =
 
 type ClaimInput = { scheduledPostId: string; dispatchedScheduledAt: string };
 
+type GateResult =
+  | { success: true; isOpen: true }
+  | { success: true; isOpen: false; isPaused: boolean }
+  | { success: false; message: string };
+
+const GATE_OPEN: GateResult = { success: true, isOpen: true };
+
 type HelperState = {
   load: LoadResult;
+  gate: GateResult;
+  gateCalls: ClaimInput[];
   claim: { success: true; claimed: boolean } | { success: false; message: string };
   isPublished: boolean;
   claimCalls: ClaimInput[];
@@ -64,6 +73,8 @@ type HelperState = {
 
 const helperState: HelperState = {
   load: { kind: "ready", post: POST },
+  gate: GATE_OPEN,
+  gateCalls: [],
   claim: { success: true, claimed: true },
   isPublished: false,
   claimCalls: [],
@@ -93,6 +104,13 @@ mock.module("@/actions/server/data/fetchAccountForPublish", () => ({
 
 mock.module("./processSinglePostHelpers", () => ({
   loadPostForProcessing: async () => helperState.load,
+  gatePostOnOwnerAccess: async (input: { post: PostRow; dispatchedScheduledAt: string }) => {
+    helperState.gateCalls.push({
+      scheduledPostId: input.post.id,
+      dispatchedScheduledAt: input.dispatchedScheduledAt,
+    });
+    return helperState.gate;
+  },
   claimPostForProcessing: async (input: ClaimInput) => {
     helperState.claimCalls.push(input);
     return helperState.claim;
@@ -160,6 +178,8 @@ function runOnFailure() {
 
 beforeEach(() => {
   helperState.load = { kind: "ready", post: POST };
+  helperState.gate = GATE_OPEN;
+  helperState.gateCalls = [];
   helperState.claim = { success: true, claimed: true };
   helperState.isPublished = false;
   helperState.claimCalls = [];
@@ -197,6 +217,33 @@ describe("processSinglePost", () => {
   test("a failed claim throws instead of reading as claimed by another worker", async () => {
     helperState.claim = { success: false, message: "claim error: timeout" };
     await expect(runWorker()).rejects.toThrow("claim error");
+  });
+
+  test("a post whose owner has no access is paused at its time, never claimed or published", async () => {
+    helperState.gate = { success: true, isOpen: false, isPaused: true };
+    const outcome = await runWorker();
+    expect(outcome).toEqual({ skipped: true, reason: "paused-without-access" });
+    expect(helperState.gateCalls).toEqual([
+      { scheduledPostId: POST.id, dispatchedScheduledAt: EVENT_DATA.scheduled_at },
+    ]);
+    expect(helperState.claimCalls).toEqual([]);
+    expect(helperState.platformCalls).toBe(0);
+    expect(helperState.recorded).toEqual([]);
+  });
+
+  test("an access check that cannot run throws so Inngest retries it, and nothing is claimed", async () => {
+    helperState.gate = { success: false, message: "access check unavailable for post post-1" };
+    await expect(runWorker()).rejects.toThrow("access-check-failure");
+    expect(helperState.claimCalls).toEqual([]);
+    expect(helperState.platformCalls).toBe(0);
+  });
+
+  test("a deleted account is paused, not failed, when its owner has no access", async () => {
+    helperState.load = { kind: "account_missing", post: POST };
+    helperState.gate = { success: true, isOpen: false, isPaused: true };
+    const outcome = await runWorker();
+    expect(outcome).toEqual({ skipped: true, reason: "paused-without-access" });
+    expect(helperState.recorded).toEqual([]);
   });
 
   test("a re-executed publish step does not publish twice", async () => {

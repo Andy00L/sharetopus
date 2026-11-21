@@ -1,6 +1,11 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
+import {
+  checkActiveSubscription,
+  needsOwnerAccessToPublish,
+} from "@/actions/checkActiveSubscription";
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
+import { buildAccessPauseValues } from "@/actions/server/data/cancelFutureScheduledPostsOnSubCancel";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
 import { content_history, scheduled_posts, social_accounts } from "@/db/schema";
@@ -73,14 +78,27 @@ export async function loadPostForProcessing(
 
 const TERMINAL_POST_STATUSES: readonly PostStatus[] = ["posted", "failed", "cancelled"];
 
+type RunTarget = {
+  scheduledPostId: string;
+  dispatchedScheduledAt: string;
+};
+
+function isWaitingForThisRun(target: RunTarget) {
+  return and(
+    eq(scheduled_posts.id, target.scheduledPostId),
+    inArray(
+      scheduled_posts.status,
+      ["scheduled", "queued"] satisfies PostStatus[],
+    ),
+    eq(scheduled_posts.scheduled_at, target.dispatchedScheduledAt),
+  );
+}
+
 export type ClaimResult =
   | { success: true; claimed: boolean }
   | { success: false; message: string };
 
-export async function claimPostForProcessing(input: {
-  scheduledPostId: string;
-  dispatchedScheduledAt: string;
-}): Promise<ClaimResult> {
+export async function claimPostForProcessing(target: RunTarget): Promise<ClaimResult> {
   const { data, error } = await runQuery(
     db
       .update(scheduled_posts)
@@ -88,16 +106,7 @@ export async function claimPostForProcessing(input: {
         status: "processing" satisfies PostStatus,
         updated_at: new Date().toISOString(),
       })
-      .where(
-        and(
-          eq(scheduled_posts.id, input.scheduledPostId),
-          inArray(
-            scheduled_posts.status,
-            ["scheduled", "queued"] satisfies PostStatus[],
-          ),
-          eq(scheduled_posts.scheduled_at, input.dispatchedScheduledAt),
-        ),
-      )
+      .where(isWaitingForThisRun(target))
       .returning({ id: scheduled_posts.id }),
   );
 
@@ -106,6 +115,45 @@ export async function claimPostForProcessing(input: {
     return { success: false, message: `claim error: ${error.message}` };
   }
   return { success: true, claimed: data.length > 0 };
+}
+
+export type AccessGateResult =
+  | { success: true; isOpen: true }
+  | { success: true; isOpen: false; isPaused: boolean }
+  | { success: false; message: string };
+
+export async function gatePostOnOwnerAccess(input: {
+  post: Pick<ScheduledPost, "id" | "principal_id" | "created_via">;
+  dispatchedScheduledAt: string;
+}): Promise<AccessGateResult> {
+  const { post, dispatchedScheduledAt } = input;
+  if (!needsOwnerAccessToPublish(post)) return { success: true, isOpen: true };
+
+  const access = await checkActiveSubscription(post.principal_id);
+  if (access.status === "unavailable") {
+    return { success: false, message: `access check unavailable for post ${post.id}` };
+  }
+  if (access.isActive) return { success: true, isOpen: true };
+
+  const nowIso = new Date().toISOString();
+  const { data: pausedRows, error } = await runQuery(
+    db
+      .update(scheduled_posts)
+      .set({ ...buildAccessPauseValues(nowIso), updated_at: nowIso })
+      .where(isWaitingForThisRun({ scheduledPostId: post.id, dispatchedScheduledAt }))
+      .returning({ id: scheduled_posts.id }),
+  );
+  if (error) {
+    console.error("[gatePostOnOwnerAccess] pause failed:", error.message);
+    return { success: false, message: `pause error: ${error.message}` };
+  }
+  const isPaused = pausedRows.length > 0;
+  if (isPaused) {
+    console.log(
+      `[gatePostOnOwnerAccess] Paused post ${post.id}: principal ${post.principal_id} has no access`,
+    );
+  }
+  return { success: true, isOpen: false, isPaused };
 }
 
 export function resolvePostBatchId(post: Pick<ScheduledPost, "id" | "batch_id">): string {
