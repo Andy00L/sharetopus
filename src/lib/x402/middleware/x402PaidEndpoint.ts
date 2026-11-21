@@ -561,7 +561,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
         refundInitiated: refundOutcome.refundInitiated,
         refundTxHash: refundOutcome.refundTxHash,
       }),
-      mayHoldUnusedPayment: true,
+      mayHoldUnusedPayment: !refundOutcome.refundConfirmed,
     };
   }
 

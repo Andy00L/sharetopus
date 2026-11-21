@@ -21,7 +21,7 @@ export const PostDTOSchema = z.object({
 
 export const PostDispatchSchema = z.object({
   dispatch_id: z.string(),
-  batch_id: z.string().nullable(),
+  batch_id: z.string(),
   status: z.literal("processing"),
   platform: z.string(),
   social_account_id: z.string(),

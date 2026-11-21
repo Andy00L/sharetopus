@@ -86,7 +86,7 @@ export const POST = withRestEndpoint({
 
       const postDispatch = {
         dispatch_id: dispatchId,
-        batch_id: batchResult.details.dispatched > 0 ? batchResult.batchId : null,
+        batch_id: batchResult.batchId,
         status: "processing",
         platform: validatedInput.platform,
         social_account_id: validatedInput.social_account_id,

@@ -249,10 +249,16 @@ export interface RefundChargeInput {
   principalId: string;
 }
 
-export interface RefundChargeOutcome {
-  refundInitiated: boolean;
-  refundTxHash: string | null;
-}
+export type RefundChargeOutcome =
+  | { refundInitiated: true; refundConfirmed: true; refundTxHash: string }
+  | { refundInitiated: true; refundConfirmed: false; refundTxHash: string }
+  | { refundInitiated: false; refundConfirmed: false; refundTxHash: null };
+
+const REFUND_NOT_SENT: RefundChargeOutcome = {
+  refundInitiated: false,
+  refundConfirmed: false,
+  refundTxHash: null,
+};
 
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
   const refundAtomicAmount = usdcToAtomic(input.amountUsdc, input.network.usdcDecimals);
@@ -272,7 +278,7 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
       `[refundCharge] CHARGE RECONCILIATION NEEDED: charge ${input.chargeId} is no longer settled, so no refund was sent (another writer moved it; a second refund could pay twice).`,
     );
     await recordX402Reconciliation({ kind: "refund_failed", txHash: null, ...reconciliationBase });
-    return { refundInitiated: false, refundTxHash: null };
+    return REFUND_NOT_SENT;
   }
   if (!markerWrite.success) {
     console.error(
@@ -308,7 +314,7 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
           ...reconciliationBase,
         });
       }
-      return { refundInitiated: true, refundTxHash: refundResult.refundTxHash };
+      return { refundInitiated: true, refundConfirmed: true, refundTxHash: refundResult.refundTxHash };
     }
 
     case "unconfirmed": {
@@ -320,7 +326,7 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
         txHash: refundResult.refundTxHash,
         ...reconciliationBase,
       });
-      return { refundInitiated: true, refundTxHash: refundResult.refundTxHash };
+      return { refundInitiated: true, refundConfirmed: false, refundTxHash: refundResult.refundTxHash };
     }
 
     case "send_unknown": {
@@ -335,7 +341,7 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
         txHash: refundResult.refundTxHash,
         ...reconciliationBase,
       });
-      return { refundInitiated: false, refundTxHash: null };
+      return REFUND_NOT_SENT;
     }
 
     case "failed": {
@@ -347,13 +353,13 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
         txHash: refundResult.refundTxHash,
         ...reconciliationBase,
       });
-      return { refundInitiated: false, refundTxHash: null };
+      return REFUND_NOT_SENT;
     }
 
     default: {
       const unhandledResult: never = refundResult;
       console.error(`[refundCharge] Unhandled refund result: ${JSON.stringify(unhandledResult)}`);
-      return { refundInitiated: false, refundTxHash: null };
+      return REFUND_NOT_SENT;
     }
   }
 }

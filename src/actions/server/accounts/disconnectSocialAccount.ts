@@ -1,13 +1,40 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, notExists } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { scheduled_posts, social_accounts } from "@/db/schema";
+import { pending_direct_posts, scheduled_posts, social_accounts } from "@/db/schema";
 import { deleteUnreferencedMediaFiles } from "../data/storageFiles/deleteSupabaseFile";
 import { MEDIA_HOLDING_POST_STATUSES } from "../data/storageFiles/mediaReferences";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
 import { DISCONNECT_SOCIAL_ACCOUNT_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
+import { PUBLISHING_POST_STATUS } from "../scheduleActions/preflightScheduledPostChange";
+
+const PUBLISHING_ACCOUNT_REFUSAL = "A post on this account is publishing now. Try again in a minute.";
+
+function selectPublishingScheduledPosts(accountId: string) {
+  return db
+    .select({ id: scheduled_posts.id })
+    .from(scheduled_posts)
+    .where(
+      and(
+        eq(scheduled_posts.social_account_id, accountId),
+        eq(scheduled_posts.status, PUBLISHING_POST_STATUS),
+      ),
+    );
+}
+
+function selectPublishingDirectPosts(accountId: string) {
+  return db
+    .select({ event_id: pending_direct_posts.event_id })
+    .from(pending_direct_posts)
+    .where(
+      and(
+        eq(pending_direct_posts.social_account_id, accountId),
+        eq(pending_direct_posts.status, "processing"),
+      ),
+    );
+}
 
 export type DisconnectSocialAccountResult = {
   success: boolean;
@@ -111,8 +138,17 @@ export async function disconnectSocialAccount(
       .map((row) => row.media_storage_path)
       .filter((mediaPath): mediaPath is string => mediaPath !== null);
 
-    const { error: deleteError } = await runQuery(
-      db.delete(social_accounts).where(eq(social_accounts.id, accountId)),
+    const { data: deletedAccounts, error: deleteError } = await runQuery(
+      db
+        .delete(social_accounts)
+        .where(
+          and(
+            eq(social_accounts.id, accountId),
+            notExists(selectPublishingScheduledPosts(accountId)),
+            notExists(selectPublishingDirectPosts(accountId)),
+          ),
+        )
+        .returning({ id: social_accounts.id }),
     );
 
     if (deleteError) {
@@ -124,6 +160,13 @@ export async function disconnectSocialAccount(
         success: false,
         message: `Failed to disconnect the account`,
       };
+    }
+
+    if (deletedAccounts.length === 0) {
+      console.warn(
+        `[disconnectSocialAccount] Refused account ${accountId}: a post on it is publishing now`,
+      );
+      return { success: false, message: PUBLISHING_ACCOUNT_REFUSAL };
     }
 
     const mediaCleanup = await deleteUnreferencedMediaFiles(userId, filesToCheck);

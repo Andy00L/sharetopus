@@ -5,6 +5,7 @@ import type { PostNowEventData } from "@/inngest/events/postNow";
 
 type StoredLock = {
   event_id: string;
+  batch_id: string;
   principal_id: string;
   idempotency_key: string | null;
   status: "processing" | "completed" | "failed";
@@ -62,6 +63,7 @@ function insertLocks(params: unknown[]): { event_id: string }[] {
     if (lockStore.has(eventId) || hasKeyConflict(principalId, idempotencyKey)) continue;
     lockStore.set(eventId, {
       event_id: eventId,
+      batch_id: String(rowParams[1]),
       principal_id: principalId,
       idempotency_key: idempotencyKey,
       status: "processing",
@@ -131,10 +133,14 @@ mock.module("@/inngest/client", () => ({
 
 const { dispatchPostNowEvents } = await import("./dispatchPostNowEvents");
 
-function buildPostNowData(dispatchId: string, idempotencyKey: string): PostNowEventData {
+function buildPostNowData(
+  dispatchId: string,
+  idempotencyKey: string,
+  batchId = "batch-1",
+): PostNowEventData {
   return {
     dispatch_id: dispatchId,
-    batch_id: "batch-1",
+    batch_id: batchId,
     principal_id: PRINCIPAL_ID,
     social_account_id: "account-1",
     platform: "x",
@@ -169,22 +175,25 @@ describe("dispatchPostNowEvents", () => {
     const retriedDispatch = await dispatchPostNowEvents([buildPostNowData("dispatch-b", "key-1")]);
     expect(retriedDispatch).toEqual({
       success: true,
-      eventIds: ["dispatch-b"],
+      dispatches: [{ eventId: "dispatch-b", batchId: "batch-1" }],
       freshCount: 1,
       refused: [],
     });
     expect(sentEventIds).toEqual([["post.now-dispatch-b"]]);
   });
 
-  test("a repeated key reports the existing lock's id and sends nothing", async () => {
-    await dispatchPostNowEvents([buildPostNowData("dispatch-a", "key-1")]);
+  test("a repeated key reports the existing lock's id and batch and sends nothing", async () => {
+    await dispatchPostNowEvents([buildPostNowData("dispatch-a", "key-1", "batch-1")]);
     const repeatedDispatch = await dispatchPostNowEvents([
-      buildPostNowData("dispatch-b", "key-1"),
-      buildPostNowData("dispatch-c", "key-2"),
+      buildPostNowData("dispatch-b", "key-1", "batch-2"),
+      buildPostNowData("dispatch-c", "key-2", "batch-2"),
     ]);
     expect(repeatedDispatch).toEqual({
       success: true,
-      eventIds: ["dispatch-a", "dispatch-c"],
+      dispatches: [
+        { eventId: "dispatch-a", batchId: "batch-1" },
+        { eventId: "dispatch-c", batchId: "batch-2" },
+      ],
       freshCount: 1,
       refused: [],
     });
@@ -215,7 +224,7 @@ describe("dispatchPostNowEvents", () => {
     ]);
     expect(dispatch).toEqual({
       success: true,
-      eventIds: ["dispatch-b"],
+      dispatches: [{ eventId: "dispatch-b", batchId: "batch-1" }],
       freshCount: 1,
       refused: [
         {

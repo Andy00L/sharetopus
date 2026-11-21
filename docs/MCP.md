@@ -303,7 +303,7 @@ bookmark           string  optional
   Cursor from the previous page
 ```
 
-**Returns:** `{ boards: [{ id, name, description, privacy, pin_count }], bookmark }`. An expired Pinterest token returns a tool error that points at the reconnect URL.
+**Returns:** `{ boards: [{ id, name, description, privacy, pin_count }], bookmark }`. An expired Pinterest token returns a tool error that points at the reconnect URL. A token that cannot be refreshed right now returns a tool error that asks to retry.
 
 ---
 
@@ -462,7 +462,7 @@ scheduled_at  string (ISO 8601 with a zone)  required for reschedule
 
 ### delete_scheduled_posts
 
-Permanently delete 1 to 50 scheduled posts. Cannot be undone; to stop a post and keep it, use `update_scheduled_posts` with `action: "cancel"`. Media files no other post uses are removed from Supabase Storage.
+Permanently delete 1 to 50 scheduled posts. Cannot be undone; to stop a post and keep it, use `update_scheduled_posts` with `action: "cancel"`. Media files no other post uses are removed from Supabase Storage. A post that is publishing now cannot be deleted; the tool answers an error and the call can be retried in a minute.
 
 **Parameters:**
 ```

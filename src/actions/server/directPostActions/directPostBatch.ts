@@ -268,17 +268,18 @@ export async function directPostBatch(
       };
     }
 
+    const [firstDispatch] = dispatch.dispatches;
     return {
       success: true,
       message: `Dispatched ${dispatch.freshCount} post(s)${duplicates > 0 ? `, ${duplicates} already existed (idempotent retry)` : ""}.`,
-      batchId,
+      batchId: dispatch.freshCount === 0 && firstDispatch ? firstDispatch.batchId : batchId,
       details: {
         total: posts.length,
         dispatched: dispatch.freshCount,
         duplicates,
         rejected,
       },
-      eventIds: dispatch.eventIds,
+      eventIds: dispatch.dispatches.map((postNowDispatch) => postNowDispatch.eventId),
     };
   } catch (err) {
     console.error(

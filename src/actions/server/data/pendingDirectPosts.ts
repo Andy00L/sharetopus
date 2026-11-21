@@ -15,9 +15,11 @@ export type PendingDirectPostLock = {
   idempotency_key: string | null;
 };
 
+type ExistingDirectPostLock = Pick<PendingDirectPostLock, "event_id" | "batch_id">;
+
 type DirectPostLockEntry<Item> =
   | { kind: "locked"; item: Item }
-  | { kind: "already_locked"; item: Item; existingEventId: string };
+  | { kind: "already_locked"; item: Item; existingLock: ExistingDirectPostLock };
 
 type LockPendingDirectPostsResult<Item> =
   | { success: true; entries: DirectPostLockEntry<Item>[] }
@@ -55,8 +57,8 @@ export async function lockPendingDirectPosts<Item>(
 
   const existing =
     skippedLocks.length > 0
-      ? await findEventIdsByIdempotencyKey(skippedLocks)
-      : { success: true as const, eventIdByKey: new Map<string, string>() };
+      ? await findLocksByIdempotencyKey(skippedLocks)
+      : { success: true as const, lockByKey: new Map<string, ExistingDirectPostLock>() };
   if (!existing.success) {
     return failAfterReleasing(insertedEventIds, existing.message);
   }
@@ -67,14 +69,14 @@ export async function lockPendingDirectPosts<Item>(
       entries.push({ kind: "locked", item: candidate.item });
       continue;
     }
-    const existingEventId = existing.eventIdByKey.get(toIdempotencyMapKey(candidate.lock));
-    if (!existingEventId) {
+    const existingLock = existing.lockByKey.get(toIdempotencyMapKey(candidate.lock));
+    if (!existingLock) {
       return failAfterReleasing(
         insertedEventIds,
         `Lock for event ${candidate.lock.event_id} was neither written nor found by idempotency key`,
       );
     }
-    entries.push({ kind: "already_locked", item: candidate.item, existingEventId });
+    entries.push({ kind: "already_locked", item: candidate.item, existingLock });
   }
   return { success: true, entries };
 }
@@ -83,10 +85,11 @@ function toIdempotencyMapKey(lock: Pick<PendingDirectPostLock, "principal_id" | 
   return JSON.stringify([lock.principal_id, lock.idempotency_key]);
 }
 
-async function findEventIdsByIdempotencyKey(
+async function findLocksByIdempotencyKey(
   locks: PendingDirectPostLock[],
 ): Promise<
-  { success: true; eventIdByKey: Map<string, string> } | { success: false; message: string }
+  | { success: true; lockByKey: Map<string, ExistingDirectPostLock> }
+  | { success: false; message: string }
 > {
   const keyedLockFilters = locks.flatMap((lock) =>
     lock.idempotency_key === null
@@ -98,12 +101,13 @@ async function findEventIdsByIdempotencyKey(
           ),
         ],
   );
-  if (keyedLockFilters.length === 0) return { success: true, eventIdByKey: new Map() };
+  if (keyedLockFilters.length === 0) return { success: true, lockByKey: new Map() };
 
   const { data: existingRows, error } = await runQuery(
     db
       .select({
         event_id: pending_direct_posts.event_id,
+        batch_id: pending_direct_posts.batch_id,
         principal_id: pending_direct_posts.principal_id,
         idempotency_key: pending_direct_posts.idempotency_key,
       })
@@ -111,13 +115,16 @@ async function findEventIdsByIdempotencyKey(
       .where(or(...keyedLockFilters)),
   );
   if (error) {
-    console.error("[findEventIdsByIdempotencyKey] Lookup failed:", error.message);
+    console.error("[findLocksByIdempotencyKey] Lookup failed:", error.message);
     return { success: false, message: `Existing lock lookup failed: ${error.message}` };
   }
   return {
     success: true,
-    eventIdByKey: new Map(
-      existingRows.map((existingRow) => [toIdempotencyMapKey(existingRow), existingRow.event_id]),
+    lockByKey: new Map(
+      existingRows.map((existingRow) => [
+        toIdempotencyMapKey(existingRow),
+        { event_id: existingRow.event_id, batch_id: existingRow.batch_id },
+      ]),
     ),
   };
 }

@@ -958,6 +958,12 @@ export const DOCS_SECTIONS: DocsSection[] = [
         description:
           "Charges delete. Hard deletes 1 to 50 scheduled or completed posts and their stored media. Not reversible.",
         sourceRef: "src/app/api/x402/delete/route.ts",
+        callouts: [
+          {
+            tone: "note",
+            text: "A post that is publishing now cannot be deleted: the call answers 409 post_publishing before payment, and nothing is deleted or charged. Try again in a minute.",
+          },
+        ],
         paramTables: [
           {
             heading: "Request Body",
@@ -1557,6 +1563,16 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "Nothing would change: the idempotency_key was already used, the account does not need re-authentication, or no post is in an eligible state. Checked before settlement; nothing charged.",
         ],
         [
+          "409",
+          "idempotency_key_in_progress",
+          "post-now and schedule: another paid call with this idempotency_key is running, or ended less than 120 seconds ago without a known payment outcome. A call whose action failed and whose refund confirmed frees the key at once. Checked before settlement; nothing charged. Retry after Retry-After.",
+        ],
+        [
+          "409",
+          "post_publishing",
+          "A post named in a delete call is publishing now. Checked before settlement; nothing charged. Try again in a minute.",
+        ],
+        [
           "413",
           "quota_exceeded, file_too_large",
           "The upload would exceed the wallet storage cap or the per-file limit. Checked before settlement; nothing charged.",
@@ -1590,6 +1606,11 @@ export const DOCS_SECTIONS: DocsSection[] = [
           "503",
           "rate_limiter_unavailable",
           "The server's rate limiter is down. Not a client limit; retry after Retry-After.",
+        ],
+        [
+          "503",
+          "idempotency_check_unavailable",
+          "post-now and schedule: the idempotency_key could not be checked. Checked before settlement; nothing charged. Retry after Retry-After.",
         ],
         [
           "504",

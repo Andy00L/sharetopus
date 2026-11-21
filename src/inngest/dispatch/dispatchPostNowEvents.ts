@@ -18,10 +18,12 @@ export type RefusedPostNowEvent = {
   message: string;
 };
 
+export type PostNowDispatch = { eventId: string; batchId: string };
+
 export type DispatchPostNowEventsResult =
   | {
       success: true;
-      eventIds: string[];
+      dispatches: PostNowDispatch[];
       freshCount: number;
       refused: RefusedPostNowEvent[];
     }
@@ -91,7 +93,7 @@ export async function dispatchPostNowEvents(
     );
   }
   if (validPosts.length === 0) {
-    return { success: true, eventIds: [], freshCount: 0, refused };
+    return { success: true, dispatches: [], freshCount: 0, refused };
   }
 
   const lockResult = await lockPendingDirectPosts(validPosts, toDispatchLock);
@@ -140,8 +142,10 @@ export async function dispatchPostNowEvents(
 
   return {
     success: true,
-    eventIds: lockResult.entries.map((entry) =>
-      entry.kind === "locked" ? entry.item.dispatch_id : entry.existingEventId,
+    dispatches: lockResult.entries.map((entry): PostNowDispatch =>
+      entry.kind === "locked"
+        ? { eventId: entry.item.dispatch_id, batchId: entry.item.batch_id }
+        : { eventId: entry.existingLock.event_id, batchId: entry.existingLock.batch_id },
     ),
     freshCount: postsToSend.length,
     refused,

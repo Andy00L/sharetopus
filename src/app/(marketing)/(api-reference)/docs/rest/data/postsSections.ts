@@ -83,9 +83,10 @@ const POST_DISPATCH_FIELDS: ParamTableData = {
     },
     {
       name: "batch_id",
-      type: "string | null",
+      type: "string",
       required: true,
-      description: "Batch of this dispatch; null on a retry with an idempotency_key that was already dispatched.",
+      description:
+        "Batch of this dispatch. A retry with an idempotency_key that was already dispatched returns the first call's batch_id.",
     },
     {
       name: "status",
@@ -517,7 +518,7 @@ export const REST_POSTS_SECTION: DocsSection = {
       path: "/api/v1/posts/{id}",
       title: "Cancel or delete a post",
       description:
-        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. Only a scheduled post can be cancelled; any other status answers 409 conflict. hard=true permanently deletes the post and cleans up its media. A 200 always means the change happened.",
+        "Default is a soft cancel: the post keeps its row and media, status becomes cancelled. Only a scheduled post can be cancelled; any other status answers 409 conflict. hard=true permanently deletes the post and cleans up its media. hard=true answers 409 conflict while the post is publishing; try again in a minute. A 200 always means the change happened.",
       sourceRef:
         "src/app/api/v1/posts/[id]/route.ts (DELETE), src/lib/api/rest/validation/postPatchSchemas.ts (PostDeleteQuerySchema)",
       paramTables: [

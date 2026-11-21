@@ -146,7 +146,7 @@ describe("refundCharge after the paid action failed", () => {
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(outcome).toEqual({ refundInitiated: false, refundConfirmed: false, refundTxHash: null });
     const updates = readUpdates();
     expect(updates).toHaveLength(1);
     expect(updates[0]?.sql).toBe(
@@ -165,7 +165,7 @@ describe("refundCharge after the paid action failed", () => {
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(outcome).toEqual({ refundInitiated: false, refundConfirmed: false, refundTxHash: null });
     expect(readUpdates()).toHaveLength(1);
     expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);
   });
@@ -179,8 +179,18 @@ describe("refundCharge after the paid action failed", () => {
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(outcome).toEqual({ refundInitiated: false, refundConfirmed: false, refundTxHash: null });
     expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: "0xsignedrefund" }]);
+  });
+
+  test("a refund sent but not confirmed is reported unconfirmed and keeps its hash on the reconciliation row", async () => {
+    refundResult = { status: "unconfirmed", refundTxHash: "0xsentrefund", message: "No receipt within 30000 ms." };
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: true, refundConfirmed: false, refundTxHash: "0xsentrefund" });
+    expect(readUpdates()).toHaveLength(1);
+    expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: "0xsentrefund" }]);
   });
 
   test("a confirmed refund records the failure first, then moves the charge from settled to refunded", async () => {
@@ -188,7 +198,7 @@ describe("refundCharge after the paid action failed", () => {
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: true, refundTxHash: "0xrefund" });
+    expect(outcome).toEqual({ refundInitiated: true, refundConfirmed: true, refundTxHash: "0xrefund" });
     const updates = readUpdates();
     expect(updates.map((update) => update.params.at(-1))).toEqual(["settled", "settled"]);
     expect(updates[1]?.sql).toContain('set "status" = $1');
@@ -204,7 +214,7 @@ describe("refundCharge when the failure cannot be written on the charge", () => 
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: true, refundTxHash: "0xrefund" });
+    expect(outcome).toEqual({ refundInitiated: true, refundConfirmed: true, refundTxHash: "0xrefund" });
     expect(readUpdates().map((update) => update.params[0])).toEqual([
       "action_failed: Could not dispatch the post.",
       "action_failed: Could not dispatch the post.",
@@ -220,7 +230,7 @@ describe("refundCharge when the failure cannot be written on the charge", () => 
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(outcome).toEqual({ refundInitiated: false, refundConfirmed: false, refundTxHash: null });
     expect(refundSendCount).toBe(1);
     expect(recordedReconciliations).toEqual([
       { kind: "refund_failed", txHash: null },
@@ -233,7 +243,7 @@ describe("refundCharge when the failure cannot be written on the charge", () => 
 
     const outcome = await refundAfterFailedAction();
 
-    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(outcome).toEqual({ refundInitiated: false, refundConfirmed: false, refundTxHash: null });
     expect(readUpdates()).toHaveLength(1);
     expect(refundSendCount).toBe(0);
     expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);

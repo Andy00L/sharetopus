@@ -176,7 +176,7 @@ All variables are documented in `.env.example`. The tables below group them by s
 
 | Variable | Required | Notes |
 |---|---|---|
-| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint. Also holds the token refresh lock ([PLATFORMS.md](./PLATFORMS.md#token-refresh)); without Redis, refreshes run unlocked |
+| `UPSTASH_REDIS_REST_URL` | Yes | Upstash Redis REST endpoint. Also holds the token refresh lock ([PLATFORMS.md](./PLATFORMS.md#token-refresh)); without Redis, platforms whose refresh token rotates stop refreshing until it is back (callers get a retry-later answer); the others refresh without the lock |
 | `UPSTASH_REDIS_REST_TOKEN` | Yes | Upstash Redis REST token |
 
 ### Background jobs (Inngest)

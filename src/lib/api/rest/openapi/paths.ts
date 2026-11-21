@@ -95,7 +95,7 @@ export const restPaths = {
       tags: ["Posts"],
       summary: "Create a post",
       description:
-        "Schedule a post for later (200 with the PostDTO) or publish it now by omitting scheduled_at (202 with the dispatch: the post was handed to the publisher, and once published it appears in content history). A retry with an idempotency_key that was already dispatched answers 202 with the first dispatch_id and batch_id null.",
+        "Schedule a post for later (200 with the PostDTO) or publish it now by omitting scheduled_at (202 with the dispatch: the post was handed to the publisher, and once published it appears in content history). A retry with an idempotency_key that was already dispatched answers 202 with the first call's dispatch_id and batch_id.",
       operationId: "createPost",
       requestBody: jsonBody(PostCreateInputSchema),
       responses: {
@@ -150,7 +150,7 @@ export const restPaths = {
       tags: ["Posts"],
       summary: "Cancel or delete a post",
       description:
-        "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion.",
+        "Soft-cancel by default; only a scheduled post can be cancelled (409 otherwise). Use ?hard=true for permanent deletion. A post that is publishing now cannot be deleted (409 conflict); try again in a minute.",
       operationId: "deletePost",
       parameters: [pathParam("id", "Post UUID")],
       requestParams: { query: PostDeleteQuerySchema },

@@ -17,6 +17,7 @@ const ledger = {
   heldSettles: new Map<string, HeldSettle>(),
   shouldRefusePrecheckOnce: false,
   shouldFailActionOnce: false,
+  isRefundConfirmed: false,
   actionRuns: 0,
   refundedChargeIds: [] as string[],
 };
@@ -30,6 +31,7 @@ beforeEach(() => {
   ledger.heldSettles.clear();
   ledger.shouldRefusePrecheckOnce = false;
   ledger.shouldFailActionOnce = false;
+  ledger.isRefundConfirmed = false;
   ledger.actionRuns = 0;
   ledger.refundedChargeIds = [];
 });
@@ -140,7 +142,11 @@ mock.module("@/lib/x402/charges/chargeLifecycle", () => ({
   },
   refundCharge: async (input: { chargeId: string }) => {
     ledger.refundedChargeIds.push(input.chargeId);
-    return { refundInitiated: true, refundTxHash: `refund-${input.chargeId}` };
+    return {
+      refundInitiated: true,
+      refundConfirmed: ledger.isRefundConfirmed,
+      refundTxHash: `refund-${input.chargeId}`,
+    };
   },
   updateChargeRecord: async () => ({ ok: true }),
 }));
@@ -312,13 +318,23 @@ describe("which first-call outcomes free the key for a retry with a new payment"
       settleAttempts: ["nonce-1"],
     },
     {
-      outcome: "the action fails and its refund is sent",
+      outcome: "the action fails and its refund is sent but not confirmed",
       prepareFirstCall: () => {
         ledger.shouldFailActionOnce = true;
       },
       retryStatus: 409,
       retryErrorKind: "idempotency_key_in_progress",
       settleAttempts: ["nonce-1"],
+    },
+    {
+      outcome: "the action fails and its refund is confirmed",
+      prepareFirstCall: () => {
+        ledger.shouldFailActionOnce = true;
+        ledger.isRefundConfirmed = true;
+      },
+      retryStatus: 200,
+      retryErrorKind: null,
+      settleAttempts: ["nonce-1", "nonce-2"],
     },
   ];
 
