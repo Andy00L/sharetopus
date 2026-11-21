@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import { PLATFORM_PUBLISH_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 import {
   buildHttpFailure,
@@ -12,11 +13,10 @@ import {
 } from "@/lib/api/_shared/platformFailure";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** Video publish makes Facebook pull file_url server-side; allow 2 minutes. */
+// Video publish makes Facebook pull file_url server-side; allow 2 minutes.
+// The file_url docs state no pull time limit:
+// https://developers.facebook.com/docs/graph-api/reference/page/videos/
 const VIDEO_PUBLISH_TIMEOUT_MS = 120_000;
-
-/** Graph API version pinned across the repo; see exchangeFacebookCode.ts. */
-const GRAPH_API_VERSION = "v23.0";
 
 /**
  * Publish response shapes.
@@ -34,19 +34,6 @@ export type FacebookPostResult =
   | { success: true; postId: string; postUrl: string; message: string }
   | PlatformPostFailure;
 
-/**
- * Publish one post to one Facebook Page with its PAGE access token:
- *   - text:  POST /{pageId}/feed with message
- *   - image: POST /{pageId}/photos with url (Facebook pulls the file)
- *   - video: POST /{pageId}/videos with file_url (Facebook pulls the file)
- *
- * mediaUrl must be publicly reachable for the pull duration; the signed
- * Supabase URL minted by the direct-post pipeline satisfies that.
- * sourceRef: https://developers.facebook.com/docs/pages-api/posts/,
- *            https://developers.facebook.com/docs/graph-api/reference/page/videos/
- *
- * Called by: directPostForFacebookAccounts
- */
 export async function postToFacebook({
   pageAccessToken,
   pageId,
@@ -77,15 +64,15 @@ export async function postToFacebook({
 
   switch (postType) {
     case "text":
-      endpoint = `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/feed`;
+      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/feed`;
       body = { message };
       break;
     case "image":
-      endpoint = `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/photos`;
+      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/photos`;
       body = { url: mediaUrl ?? "", caption: message };
       break;
     case "video":
-      endpoint = `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/videos`;
+      endpoint = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/${pageId}/videos`;
       body = { file_url: mediaUrl ?? "", description: message };
       timeoutMs = VIDEO_PUBLISH_TIMEOUT_MS;
       break;

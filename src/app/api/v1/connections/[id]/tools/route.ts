@@ -13,25 +13,8 @@ import {
   runProviderToolForAccount,
 } from "@/lib/platforms/providers/runProviderTool";
 
-/**
- * Generic provider-tool surface for one connection.
- *
- *   GET  /v1/connections/{id}/tools  -> discovery: what can be triggered
- *   POST /v1/connections/{id}/tools  -> trigger one of them
- *
- * One route serves every provider helper (list Discord channels, list
- * Slack channels, resolve a Telegram chat, and whatever a future provider
- * declares), because the tool list and its parameter schema come from the
- * provider declaration rather than from per-helper routes.
- *
- * Ownership is enforced in the service layer by scoping the account lookup
- * to the calling principal, so another principal's connection id reports
- * not-found rather than forbidden.
- */
-
 const ConnectionIdSchema = z.guid();
 
-/** Trailing path segment is "tools", so the id is the one before it. */
 function extractConnectionId(requestUrl: string): string {
   const segments = new URL(requestUrl).pathname.split("/");
   return segments[segments.length - 2] ?? "";
@@ -58,8 +41,6 @@ export const GET = withRestEndpoint({
     });
 
     if (!discovery.ok) {
-      // A missing account is the caller's problem (404); an unconfigured
-      // provider is ours (500), and the message says which.
       return restErrorResponse(
         discovery.reason === "account_not_found" ? "not_found" : "internal_error",
         discovery.message,
@@ -138,8 +119,6 @@ export const POST = withRestEndpoint({
     });
 
     if (!toolResult.ok) {
-      // Distinct statuses per failure mode so a caller can tell a bad tool
-      // name from a missing parameter from an upstream provider failure.
       const statusKind =
         toolResult.reason === "account_not_found"
           ? "not_found"

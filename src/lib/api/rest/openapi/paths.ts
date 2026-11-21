@@ -60,9 +60,6 @@ import {
   PaginatedDeliveriesSchema,
 } from "./responseSchemas";
 
-/**
- * Helper to build a standard JSON request body spec.
- */
 function jsonBody(schema: ZodType) {
   return {
     content: { "application/json": { schema } },
@@ -70,9 +67,6 @@ function jsonBody(schema: ZodType) {
   };
 }
 
-/**
- * Helper to build a standard JSON response spec.
- */
 function jsonResponse(description: string, schema: ZodType) {
   return {
     description,
@@ -90,17 +84,10 @@ const errorResponses = {
   "503": jsonResponse("Service unavailable", ErrorResponseSchema),
 };
 
-/** PATCH and DELETE /v1/posts/{id}: the post's status does not allow the change. */
 const postConflictResponse = {
   "409": jsonResponse("Conflict", ErrorResponseSchema),
 };
 
-/**
- * OpenAPI path definitions for all v1 endpoints. Request bodies and query
- * parameters are the same Zod schemas the routes validate with;
- * buildOpenApiDocument renders them, and the response mirrors in
- * responseSchemas.ts, to JSON Schema through zod-openapi.
- */
 export const restPaths = {
   "/api/v1/posts": {
     post: {
@@ -396,7 +383,6 @@ export const restPaths = {
   },
 } satisfies ZodOpenApiPathsObject;
 
-// -- Helpers --
 
 function pathParam(name: string, description: string) {
   return { name, in: "path" as const, required: true, schema: { type: "string" as const }, description };

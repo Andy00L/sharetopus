@@ -3,12 +3,6 @@ import type { WebhookDeliveryDTO } from "@/lib/api/rest/openapi/responseSchemas"
 
 type WebhookDeliveryRow = typeof webhook_deliveries.$inferSelect;
 
-/**
- * Public DTO for a webhook delivery log entry; its shape is
- * WebhookDeliveryDTOSchema (responseSchemas.ts), the same schema the
- * OpenAPI spec renders. Excludes the full response_body (can be large) and
- * the raw payload jsonb.
- */
 export function toWebhookDeliveryDTO(
   row: WebhookDeliveryRow,
 ): WebhookDeliveryDTO {

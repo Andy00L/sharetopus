@@ -7,17 +7,10 @@ import {
   refinePostTarget,
 } from "@/lib/platforms/postTargetOptions";
 
-/**
- * Supported social platforms for REST API. Sourced from the shared
- * capability registry (src/lib/platforms/capabilities.ts): the seven
- * legacy adapters plus every registry provider, all of which the worker
- * can now publish to.
- */
 export const SocialPlatformEnum = z.enum(SCHEDULABLE_PLATFORMS);
 
 export const PostTypeEnum = z.enum(["text", "image", "video"]);
 
-/** Body of POST /v1/posts, flat like a publish_posts entry; scheduled_at schedules, no scheduled_at publishes now. */
 export const PostCreateInputSchema = z
   .object({
     social_account_id: z.guid(),
@@ -30,20 +23,14 @@ export const PostCreateInputSchema = z
     idempotency_key: z.string().min(1).max(200).optional(),
     batch_id: z.string().optional(),
 
-    // Pinterest-specific (meaningful when platform === "pinterest").
     pinterest_board_id: z.string().optional(),
     pinterest_board_name: z.string().optional(),
     pinterest_link: z.string().url().max(2048).optional(),
 
-    // Registry-provider options, shared with the MCP posting tools.
     ...REGISTRY_POST_OPTION_FIELDS,
   })
   .superRefine((data, ctx) => {
-    // Media type, required title, and required targets (Pinterest board,
-    // subreddit, Lemmy community, Google Business location): the same
-    // checks the MCP posting tools run.
     refinePostTarget(data, ctx);
-    // Image / video posts require media_storage_path.
     if (
       (data.post_type === "image" || data.post_type === "video") &&
       !data.media_storage_path
@@ -55,7 +42,6 @@ export const PostCreateInputSchema = z
       });
     }
 
-    // Vuln 1 fix: basic format guard. Server-side enforces principal ownership.
     if (data.media_storage_path && !data.media_storage_path.includes("/")) {
       ctx.addIssue({
         code: "custom",
@@ -64,7 +50,6 @@ export const PostCreateInputSchema = z
           "media_storage_path must include a principal prefix (format: {principal_id}/filename)",
       });
     }
-    // scheduled_at, if provided, must be a future timestamp.
     if (data.scheduled_at) {
       const scheduledTime = Date.parse(data.scheduled_at);
       if (Number.isNaN(scheduledTime) || scheduledTime <= Date.now()) {
@@ -79,10 +64,6 @@ export const PostCreateInputSchema = z
 
 export type PostCreateInput = z.infer<typeof PostCreateInputSchema>;
 
-/**
- * Query schema for GET /v1/posts.
- * Keyset pagination on (created_at, id); see src/lib/api/rest/pagination.ts.
- */
 export const PostListQuerySchema = z.object({
   status: z
     .enum([

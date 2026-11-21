@@ -16,7 +16,8 @@ import {
 import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** YouTube video titles are capped at 100 characters. sourceRef: videos.insert snippet.title docs. */
+// snippet.title "has a maximum length of 100 characters":
+// https://developers.google.com/youtube/v3/docs/videos
 export const YOUTUBE_TITLE_MAX_CHARS = 100;
 
 /**
@@ -31,17 +32,6 @@ export type YouTubePostResult =
   | { success: true; postId: string; postUrl: string; message: string }
   | PlatformPostFailure;
 
-/**
- * Upload one video to YouTube via the resumable upload protocol:
- *   1. POST /upload/youtube/v3/videos?uploadType=resumable with the metadata
- *      JSON; the session URL comes back in the Location header.
- *   2. PUT the video bytes to that session URL.
- *
- * sourceRef: https://developers.google.com/youtube/v3/docs/videos/insert
- * (resumable protocol: https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol)
- *
- * Called by: directPostForYouTubeAccounts
- */
 export async function postToYouTube({
   accessToken,
   title,

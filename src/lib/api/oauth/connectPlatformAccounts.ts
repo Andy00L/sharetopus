@@ -17,7 +17,6 @@ import { exchangeYouTubeCode } from "@/lib/api/youtube/data/exchangeYouTubeCode"
 import { getYouTubeProfile } from "@/lib/api/youtube/data/getYouTubeProfile";
 import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
-/** One connected account normalized for the social_accounts upsert. */
 export interface NormalizedConnectedAccount {
   accountIdentifier: string;
   displayName: string | null;
@@ -26,13 +25,8 @@ export interface NormalizedConnectedAccount {
   emailAddress: string | null;
   accessToken: string;
   refreshToken: string | null;
-  /** ISO expiry; null means the token never expires (Facebook Page tokens). */
   tokenExpiresAt: string | null;
   extra: Json;
-  /**
-   * Profile columns for platforms whose profile call returns them. Omitted,
-   * the upsert leaves those columns untouched.
-   */
   profileStats?: {
     isVerified: boolean;
     bioDescription: string | null;
@@ -47,23 +41,10 @@ export type ConnectAccountsResult =
 
 export interface ConnectAccountsInput {
   code: string;
-  /** The exact redirect URI the authorize URL carried. */
   redirectUri: string;
-  /** The PKCE verifier; required by X, null elsewhere. */
   codeVerifier: string | null;
 }
 
-/**
- * Exchanges an OAuth code and reads the connected account(s) for one of the
- * seven dedicated platforms. Facebook returns one entry per managed Page;
- * every other platform returns exactly one.
- *
- * Both connect flows go through here, so an account gets the same
- * identifier (and the same row) whichever flow connected it:
- *   - completeWebOAuthConnect: the web popup, redirect URI from env
- *   - handleOAuthCallback: x402, REST and share links, redirect URI from
- *     the social_connections row
- */
 export async function connectPlatformAccounts(
   platform: AdapterPlatform,
   input: ConnectAccountsInput,
@@ -86,11 +67,6 @@ export async function connectPlatformAccounts(
   }
 }
 
-/**
- * The social_accounts values for one connected account. Both connect flows
- * upsert with them, so a reconnect through either flow updates the row the
- * same way.
- */
 export function buildSocialAccountValues(
   principalId: string,
   platform: AdapterPlatform,
@@ -125,7 +101,6 @@ function toTokenExpiresAt(expiresInSeconds: number): string {
   return new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 }
 
-/** LinkedIn exposes no handle, so the member's name stands in for username. */
 async function connectLinkedInAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -163,10 +138,6 @@ async function connectLinkedInAccount(
   };
 }
 
-/**
- * The open_id from the token answer is the identity, so a creator who
- * withheld the profile scopes still connects, with placeholder fields.
- */
 async function connectTikTokAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -179,7 +150,6 @@ async function connectTikTokAccount(
     return { success: false, message: "TikTok returned no account id." };
   }
 
-  // Never throws: a failed call returns placeholder fields.
   const profile = await getTikTokProfile(tokens.access_token, tokens.open_id);
 
   return {
@@ -213,10 +183,6 @@ async function connectTikTokAccount(
   };
 }
 
-/**
- * The account id is the identity, so a profile that cannot be read fails
- * the connect instead of storing an account with an empty identifier.
- */
 async function connectPinterestAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -226,7 +192,6 @@ async function connectPinterestAccount(
   }
   const tokens = exchangeResult.data;
 
-  // Never throws: a failed call returns a placeholder with an empty id.
   const profile = await getPinterestProfile(tokens.access_token);
   if (!profile.id) {
     return { success: false, message: "Could not read the Pinterest account." };
@@ -262,11 +227,6 @@ async function connectPinterestAccount(
   };
 }
 
-/**
- * Keyed on the /me user_id, the professional account ID postToInstagram
- * publishes under. Instagram Login issues no refresh token: the long-lived
- * access token refreshes itself (refreshInstagramToken).
- */
 async function connectInstagramAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -309,7 +269,6 @@ async function connectInstagramAccount(
   };
 }
 
-/** The channel id is the identity, so the channel read is required. */
 async function connectYouTubeAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -346,7 +305,6 @@ async function connectYouTubeAccount(
   };
 }
 
-/** The user id is the identity, so the user read is required. */
 async function connectXAccount(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
@@ -387,11 +345,9 @@ async function connectXAccount(
   };
 }
 
-/**
- * One account per managed Page. The PAGE token is what every publish call
- * uses; page tokens minted from a long-lived user token do not expire, and
- * the user token itself is stored nowhere.
- */
+// Page tokens generated from a long-lived user token have no expiration date,
+// so Facebook rows store token_expires_at = null:
+// https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived
 async function connectFacebookPages(
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {

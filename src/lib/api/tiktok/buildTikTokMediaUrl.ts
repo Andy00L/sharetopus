@@ -8,19 +8,6 @@ type BuildTikTokMediaUrlResult =
   | { success: true; url: string; mode: TikTokMediaMode }
   | { success: false; message: string };
 
-/**
- * Dual-mode TikTok media URL builder. Reads TIKTOK_MEDIA_SOURCE env var
- * to select the mode:
- *   - "proxy" (default): routes through /api/media (Vercel streams bytes)
- *   - "supabase_direct": routes to Supabase Custom Domain (bypasses Vercel)
- *
- * If TIKTOK_MEDIA_SOURCE=supabase_direct but SUPABASE_CUSTOM_STORAGE_DOMAIN
- * is empty, returns a clean error. Does NOT silently fall back to proxy
- * (that would mask misconfiguration).
- *
- * Returns: { success, url, mode } or { success: false, message }.
- * Persists: nothing.
- */
 export async function buildTikTokMediaUrl(input: {
   mediaPath: string;
   principalId: string;
@@ -51,7 +38,6 @@ export async function buildTikTokMediaUrl(input: {
     return { success: true, url: result.url, mode: "proxy" };
   }
 
-  // supabase_direct mode
   const result = await buildSupabaseDirectTikTokMediaUrl({
     mediaPath: input.mediaPath,
     expiresInSeconds: input.expiresInSeconds,

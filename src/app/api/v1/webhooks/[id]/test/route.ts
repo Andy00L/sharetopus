@@ -14,19 +14,11 @@ import { webhook_deliveries, webhook_subscriptions } from "@/db/schema";
 const SubscriptionIdSchema = z.guid();
 const DELIVERY_TIMEOUT_MS = 10_000;
 
-/**
- * POST /v1/webhooks/[id]/test -- send a synthetic event to the subscription URL.
- *
- * Delivers synchronously (not via Inngest) so the response carries
- * the actual delivery outcome for instant debugging feedback.
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.test",
   handler: async (ctx, request) => {
-    // Step 1: extract subscription ID from URL.
     const urlSegments = new URL(request.url).pathname.split("/");
-    // Path: /api/v1/webhooks/[id]/test -> id is second-to-last.
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
     const idParseResult = SubscriptionIdSchema.safeParse(idCandidate);
@@ -39,12 +31,18 @@ export const POST = withRestEndpoint({
     }
     const subscriptionId = idParseResult.data;
 
-    // Step 2: parse optional body.
+    const bodyText = await request.text();
     let rawBody: unknown = {};
-    try {
-      rawBody = await request.json();
-    } catch {
-      // Empty body is fine for test endpoint.
+    if (bodyText.trim() !== "") {
+      try {
+        rawBody = JSON.parse(bodyText);
+      } catch {
+        return restErrorResponse(
+          "validation_error",
+          "Request body is not valid JSON",
+          ctx.requestId,
+        );
+      }
     }
 
     const bodyParseResult = WebhookTestInputSchema.safeParse(rawBody);
@@ -52,7 +50,6 @@ export const POST = withRestEndpoint({
       ? (bodyParseResult.data.event_type ?? "webhook.test")
       : "webhook.test";
 
-    // Step 3: load subscription.
     const { data: subscriptionRows, error: loadError } = await runQuery(
       db
         .select({
@@ -89,7 +86,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: build payload + sign.
     const deliveryId = crypto.randomUUID();
     const bodyString = JSON.stringify({
       event_type: eventType,
@@ -103,7 +99,6 @@ export const POST = withRestEndpoint({
       subscriptionRow.secret,
     );
 
-    // Step 5: deliver synchronously (SSRF-guarded, IP-pinned at delivery).
     const startedAt = Date.now();
     const { statusCode, responseBody, errorMessage } =
       await deliverSignedWebhook(subscriptionRow.url, {
@@ -122,9 +117,6 @@ export const POST = withRestEndpoint({
     const wasSuccess =
       statusCode !== null && statusCode >= 200 && statusCode < 300;
 
-    // Step 6: persist delivery record. The receiver already got the event,
-    // so a failed insert is logged and the response still reports the
-    // delivery outcome.
     const { error: deliveryLogError } = await runQuery(
       db.insert(webhook_deliveries).values({
         id: deliveryId,

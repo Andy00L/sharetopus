@@ -5,20 +5,18 @@ import { z } from "zod";
 import { requestCodeExchange } from "@/lib/api/oauth/requestCodeExchange";
 import type { TokenExchangeResult } from "@/lib/types/dbTypes";
 
-/** 60 days in seconds, the documented long-lived token lifetime. */
-const LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
+// Only a long-lived Instagram token can be refreshed, and a refreshed token is
+// valid for 60 days, so the short-lived token from the code is exchanged for a
+// long-lived one at once:
+// https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token
+export const INSTAGRAM_LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
 
-/**
- * One short-lived token entry. user_id arrives as a string or a number
- * depending on the API surface; it is normalized to a string below.
- */
 const InstagramTokenEntrySchema = z.object({
   access_token: z.string().min(1),
   user_id: z.union([z.string().min(1), z.number()]),
   permissions: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
-/** The short-lived answer is { data: [entry] } or the entry itself. */
 const InstagramShortLivedSchema = z.union([
   z.object({ data: z.array(InstagramTokenEntrySchema).nonempty() }),
   InstagramTokenEntrySchema,
@@ -33,22 +31,6 @@ const InstagramLongLivedSchema = z.object({
   expires_in: z.number().optional(),
 });
 
-/**
- * Exchanges an Instagram Login code for a LONG-LIVED access token.
- *
- * Two phases:
- *   1. code -> short-lived token (1 hour) from api.instagram.com
- *   2. short-lived -> long-lived token (60 days) from graph.instagram.com
- *
- * Phase 2 is required: refreshInstagramToken can only renew a long-lived
- * token, so a stored short-lived one would die within the hour with no way
- * back. Instagram Login issues no refresh token at all; the answer carries
- * none, where this function used to return the string "null".
- *
- * `redirectUri` must be the exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeInstagramCode(
   code: string,
   redirectUri: string,
@@ -95,7 +77,7 @@ export async function exchangeInstagramCode(
     success: true,
     data: {
       access_token: longLived.answer.access_token,
-      expires_in: longLived.answer.expires_in ?? LONG_LIVED_FALLBACK_SECONDS,
+      expires_in: longLived.answer.expires_in ?? INSTAGRAM_LONG_LIVED_FALLBACK_SECONDS,
       user_id: String(tokenEntry.user_id),
       scope: Array.isArray(tokenEntry.permissions)
         ? tokenEntry.permissions.join(",")

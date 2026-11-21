@@ -14,17 +14,10 @@ import { verifyWebhookUrl } from "@/lib/api/rest/webhooks/verifyWebhookConfig";
 import { db, runQuery } from "@/db/client";
 import { webhook_subscriptions } from "@/db/schema";
 
-/**
- * POST /v1/webhooks -- create a webhook subscription.
- *
- * Returns the full secret ONCE in the response. Subsequent GET
- * responses only show the DTO (secret stripped).
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.create",
   handler: async (ctx, request) => {
-    // Step 1: parse JSON body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -36,7 +29,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 2: Zod validate.
     const validationResult = WebhookCreateInputSchema.safeParse(rawBody);
     if (!validationResult.success) {
       return restErrorResponse(
@@ -48,7 +40,6 @@ export const POST = withRestEndpoint({
     }
     const validatedInput = validationResult.data;
 
-    // Step 3: validate URL (https, no private IPs).
     const urlCheck = await verifyWebhookUrl(validatedInput.url);
     if (!urlCheck.valid) {
       return restErrorResponse(
@@ -58,7 +49,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 4: generate secret and insert.
     const webhookSecret = generateWebhookSecret();
     const { data: subscriptionRows, error: insertError } = await runQuery(
       db
@@ -85,7 +75,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Return the DTO plus the full secret (shown once at creation).
     const subscriptionDto = toWebhookSubscriptionDTO(subscriptionRow);
 
     return {
@@ -101,9 +90,6 @@ export const POST = withRestEndpoint({
   },
 });
 
-/**
- * GET /v1/webhooks -- list webhook subscriptions for the principal.
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.webhooks.list",

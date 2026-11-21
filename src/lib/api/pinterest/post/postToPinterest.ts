@@ -18,12 +18,6 @@ export type PinterestPostResult =
     }
   | PlatformPostFailure;
 
-/**
- * Creates one pin. An image pin hands Pinterest the public mediaUrl to pull;
- * a video pin registers a media upload, streams the file from storage,
- * waits for processing, then creates the pin.
- * sourceRef: https://developers.pinterest.com/docs/api/v5/pins-create
- */
 export async function postToPinterest({
   accessToken,
   boardId,

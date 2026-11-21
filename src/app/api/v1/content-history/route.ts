@@ -13,20 +13,10 @@ import { ContentHistoryQuerySchema } from "@/lib/api/rest/validation/analyticsSc
 import { db, runQuery } from "@/db/client";
 import { content_history } from "@/db/schema";
 
-/**
- * GET /v1/content-history -- list published content history.
- *
- * Queries content_history directly (same table the shared
- * getContentHistory helper reads). Direct query here because
- * the helper joins social_accounts for avatar_url which the
- * REST DTO does not expose, and has its own rate limiting.
- * Keyset pagination on (created_at, id).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.content_history.list",
   handler: async (ctx, request) => {
-    // Step 1: parse query string.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -42,8 +32,6 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 2: query scoped to principal. and() skips the optional filters
-    // left undefined.
     const { data: fetchedRows, error: queryError } = await runQuery(
       db
         .select()
@@ -72,7 +60,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 3: compute pagination.
     const { pageRows, nextCursor } = toListPage(
       fetchedRows,
       query.limit,

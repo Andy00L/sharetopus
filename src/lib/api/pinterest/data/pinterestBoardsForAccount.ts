@@ -15,21 +15,10 @@ import {
   type PinterestBoardsResponse,
 } from "./getPinterestBoards";
 
-/** createPinterestBoardForAccount calls per user per minute. */
-
 type ResolvedPinterestAccount =
   | { success: true; accessToken: string; userId: string }
   | { success: false; message: string };
 
-/**
- * Resolves a Pinterest access token for a board operation entirely
- * server-side: the caller identifies the account by id only. Validates the
- * Clerk session, checks the account belongs to the caller, then refreshes
- * the token if needed (ensureValidToken persists rotations). The token
- * never crosses to the client.
- *
- * Tables touched: social_accounts (read + update on token refresh).
- */
 async function resolvePinterestAccessToken(
   socialAccountId: string,
 ): Promise<ResolvedPinterestAccount> {
@@ -53,8 +42,6 @@ async function resolvePinterestAccessToken(
       )
       .limit(1),
   );
-  // A failed read is not a missing account: "not found" would send the
-  // user off to reconnect an account that is still connected.
   if (accountError) {
     console.error(
       "[resolvePinterestAccessToken] Account fetch failed:",
@@ -103,10 +90,6 @@ async function resolvePinterestAccessToken(
   return { success: true, accessToken: tokenResult.token, userId };
 }
 
-/**
- * Server Action: lists Pinterest boards for one of the caller's accounts.
- * Client components call this with an account id instead of a token.
- */
 export async function getPinterestBoardsForAccount(
   socialAccountId: string,
   options?: { pageSize?: number; bookmark?: string },
@@ -122,10 +105,6 @@ type CreateBoardForAccountResult =
   | { success: true; board: PinterestBoard }
   | { success: false; message: string };
 
-/**
- * Server Action: creates a Pinterest board on one of the caller's
- * accounts. Rate limited per user; the token stays server-side.
- */
 export async function createPinterestBoardForAccount(
   socialAccountId: string,
   name: string,

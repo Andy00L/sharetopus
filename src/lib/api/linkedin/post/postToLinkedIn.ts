@@ -177,12 +177,6 @@ async function uploadMediaAsset({
   return { success: true, assetUrn };
 }
 
-/**
- * Publishes one share through v2/ugcPosts for a member or an organization
- * author. Image and video shares upload the bytes as an asset first; a text
- * post with a link becomes an ARTICLE share.
- * sourceRef: https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin
- */
 export async function postToLinkedIn({
   accessToken,
   authorUrn,

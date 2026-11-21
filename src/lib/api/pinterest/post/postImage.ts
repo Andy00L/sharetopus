@@ -14,7 +14,6 @@ import {
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { PinterestPostResult } from "./postToPinterest";
 
-/** POST /v5/pins answer: the pin id, the rest kept for the result's data. */
 const CreatedPinSchema = z.looseObject({ id: z.string().min(1) });
 
 const PIN_REQUEST_TIMEOUT_MS: Record<"image" | "video", number> = {
@@ -22,10 +21,6 @@ const PIN_REQUEST_TIMEOUT_MS: Record<"image" | "video", number> = {
   video: PLATFORM_PUBLISH_TIMEOUT_MS,
 };
 
-/**
- * Sends one POST /v5/pins request and reads the created pin. Shared by the
- * image and video flows, since both end with this publishing request.
- */
 export async function createPin({
   accessToken,
   pinBody,
@@ -81,7 +76,6 @@ export async function createPin({
   }
 }
 
-/** Creates an image pin that Pinterest pulls from the public mediaUrl. */
 export async function createImagePin({
   accessToken,
   boardId,

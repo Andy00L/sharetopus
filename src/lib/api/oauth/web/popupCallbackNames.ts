@@ -10,7 +10,6 @@ const POPUP_CALLBACK_PREFIXES = {
   facebook: "Facebook",
 } as const satisfies Record<AdapterPlatform, string>;
 
-/** window.opener callbacks the connect popup calls; client-safe so the connect button registers the same names. */
 export function popupCallbackNames(platform: AdapterPlatform) {
   const prefix = POPUP_CALLBACK_PREFIXES[platform];
   return {

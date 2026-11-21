@@ -9,6 +9,7 @@ import {
   buildUnreadableAnswerFailure,
   type PlatformPostFailure,
 } from "@/lib/api/_shared/platformFailure";
+import { META_GRAPH_API_VERSION } from "@/lib/api/_shared/metaGraphApiVersion";
 import {
   PLATFORM_API_TIMEOUT_MS,
   PLATFORM_IMAGE_PULL_TIMEOUT_MS,
@@ -16,7 +17,7 @@ import {
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-const INSTAGRAM_GRAPH_BASE_URL = "https://graph.instagram.com/v23.0";
+const INSTAGRAM_GRAPH_BASE_URL = `https://graph.instagram.com/${META_GRAPH_API_VERSION}`;
 
 const CONTAINER_POLL_INITIAL_INTERVAL_MS = 3_000;
 const CONTAINER_POLL_MAX_INTERVAL_MS = 15_000;
@@ -24,10 +25,8 @@ const CONTAINER_READY_DEADLINE_MS = 150_000;
 
 const CreatedObjectSchema = z.object({ id: z.string().min(1) });
 
-/**
- * Container status_code values: EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED.
- * sourceRef: https://developers.facebook.com/docs/instagram-platform/reference/ig-container
- */
+// Container status_code values: EXPIRED, ERROR, FINISHED, IN_PROGRESS, PUBLISHED.
+// https://developers.facebook.com/docs/instagram-platform/content-publishing
 const ContainerStatusSchema = z.object({ status_code: z.string() });
 
 const MediaPermalinkSchema = z.object({ permalink: z.string().optional() });
@@ -147,10 +146,6 @@ function waitFor(durationMs: number): Promise<void> {
   return new Promise((resolveWait) => setTimeout(resolveWait, durationMs));
 }
 
-/**
- * Publishing a container that is still processing fails, so this waits for
- * FINISHED. A status check that fails is retried until the deadline.
- */
 async function waitForContainerReady(
   accessToken: string,
   containerId: string,
@@ -210,11 +205,6 @@ async function readMediaPermalink(
   }
 }
 
-/**
- * Publishes one image or Reel: create a media container that Instagram pulls
- * from mediaUrl, wait until it is FINISHED, then media_publish it.
- * sourceRef: https://developers.facebook.com/docs/instagram-platform/content-publishing
- */
 export async function postToInstagram(input: {
   accessToken: string;
   igUserId: string;

@@ -16,19 +16,15 @@ import {
 import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 
-/** One chunk APPEND moves at most 4 MB; 60s covers it on a slow link. */
 const APPEND_TIMEOUT_MS = 60_000;
-/** Chunk size in bytes. X accepts 1 MB to 4 MB per APPEND segment. sourceRef: docs.x.com chunked media upload quickstart. */
+// X asks for APPEND segments at or below 5 MB:
+// https://docs.x.com/x-api/media/quickstart/media-upload-chunked
 const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
-/** Max STATUS polls while X processes a video before giving up. */
 const MAX_PROCESSING_POLLS = 10;
-/** Fallback wait between STATUS polls when X omits check_after_secs, in seconds. */
 const DEFAULT_POLL_WAIT_SECONDS = 3;
 
-/**
- * Media id envelope shared by initialize/finalize/status responses.
- * sourceRef: https://docs.x.com/x-api/media/quickstart/media-upload-chunked
- */
+// Initialize, finalize and status answer:
+// https://docs.x.com/x-api/media/quickstart/media-upload-chunked
 const XMediaSchema = z.object({
   data: z.object({
     id: z.string().min(1),
@@ -41,9 +37,7 @@ const XMediaSchema = z.object({
   }),
 });
 
-/**
- * Tweet create response. sourceRef: https://docs.x.com POST /2/tweets
- */
+// POST /2/tweets answer: https://docs.x.com/x-api/posts/create-post
 const XTweetSchema = z.object({
   data: z.object({
     id: z.string().min(1),
@@ -55,22 +49,6 @@ export type XPostResult =
   | { success: true; postId: string; postUrl: string; message: string }
   | PlatformPostFailure;
 
-/**
- * Publish one tweet, optionally with one image or video.
- *
- * Media uses the v2 chunked upload flow (the dedicated endpoints that
- * replaced command-style /2/media/upload in May 2025):
- *   1. POST /2/media/upload/initialize (JSON)
- *   2. POST /2/media/upload/{id}/append (multipart, 4 MB segments)
- *   3. POST /2/media/upload/{id}/finalize
- *   4. GET  /2/media/upload?command=STATUS while X processes video
- * then POST /2/tweets with media.media_ids.
- *
- * sourceRef: https://docs.x.com/x-api/media/quickstart/media-upload-chunked
- * Requires the media.write scope on the user token for media uploads.
- *
- * Called by: directPostForXAccounts
- */
 export async function postToX({
   accessToken,
   text,
@@ -84,7 +62,6 @@ export async function postToX({
   buffer?: Buffer;
   mediaType?: string;
   postType: "text" | "image" | "video";
-  /** Handle used to build the public post URL; falls back to /i/status. */
   username?: string;
 }): Promise<XPostResult> {
   if (!accessToken) {

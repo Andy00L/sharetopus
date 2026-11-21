@@ -8,17 +8,10 @@ import { generateServerSignedUploadUrl } from "@/actions/server/data/generateSer
 
 const UPLOAD_URL_EXPIRY_SECONDS = 7200;
 
-/**
- * POST /v1/media/upload-url -- request a signed upload URL.
- *
- * Reuses generateServerSignedUploadUrl (same helper web + MCP use).
- * Validates content type, per-file size cap, and storage quota.
- */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.upload_url",
   handler: async (ctx, request) => {
-    // Step 1: parse JSON body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -30,7 +23,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 2: Zod validate.
     const validationResult = UploadUrlInputSchema.safeParse(rawBody);
     if (!validationResult.success) {
       return restErrorResponse(
@@ -42,7 +34,6 @@ export const POST = withRestEndpoint({
     }
     const validatedInput = validationResult.data;
 
-    // Step 3: delegate to shared helper (handles content type, size cap, quota).
     const uploadResult = await generateServerSignedUploadUrl({
       principalId: ctx.principal.principalId,
       tier: ctx.principal.plan,
@@ -53,7 +44,6 @@ export const POST = withRestEndpoint({
     });
 
     if (!uploadResult.success) {
-      // Map helper reason to REST error code.
       const errorCode =
         uploadResult.reason === "storage_quota_exceeded"
           ? "forbidden"

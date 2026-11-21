@@ -17,19 +17,6 @@ import { isX402Platform, getAppUrl } from "@/lib/x402/config";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-/**
- * GET /api/oauth/callback/linkedin?code=...&state=...
- * GET /api/oauth/callback/tiktok?code=...&state=...
- * etc.
- *
- * Shared OAuth callback for x402-originated and REST-originated
- * connections. No Clerk session required. State param validation
- * via social_connections row lookup is the only auth.
- *
- * Rate limit: 60/min per IP (x402_oauth_callback scope). The endpoint is
- * unauthenticated and triggers DB lookups plus outbound provider calls, so
- * it must not be free to hammer.
- */
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ platform: string }> }
@@ -41,7 +28,6 @@ export async function GET(
 
   const platformParam = params.platform;
 
-  // Validate platform
   if (!isX402Platform(platformParam)) {
     return new NextResponse(
       buildHtmlPage(
@@ -54,7 +40,6 @@ export async function GET(
 
   const platform = platformParam;
 
-  // Audit rows are written after the response is sent.
   const auditCallback = (resultStatus: X402AuditEntry["resultStatus"]): void => {
     const auditEntry: X402AuditEntry = {
       principal: null,
@@ -69,7 +54,6 @@ export async function GET(
     after(() => logX402Call(auditEntry));
   };
 
-  // Rate limit before any DB or provider work.
   const rateLimitResult = await checkRateLimit({
     operation: "x402_oauth_callback",
     identifier: null,
@@ -95,7 +79,6 @@ export async function GET(
     );
   }
 
-  // Parse query params
   const url = new URL(request.url);
   const code = url.searchParams.get("code") ?? "";
   const state = url.searchParams.get("state") ?? "";
@@ -112,9 +95,6 @@ export async function GET(
     );
   }
 
-  // A hit with neither a code nor a provider error is not a real callback;
-  // rejecting it here keeps a stray request from burning the pending
-  // connection with a doomed token exchange.
   if (!code && !errorCode) {
     return new NextResponse(
       buildHtmlPage(
@@ -125,7 +105,6 @@ export async function GET(
     );
   }
 
-  // Process callback via shared handler (looks up social_connections by state)
   const result = await handleOAuthCallback({
     platform,
     code,
@@ -144,7 +123,6 @@ export async function GET(
 
     auditCallback("error");
 
-    // Share-link flows redirect to the share error page instead of inline HTML
     if (result.error.kind.startsWith("share_link_") || result.error.kind.startsWith("owner_")) {
       return NextResponse.redirect(
         `${appUrl}/share/${platform}/error?reason=${encodeURIComponent(result.error.kind)}`,
@@ -167,7 +145,6 @@ export async function GET(
 
   auditCallback("ok");
 
-  // Share-link flows redirect to the share success page
   if (result.shareLinkId) {
     const maskedAccount = result.accountUsername
       ? encodeURIComponent(result.accountUsername)
@@ -186,14 +163,6 @@ export async function GET(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Error status mapping
-// ---------------------------------------------------------------------------
-
-/**
- * Failure pages carry non-2xx statuses so agents and monitoring can tell a
- * failed callback from a successful one without parsing HTML.
- */
 function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
   switch (kind) {
     case "state_not_found":
@@ -208,8 +177,6 @@ function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
       return 500;
     case "temporarily_unavailable":
       return 503;
-    // Share-link kinds redirect before reaching here; this keeps the switch
-    // total if that ever changes.
     case "share_link_not_found":
     case "share_link_revoked":
     case "share_link_expired":
@@ -220,12 +187,7 @@ function mapCallbackErrorToHttpStatus(kind: CallbackErrorKind): number {
   }
 }
 
-// ---------------------------------------------------------------------------
-// HTML page builder
-// ---------------------------------------------------------------------------
-
 function buildHtmlPage(title: string, message: string): string {
-  // Escape HTML entities to prevent XSS
   const safeTitle = escapeHtml(title);
   const safeMessage = escapeHtml(message);
 

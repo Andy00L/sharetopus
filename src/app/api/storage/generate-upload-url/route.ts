@@ -70,8 +70,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // A failed subscription read is ours: 503 and a retry,
-    // never a "subscription required" to a paying user.
     const subscriptionCheck = await checkActiveSubscription(userId);
     if (subscriptionCheck.status === "unavailable") {
       return NextResponse.json(

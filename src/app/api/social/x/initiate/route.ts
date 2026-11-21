@@ -1,13 +1,6 @@
 import { initiateWebOAuth } from "@/lib/api/oauth/web/initiateWebOAuth";
 import type { NextResponse } from "next/server";
 
-/**
- * POST /api/social/x/initiate
- *
- * Starts the X OAuth 2.0 popup flow. X mandates PKCE, so initiateWebOAuth
- * mints a code_verifier cookie and passes the S256 challenge here.
- * sourceRef: https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token
- */
 export async function POST(): Promise<NextResponse> {
   return initiateWebOAuth({
     platform: "x",
@@ -29,8 +22,6 @@ export async function POST(): Promise<NextResponse> {
         };
       }
 
-      // tweet.write publishes; media.write uploads media; offline.access
-      // issues the (rotating) refresh token.
       const scopes = [
         "tweet.read",
         "tweet.write",

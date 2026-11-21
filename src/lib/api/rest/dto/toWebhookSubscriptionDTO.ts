@@ -3,12 +3,6 @@ import type { WebhookSubscriptionDTO } from "@/lib/api/rest/openapi/responseSche
 
 type WebhookSubscriptionRow = typeof webhook_subscriptions.$inferSelect;
 
-/**
- * Public DTO for a webhook subscription; its shape is
- * WebhookSubscriptionDTOSchema (responseSchemas.ts), the same schema the
- * OpenAPI spec renders. The secret is never part of it: POST /v1/webhooks
- * returns it once, in WebhookSubscriptionCreated.
- */
 export function toWebhookSubscriptionDTO(
   row: WebhookSubscriptionRow,
 ): WebhookSubscriptionDTO {

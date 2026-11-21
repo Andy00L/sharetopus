@@ -41,11 +41,6 @@ type LinkedInPassthrough = {
   config: DirectPostConfig;
 };
 
-/**
- * Publish one post to one LinkedIn member via the shared direct-post
- * pipeline. Only called from the Inngest workers (post.now and post.due),
- * which already rate limit at the batch layer.
- */
 export async function directPostForLinkedInAccounts(
   config: DirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

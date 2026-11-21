@@ -1,13 +1,6 @@
 import { initiateWebOAuth } from "@/lib/api/oauth/web/initiateWebOAuth";
 import type { NextResponse } from "next/server";
 
-/**
- * POST /api/social/youtube/initiate
- *
- * Starts the YouTube (Google) OAuth popup flow. access_type=offline plus
- * prompt=consent forces Google to issue a refresh_token on every connect.
- * sourceRef: https://developers.google.com/identity/protocols/oauth2/web-server
- */
 export async function POST(): Promise<NextResponse> {
   return initiateWebOAuth({
     platform: "youtube",
@@ -25,13 +18,14 @@ export async function POST(): Promise<NextResponse> {
         };
       }
 
-      // youtube.upload publishes videos; youtube.readonly reads the channel
-      // for the profile stored on the account row.
       const scopes = [
         "https://www.googleapis.com/auth/youtube.upload",
         "https://www.googleapis.com/auth/youtube.readonly",
       ].join(" ");
 
+      // Google returns a refresh token only for access_type=offline, and
+      // prompt=consent makes it issue a new one on a reconnect:
+      // https://developers.google.com/identity/protocols/oauth2/web-server#offline
       const url =
         `https://accounts.google.com/o/oauth2/v2/auth` +
         `?client_id=${clientId}` +

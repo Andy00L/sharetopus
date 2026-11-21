@@ -1,12 +1,6 @@
 import { initiateWebOAuth } from "@/lib/api/oauth/web/initiateWebOAuth";
 import type { NextResponse } from "next/server";
 
-/**
- * POST /api/social/pinterest/initiate
- *
- * Starts the Pinterest OAuth popup flow. The web flow also asks for the
- * catalogs:* scopes, which buildOAuthUrl (the x402 flow) leaves out.
- */
 export async function POST(): Promise<NextResponse> {
   return initiateWebOAuth({
     platform: "pinterest",

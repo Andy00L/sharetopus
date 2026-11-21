@@ -54,7 +54,8 @@ const TIKTOK_REASON_BY_CODE = new Map<string, PlatformFailureReason>([
   ["privacy_level_option_mismatch", "policy_rejected"],
 ]);
 
-// https://developers.google.com/youtube/v3/docs/errors
+// https://developers.google.com/youtube/v3/docs/errors and
+// https://developers.google.com/youtube/v3/docs/core_errors (userRateLimitExceeded).
 const YOUTUBE_RATE_LIMIT_REASONS = new Set([
   "quotaExceeded",
   "rateLimitExceeded",
@@ -200,10 +201,6 @@ function classifyPlatformBody(
   }
 }
 
-/**
- * Reads the reason from the platform's own error code first, then from the
- * HTTP status. Exported for tests.
- */
 export function classifyPlatformHttpFailure(input: {
   platform: Platform;
   httpStatus: number;
@@ -226,10 +223,6 @@ export function classifyPlatformHttpFailure(input: {
   };
 }
 
-/**
- * A non-2xx answer. Only a 5xx answer to the request that publishes can
- * hide a published post; any other refusal published nothing.
- */
 export function buildHttpFailure(input: {
   platform: Platform;
   action: string;
@@ -254,7 +247,6 @@ export function buildHttpFailure(input: {
   };
 }
 
-/** The request never got an answer (DNS, reset, timeout). */
 export function buildNetworkFailure(input: {
   action: string;
   requestError: unknown;
@@ -267,7 +259,6 @@ export function buildNetworkFailure(input: {
   };
 }
 
-/** A 2xx answer this code cannot read, so whether it published is unknown. */
 export function buildUnreadableAnswerFailure(input: {
   action: string;
   isPublishRequest: boolean;
@@ -279,7 +270,6 @@ export function buildUnreadableAnswerFailure(input: {
   };
 }
 
-/** Our own check refused the post before any platform request. */
 export function buildInputFailure(error: string): PlatformPostFailure {
   return {
     success: false,

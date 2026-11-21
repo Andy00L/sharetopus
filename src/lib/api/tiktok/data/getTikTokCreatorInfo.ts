@@ -11,7 +11,6 @@ import { describeNetworkError } from "@/lib/net/describeNetworkError";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { PrivacyLevel } from "@/lib/types/dbTypes";
 
-/** creator_info `data`; the composer reads every field. */
 export type CreatorInfoData = {
   creator_avatar_url: string;
   creator_username: string;
@@ -23,10 +22,7 @@ export type CreatorInfoData = {
   max_video_post_duration_sec: number;
 };
 
-/**
- * The privacy levels creator_info returns. sourceRef:
- * developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
- */
+// The privacy levels creator_info returns: https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
 const TikTokPrivacyLevelSchema = z.enum([
   "PUBLIC_TO_EVERYONE",
   "MUTUAL_FOLLOW_FRIENDS",
@@ -34,7 +30,6 @@ const TikTokPrivacyLevelSchema = z.enum([
   "SELF_ONLY",
 ]);
 
-/** Validates creator_info `data`; a privacy level TikTok adds later is dropped, not fatal. */
 const CreatorInfoDataSchema = z.object({
   creator_avatar_url: z.string(),
   creator_username: z.string(),
@@ -51,7 +46,6 @@ const CreatorInfoDataSchema = z.object({
   max_video_post_duration_sec: z.number(),
 });
 
-/** The envelope every creator_info answer carries, 2xx or not; `data` is checked separately. */
 const CreatorInfoResponseSchema = z.object({
   data: z.unknown().optional(),
   error: z
@@ -64,12 +58,10 @@ type GetCreatorInfoResult =
   | { success: true; data: CreatorInfoData }
   | { success: false; message: string; failure: PlatformFailure };
 
-/**
- * User-facing messages for the creator_info error codes a creator can act
- * on. The three posting-limit codes mean the post must stop and the user
- * try again later (Content Sharing Guidelines). sourceRef:
- * developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
- */
+// creator_info error codes: https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
+// When creator_info says the creator cannot post now, "API Clients must stop the
+// current publishing attempt and prompt users to try again later":
+// https://developers.tiktok.com/doc/content-sharing-guidelines
 const CREATOR_INFO_ERROR_MESSAGES: Record<string, string> = {
   spam_risk_too_many_posts:
     "This account has reached TikTok's daily posting limit. Please try again later.",
@@ -85,11 +77,6 @@ const CREATOR_INFO_ERROR_MESSAGES: Record<string, string> = {
     "TikTok is receiving too many requests. Please wait a minute and try again.",
 };
 
-/**
- * Fetches TikTok creator info for the Content Posting API.
- * Returns privacy_level_options, interaction flags, and creator display info.
- * https://developers.tiktok.com/doc/content-posting-api-reference-direct-post-video
- */
 export async function getTikTokCreatorInfo(
   accessToken: string
 ): Promise<GetCreatorInfoResult> {
@@ -115,8 +102,6 @@ export async function getTikTokCreatorInfo(
       }
     );
 
-    // TikTok answers errors with a 4xx status AND the error envelope, so the
-    // code is read before the status decides anything.
     const responseText = await response.text();
     const parsedEnvelope = CreatorInfoResponseSchema.safeParse(
       parseJsonObject(responseText),

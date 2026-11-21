@@ -37,15 +37,6 @@ type YouTubePassthrough = {
   config: YouTubeDirectPostConfig;
 };
 
-/**
- * Publish one video to one YouTube channel via the shared direct-post
- * pipeline. Only called from the Inngest workers (post.now and post.due),
- * which already rate limit at the batch layer, so no per-account
- * checkRateLimit hook here.
- *
- * YouTube accepts video only; the platform compatibility check rejects
- * text/image upstream and validate() backstops it.
- */
 export async function directPostForYouTubeAccounts(
   config: YouTubeDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {
@@ -97,7 +88,8 @@ export async function directPostForYouTubeAccounts(
       },
       call: async (accessToken, passthrough) => {
         const content = passthrough.config.accountContent;
-        // YouTube requires a non-empty title; fall back to the caption head.
+        // YouTube refuses an empty title with invalidTitle:
+        // https://developers.google.com/youtube/v3/docs/errors
         const resolvedTitle =
           content.title?.trim() ||
           content.description.trim().slice(0, YOUTUBE_TITLE_MAX_CHARS) ||

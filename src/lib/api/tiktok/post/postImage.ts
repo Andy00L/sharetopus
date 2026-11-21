@@ -11,16 +11,12 @@ import { z } from "zod";
 import type { TikTokPostResult } from "./postToTikTok";
 import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
-/**
- * Direct Post init answer (photo and video): the publish_id the status
- * poll tracks. Also read by handleVideoPost.
- * sourceRef: developers.tiktok.com/doc/content-posting-api-reference-direct-post
- */
+// Direct Post init answer:
+// https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 export const TikTokPostInitSchema = z.object({
   data: z.object({ publish_id: z.string() }),
 });
 
-/** Starts a TikTok photo Direct Post that TikTok pulls from media_url. */
 export async function handleImagePost({
   accessToken,
   title,

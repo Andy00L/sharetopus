@@ -11,20 +11,6 @@ import type { PrincipalResolution } from "@/lib/types/principal";
 import { isLastUseStale } from "@/lib/api/isLastUseStale";
 import type { RestPrincipal } from "./types";
 
-/**
- * Resolves a Bearer token into a RestPrincipal.
- *
- * Pipeline:
- *   1. Format check (must start with "stp_rest_")
- *   2. DB lookup by token_hash (kind='rest', not revoked)
- *   3. Expiry check (expires_at > now, or null)
- *   4. Subscription gate (active subscription required)
- *   5. last_used_at + last_used_ip update after the response, at most once
- *      per LAST_USED_WRITE_INTERVAL_MS per key
- *
- * "rejected" when a check fails, "unavailable" when a database read failed
- * on the way. Never throws. The caller (HOF) answers 401 and 503.
- */
 export async function resolveRestApiKey(
   bearerToken: string,
   clientIpHash: string | null,
@@ -111,11 +97,6 @@ export async function resolveRestApiKey(
   }
 }
 
-/**
- * Sets api_keys.last_used_at to now and last_used_ip to the hashed client
- * IP. Errors are logged, never raised: last-use tracking is observability
- * data, not an auth gate, and rest_audit_log keeps the per-request trail.
- */
 async function updateLastUsedFields(
   apiKeyId: string,
   clientIpHash: string | null,

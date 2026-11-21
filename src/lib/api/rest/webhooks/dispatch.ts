@@ -29,14 +29,6 @@ type WebhookDelivery = {
 
 type StoredWebhookDelivery = Omit<WebhookDelivery, "payload"> & { payload: unknown };
 
-/**
- * Queues one delivery of one stored event to one subscription as a
- * webhook.dispatch.v1 Inngest event; the deliver-webhook worker signs,
- * sends, retries and records it. Deliveries of the same event share
- * eventId. Used by the replay endpoint, which must reach only the
- * subscription being replayed. The payload comes from a stored row, so it
- * is parsed with the event schema here.
- */
 export async function sendWebhookDispatchEvent(
   storedDelivery: StoredWebhookDelivery,
 ): Promise<WebhookDispatchSendResult> {
@@ -80,16 +72,6 @@ export function dispatchWebhook(
   return dispatchWebhooks(principalId, eventType, [payload]);
 }
 
-/**
- * Queues one delivery per (event, matching subscription): one subscription
- * read and one Inngest send for the whole list. Each payload is its own
- * event with its own eventId. The delivery worker signs, retries and records.
- *
- * Never throws. A failed read or send is logged. The work is registered with
- * waitUntil, so a caller that does not await it (a floating call in an
- * Inngest step or a server action) still has the send finish before the
- * function is frozen.
- */
 export function dispatchWebhooks(
   principalId: string,
   eventType: string,

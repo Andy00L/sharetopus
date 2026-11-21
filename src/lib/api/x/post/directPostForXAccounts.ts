@@ -33,15 +33,6 @@ type XPassthrough = {
   config: XDirectPostConfig;
 };
 
-/**
- * Publish one tweet for one X account via the shared direct-post pipeline.
- * Text posts skip media entirely; image/video posts fetch the file from
- * storage and hand the buffer to the chunked upload in postToX.
- *
- * Only called from the Inngest workers (post.now and post.due), which
- * already rate limit at the batch layer, so no per-account checkRateLimit
- * hook here.
- */
 export async function directPostForXAccounts(
   config: XDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

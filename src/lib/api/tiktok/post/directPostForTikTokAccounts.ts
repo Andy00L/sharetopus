@@ -38,11 +38,9 @@ type TikTokPassthrough = {
   config: TikTokDirectPostConfig;
 };
 
-/**
- * Starts the publish-status poll for one TikTok post. Inngest drops a
- * repeated event id for 24 hours, so a second send for the same publish_id
- * starts no second poller: https://www.inngest.com/docs/guides/handling-idempotency
- */
+// Inngest drops a repeated event id for 24 hours, so a second send for the same
+// publish_id starts no second poller:
+// https://www.inngest.com/docs/guides/handling-idempotency
 async function sendTikTokPublishPollEvent(input: {
   publishId: string;
   socialAccountId: string;
@@ -63,7 +61,6 @@ async function sendTikTokPublishPollEvent(input: {
   }
 }
 
-/** Posts to one TikTok account now and starts polling TikTok for the publish result. */
 export async function directPostForTikTokAccounts(
   config: TikTokDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

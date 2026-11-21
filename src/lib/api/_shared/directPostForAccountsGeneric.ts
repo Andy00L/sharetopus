@@ -23,7 +23,6 @@ export type DirectPostWarningKind =
   | "tiktok_poll_not_sent"
   | "post_success_hook_failed";
 
-/** Something that failed after the post went live; the post itself succeeded. */
 export type DirectPostWarning = {
   kind: DirectPostWarningKind;
   message: string;
@@ -44,7 +43,6 @@ const UNLOCATED_FAILURE: PlatformFailure = {
   mayHavePublished: true,
 };
 
-/** A refusal decided before any platform request, so nothing was published. */
 export function buildDirectPostRefusal(
   message: string,
   reason: PlatformFailureReason,
@@ -195,7 +193,6 @@ async function prepareForPublish<TPassthrough, TPostResult extends AdapterPostRe
   }
 }
 
-/** Shared direct-post flow: validate, refresh the token, call the platform adapter, record content history. */
 export async function directPostForAccountsGeneric<
   TPassthrough,
   TPostResult extends AdapterPostResult,

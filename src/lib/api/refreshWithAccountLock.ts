@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { and, eq, isNull } from "drizzle-orm";
 
 import { redis } from "@/actions/api/upstash";
@@ -12,16 +13,14 @@ import {
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
-/** A stored token counts as expired this long before it dies, so a publish
- * never starts with a token that expires mid-upload. Milliseconds. */
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 const POLL_INITIAL_INTERVAL_MS = 500;
 const POLL_MAX_INTERVAL_MS = 4_000;
 
-/** Deletes the lock only while this run still owns it. A plain DEL could
- * remove a lock that another run took after ours expired.
- * sourceRef: https://redis.io/docs/latest/commands/set/ (section "Patterns") */
+// Deletes the lock only while this run still owns it. A plain DEL could remove a
+// lock that another run took after ours expired:
+// https://redis.io/docs/latest/commands/set/ (section "Patterns")
 const RELEASE_LOCK_SCRIPT =
   'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end';
 
@@ -31,19 +30,14 @@ export type StoredCredential = Pick<
 >;
 
 export type LockedRefreshOutcome<Refreshed> =
-  /** Another run refreshed the account; its token is in the row. */
   | { kind: "stored_token_fresh"; accessToken: string }
-  /** This run refreshed; `value` is what the refresh returned. */
   | { kind: "refreshed"; value: Refreshed }
-  /** The row could not be read, or another run's refresh ran too long. */
   | { kind: "unavailable"; message: string };
 
 export type RefreshWindowOptions = { refreshIfExpiringWithinMs?: number };
 
 export type RefusedRefreshOutcome =
-  /** Another run saved a fresh token after this refresh began; use it. */
   | { kind: "refreshed_elsewhere"; accessToken: string }
-  /** The account is flagged is_available = false; the user must reconnect. */
   | { kind: "needs_reconnect" };
 
 type LockAttempt =
@@ -51,11 +45,6 @@ type LockAttempt =
   | { kind: "held" }
   | { kind: "unavailable"; message: string };
 
-/**
- * Whether a stored token is expired or expires within `withinMs` (5 minutes
- * unless the caller widens it). A null expiry means the token does not
- * expire (Facebook Page tokens, credential providers).
- */
 export function isTokenExpiring(
   expiresAt: string | null,
   withinMs: number = TOKEN_EXPIRY_BUFFER_MS,
@@ -64,7 +53,6 @@ export function isTokenExpiring(
   return Date.now() + withinMs >= new Date(expiresAt).getTime();
 }
 
-/** The stored access token when it is present and not expiring, else null. */
 export function selectFreshAccessToken(
   credential: StoredCredential,
   withinMs: number = TOKEN_EXPIRY_BUFFER_MS,
@@ -75,23 +63,6 @@ export function selectFreshAccessToken(
   return credential.access_token;
 }
 
-/**
- * Runs `refreshStoredCredential` for one social account under a short Redis
- * lock, so concurrent runs never refresh the same account twice. Without it,
- * two runs that found the same expired token both refreshed it: where the
- * platform rotates the refresh token (X does on every refresh) the second
- * refresh was refused, which failed that post and could flag a healthy
- * account as needing a reconnect.
- *
- * The lock holder re-reads the row and refreshes only when the stored token
- * is still expiring, with the stored refresh token (the caller's copy may
- * predate a rotation). Other runs wait and return the token the holder
- * saved. When Redis is unreachable, the refresh runs without the lock, as
- * it did before the lock existed.
- *
- * Called by: ensureValidToken (the 7 legacy platforms) and
- * publishViaRegistry's ensureFreshRegistryToken (registry providers).
- */
 export async function refreshWithAccountLock<Refreshed>(
   accountId: string,
   refreshStoredCredential: (stored: StoredCredential) => Promise<Refreshed>,
@@ -118,9 +89,7 @@ export async function refreshWithAccountLock<Refreshed>(
       }
     }
 
-    await waitFor(
-      Math.min(POLL_MAX_INTERVAL_MS, POLL_INITIAL_INTERVAL_MS * 2 ** pollIndex),
-    );
+    await sleep(Math.min(POLL_MAX_INTERVAL_MS, POLL_INITIAL_INTERVAL_MS * 2 ** pollIndex));
     pollIndex++;
     const stored = await readStoredCredential(accountId);
     if (!stored.ok) return { kind: "unavailable", message: stored.message };
@@ -137,10 +106,6 @@ export async function refreshWithAccountLock<Refreshed>(
   };
 }
 
-/**
- * Reads the account's stored credential. Used under the refresh lock, and
- * by settleRefusedRefresh when a refused refresh may have raced another run.
- */
 export async function readStoredCredential(
   accountId: string,
 ): Promise<{ ok: true; credential: StoredCredential } | { ok: false; message: string }> {
@@ -166,17 +131,6 @@ export async function readStoredCredential(
   return { ok: true, credential: row };
 }
 
-/**
- * The platform refused the stored credential. The refresh lock keeps other
- * runs from refreshing this account meanwhile, but it is skipped when Redis
- * is unreachable, so the row is re-read first: if it now holds an unexpired
- * token another run saved, that token is used. Otherwise the account is
- * flagged is_available = false so connection lists report it as needing a
- * reconnect.
- *
- * Called by: ensureValidToken (the 7 adapter platforms) and
- * publishViaRegistry (registry providers).
- */
 export async function settleRefusedRefresh(input: {
   accountId: string;
   platform: string;
@@ -189,22 +143,17 @@ export async function settleRefusedRefresh(input: {
       : null;
   if (freshToken) return { kind: "refreshed_elsewhere", accessToken: freshToken };
 
-  // Guarded on the expiry the refused refresh started from: a refresh that
-  // lands after the re-read writes a new expiry, so its row is never
-  // overwritten with a stale flag. The token itself cannot be compared in
-  // SQL, since it is stored encrypted with a fresh IV (schema.ts, encryptedText).
+  const rowStillHoldsRefusedCredential = and(
+    eq(social_accounts.id, input.accountId),
+    input.refusedExpiresAt === null
+      ? isNull(social_accounts.token_expires_at)
+      : eq(social_accounts.token_expires_at, input.refusedExpiresAt),
+  );
   const { error: flagError } = await runQuery(
     db
       .update(social_accounts)
       .set({ is_available: false, updated_at: new Date().toISOString() })
-      .where(
-        and(
-          eq(social_accounts.id, input.accountId),
-          input.refusedExpiresAt === null
-            ? isNull(social_accounts.token_expires_at)
-            : eq(social_accounts.token_expires_at, input.refusedExpiresAt),
-        ),
-      ),
+      .where(rowStillHoldsRefusedCredential),
   );
   if (flagError) {
     console.error(
@@ -247,17 +196,9 @@ async function releaseRefreshLock(lockKey: string, ownerId: string): Promise<voi
   try {
     await redis.eval(RELEASE_LOCK_SCRIPT, [lockKey], [ownerId]);
   } catch (error) {
-    // The lock expires on its own after TOKEN_REFRESH_LOCK_TTL_MS, and waiters return
-    // the saved token without needing it.
     console.error(
       `[releaseRefreshLock] Release failed for ${lockKey}:`,
       error instanceof Error ? error.message : error,
     );
   }
-}
-
-// The two sleep helpers in the codebase are file-local (client polling, x402
-// broadcast), so this module keeps its own.
-function waitFor(durationMs: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, durationMs));
 }

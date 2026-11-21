@@ -11,10 +11,8 @@ import { TikTokPostInitSchema } from "./postImage";
 import type { TikTokPostResult } from "./postToTikTok";
 import { resolveTikTokPrivacyLevel } from "./tikTokPrivacy";
 
-/** TikTok rejects a cover timestamp under 1 s. */
 const TIKTOK_MIN_COVER_TIMESTAMP_MS = 1000;
 
-/** Cover timestamp as a whole number of ms, at least 1 s; non-finite input gets the minimum. */
 function resolveTikTokVideoCoverTimestampMs(
   input: number | null | undefined
 ): number {
@@ -24,7 +22,6 @@ function resolveTikTokVideoCoverTimestampMs(
   return Math.max(Math.floor(input), TIKTOK_MIN_COVER_TIMESTAMP_MS);
 }
 
-/** Starts a TikTok video Direct Post that TikTok pulls from media_url. */
 export async function handleVideoPost({
   accessToken,
   description,

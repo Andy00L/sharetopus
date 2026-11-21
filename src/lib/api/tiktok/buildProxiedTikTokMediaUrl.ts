@@ -1,17 +1,6 @@
 import "server-only";
 import { createHmac } from "crypto";
 
-/**
- * Builds an HMAC-signed proxied media URL for TikTok through the /api/media
- * route. TikTok fetches this URL, and the route verifies the signature and
- * expiry before streaming bytes from Supabase storage.
- *
- * The URL includes an HMAC-SHA256 signature over `userId:filePath:expires`
- * and a 30-minute expiry timestamp.
- *
- * Returns: { success, url, expiresAt } or { success: false, message }.
- * Persists: nothing.
- */
 export function buildProxiedTikTokMediaUrl(input: {
   mediaPath: string;
   principalId: string;

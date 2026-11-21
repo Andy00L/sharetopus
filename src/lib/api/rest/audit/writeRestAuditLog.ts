@@ -6,7 +6,6 @@ import { redactSecrets } from "@/lib/api/audit/redactPatterns";
 import { toJsonValue } from "@/lib/utils/jsonObject";
 import type { RestApiKeyContext } from "../auth/types";
 
-/** The rest_audit_log.outcome values, from the column's CHECK list. */
 export type RestAuditOutcome = (typeof REST_AUDIT_OUTCOMES)[number];
 
 export type RestAuditWriteInput = {
@@ -19,13 +18,6 @@ export type RestAuditWriteInput = {
   finishedAt: number;
 };
 
-/**
- * Writes one row to rest_audit_log. Never throws.
- *
- * Args payload redacted via the shared redactSecrets helper (same
- * patterns MCP uses). Latency runs from context.startedAt to finishedAt,
- * because withRestEndpoint writes the row after the response is sent.
- */
 export async function writeRestAuditLog(
   input: RestAuditWriteInput,
 ): Promise<void> {

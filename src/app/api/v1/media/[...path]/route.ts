@@ -14,26 +14,12 @@ import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedVie
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 
-/**
- * Extracts the storage path from the catch-all URL.
- * URL shape: /api/v1/media/{principalId}/{filename.ext}
- * The catch-all [...path] captures everything after /media/.
- */
 function extractStoragePath(requestUrl: string): string {
   const urlPathname = new URL(requestUrl).pathname;
   const mediaPrefix = "/api/v1/media/";
   return urlPathname.slice(mediaPrefix.length);
 }
 
-/**
- * GET /v1/media/[...path] -- get a signed view URL for a file.
- *
- * The catch-all [...path] captures storage paths that contain slashes
- * (e.g. "user_abc/photo.jpg"). A path outside the principal's folder,
- * traversal included, is refused by isOwnedMediaPath with 403.
- *
- * Query: ?expires_in_seconds=300 (1-3600, default 300).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.view_url",
@@ -86,14 +72,6 @@ export const GET = withRestEndpoint({
   },
 });
 
-/**
- * DELETE /v1/media/[...path] -- reference-aware file delete.
- *
- * Reuses deleteSupabaseFile which checks references in
- * scheduled_posts, failed_posts, pending_tiktok_pulls, and
- * pending_direct_posts before removing. Returns deleted:false
- * if the file is still referenced (preserved).
- */
 export const DELETE = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.delete",
@@ -113,8 +91,6 @@ export const DELETE = withRestEndpoint({
       false,
     );
 
-    // The helper's failure message can carry database text: log it, answer
-    // the caller with a plain one.
     if (!deleteResult.success) {
       console.error(
         `[v1/media DELETE] delete failed (request_id=${ctx.requestId}): ${deleteResult.message}`,

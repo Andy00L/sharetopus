@@ -2,19 +2,8 @@ import "server-only";
 
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 
-/**
- * Lifetime assumed when LinkedIn's answer omits expires_in, in seconds
- * (2 hours, the value this function has always used as its fallback).
- */
 const LINKEDIN_FALLBACK_EXPIRES_IN_SECONDS = 7200;
 
-/**
- * Refreshes a LinkedIn access token with the stored refresh token. The app
- * credentials go in the form body, like the code exchange
- * (exchangeLinkedInCode).
- *
- * Called by: ensureValidToken (case "linkedin")
- */
 export default async function refreshLinkedInToken(
   refreshToken: string,
 ): Promise<TokenRefreshResult> {

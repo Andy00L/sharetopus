@@ -23,12 +23,8 @@ export type TikTokPostResult =
     }
   | PlatformPostFailure;
 
-/**
- * Starts a TikTok Direct Post that TikTok pulls from media_url. The
- * creator_info query comes first: TikTok requires it before every post, and
- * its username builds the profile URL.
- * sourceRef: developers.tiktok.com/doc/content-posting-api-reference-query-creator-info
- */
+// TikTok's Direct Post flow queries creator info before it initializes a post:
+// https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 export async function postToTikTok({
   accessToken,
   title,

@@ -22,7 +22,6 @@ interface InstagramDirectPostConfig {
     isCustomized: boolean;
   };
   userId: string | null;
-  /** Public signed URL Instagram pulls the media from. */
   mediaUrl: string;
   postType: "image" | "video";
   batchId: string;
@@ -34,7 +33,6 @@ type InstagramPassthrough = {
   config: InstagramDirectPostConfig;
 };
 
-/** Posts an image, or a video as a Reel, to one Instagram account now and records it in content history. */
 export async function directPostForInstagramAccounts(
   config: InstagramDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

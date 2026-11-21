@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
+const SIGNED_URL_TTL_SECONDS = 600;
 
 async function fetchUpstreamWithHeadersTimeout(signedUrl: string): Promise<Response> {
   const headersAbortController = new AbortController();
@@ -32,7 +33,6 @@ export async function GET(request: NextRequest) {
     file: filePath,
   });
 
-  // SECURITY CHECK 1: All params must be present
   if (!filePath || !userId || !expiresRaw || !sig) {
     console.warn("[GET /api/media] Missing required parameters");
     return new Response("Missing required parameters", {
@@ -41,7 +41,6 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // SECURITY CHECK 2: Expiry
   const expires = parseInt(expiresRaw, 10);
   if (Number.isNaN(expires) || Math.floor(Date.now() / 1000) >= expires) {
     console.warn("[GET /api/media] URL expired", { user: userId, file: filePath });
@@ -51,7 +50,6 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // SECURITY CHECK 3: HMAC signature verification
   const secret = process.env.MEDIA_PROXY_HMAC_SECRET;
   if (!secret) {
     console.error("[GET /api/media] HMAC secret not configured");
@@ -100,7 +98,7 @@ export async function GET(request: NextRequest) {
   try {
     const { data, error } = await adminSupabase.storage
       .from(MEDIA_BUCKET)
-      .createSignedUrl(filePath, 600); // 10 minutes
+      .createSignedUrl(filePath, SIGNED_URL_TTL_SECONDS);
 
     if (error) {
       console.error("[GET /api/media] Supabase error:", error);
@@ -130,9 +128,9 @@ export async function GET(request: NextRequest) {
 
     console.log("[GET /api/media] Streaming file from Supabase signed URL");
 
-    // Stream the file body instead of redirecting. TikTok's Content
-    // Posting API rejects redirects on PULL_FROM_URL per their docs.
-    // Pinterest's S3 ingester also rejects redirects in some configs.
+    // TikTok's PULL_FROM_URL media URL "should not redirect to another URL", so
+    // the bytes are streamed instead of redirected:
+    // https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide
     let upstream: Response;
     try {
       upstream = await fetchUpstreamWithHeadersTimeout(data.signedUrl);
@@ -166,12 +164,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // This route serves stored uploads from the app's own origin. The stored
-    // content type is whatever the uploader sent with the signed upload, not
-    // the one the upload request declared, so only image and video types are
-    // passed through; anything else goes out as an opaque download. nosniff
-    // stops the browser guessing a script or HTML type from the bytes, and
-    // the sandbox CSP keeps even a mislabeled file from running script here.
     const responseHeaders: Record<string, string> = {
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
@@ -180,11 +172,6 @@ export async function GET(request: NextRequest) {
 
     const contentType = upstream.headers.get("content-type") ?? "";
 
-    // Only TikTok fetches this route (buildProxiedTikTokMediaUrl, and
-    // buildTikTokMediaUrl in proxy mode), and TikTok refuses photos over
-    // 1080p with picture_size_check_failed. Photos are fitted here, at the
-    // TikTok boundary, so the stored file other platforms use keeps its
-    // full resolution.
     if (/^image\//i.test(contentType)) {
       const { fitPhotoForTikTok } = await import(
         "@/lib/api/tiktok/fitPhotoForTikTok"

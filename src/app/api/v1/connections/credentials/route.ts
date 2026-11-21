@@ -14,24 +14,6 @@ import {
   resolveConfiguredProvider,
 } from "@/lib/platforms/providers/registry";
 
-/**
- * Credentials-based connect surface.
- *
- *   GET  /v1/connections/credentials -> which providers can be connected
- *        this way, with their field declarations (drives any client form)
- *   POST /v1/connections/credentials -> verify the pasted credentials with
- *        the provider and store the connection
- *
- * One route serves every credentials provider because the field list comes
- * from the catalog declaration; adding a provider adds zero routes.
- *
- * Secrets discipline: the submitted values are passed to provider.connect
- * and then dropped. Only what the provider returns is stored (the posting
- * credential in access_token, config in extra), the raw form values are
- * never logged, and the response echoes identity fields only, never
- * credentials.
- */
-
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.credentials.list",
@@ -105,8 +87,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Verify with the provider. This talks to the live API, so bad
-    // credentials are caught here, not on the first scheduled post.
     const connectResult = await provider.connect({ values });
     if (!connectResult.ok) {
       return {
@@ -139,8 +119,6 @@ export const POST = withRestEndpoint({
       updated_at: new Date().toISOString(),
     } satisfies typeof social_accounts.$inferInsert;
 
-    // Same conflict target the OAuth callback uses, so reconnecting the
-    // same account updates it instead of duplicating it.
     const { data: accountRows, error: upsertError } = await runQuery(
       db
         .insert(social_accounts)

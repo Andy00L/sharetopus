@@ -15,22 +15,9 @@ type GetCreatorInfoForAccountResult =
   | { success: true; data: CreatorInfoData }
   | { success: false; message: string };
 
-/**
- * Server Action wrapper: resolves a valid TikTok access token for the given
- * social_account (refreshes via ensureValidToken if expired, persists new
- * token to DB), then fetches creator info.
- *
- * Use this from client components instead of getTikTokCreatorInfo directly,
- * which takes a raw token and skips the refresh path.
- *
- * Tables touched: social_accounts (read + update on token refresh).
- * External calls: TikTok refresh endpoint (conditional), TikTok creator_info.
- */
 export async function getTikTokCreatorInfoForAccount(
   socialAccountId: string,
 ): Promise<GetCreatorInfoForAccountResult> {
-  // Public server action: require a session and account ownership, or any
-  // client could probe creator info by account id.
   const { userId } = await auth();
   if (!userId) {
     return {
@@ -51,8 +38,6 @@ export async function getTikTokCreatorInfoForAccount(
       )
       .limit(1),
   );
-  // A failed read is not a missing account: "not found or deleted" would
-  // send the user off to reconnect an account that is still connected.
   if (accountError) {
     console.error(
       "[getTikTokCreatorInfoForAccount] Account fetch failed:",

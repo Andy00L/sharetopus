@@ -1,14 +1,11 @@
-// lib/api/tiktok/client.ts
 import "server-only";
 import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 import { TikTokProfile } from "@/lib/types/socialProfiles";
 
 export async function getTikTokProfile(
   accessToken: string,
-  openId?: string // Ensure openId is passed and is a string
+  openId: string
 ): Promise<TikTokProfile> {
-  // Define fields to request according to TikTok documentation
-  // user.info.profile scope is required for these details
   const fields =
     "open_id,union_id,avatar_url,display_name,bio_description,is_verified,follower_count,following_count";
 
@@ -26,7 +23,6 @@ export async function getTikTokProfile(
       signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
-    // Never log the body: it holds the creator's personal profile.
     const responseText = await response.text();
 
     let data;
@@ -36,7 +32,7 @@ export async function getTikTokProfile(
       console.error("[getTikTokProfile] Failed to parse API response:", parseError);
       return {
         id: openId,
-        username: `tiktok_user_${openId?.substring(0, 6)}`,
+        username: `tiktok_user_${openId.substring(0, 6)}`,
         display_name: "TikTok User (Error)",
         avatar_url: "",
         is_verified: false,
@@ -45,19 +41,18 @@ export async function getTikTokProfile(
         following_count: null,
       };
     }
-    // --- FIX: Check for error object AND error code !== 'ok' ---
     if (data.error && data.error.code !== "ok") {
       console.warn(
         `[getTikTokProfile] API returned an error code: ${data.error.code}`,
         data.error
-      ); // Handle specific errors like scope_not_authorized
+      );
       if (data.error.code === "scope_not_authorized") {
         console.warn(
           "[getTikTokProfile] User did not authorize required scope(s). Returning basic info."
         );
         return {
           id: openId,
-          username: `tiktok_user_${openId?.substring(0, 6)}`,
+          username: `tiktok_user_${openId.substring(0, 6)}`,
           display_name: "TikTok User (Limited Access)",
           avatar_url: "",
           is_verified: false,
@@ -66,10 +61,9 @@ export async function getTikTokProfile(
           following_count: null,
         };
       }
-      // Throw other actual API errors
       return {
         id: openId,
-        username: `tiktok_user_${openId?.substring(0, 6)}`,
+        username: `tiktok_user_${openId.substring(0, 6)}`,
         display_name: "TikTok User (Error)",
         avatar_url: "",
         is_verified: false,
@@ -79,14 +73,12 @@ export async function getTikTokProfile(
       };
     }
 
-    // Extract user data - handle the case where data.data or data.data.user might be missing
     const userData = data?.data?.user;
     if (!userData) {
       console.warn("[getTikTokProfile] Profile data block missing in API response.");
-      // Return fallback if user data is unexpectedly missing
       return {
         id: openId,
-        username: `tiktok_user_${openId?.substring(0, 6)}`,
+        username: `tiktok_user_${openId.substring(0, 6)}`,
         display_name: "TikTok User (Data Missing)",
         avatar_url: "",
         is_verified: false,
@@ -97,24 +89,22 @@ export async function getTikTokProfile(
       };
     }
 
-    // Build complete profile from response
     return {
-      id: userData.open_id ?? openId, // Prefer open_id from profile data if available
+      id: userData.open_id ?? openId,
       username:
-        userData.display_name ?? `tiktok_user_${openId?.substring(0, 6)}`, // Use display_name or fallback
+        userData.display_name ?? `tiktok_user_${openId.substring(0, 6)}`,
       display_name: userData.display_name ?? "TikTok User",
-      avatar_url: userData.avatar_url ?? null, // Use null if empty
+      avatar_url: userData.avatar_url ?? null,
       is_verified: !!userData.is_verified,
       bio_description: userData.bio_description ?? null,
-      follower_count: userData.follower_count ?? null, // Use null coalescing for counts
+      follower_count: userData.follower_count ?? null,
       following_count: userData.following_count ?? null,
     };
   } catch (error) {
     console.error("[getTikTokProfile] Profile fetch error:", error);
-    // Create fallback profile indicating a fetch error
     return {
       id: openId,
-      username: `tiktok_user_${openId?.substring(0, 6)}`,
+      username: `tiktok_user_${openId.substring(0, 6)}`,
       display_name: "TikTok User (Error)",
       avatar_url: "",
       is_verified: false,

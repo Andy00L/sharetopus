@@ -17,12 +17,6 @@ import { isJobTerminal } from "@/lib/types/postStatus";
 
 export const runtime = "nodejs";
 
-/**
- * Maps the DB status enum ("processing"|"completed"|"failed") to the
- * public API values ("pending"|"success"|"failed"). The public shape
- * is unchanged from the Inngest-backed version so existing clients
- * keep working.
- */
 function mapDbStatusToPublic(
   dbStatus: "processing" | "completed" | "failed",
 ): PostStatusJobStatus {
@@ -31,16 +25,6 @@ function mapDbStatusToPublic(
   return "pending";
 }
 
-/**
- * GET /api/posts/status?event_ids=evt1,evt2,evt3
- *
- * Returns the current status of every event_id requested, scoped to
- * the authenticated user. Backed by pending_direct_posts which the
- * direct-post worker maintains via finalizePendingDirectPost.
- *
- * Previously queried Inngest's REST API per event_id. Switched to the
- * local DB to remove N external HTTP calls per poll iteration.
- */
 export async function GET(request: Request): Promise<NextResponse> {
   const { userId } = await auth();
   if (!userId) {
@@ -61,7 +45,6 @@ export async function GET(request: Request): Promise<NextResponse> {
       success: false,
       message: rateCheck.message,
     };
-    // A limiter outage is ours: 503, not a 429 that says "slow down".
     return NextResponse.json(body, {
       status: rateCheck.reason === "limited" ? 429 : 503,
     });
@@ -127,10 +110,6 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json(body, { status: 500 });
   }
 
-  // Build a row lookup keyed by event_id. Missing event_ids are
-  // treated as still "pending" (lock row insert and Inngest send are
-  // sequential but not transactional; a rare race could leave a row
-  // momentarily missing).
   const rowByEventId = new Map(
     statusRows.map((row) => [row.event_id, row]),
   );

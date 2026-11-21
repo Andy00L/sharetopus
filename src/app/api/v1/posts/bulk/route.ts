@@ -13,12 +13,10 @@ import { db, runQuery } from "@/db/client";
 import { scheduled_posts } from "@/db/schema";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
-/** POST /v1/posts/bulk: schedules up to 30 posts under one batch_id through schedulePostBatch, like publish_posts. */
 export const POST = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.posts.bulk",
   handler: async (ctx, request) => {
-    // Step 1: parse JSON body.
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -30,7 +28,6 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Step 2: Zod validate the array.
     const validationResult = PostBulkInputSchema.safeParse(rawBody);
     if (!validationResult.success) {
       return restErrorResponse(
@@ -42,23 +39,18 @@ export const POST = withRestEndpoint({
     }
     const validatedBulkInput = validationResult.data;
 
-    // Step 3: generate a shared batch_id for the entire bulk request.
     const sharedBatchId = generateBatchId();
 
-    // Step 4: transform each item to SchedulePostData with shared batch_id.
     const scheduledPostsData = validatedBulkInput.posts.map(
       (postInput, postIndex) => {
         const scheduleData = restInputToSchedulePostData(postInput);
-        // Override batch_id so all posts in this bulk share one group.
         scheduleData.batch_id = sharedBatchId;
-        // Build idempotency key from batch_id + index for safe retries.
         scheduleData.idempotency_key =
           postInput.idempotency_key ?? `${sharedBatchId}:${postIndex}`;
         return scheduleData;
       },
     );
 
-    // Step 5: call schedulePostBatch (same function MCP uses).
     const batchResult = await schedulePostBatch(
       scheduledPostsData,
       ctx.principal.principalId,
@@ -66,12 +58,10 @@ export const POST = withRestEndpoint({
       ctx.requestId,
     );
 
-    // Nothing was scheduled: answer with the status the caller can act on.
     if (!batchResult.success) {
       return restPostBatchFailureResponse(batchResult, ctx.requestId);
     }
 
-    // Step 6: fetch created rows to return as PostDTOs.
     const insertedIds = batchResult.scheduleIds ?? [];
     let postDtos: ReturnType<typeof toPostDTO>[] = [];
 

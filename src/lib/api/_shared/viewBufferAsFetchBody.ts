@@ -1,7 +1,7 @@
-// fetch's BodyInit takes a Uint8Array backed by an ArrayBuffer, and a Buffer's
-// backing is typed ArrayBufferLike: a view over the same memory satisfies it
-// without the full copy `new Uint8Array(buffer)` makes. Only a
-// SharedArrayBuffer backing, which file and network reads never produce, is copied.
+// TypeScript's lib.dom.d.ts types BufferSource (part of fetch's BodyInit) as
+// ArrayBufferView<ArrayBuffer>, and @types/node types Buffer's backing as
+// ArrayBufferLike (buffer.buffer.d.ts), so a Buffer is not a BodyInit. A view
+// over the same memory satisfies the type without a copy.
 export function viewBufferAsFetchBody(buffer: Buffer): Uint8Array<ArrayBuffer> {
   const backingStore = buffer.buffer;
   if (backingStore instanceof ArrayBuffer) {

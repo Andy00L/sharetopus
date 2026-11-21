@@ -52,11 +52,6 @@ function buildStorageFailure(error: string): PlatformPostFailure {
   };
 }
 
-/**
- * Creates a video pin: register a media upload, stream the file from
- * storage to Pinterest's upload URL, wait for processing, create the pin.
- * The upload streams chunk by chunk, so memory holds one chunk, not the file.
- */
 export async function createVideoPin({
   accessToken,
   boardId,
@@ -156,12 +151,9 @@ async function registerMediaUpload(
   }
 }
 
-/**
- * Streams the stored file into Pinterest's upload URL as multipart/form-data.
- * The upload URL is an S3 POST endpoint whose policy requires Content-Length,
- * so the file size comes from the storage answer's header. One deadline
- * covers the storage download, the upload and the processing wait after it.
- */
+// The upload URL is an S3 POST endpoint whose policy requires Content-Length,
+// so the file size comes from the storage answer's header:
+// https://docs.aws.amazon.com/AmazonS3/latest/API/RESTObjectPOST.html
 async function uploadVideoFileStreaming({
   registration,
   mediaPath,
@@ -226,9 +218,9 @@ async function uploadVideoFileStreaming({
       fileStream: storageResponse.body,
     });
 
-  // Node's fetch requires duplex: "half" for a ReadableStream body, and
-  // lib.dom's RequestInit does not declare it yet.
-  // sourceRef: https://nodejs.org/api/globals.html#fetch
+  // The Fetch standard's Request constructor throws a TypeError for a stream
+  // body without init.duplex, and TypeScript 5.9's lib.dom.d.ts RequestInit
+  // does not declare duplex: https://fetch.spec.whatwg.org/#dom-request
   const streamingUploadInit: RequestInit & { duplex: "half" } = {
     method: "POST",
     body: streamingBody,
@@ -301,7 +293,6 @@ function waitFor(durationMs: number): Promise<void> {
   return new Promise((resolveWait) => setTimeout(resolveWait, durationMs));
 }
 
-/** Polls with a growing interval until Pinterest reports the video processed, failed, or the deadline passes. */
 async function waitForVideoProcessing({
   accessToken,
   mediaId,

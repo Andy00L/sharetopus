@@ -14,17 +14,6 @@ import {
   preparePostNowPayment,
 } from "@/lib/solanaActions/postNowBlink";
 
-/**
- * Solana Action for post-now (the Blink).
- *
- * GET  ?account_id&platform          the action card (price, one text field)
- * POST ?account_id&platform&text     {account} -> unsigned USDC payment
- *
- * Blink URL: https://dial.to/?action=solana-action:<this URL with the query>
- * Logic lives in src/lib/solanaActions/postNowBlink.ts; this file only maps
- * HTTP to it. Every response carries the Actions CORS and version headers.
- */
-
 export const runtime = "nodejs";
 export const maxDuration = 30;
 

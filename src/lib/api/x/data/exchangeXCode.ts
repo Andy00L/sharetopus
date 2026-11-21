@@ -18,17 +18,6 @@ const XTokenSchema = z.object({
   token_type: z.string().optional(),
 });
 
-/**
- * Exchanges an X OAuth 2.0 authorization code for tokens.
- *
- * X requires PKCE on every authorization-code exchange, so the caller must
- * supply the code_verifier that produced the code_challenge in the
- * authorize URL. Confidential clients (this server) authenticate with HTTP
- * Basic auth on the token endpoint. `redirectUri` must be the exact URI the
- * authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeXCode(
   code: string,
   redirectUri: string,

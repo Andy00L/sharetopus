@@ -17,19 +17,10 @@ import { social_accounts } from "@/db/schema";
 
 const ConnectionIdSchema = z.guid();
 
-/**
- * GET /v1/connections/[id]/boards -- list Pinterest boards.
- *
- * 400 if the account is not Pinterest. 401 with reauth_url if the
- * Pinterest token has expired and cannot be refreshed. Reuses
- * ensureValidToken and getPinterestBoards (same chain MCP uses).
- */
 export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.connections.boards",
   handler: async (ctx, request) => {
-    // Step 1: extract connection ID from URL path.
-    // Path is /v1/connections/[id]/boards, so id is second-to-last.
     const urlSegments = new URL(request.url).pathname.split("/");
     const idCandidate = urlSegments[urlSegments.length - 2] ?? "";
 
@@ -43,7 +34,6 @@ export const GET = withRestEndpoint({
     }
     const connectionId = idParseResult.data;
 
-    // Step 2: parse query params.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -59,8 +49,6 @@ export const GET = withRestEndpoint({
     }
     const query = queryParseResult.data;
 
-    // Step 3: fetch account scoped to principal. The full row, because
-    // ensureValidToken's refresh path reads columns beyond the token ones.
     const { data: pinterestAccounts, error: lookupError } = await runQuery(
       db
         .select()
@@ -95,7 +83,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 4: reject non-Pinterest accounts.
     if (pinterestAccount.platform !== "pinterest") {
       return restErrorResponse(
         "validation_error",
@@ -104,7 +91,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 5: ensure token is fresh (refresh if expired).
     const tokenRefreshResult = await ensureValidToken(pinterestAccount);
     if (!tokenRefreshResult.success || !tokenRefreshResult.token) {
       const baseUrl =
@@ -119,15 +105,12 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 6: fetch boards via shared Pinterest helper.
     const boardsResult = await getPinterestBoards(
       tokenRefreshResult.token,
       ctx.principal.principalId,
       { pageSize: query.page_size, bookmark: query.bookmark },
     );
 
-    // Step 7: a refusal answers what the caller can act on; a rate limit
-    // is a 429, not a 500.
     if (!boardsResult.success) {
       switch (boardsResult.failure) {
         case "token_expired": {

@@ -4,7 +4,6 @@ import type { DirectPostData } from "@/actions/server/directPostActions/directPo
 import { buildRegistryPostOptions } from "@/lib/platforms/postTargetOptions";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 
-/** REST input as one schedulePostBatch entry (scheduled_at given); Pinterest and registry options fold into postOptions. */
 export function restInputToSchedulePostData(
   input: PostCreateInput,
 ): SchedulePostData {
@@ -31,7 +30,6 @@ export function restInputToSchedulePostData(
   };
 }
 
-/** REST input as one directPostBatch entry (no scheduled_at); Pinterest fields stay top level there. */
 export function restInputToDirectPostData(
   input: PostCreateInput,
 ): DirectPostData {

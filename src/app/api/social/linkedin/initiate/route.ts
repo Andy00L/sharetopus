@@ -1,14 +1,6 @@
 import { initiateWebOAuth } from "@/lib/api/oauth/web/initiateWebOAuth";
 import type { NextResponse } from "next/server";
 
-/**
- * POST /api/social/linkedin/initiate
- *
- * Starts the LinkedIn OAuth popup flow. openid + profile return the OpenID
- * sub the account is keyed on, email fills its email address, and
- * w_member_social posts.
- * sourceRef: https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow
- */
 export async function POST(): Promise<NextResponse> {
   return initiateWebOAuth({
     platform: "linkedin",

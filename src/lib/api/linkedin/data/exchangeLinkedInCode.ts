@@ -18,12 +18,6 @@ const LinkedInTokenSchema = z.object({
   scope: z.string().optional(),
 });
 
-/**
- * Exchanges a LinkedIn authorization code for tokens. `redirectUri` must be
- * the exact URI the authorize URL carried.
- *
- * Called by: connectPlatformAccounts
- */
 export async function exchangeLinkedInCode(
   code: string,
   redirectUri: string,

@@ -4,13 +4,9 @@ import { z } from "zod";
 
 import type { XProfile } from "@/lib/types/socialProfiles";
 
-/** Outbound X API calls are bounded to 15s. */
 const PROFILE_TIMEOUT_MS = 15_000;
 
-/**
- * GET /2/users/me response with the user.fields this module requests.
- * sourceRef: https://docs.x.com/x-api/users/lookup (users/me)
- */
+// GET /2/users/me answer: https://docs.x.com/x-api/users/get-my-user
 const XUserSchema = z.object({
   data: z.object({
     id: z.string().min(1),
@@ -25,12 +21,6 @@ export type XProfileResult =
   | { success: true; data: XProfile }
   | { success: false; message: string };
 
-/**
- * Fetch the authorized X user. The numeric user id is the account
- * identifier stored in social_accounts.
- *
- * Called by: connectPlatformAccounts (web popup and x402/REST callback)
- */
 export async function getXProfile(
   accessToken: string,
 ): Promise<XProfileResult> {

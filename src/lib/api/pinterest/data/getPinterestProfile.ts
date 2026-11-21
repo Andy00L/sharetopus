@@ -1,4 +1,3 @@
-// lib/api/pinterest/getPinterestProfile.ts
 import "server-only";
 import { PLATFORM_API_TIMEOUT_MS } from "@/lib/api/_shared/platformFetchTimeouts";
 
@@ -20,7 +19,6 @@ export async function getPinterestProfile(
       signal: AbortSignal.timeout(PLATFORM_API_TIMEOUT_MS),
     });
 
-    // Never log the body: it holds the account's personal profile.
     const responseText = await response.text();
 
     let data;
@@ -61,7 +59,6 @@ export async function getPinterestProfile(
       };
     }
 
-    // Extract user data
     const supabaseUserData = data;
 
     return {

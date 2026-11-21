@@ -2,13 +2,6 @@ import { z } from "zod";
 
 import { PostCreateInputSchema } from "./schemas";
 
-/**
- * Body schema for PATCH /v1/posts/[id].
- *
- * Only `scheduled_at` is patchable for now. The internal
- * updateScheduledTimeBatch enforces the future-time constraint,
- * but we reject obviously invalid values at the edge.
- */
 export const PostPatchInputSchema = z.object({
   scheduled_at: z
     .string()
@@ -24,19 +17,12 @@ export const PostPatchInputSchema = z.object({
 
 export type PostPatchInput = z.infer<typeof PostPatchInputSchema>;
 
-/** Body of POST /v1/posts/bulk: 1-30 PostCreateInputSchema items, the publish_posts cap. */
 export const PostBulkInputSchema = z.object({
   posts: z.array(PostCreateInputSchema).min(1).max(30),
 });
 
 export type PostBulkInput = z.infer<typeof PostBulkInputSchema>;
 
-/**
- * Query schema for DELETE /v1/posts/[id].
- *
- * `hard=true` triggers permanent deletion with media cleanup.
- * Default (absent or false) is soft-cancel (status -> cancelled).
- */
 export const PostDeleteQuerySchema = z.object({
   hard: z
     .enum(["true", "false"])

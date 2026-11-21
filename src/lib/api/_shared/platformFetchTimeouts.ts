@@ -14,12 +14,8 @@ export const PLATFORM_IMAGE_PULL_TIMEOUT_MS = 45_000;
 
 export const PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS = 240_000;
 
-/** Lifetime of a token refresh lock: longer than the slowest refresh request
- * (30 s) plus its database write, so a live refresh never outlasts its lock. */
 export const TOKEN_REFRESH_LOCK_TTL_MS = 45_000;
 
-/** How long a run waits on another run's refresh: longer than the lock, so a
- * waiter outlasts the lock of a run that crashed. */
 export const TOKEN_REFRESH_WAIT_DEADLINE_MS = TOKEN_REFRESH_LOCK_TTL_MS + 5_000;
 
 const PUBLISH_STEP_BUDGET_MS = RUNTIME.minStepBudgetS * 1000;

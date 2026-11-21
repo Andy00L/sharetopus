@@ -19,7 +19,6 @@ interface FacebookDirectPostConfig {
     description: string;
   };
   userId: string | null;
-  /** Public signed URL Facebook pulls media from; empty for text posts. */
   mediaUrl: string;
   batchId: string;
   postType: MediaType;
@@ -31,16 +30,6 @@ type FacebookPassthrough = {
   config: FacebookDirectPostConfig;
 };
 
-/**
- * Publish one post to one Facebook Page via the shared direct-post
- * pipeline. The account row stores the PAGE id as account_identifier and
- * the non-expiring PAGE token as access_token, so ensureValidToken passes
- * it straight through (token_expires_at is null for Facebook).
- *
- * Only called from the Inngest workers (post.now and post.due), which
- * already rate limit at the batch layer, so no per-account checkRateLimit
- * hook here.
- */
 export async function directPostForFacebookAccounts(
   config: FacebookDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

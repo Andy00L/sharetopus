@@ -1,23 +1,10 @@
 import "server-only";
 
+import { INSTAGRAM_LONG_LIVED_FALLBACK_SECONDS } from "@/lib/api/instagram/data/exchangeInstagramCode";
 import { requestTokenRefresh, type TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 
-/** 60 days in seconds, the documented long-lived token lifetime. */
-const LONG_LIVED_FALLBACK_SECONDS = 60 * 24 * 60 * 60;
-
-/**
- * Refreshes an Instagram LONG-LIVED access token before it expires.
- *
- * Instagram Login has no refresh_token: the long-lived ACCESS token itself
- * is exchanged for a fresh 60-day one, so the caller passes the current
- * access token (not social_accounts.refresh_token). Instagram requires the
- * token to be at least 24 hours old and still valid; an expired token is
- * refused and the user must reconnect. The URL carries the token, and
- * requestTokenRefresh never logs it.
- * sourceRef: https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token
- *
- * Called by: ensureValidToken (case "instagram")
- */
+// Instagram Login issues no refresh token: the long-lived access token itself is
+// exchanged for a new one: https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token
 export default async function refreshInstagramToken(
   longLivedAccessToken: string,
 ): Promise<TokenRefreshResult> {
@@ -34,6 +21,6 @@ export default async function refreshInstagramToken(
       `&access_token=${encodeURIComponent(longLivedAccessToken)}`,
     method: "GET",
     currentRefreshToken: null,
-    fallbackExpiresInSeconds: LONG_LIVED_FALLBACK_SECONDS,
+    fallbackExpiresInSeconds: INSTAGRAM_LONG_LIVED_FALLBACK_SECONDS,
   });
 }

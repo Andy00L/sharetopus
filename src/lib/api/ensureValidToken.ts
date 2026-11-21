@@ -38,28 +38,6 @@ function buildReconnectResult(platform: Platform): EnsureValidTokenResult {
   };
 }
 
-/**
- * Returns a valid access token for any platform, refreshing it first when
- * it is expired or about to expire.
- *
- * Refresh strategy per platform:
- *   - tiktok / pinterest / linkedin / youtube / x: standard refresh_token
- *     grant (x additionally ROTATES the refresh token on every call).
- *   - instagram: no refresh_token exists; the long-lived ACCESS token is
- *     exchanged for a fresh one via /refresh_access_token.
- *   - facebook: Page tokens minted from a long-lived user token do not
- *     expire (token_expires_at is stored null, so this path is only reached
- *     if the token was revoked); the user must reconnect.
- *
- * The refresh runs under refreshWithAccountLock: when several runs find the
- * same expired token, one refreshes and the others reuse the token it saved.
- *
- * When the platform refuses the stored credential, the account is flagged
- * is_available = false so the x402 and MCP connection lists report it as
- * needing re-authentication. A refresh that fails for a reason that may
- * pass (network, 5xx, missing config) leaves the account untouched, and a
- * successful refresh clears the flag.
- */
 export async function ensureValidToken(
   account: SocialAccount,
   options: RefreshWindowOptions = {},
@@ -83,8 +61,6 @@ export async function ensureValidToken(
     `[ensureValidToken ${account.platform}] Token expired or close to expiry, refreshing...`,
   );
 
-  // Refreshes from the stored credential, not this copy: the refresh token
-  // may have rotated since this copy was read.
   const outcome = await refreshWithAccountLock(
     account.id,
     (stored) => refreshAndStoreToken({ ...account, ...stored }),
@@ -100,11 +76,6 @@ export async function ensureValidToken(
   }
 }
 
-/**
- * Refreshes the account's token and saves the new pair. Runs under the
- * account's refresh lock; `account` carries the credential just read from
- * the row.
- */
 async function refreshAndStoreToken(
   account: SocialAccount,
 ): Promise<EnsureValidTokenResult> {
@@ -126,17 +97,6 @@ async function refreshAndStoreToken(
     );
 
     if (!updateSuccess) {
-      // The refreshed access token still works for THIS call, so the
-      // caller proceeds. What the caller cannot see is whether the
-      // account was just left unrecoverable.
-      //
-      // Platforms that rotate the refresh token (X returns a fresh one
-      // and invalidates the old one on every refresh) consumed the stored
-      // credential to produce these tokens. If the new pair was not
-      // persisted, the stored refresh token is now dead and its
-      // replacement is gone: every later refresh fails and the user must
-      // reconnect by hand. That warrants a distinct, greppable line
-      // rather than the generic message this branch used to log.
       const refreshTokenWasRotated =
         Boolean(newTokens.refresh_token) &&
         newTokens.refresh_token !== account.refresh_token;
@@ -182,7 +142,6 @@ async function refreshAndStoreToken(
   }
 }
 
-/** A refresh that may pass on a later attempt; the account is left as it is. */
 function buildRetryLaterResult(platform: Platform): EnsureValidTokenResult {
   return {
     success: false,
@@ -191,11 +150,6 @@ function buildRetryLaterResult(platform: Platform): EnsureValidTokenResult {
   };
 }
 
-/**
- * Platform dispatch for the refresh call. Encapsulates which credential
- * each platform refreshes with (refresh_token vs long-lived access token)
- * and which platforms cannot refresh at all.
- */
 async function refreshTokenForPlatform(
   account: SocialAccount,
 ): Promise<TokenRefreshResult> {
@@ -226,13 +180,10 @@ async function refreshTokenForPlatform(
         ? refreshXToken(account.refresh_token)
         : missingRefreshToken;
     case "instagram":
-      // Instagram Login refreshes the long-lived access token itself.
       return account.access_token
         ? refreshInstagramToken(account.access_token)
         : { kind: "rejected", message: "No access token stored." };
     case "facebook":
-      // Facebook Page tokens do not expire; reaching this branch means the
-      // token was revoked on the platform side.
       return { kind: "rejected", message: "Facebook Page token expired or was revoked." };
     default:
       console.error(
@@ -258,15 +209,6 @@ async function handleRejectedRefresh(
     : buildReconnectResult(account.platform);
 }
 
-/**
- * Persists refreshed tokens for a social account.
- *
- * `currentRefreshToken` is the token already stored for this account. When
- * a refresh response omits a new refresh token (or returns an empty one),
- * the existing token is kept rather than nulled: only X rotates the refresh
- * token on every call, and losing a still-valid token would break future
- * auto-refresh and force a manual reconnect.
- */
 async function updateTokenInDatabase(
   accountId: string,
   platform: Platform,
@@ -283,12 +225,8 @@ async function updateTokenInDatabase(
 
     const updatePayload = {
       access_token: tokenData.access_token,
-      // Keep the existing refresh token when the response omits or blanks
-      // it; X rotates it and returns a fresh one, which takes precedence.
       refresh_token: tokenData.refresh_token || currentRefreshToken,
       token_expires_at: expiresAt.toISOString(),
-      // A refresh that worked proves the account is usable again, clearing
-      // any earlier "needs re-authentication" flag.
       is_available: true,
       updated_at: new Date().toISOString(),
     };
@@ -308,10 +246,6 @@ async function updateTokenInDatabase(
       return error ? error.message : null;
     };
 
-    // One immediate retry. On platforms that rotate the refresh token, the
-    // credential that produced these tokens is already spent, so losing
-    // this write costs the user a manual reconnect. A transient database
-    // error is worth a second attempt before accepting that.
     let updateError = await runUpdate();
     if (updateError) {
       console.warn(

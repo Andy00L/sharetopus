@@ -9,18 +9,6 @@ import type { ApiKeyKind } from "@/lib/api/tokens";
 const NOT_FOUND_MESSAGE =
   "Key not found, already revoked, or does not belong to you.";
 
-/**
- * Revokes one of a principal's live API keys of the given kind by setting
- * revoked_at; the row stays for audit, and the key resolvers filter on
- * revoked_at IS NULL, so it stops working at once. One UPDATE checks
- * ownership and revokes, so nothing can change between the two.
- *
- * A failed query is reported as a failure to retry, never as "not found":
- * telling a user that a leaked key is already dead when it still works is
- * the worst answer this can give.
- *
- * Called by revokeApiKey (src/actions/server/api/apiKeys.ts) for both kinds.
- */
 export async function revokeApiKeyForPrincipal(
   principalId: string,
   keyId: string,
@@ -42,8 +30,8 @@ export async function revokeApiKeyForPrincipal(
   );
 
   if (error) {
-    // 22P02 (invalid_text_representation): keyId is not a uuid, so no key
-    // has it. sourceRef: postgresql.org/docs/current/errcodes-appendix.html
+    // 22P02 invalid_text_representation: keyId is not a uuid, so no key has it:
+    // https://www.postgresql.org/docs/current/errcodes-appendix.html
     if (error.code === "22P02") {
       return { success: false, message: NOT_FOUND_MESSAGE };
     }

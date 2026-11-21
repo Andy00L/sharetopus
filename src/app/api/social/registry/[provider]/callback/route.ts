@@ -11,21 +11,6 @@ import { resolveConfiguredProvider } from "@/lib/platforms/providers/registry";
 import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/catalog";
 import type { ProviderConnectResult } from "@/lib/platforms/providers/types";
 
-/**
- * OAuth callback for registry providers. Pairs with
- * /api/social/registry/[provider]/initiate, which set the state cookie
- * (and, for PKCE providers, the verifier cookie) on this browser.
- *
- * Flow: verify the state param against the HTTP-only cookie in constant
- * time, exchange the code through the provider, upsert social_accounts,
- * then redirect to the connections page. The cookies are cleared on every
- * exit path, success or failure, so a state can never be replayed.
- *
- * The signed-in Clerk user is the owner. The cookie check binds the
- * callback to the same browser that initiated, which is the CSRF defense:
- * an attacker-supplied code cannot be planted on a victim's account
- * without also holding the victim's state cookie.
- */
 export async function GET(
   request: NextRequest,
   routeContext: { params: Promise<{ provider: string }> },
@@ -47,7 +32,6 @@ export async function GET(
   const verifierCookieName = `${providerId}_auth_verifier`;
   const cookieStore = await cookies();
 
-  // Clear both cookies no matter how this request ends: one-shot state.
   const clearOAuthCookies = (response: NextResponse) => {
     response.cookies.delete(stateCookieName);
     response.cookies.delete(verifierCookieName);
@@ -61,7 +45,6 @@ export async function GET(
 
   const providerError = requestUrl.searchParams.get("error");
   if (providerError) {
-    // The user declined consent (or the provider failed). Nothing to store.
     return clearOAuthCookies(redirectToConnections("error", providerError));
   }
 
@@ -131,8 +114,6 @@ export async function GET(
     updated_at: new Date().toISOString(),
   } satisfies typeof social_accounts.$inferInsert;
 
-  // A reconnect of the same account (social_accounts_unique_per_principal)
-  // overwrites these columns in place instead of adding a second row.
   const { error: upsertError } = await runQuery(
     db
       .insert(social_accounts)

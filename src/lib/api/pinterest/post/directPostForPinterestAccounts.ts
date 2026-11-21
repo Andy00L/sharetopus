@@ -42,7 +42,6 @@ type PinterestPassthrough = {
   config: PinterestDirectPostConfig;
 };
 
-/** Creates one pin on the chosen board of one Pinterest account and records it in content history. */
 export async function directPostForPinterestAccounts(
   config: PinterestDirectPostConfig,
 ): Promise<DirectPostScheduleResult> {

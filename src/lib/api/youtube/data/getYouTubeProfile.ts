@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import type { YouTubeProfile } from "@/lib/types/socialProfiles";
 
-/** Outbound YouTube Data API calls are bounded to 15s. */
 const PROFILE_TIMEOUT_MS = 15_000;
 
 /**
@@ -42,16 +41,9 @@ export type YouTubeProfileResult =
   | { success: true; data: YouTubeProfile }
   | { success: false; message: string };
 
-/**
- * Fetch the authorized user's YouTube channel (id, title, avatar, stats).
- * The channel id is the account identifier stored in social_accounts.
- *
- * Called by: connectPlatformAccounts (web popup and x402/REST callback)
- */
 export async function getYouTubeProfile(
   accessToken: string,
 ): Promise<YouTubeProfileResult> {
-  // sourceRef: https://developers.google.com/youtube/v3/docs/channels/list
   const url =
     "https://www.googleapis.com/youtube/v3/channels" +
     "?part=snippet,statistics&mine=true";
@@ -88,8 +80,6 @@ export async function getYouTubeProfile(
 
     const channel = parsed.data.items?.[0];
     if (!channel) {
-      // A Google account without a YouTube channel returns an empty items
-      // list; posting is impossible for it, so the connect flow must fail.
       return {
         success: false,
         message:

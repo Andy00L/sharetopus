@@ -14,17 +14,7 @@ import {
 } from "@/lib/solanaActions/postNowBlink";
 import { getBaseUrl } from "@/lib/x402/config";
 
-/**
- * Second link in the post-now Blink chain. The client calls it after the
- * wallet broadcast the payment, with the signature. On success it returns
- * the spec's completed action carrying the explorer link; on failure an
- * ActionError with the reason (and the refund signature when one was sent).
- *
- * Logic lives in src/lib/solanaActions/postNowBlink.ts.
- */
-
 export const runtime = "nodejs";
-// Confirmation polling can take up to 15s; the post dispatch is quick.
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
