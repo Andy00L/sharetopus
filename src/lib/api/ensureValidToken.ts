@@ -9,6 +9,7 @@ import {
   readStoredCredential,
   refreshWithAccountLock,
   selectFreshAccessToken,
+  type RefreshWindowOptions,
 } from "@/lib/api/refreshWithAccountLock";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
 import { SocialAccount, TokenExchangeResponse } from "@/lib/types/dbTypes";
@@ -19,10 +20,7 @@ import refreshTikTokToken from "./tiktok/data/refreshTikTokToken";
 import refreshXToken from "./x/data/refreshXToken";
 import refreshYouTubeToken from "./youtube/data/refreshYouTubeToken";
 
-type TokenFailureReason = Extract<
-  PlatformFailureReason,
-  "auth_expired" | "transient" | "unknown"
->;
+type TokenFailureReason = Extract<PlatformFailureReason, "auth_expired" | "transient">;
 
 type EnsureValidTokenResult =
   | { success: true; token: string; error?: undefined }
@@ -65,6 +63,7 @@ function buildReconnectResult(platform: Platform): EnsureValidTokenResult {
  */
 export async function ensureValidToken(
   account: SocialAccount,
+  options: RefreshWindowOptions = {},
 ): Promise<EnsureValidTokenResult> {
   const accessToken = account.access_token;
   if (!accessToken) {
@@ -74,7 +73,7 @@ export async function ensureValidToken(
     return buildReconnectResult(account.platform);
   }
 
-  if (!isTokenExpiring(account.token_expires_at)) {
+  if (!isTokenExpiring(account.token_expires_at, options.refreshIfExpiringWithinMs)) {
     return {
       success: true,
       token: accessToken,
@@ -87,8 +86,10 @@ export async function ensureValidToken(
 
   // Refreshes from the stored credential, not this copy: the refresh token
   // may have rotated since this copy was read.
-  const outcome = await refreshWithAccountLock(account.id, (stored) =>
-    refreshAndStoreToken({ ...account, ...stored }),
+  const outcome = await refreshWithAccountLock(
+    account.id,
+    (stored) => refreshAndStoreToken({ ...account, ...stored }),
+    options,
   );
   switch (outcome.kind) {
     case "stored_token_fresh":
@@ -256,7 +257,10 @@ async function handleRejectedRefresh(
   account: SocialAccount,
 ): Promise<EnsureValidTokenResult> {
   const stored = await readStoredCredential(account.id);
-  const freshToken = stored.ok ? selectFreshAccessToken(stored.credential) : null;
+  const freshToken =
+    stored.ok && stored.credential.token_expires_at !== account.token_expires_at
+      ? selectFreshAccessToken(stored.credential)
+      : null;
   if (freshToken) {
     return { success: true, token: freshToken };
   }

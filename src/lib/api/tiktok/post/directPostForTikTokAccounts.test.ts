@@ -102,8 +102,8 @@ describe("directPostForTikTokAccounts after TikTok accepted the post", () => {
     expect(sentEvents[0]).toMatchObject({
       id: `tiktok-poll-${PUBLISH_ID}`,
       name: "tiktok.publish.poll",
-      data: { publish_id: PUBLISH_ID, social_account_id: ACCOUNT.id },
     });
+    expect(sentEvents[0].data).toEqual({ publish_id: PUBLISH_ID, social_account_id: ACCOUNT.id });
   });
 
   test("a pull row that could not be saved is a warning on a successful post, and no poll starts", async () => {

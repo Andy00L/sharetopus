@@ -1,6 +1,7 @@
 import "server-only";
 import { insertPendingTikTokPull } from "@/actions/server/data/pendingTikTokPulls";
 import { inngest } from "@/inngest/client";
+import { tikTokPublishPollEvent } from "@/inngest/events/tikTokPublishPoll";
 import { postToTikTok } from "@/lib/api/tiktok/post/postToTikTok";
 import type { TikTokPostResult } from "@/lib/api/tiktok/post/postToTikTok";
 import { resolveTikTokPrivacyLevel } from "@/lib/api/tiktok/post/tikTokPrivacy";
@@ -44,19 +45,15 @@ type TikTokPassthrough = {
  */
 async function sendTikTokPublishPollEvent(input: {
   publishId: string;
-  contentHistoryId: string | null;
   socialAccountId: string;
 }): Promise<{ success: true } | { success: false; message: string }> {
   try {
-    await inngest.send({
-      id: `tiktok-poll-${input.publishId}`,
-      name: "tiktok.publish.poll",
-      data: {
-        publish_id: input.publishId,
-        content_history_id: input.contentHistoryId,
-        social_account_id: input.socialAccountId,
-      },
-    });
+    await inngest.send(
+      tikTokPublishPollEvent.create(
+        { publish_id: input.publishId, social_account_id: input.socialAccountId },
+        { id: `tiktok-poll-${input.publishId}` },
+      ),
+    );
     return { success: true };
   } catch (sendError) {
     return {
@@ -146,7 +143,6 @@ export async function directPostForTikTokAccounts(
         }
         const pollSend = await sendTikTokPublishPollEvent({
           publishId: postResult.publishId,
-          contentHistoryId,
           socialAccountId: genericConfig.accountContent.accountId,
         });
         if (!pollSend.success) {

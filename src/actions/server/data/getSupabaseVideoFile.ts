@@ -1,12 +1,13 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 import "server-only";
 
 export async function getSupabaseVideoFile(
   filePath: string,
   userId: string | null
 ): Promise<{ success: boolean; message: string; buffer?: Buffer }> {
-  if (!filePath?.startsWith(`${userId}/`)) {
+  if (!isOwnedMediaPath(filePath, userId ?? "")) {
     console.warn(
       `[Get Supabase video File]  Attempt to access invalid/unauthorized path by user ${userId}: ${filePath}`
     );

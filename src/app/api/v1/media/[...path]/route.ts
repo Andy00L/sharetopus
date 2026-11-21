@@ -9,6 +9,7 @@ import type {
 } from "@/lib/api/rest/openapi/responseSchemas";
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 
 /**
  * Extracts the storage path from the catch-all URL.
@@ -22,23 +23,11 @@ function extractStoragePath(requestUrl: string): string {
 }
 
 /**
- * Validates a storage path: non-empty, no traversal, no leading slash.
- */
-function isValidStoragePath(storagePath: string): boolean {
-  return (
-    storagePath.length > 0 &&
-    !storagePath.includes("..") &&
-    !storagePath.startsWith("/") &&
-    !storagePath.includes("//")
-  );
-}
-
-/**
  * GET /v1/media/[...path] -- get a signed view URL for a file.
  *
  * The catch-all [...path] captures storage paths that contain slashes
- * (e.g. "user_abc/photo.jpg"). Ownership validated by checking the
- * path starts with the principal's ID prefix.
+ * (e.g. "user_abc/photo.jpg"). A path outside the principal's folder,
+ * traversal included, is refused by isOwnedMediaPath with 403.
  *
  * Query: ?expires_in_seconds=300 (1-3600, default 300).
  */
@@ -46,18 +35,8 @@ export const GET = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.view_url",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate storage path.
     const storagePath = extractStoragePath(request.url);
-    if (!isValidStoragePath(storagePath)) {
-      return restErrorResponse(
-        "validation_error",
-        "Invalid media path",
-        ctx.requestId,
-      );
-    }
-
-    // Step 2: ownership check.
-    if (!storagePath.startsWith(`${ctx.principal.principalId}/`)) {
+    if (!isOwnedMediaPath(storagePath, ctx.principal.principalId)) {
       return restErrorResponse(
         "forbidden",
         "You can only access your own files",
@@ -65,7 +44,6 @@ export const GET = withRestEndpoint({
       );
     }
 
-    // Step 3: parse query params.
     const queryObject = Object.fromEntries(
       new URL(request.url).searchParams,
     );
@@ -74,7 +52,6 @@ export const GET = withRestEndpoint({
       ? queryParseResult.data.expires_in_seconds
       : 300;
 
-    // Step 4: generate signed view URL.
     const viewUrlResult = await getServerSignedViewUrl(
       storagePath,
       expiresInSeconds,
@@ -115,18 +92,8 @@ export const DELETE = withRestEndpoint({
   scopes: ["api:full"],
   rateLimitAction: "rest.media.delete",
   handler: async (ctx, request) => {
-    // Step 1: extract and validate storage path.
     const storagePath = extractStoragePath(request.url);
-    if (!isValidStoragePath(storagePath)) {
-      return restErrorResponse(
-        "validation_error",
-        "Invalid media path",
-        ctx.requestId,
-      );
-    }
-
-    // Step 2: ownership check.
-    if (!storagePath.startsWith(`${ctx.principal.principalId}/`)) {
+    if (!isOwnedMediaPath(storagePath, ctx.principal.principalId)) {
       return restErrorResponse(
         "forbidden",
         "You can only delete your own files",
@@ -134,19 +101,11 @@ export const DELETE = withRestEndpoint({
       );
     }
 
-    // Step 3: call shared helper (reference-aware, never throws).
     const deleteResult = await deleteSupabaseFile(
       ctx.principal.principalId,
       storagePath,
       false,
     );
-
-    // Detect whether the file was actually removed. deleteSupabaseFile
-    // returns success:true for both "deleted" and "preserved due to
-    // references". The message text distinguishes the two outcomes.
-    const wasDeleted =
-      deleteResult.success &&
-      deleteResult.message.includes("deleted successfully");
 
     // The helper's failure message can carry database text: log it, answer
     // the caller with a plain one.
@@ -165,13 +124,13 @@ export const DELETE = withRestEndpoint({
       response: NextResponse.json(
         {
           storage_path: storagePath,
-          deleted: wasDeleted,
+          deleted: deleteResult.removed,
         } satisfies MediaDeleteResult,
         { status: 200, headers: { "x-request-id": ctx.requestId } },
       ),
       auditSummary: {
         storage_path: storagePath,
-        deleted: wasDeleted,
+        deleted: deleteResult.removed,
       },
     };
   },

@@ -44,24 +44,32 @@ export type LockedRefreshOutcome<Refreshed> =
   /** The row could not be read, or another run's refresh ran too long. */
   | { kind: "unavailable"; message: string };
 
+export type RefreshWindowOptions = { refreshIfExpiringWithinMs?: number };
+
 type LockAttempt =
   | { kind: "acquired"; ownerId: string }
   | { kind: "held" }
   | { kind: "unavailable"; message: string };
 
 /**
- * Whether a stored token is expired or expires within the next 5 minutes.
- * A null expiry means the token does not expire (Facebook Page tokens,
- * credential providers).
+ * Whether a stored token is expired or expires within `withinMs` (5 minutes
+ * unless the caller widens it). A null expiry means the token does not
+ * expire (Facebook Page tokens, credential providers).
  */
-export function isTokenExpiring(expiresAt: string | null): boolean {
+export function isTokenExpiring(
+  expiresAt: string | null,
+  withinMs: number = TOKEN_EXPIRY_BUFFER_MS,
+): boolean {
   if (!expiresAt) return false;
-  return Date.now() + TOKEN_EXPIRY_BUFFER_MS >= new Date(expiresAt).getTime();
+  return Date.now() + withinMs >= new Date(expiresAt).getTime();
 }
 
 /** The stored access token when it is present and not expiring, else null. */
-export function selectFreshAccessToken(credential: StoredCredential): string | null {
-  if (!credential.access_token || isTokenExpiring(credential.token_expires_at)) {
+export function selectFreshAccessToken(
+  credential: StoredCredential,
+  withinMs: number = TOKEN_EXPIRY_BUFFER_MS,
+): string | null {
+  if (!credential.access_token || isTokenExpiring(credential.token_expires_at, withinMs)) {
     return null;
   }
   return credential.access_token;
@@ -87,7 +95,9 @@ export function selectFreshAccessToken(credential: StoredCredential): string | n
 export async function refreshWithAccountLock<Refreshed>(
   accountId: string,
   refreshStoredCredential: (stored: StoredCredential) => Promise<Refreshed>,
+  options: RefreshWindowOptions = {},
 ): Promise<LockedRefreshOutcome<Refreshed>> {
+  const withinMs = options.refreshIfExpiringWithinMs ?? TOKEN_EXPIRY_BUFFER_MS;
   const lockKey = `token_refresh_lock:${accountId}`;
   const deadline = Date.now() + WAIT_DEADLINE_MS;
   let pollIndex = 0;
@@ -98,11 +108,11 @@ export async function refreshWithAccountLock<Refreshed>(
       console.warn(
         `[refreshWithAccountLock] Lock unavailable, refreshing account ${accountId} without it: ${lock.message}`,
       );
-      return refreshIfStillExpiring(accountId, refreshStoredCredential);
+      return refreshIfStillExpiring(accountId, withinMs, refreshStoredCredential);
     }
     if (lock.kind === "acquired") {
       try {
-        return await refreshIfStillExpiring(accountId, refreshStoredCredential);
+        return await refreshIfStillExpiring(accountId, withinMs, refreshStoredCredential);
       } finally {
         await releaseRefreshLock(lockKey, lock.ownerId);
       }
@@ -114,7 +124,7 @@ export async function refreshWithAccountLock<Refreshed>(
     pollIndex++;
     const stored = await readStoredCredential(accountId);
     if (!stored.ok) return { kind: "unavailable", message: stored.message };
-    const freshToken = selectFreshAccessToken(stored.credential);
+    const freshToken = selectFreshAccessToken(stored.credential, withinMs);
     if (freshToken) return { kind: "stored_token_fresh", accessToken: freshToken };
   } while (Date.now() < deadline);
 
@@ -158,11 +168,12 @@ export async function readStoredCredential(
 
 async function refreshIfStillExpiring<Refreshed>(
   accountId: string,
+  withinMs: number,
   refreshStoredCredential: (stored: StoredCredential) => Promise<Refreshed>,
 ): Promise<LockedRefreshOutcome<Refreshed>> {
   const stored = await readStoredCredential(accountId);
   if (!stored.ok) return { kind: "unavailable", message: stored.message };
-  const freshToken = selectFreshAccessToken(stored.credential);
+  const freshToken = selectFreshAccessToken(stored.credential, withinMs);
   if (freshToken) return { kind: "stored_token_fresh", accessToken: freshToken };
   return { kind: "refreshed", value: await refreshStoredCredential(stored.credential) };
 }

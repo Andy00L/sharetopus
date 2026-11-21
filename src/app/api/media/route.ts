@@ -1,5 +1,6 @@
 import { adminSupabase } from "@/actions/api/adminSupabase";
 import { MEDIA_BUCKET } from "@/lib/storage/mediaBucket";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 import { NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -80,27 +81,13 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // SECURITY CHECK 4: Path ownership (defense in depth)
-  if (!filePath.startsWith(`${userId}/`)) {
+  if (!isOwnedMediaPath(filePath, userId)) {
     console.warn("[GET /api/media] Path does not belong to user", {
       user: userId,
       file: filePath,
     });
     return new Response("Invalid file path", {
       status: 403,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-
-  // SECURITY CHECK 5: Path traversal prevention
-  if (
-    filePath.includes("..") ||
-    filePath.includes("//") ||
-    filePath.startsWith("/")
-  ) {
-    console.warn(`[GET /api/media] Blocked suspicious file path: ${filePath}`);
-    return new Response("Invalid file path", {
-      status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }

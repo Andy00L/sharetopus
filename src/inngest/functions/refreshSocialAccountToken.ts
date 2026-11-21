@@ -4,7 +4,10 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
-import { socialAccountTokenRefreshEvent } from "@/inngest/events/socialAccountTokenRefresh";
+import {
+  socialAccountTokenRefreshEvent,
+  TOKEN_REFRESH_HORIZON_MS,
+} from "@/inngest/events/socialAccountTokenRefresh";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { isTokenExpiring } from "@/lib/api/refreshWithAccountLock";
 
@@ -45,9 +48,13 @@ async function refreshAccountToken(socialAccountId: string): Promise<TokenRefres
   const account = accountRows[0];
   if (!account) return { outcome: "skipped", reason: "account_gone" };
   if (!account.is_available) return { outcome: "skipped", reason: "already_unavailable" };
-  if (!isTokenExpiring(account.token_expires_at)) return { outcome: "not_due" };
+  if (!isTokenExpiring(account.token_expires_at, TOKEN_REFRESH_HORIZON_MS)) {
+    return { outcome: "not_due" };
+  }
 
-  const tokenResult = await ensureValidToken(account);
+  const tokenResult = await ensureValidToken(account, {
+    refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS,
+  });
   if (tokenResult.success) return { outcome: "refreshed" };
 
   switch (tokenResult.failureReason) {
@@ -57,7 +64,6 @@ async function refreshAccountToken(socialAccountId: string): Promise<TokenRefres
       );
       return { outcome: "needs_reconnect", message: tokenResult.error };
     case "transient":
-    case "unknown":
       throw new Error(
         `[refreshAccountToken] ${account.platform} account ${account.id} refresh failed (${tokenResult.failureReason}): ${tokenResult.error}`,
       );

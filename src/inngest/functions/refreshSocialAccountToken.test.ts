@@ -22,11 +22,12 @@ function buildChainableQuery(): object {
 type AccountRow = { id: string; platform: string; is_available: boolean; token_expires_at: string | null };
 type TokenResult =
   | { success: true; token: string }
-  | { success: false; error: string; failureReason: "auth_expired" | "transient" | "unknown" };
+  | { success: false; error: string; failureReason: "auth_expired" | "transient" };
 
 let storedAccountRows: AccountRow[] = [];
 let nextTokenResult: TokenResult = { success: true, token: "token" };
 let ensureValidTokenCalls = 0;
+let ensureValidTokenOptions: unknown = undefined;
 
 mock.module("@/db/client", () => ({
   db: buildChainableQuery(),
@@ -34,19 +35,19 @@ mock.module("@/db/client", () => ({
 }));
 
 mock.module("@/lib/api/ensureValidToken", () => ({
-  ensureValidToken: async () => {
+  ensureValidToken: async (_account: unknown, options: unknown) => {
     ensureValidTokenCalls += 1;
+    ensureValidTokenOptions = options;
     return nextTokenResult;
   },
 }));
 
-mock.module("@/lib/api/refreshWithAccountLock", () => ({
-  isTokenExpiring: (expiresAt: string | null) =>
-    expiresAt !== null && Date.parse(expiresAt) <= Date.now() + 5 * 60 * 1000,
-}));
+mock.module("@/actions/api/upstash", () => ({ redis: {} }));
 
 const { refreshSocialAccountToken } = await import("./refreshSocialAccountToken");
-const { buildTokenRefreshEvents } = await import("@/inngest/events/socialAccountTokenRefresh");
+const { buildTokenRefreshEvents, TOKEN_REFRESH_HORIZON_MS } = await import(
+  "@/inngest/events/socialAccountTokenRefresh"
+);
 
 function readHandler(candidate: unknown): (input: unknown) => Promise<unknown> {
   if (typeof candidate !== "object" || candidate === null || !("handler" in candidate)) {
@@ -64,10 +65,17 @@ const runRefresh = () =>
   });
 
 const EXPIRED_AT = "2026-01-01T00:00:00.000Z";
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function buildExpiryInDays(days: number): string {
+  return new Date(Date.now() + days * DAY_MS).toISOString();
+}
 
 beforeEach(() => {
   storedAccountRows = [{ id: "account-1", platform: "tiktok", is_available: true, token_expires_at: EXPIRED_AT }];
+  nextTokenResult = { success: true, token: "token" };
   ensureValidTokenCalls = 0;
+  ensureValidTokenOptions = undefined;
 });
 
 describe("refreshSocialAccountToken", () => {
@@ -88,9 +96,15 @@ describe("refreshSocialAccountToken", () => {
     storedAccountRows = [{ id: "account-1", platform: "tiktok", is_available: false, token_expires_at: EXPIRED_AT }];
     expect(await runRefresh()).toEqual({ outcome: "skipped", reason: "already_unavailable" });
 
-    storedAccountRows = [{ id: "account-1", platform: "tiktok", is_available: true, token_expires_at: "2099-01-01T00:00:00.000Z" }];
+    storedAccountRows = [{ id: "account-1", platform: "instagram", is_available: true, token_expires_at: buildExpiryInDays(8) }];
     expect(await runRefresh()).toEqual({ outcome: "not_due" });
     expect(ensureValidTokenCalls).toBe(0);
+  });
+
+  test("a token that still works but expires within the 7-day horizon is refreshed now", async () => {
+    storedAccountRows = [{ id: "account-1", platform: "instagram", is_available: true, token_expires_at: buildExpiryInDays(3) }];
+    expect(await runRefresh()).toEqual({ outcome: "refreshed" });
+    expect(ensureValidTokenOptions).toEqual({ refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS });
   });
 });
 
