@@ -12,6 +12,12 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 /**
  * The webhook URL is both the credential and the target, so it is stored in
@@ -126,7 +132,7 @@ async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
   const validation = validateWebhookUrl(input.accessToken);
-  if (!validation.ok) return { ok: false, message: validation.message };
+  if (!validation.ok) return refusePublish(validation.message);
 
   const content = buildContent(input);
 
@@ -135,9 +141,9 @@ async function publish(
   // Discord renders an image from an embed URL, so media needs no upload:
   // it fetches our signed URL itself. Video is not embeddable, so the URL
   // goes in the message body where Discord unfurls it.
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     payload.embeds = [{ image: { url: input.mediaUrl } }];
-  } else if (input.mediaType === "video" && input.mediaUrl) {
+  } else if (input.postType === "video" && input.mediaUrl) {
     payload.content = `${content}\n${input.mediaUrl}`.slice(0, 2000);
   }
 
@@ -151,22 +157,30 @@ async function publish(
     timeoutMs: DISCORD_TIMEOUT_MS,
   });
 
-  if (!sendResult.ok) return { ok: false, message: sendResult.message };
-
-  if (sendResult.status === 429) {
-    return { ok: false, message: "Discord rate limit reached (429)." };
+  if (!sendResult.ok) {
+    return failProviderFetch({
+      platform: "discord",
+      stage: "publish",
+      fetchFailure: sendResult,
+    });
   }
   if (sendResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Discord webhook post failed (${sendResult.status}): ${sendResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "discord",
+      stage: "publish",
+      action: "Discord webhook post",
+      httpStatus: sendResult.status,
+      bodyText: sendResult.bodyText,
+    });
   }
 
   const message = parseJsonBody(sendResult.bodyText);
   const messageId = readStringField(message, "id");
   if (!messageId) {
-    return { ok: false, message: "Discord returned no message id." };
+    return failUnreadableAnswer({
+      message: "Discord returned no message id.",
+      stage: "publish",
+    });
   }
 
   const channelId = readStringField(message, "channel_id");

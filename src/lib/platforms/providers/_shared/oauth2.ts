@@ -1,5 +1,10 @@
 import "server-only";
 
+import type {
+  ProviderRefreshInput,
+  ProviderRefreshResult,
+  TokenRefreshFailureReason,
+} from "../types";
 import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
 
 const OAUTH_TIMEOUT_MS = 20_000;
@@ -59,7 +64,7 @@ export type OAuth2TokenResult =
       refreshToken: string | null;
       expiresIn: number | null;
     }
-  | { ok: false; message: string };
+  | { ok: false; message: string; reason: TokenRefreshFailureReason };
 
 export async function exchangeOAuth2Code(
   config: OAuth2Config,
@@ -73,14 +78,30 @@ export async function exchangeOAuth2Code(
   });
 }
 
-export async function refreshOAuth2Token(
+export async function refreshOAuth2Credential(
   config: OAuth2Config,
-  refreshToken: string,
-): Promise<OAuth2TokenResult> {
-  return requestToken(config, {
+  input: ProviderRefreshInput,
+): Promise<ProviderRefreshResult> {
+  if (!input.refreshToken) {
+    return { ok: false, message: "No refresh token is stored.", reason: "auth_expired" };
+  }
+  const tokens = await requestToken(config, {
     grant_type: "refresh_token",
-    refresh_token: refreshToken,
+    refresh_token: input.refreshToken,
   });
+  if (!tokens.ok) return tokens;
+  return {
+    ok: true,
+    accessToken: tokens.accessToken,
+    rotatedRefreshToken: tokens.refreshToken,
+    expiresIn: tokens.expiresIn,
+  };
+}
+
+// RFC 6749 section 5.2: a refused grant answers 400 (401 for invalid_client).
+export function classifyTokenHttpStatus(httpStatus: number): TokenRefreshFailureReason {
+  const isRefusedGrant = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429;
+  return isRefusedGrant ? "auth_expired" : "transient";
 }
 
 async function requestToken(
@@ -98,6 +119,7 @@ async function requestToken(
     return {
       ok: false,
       message: `Missing env: ${missing.join(", ")}.`,
+      reason: "transient",
     };
   }
 
@@ -125,7 +147,13 @@ async function requestToken(
     timeoutMs: OAUTH_TIMEOUT_MS,
   });
 
-  if (!tokenResult.ok) return { ok: false, message: tokenResult.message };
+  if (!tokenResult.ok) {
+    return {
+      ok: false,
+      message: tokenResult.message,
+      reason: "transient",
+    };
+  }
   if (tokenResult.status !== 200) {
     // The body carries the provider's error slug (invalid_grant,
     // redirect_uri_mismatch), which is the actionable part. The client
@@ -133,13 +161,18 @@ async function requestToken(
     return {
       ok: false,
       message: `Token exchange failed (${tokenResult.status}): ${tokenResult.bodyText.slice(0, 200)}`,
+      reason: classifyTokenHttpStatus(tokenResult.status),
     };
   }
 
   const tokenBody = parseJsonObject(tokenResult.bodyText);
   const accessToken = readStringField(tokenBody, "access_token");
   if (!accessToken) {
-    return { ok: false, message: "Token response carried no access_token." };
+    return {
+      ok: false,
+      message: "Token response carried no access_token.",
+      reason: "transient",
+    };
   }
 
   const rawExpiresIn = tokenBody?.expires_in;

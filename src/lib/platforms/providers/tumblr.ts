@@ -17,9 +17,15 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
 
@@ -99,24 +105,6 @@ async function connect(
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(TUMBLR_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
@@ -127,16 +115,16 @@ async function publish(
         ? input.config.blogIdentifier
         : null;
   if (!blogIdentifier) {
-    return { ok: false, message: "Stored Tumblr account has no blog." };
+    return refusePublish("Stored Tumblr account has no blog.");
   }
 
   const contentBlocks: Record<string, unknown>[] = [];
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     contentBlocks.push({
       type: "image",
       media: [{ type: input.mediaMimeType, url: input.mediaUrl }],
     });
-  } else if (input.mediaType === "video" && input.mediaUrl) {
+  } else if (input.postType === "video" && input.mediaUrl) {
     contentBlocks.push({ type: "video", url: input.mediaUrl });
   }
   if (input.title.trim()) {
@@ -150,7 +138,7 @@ async function publish(
     contentBlocks.push({ type: "text", text: input.body.trim() });
   }
   if (contentBlocks.length === 0) {
-    return { ok: false, message: "Tumblr post has no content." };
+    return refusePublish("Tumblr post has no content.");
   }
 
   const result = await providerFetch(
@@ -166,12 +154,17 @@ async function publish(
     },
   );
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "tumblr", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 201 && result.status !== 200) {
-    return {
-      ok: false,
-      message: `Tumblr post failed (${result.status}): ${result.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "tumblr",
+      stage: "publish",
+      action: "Tumblr post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const response = toJsonObject(parseJsonObject(result.bodyText)?.response);
@@ -179,7 +172,9 @@ async function publish(
     response && (typeof response.id === "string" || typeof response.id === "number")
       ? String(response.id)
       : readStringField(response, "id_string");
-  if (!postId) return { ok: false, message: "Tumblr returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Tumblr returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -200,7 +195,7 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
 export const tumblrBehavior: ProviderBehavior = {
   connect,
   publish,
-  refresh,
+  refresh: (input) => refreshOAuth2Credential(TUMBLR_OAUTH, input),
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TUMBLR_OAUTH, input),
 };

@@ -4,6 +4,7 @@ import type {
   ProviderBehavior,
   ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
   ProviderToolInput,
@@ -11,7 +12,18 @@ import type {
 } from "./types";
 import { toJsonObject } from "@/lib/utils/jsonObject";
 
-import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
+import {
+  parseJsonObject,
+  providerFetch,
+  type ProviderFetchFailure,
+} from "./_shared/providerFetch";
+import { BYTES_PER_MB, readStoredMediaBytes } from "./_shared/fetchStoredMedia";
+import {
+  classifyHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 /**
  * The bot token IS the credential and never expires, which is why this
@@ -27,15 +39,24 @@ const TELEGRAM_TIMEOUT_MS = 20_000;
 /** Telegram caption limit on media messages, shorter than sendMessage. */
 const TELEGRAM_CAPTION_MAX_CHARS = 1024;
 
+// core.telegram.org/bots/api (Sending files) by HTTP URL: "5 MB max size for
+// photos and 20 MB max for other types of content".
+const TELEGRAM_URL_PHOTO_MAX_MB = 5;
+const TELEGRAM_URL_VIDEO_MAX_MB = 20;
+
 /**
  * Calls one Bot API method. The token sits in the path, so failures are
  * reported by method name only, never by URL.
  */
+type BotApiFailure =
+  | { ok: false; kind: "fetch"; message: string; fetchFailure: ProviderFetchFailure }
+  | { ok: false; kind: "answer"; message: string; httpStatus: number; bodyText: string };
+
 async function callBotApi(
   botToken: string,
   method: string,
   payload: Record<string, unknown>,
-): Promise<{ ok: true; result: unknown } | { ok: false; message: string }> {
+): Promise<{ ok: true; result: unknown } | BotApiFailure> {
   const callResult = await providerFetch(
     `${TELEGRAM_API_ORIGIN}/bot${botToken}/${method}`,
     {
@@ -47,12 +68,23 @@ async function callBotApi(
   );
 
   if (!callResult.ok) {
-    return { ok: false, message: `Telegram ${method} failed: ${callResult.message}` };
+    return {
+      ok: false,
+      kind: "fetch",
+      message: `Telegram ${method} failed: ${callResult.message}`,
+      fetchFailure: callResult,
+    };
   }
 
   const envelope = parseJsonObject(callResult.bodyText);
   if (!envelope) {
-    return { ok: false, message: `Telegram ${method} returned no JSON.` };
+    return {
+      ok: false,
+      kind: "answer",
+      message: `Telegram ${method} returned no JSON.`,
+      httpStatus: callResult.status,
+      bodyText: callResult.bodyText,
+    };
   }
 
   if (envelope.ok !== true) {
@@ -62,7 +94,14 @@ async function callBotApi(
       typeof envelope.description === "string"
         ? envelope.description
         : `HTTP ${callResult.status}`;
-    return { ok: false, message: `Telegram ${method} failed: ${description}` };
+    return {
+      ok: false,
+      kind: "answer",
+      message: `Telegram ${method} failed: ${description}`,
+      httpStatus:
+        typeof envelope.error_code === "number" ? envelope.error_code : callResult.status,
+      bodyText: callResult.bodyText,
+    };
   }
 
   return { ok: true, result: envelope.result };
@@ -131,19 +170,28 @@ async function publish(
 
   const messageText = buildMessageText(input);
 
-  if (input.mediaType === "text" || !input.mediaUrl) {
+  if (input.postType === "text" || !input.mediaUrl) {
     const sendResult = await callBotApi(input.accessToken, "sendMessage", {
       chat_id: chatId,
       text: messageText,
     });
-    if (!sendResult.ok) return { ok: false, message: sendResult.message };
+    if (!sendResult.ok) return failBotApiPublish(sendResult);
     return buildPublishResult(sendResult.result, chatId);
   }
 
   // Telegram fetches the media itself from the URL we pass, so no upload
   // step is needed. Captions are capped shorter than plain messages.
   const caption = messageText.slice(0, TELEGRAM_CAPTION_MAX_CHARS);
-  const isVideo = input.mediaType === "video";
+  const isVideo = input.postType === "video";
+  const mediaSize = await readStoredMediaBytes(input.mediaUrl);
+  if (!mediaSize.ok) return mediaSize;
+  const maxMb = isVideo ? TELEGRAM_URL_VIDEO_MAX_MB : TELEGRAM_URL_PHOTO_MAX_MB;
+  if (mediaSize.declaredBytes !== null && mediaSize.declaredBytes > maxMb * BYTES_PER_MB) {
+    const mediaMb = (mediaSize.declaredBytes / BYTES_PER_MB).toFixed(1);
+    return refusePublish(
+      `Telegram accepts ${isVideo ? "videos" : "photos"} sent by link up to ${maxMb} MB; this file is ${mediaMb} MB.`,
+    );
+  }
   const sendResult = await callBotApi(
     input.accessToken,
     isVideo ? "sendVideo" : "sendPhoto",
@@ -154,8 +202,31 @@ async function publish(
     },
   );
 
-  if (!sendResult.ok) return { ok: false, message: sendResult.message };
+  if (!sendResult.ok) return failBotApiPublish(sendResult);
   return buildPublishResult(sendResult.result, chatId);
+}
+
+function failBotApiPublish(callFailure: BotApiFailure): ProviderPublishFailure {
+  if (callFailure.kind === "fetch") {
+    return {
+      ...failProviderFetch({
+        platform: "telegram",
+        stage: "publish",
+        fetchFailure: callFailure.fetchFailure,
+      }),
+      message: callFailure.message,
+    };
+  }
+  return {
+    ok: false,
+    message: callFailure.message,
+    failure: classifyHttpAnswer({
+      platform: "telegram",
+      stage: "publish",
+      httpStatus: callFailure.httpStatus,
+      bodyText: callFailure.bodyText,
+    }),
+  };
 }
 
 function buildPublishResult(
@@ -169,7 +240,10 @@ function buildPublishResult(
       : null;
 
   if (!messageId) {
-    return { ok: false, message: "Telegram returned no message id." };
+    return failUnreadableAnswer({
+      message: "Telegram returned no message id.",
+      stage: "publish",
+    });
   }
 
   const postUrl = chatId.startsWith("@")

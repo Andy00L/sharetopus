@@ -17,9 +17,20 @@ import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
 const MAX_PROVIDER_RESPONSE_BYTES = 256 * 1024;
 
+export type ProviderFetchFailure =
+  | { ok: false; kind: "not_sent"; reason: "invalid_input" | "transient"; message: string }
+  | { ok: false; kind: "no_answer"; message: string }
+  | { ok: false; kind: "redirected"; status: number; message: string }
+  | { ok: false; kind: "unreadable_body"; status: number; message: string };
+
 export type ProviderFetchResult =
-  | { ok: true; status: number; bodyText: string }
-  | { ok: false; message: string };
+  | {
+      ok: true;
+      status: number;
+      bodyText: string;
+      headers: Readonly<Record<string, string>>;
+    }
+  | ProviderFetchFailure;
 
 export type ProviderFetchOptions = {
   method: "GET" | "POST" | "PUT";
@@ -37,12 +48,19 @@ export async function providerFetch(
   try {
     parsedUrl = new URL(rawUrl);
   } catch {
-    return { ok: false, message: "Provider URL is not a valid absolute URL." };
+    return {
+      ok: false,
+      kind: "not_sent",
+      reason: "invalid_input",
+      message: "Provider URL is not a valid absolute URL.",
+    };
   }
 
   if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
     return {
       ok: false,
+      kind: "not_sent",
+      reason: "invalid_input",
       message: `Provider URL scheme "${parsedUrl.protocol}" is not allowed.`,
     };
   }
@@ -51,6 +69,8 @@ export async function providerFetch(
   if (!resolution.ok) {
     return {
       ok: false,
+      kind: "not_sent",
+      reason: resolution.reason === "dns_failure" ? "transient" : "invalid_input",
       message: `Provider host is not reachable or not permitted (${resolution.reason}).`,
     };
   }
@@ -68,19 +88,38 @@ export async function providerFetch(
     if (response.status >= 300 && response.status < 400) {
       return {
         ok: false,
+        kind: "redirected",
+        status: response.status,
         message: `Provider redirected (HTTP ${response.status}); redirects are not followed.`,
       };
     }
 
-    const bodyText = await readCappedBody(response);
-    return { ok: true, status: response.status, bodyText };
+    const bodyRead = await readCappedBody(response);
+    if (!bodyRead.ok) {
+      return {
+        ok: false,
+        kind: "unreadable_body",
+        status: response.status,
+        message: `Provider answered HTTP ${response.status} but ${bodyRead.problem}.`,
+      };
+    }
+    return {
+      ok: true,
+      status: response.status,
+      bodyText: bodyRead.bodyText,
+      headers: Object.fromEntries(response.headers),
+    };
   } catch (requestError) {
-    return { ok: false, message: describeNetworkError(requestError) };
+    return { ok: false, kind: "no_answer", message: describeNetworkError(requestError) };
   }
 }
 
-async function readCappedBody(response: UndiciResponse): Promise<string> {
-  if (!response.body) return "";
+type CappedBodyRead =
+  | { ok: true; bodyText: string }
+  | { ok: false; problem: string };
+
+async function readCappedBody(response: UndiciResponse): Promise<CappedBodyRead> {
+  if (!response.body) return { ok: true, bodyText: "" };
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -93,17 +132,23 @@ async function readCappedBody(response: UndiciResponse): Promise<string> {
       if (!(value instanceof Uint8Array)) continue;
       chunks.push(value);
       byteCount += value.byteLength;
-      if (byteCount >= MAX_PROVIDER_RESPONSE_BYTES) break;
+      if (byteCount > MAX_PROVIDER_RESPONSE_BYTES) {
+        return {
+          ok: false,
+          problem: `its body is over the ${MAX_PROVIDER_RESPONSE_BYTES / 1024}KB read limit`,
+        };
+      }
     }
-  } catch {
+  } catch (readError) {
+    return {
+      ok: false,
+      problem: `its body could not be read: ${describeNetworkError(readError)}`,
+    };
   } finally {
     reader.cancel().catch(() => {});
   }
 
-  if (chunks.length === 0) return "";
-  return Buffer.concat(chunks)
-    .subarray(0, MAX_PROVIDER_RESPONSE_BYTES)
-    .toString("utf-8");
+  return { ok: true, bodyText: Buffer.concat(chunks).toString("utf-8") };
 }
 
 export function parseJsonBody(bodyText: string): unknown {

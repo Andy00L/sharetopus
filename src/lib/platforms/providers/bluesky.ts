@@ -4,8 +4,11 @@ import type {
   ProviderBehavior,
   ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
+  ProviderRefreshInput,
+  ProviderRefreshResult,
 } from "./types";
 import {
   parseJsonBody,
@@ -14,6 +17,13 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import { fetchStoredMedia } from "./_shared/fetchStoredMedia";
+import { classifyTokenHttpStatus } from "./_shared/oauth2";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const DEFAULT_BLUESKY_SERVICE = "https://bsky.social";
 
@@ -21,7 +31,9 @@ const BLUESKY_SESSION_TTL_SECONDS = 60 * 60;
 
 const BLUESKY_TIMEOUT_MS = 20_000;
 
-const BLUESKY_MAX_IMAGE_BYTES = 1_000_000;
+// bluesky-social/bsky lexicons/app/bsky/embed/images.json: the image blob
+// "May be up to 2 MB, formerly limited to 1 MB", "maxSize": 2000000.
+const BLUESKY_MAX_IMAGE_BYTES = 2_000_000;
 
 function resolveServiceUrl(config: Record<string, unknown>): string {
   const configured = config.service;
@@ -97,53 +109,51 @@ async function connect(
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
+async function refresh(input: ProviderRefreshInput): Promise<ProviderRefreshResult> {
+  if (!input.refreshToken) {
+    return { ok: false, message: "No Bluesky refresh token is stored.", reason: "auth_expired" };
+  }
   // refreshSession authenticates with the refresh JWT itself, and it is
   // bound to the PDS that issued it.
   const refreshResult = await providerFetch(
-    `${DEFAULT_BLUESKY_SERVICE}/xrpc/com.atproto.server.refreshSession`,
+    `${resolveServiceUrl(input.config)}/xrpc/com.atproto.server.refreshSession`,
     {
       method: "POST",
-      headers: { Authorization: `Bearer ${refreshToken}` },
+      headers: { Authorization: `Bearer ${input.refreshToken}` },
       timeoutMs: BLUESKY_TIMEOUT_MS,
     },
   );
 
   if (!refreshResult.ok) {
-    return { ok: false, message: refreshResult.message };
+    return {
+      ok: false,
+      message: refreshResult.message,
+      reason: "transient",
+    };
   }
   if (refreshResult.status !== 200) {
     return {
       ok: false,
-      message: `Bluesky session refresh failed (HTTP ${refreshResult.status}). Reconnect the account.`,
+      message: `Bluesky session refresh failed (HTTP ${refreshResult.status}).`,
+      reason: classifyTokenHttpStatus(refreshResult.status),
     };
   }
 
   const session = parseJsonBody(refreshResult.bodyText);
   const accessJwt = readStringField(session, "accessJwt");
-  const nextRefreshJwt = readStringField(session, "refreshJwt");
-  const did = readStringField(session, "did");
-  const handle = readStringField(session, "handle");
-
-  if (!accessJwt || !did) {
+  if (!accessJwt) {
     return {
       ok: false,
-      message: "Bluesky refresh response was missing accessJwt or did.",
+      message: "Bluesky refresh response was missing accessJwt.",
+      reason: "transient",
     };
   }
 
   return {
     ok: true,
     accessToken: accessJwt,
-    refreshToken: nextRefreshJwt,
+    rotatedRefreshToken: readStringField(session, "refreshJwt"),
     expiresIn: BLUESKY_SESSION_TTL_SECONDS,
-    identity: {
-      accountIdentifier: did,
-      displayName: handle,
-      username: handle,
-      avatarUrl: null,
-    },
-    config: { service: DEFAULT_BLUESKY_SERVICE, did, handle },
   };
 }
 
@@ -153,7 +163,7 @@ async function publish(
   const service = resolveServiceUrl(input.config);
   const did = typeof input.config.did === "string" ? input.config.did : null;
   if (!did) {
-    return { ok: false, message: "Stored Bluesky account is missing its DID." };
+    return refusePublish("Stored Bluesky account is missing its DID.");
   }
 
   const postText = buildPostText(input);
@@ -161,16 +171,14 @@ async function publish(
   // Image posts need the bytes uploaded as a blob first; the returned blob
   // ref is embedded in the record. Text posts skip this entirely.
   let embed: Record<string, unknown> | null = null;
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     const blobResult = await uploadImageBlob(
       service,
       input.accessToken,
       input.mediaUrl,
       input.mediaMimeType,
     );
-    if (!blobResult.ok) {
-      return { ok: false, message: blobResult.message };
-    }
+    if (!blobResult.ok) return blobResult;
     embed = {
       $type: "app.bsky.embed.images",
       images: [{ alt: input.title || "", image: blobResult.blob }],
@@ -202,19 +210,29 @@ async function publish(
   );
 
   if (!createResult.ok) {
-    return { ok: false, message: createResult.message };
+    return failProviderFetch({
+      platform: "bluesky",
+      stage: "publish",
+      fetchFailure: createResult,
+    });
   }
   if (createResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Bluesky createRecord failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "bluesky",
+      stage: "publish",
+      action: "Bluesky createRecord",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
 
   const created = parseJsonBody(createResult.bodyText);
   const uri = readStringField(created, "uri");
   if (!uri) {
-    return { ok: false, message: "Bluesky did not return a post URI." };
+    return failUnreadableAnswer({
+      message: "Bluesky did not return a post URI.",
+      stage: "publish",
+    });
   }
 
   return { ok: true, postId: uri, postUrl: buildPostUrl(input.config, uri) };
@@ -239,9 +257,7 @@ function buildPostUrl(
   return `https://bsky.app/profile/${handle}/post/${recordKey}`;
 }
 
-type BlobUploadResult =
-  | { ok: true; blob: unknown }
-  | { ok: false; message: string };
+type BlobUploadResult = { ok: true; blob: unknown } | ProviderPublishFailure;
 
 async function uploadImageBlob(
   service: string,
@@ -265,21 +281,29 @@ async function uploadImageBlob(
     },
   );
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "bluesky",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Bluesky blob upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "bluesky",
+      stage: "prepare",
+      action: "Bluesky blob upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
-  const uploaded = parseJsonObject(uploadResult.bodyText);
-  if (!uploaded) {
-    return { ok: false, message: "Bluesky blob upload returned no JSON." };
-  }
-  const blob = uploaded.blob;
+  const blob = parseJsonObject(uploadResult.bodyText)?.blob;
   if (!blob) {
-    return { ok: false, message: "Bluesky blob upload returned no blob ref." };
+    return failUnreadableAnswer({
+      message: "Bluesky blob upload returned no blob ref.",
+      stage: "prepare",
+    });
   }
 
   return { ok: true, blob };

@@ -2,10 +2,11 @@ import { describe, expect, mock, test } from "bun:test";
 
 mock.module("server-only", () => ({}));
 
+const realUndici = await import("undici");
 let servedResponse = new Response(null, { status: 500 });
-mock.module("undici", () => ({ fetch: async () => servedResponse }));
+mock.module("undici", () => ({ ...realUndici, fetch: async () => servedResponse }));
 
-const { fetchStoredMedia } = await import("./fetchStoredMedia");
+const { fetchStoredMedia, readStoredMediaBytes } = await import("./fetchStoredMedia");
 
 function serveOnce(response: Response): { wasBodyRead: () => boolean } {
   let isBodyRead = false;
@@ -34,6 +35,7 @@ describe("fetchStoredMedia", () => {
     expect(result).toEqual({
       ok: false,
       message: "Media is 2KB; this platform accepts up to 1KB.",
+      failure: { reason: "invalid_input", mayHavePublished: false },
     });
     expect(served.wasBodyRead()).toBe(false);
   });
@@ -54,6 +56,31 @@ describe("fetchStoredMedia", () => {
   test("reports a storage error status as a value", async () => {
     serveOnce(new Response("gone", { status: 404 }));
     const result = await fetchStoredMedia("https://storage.test/media.png", 1024);
-    expect(result).toEqual({ ok: false, message: "Could not read the post media (HTTP 404)." });
+    expect(result).toEqual({
+      ok: false,
+      message: "Could not read the post media (HTTP 404).",
+      failure: { reason: "transient", mayHavePublished: false },
+    });
+  });
+});
+
+describe("readStoredMediaBytes", () => {
+  test("reads the declared size without reading the body", async () => {
+    const served = serveOnce(
+      new Response("x".repeat(2048), { headers: { "content-length": "2048" } }),
+    );
+    expect(await readStoredMediaBytes("https://storage.test/media.png")).toEqual({
+      ok: true,
+      declaredBytes: 2048,
+    });
+    expect(served.wasBodyRead()).toBe(false);
+  });
+
+  test("an undeclared size is null", async () => {
+    serveOnce(new Response("hello"));
+    expect(await readStoredMediaBytes("https://storage.test/media.png")).toEqual({
+      ok: true,
+      declaredBytes: null,
+    });
   });
 });

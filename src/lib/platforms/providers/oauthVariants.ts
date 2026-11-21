@@ -13,6 +13,7 @@ import type {
   ProviderToolInput,
   ProviderToolResult,
 } from "./types";
+import { postToLinkedIn } from "@/lib/api/linkedin/post/postToLinkedIn";
 import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
 
 import {
@@ -26,13 +27,23 @@ import {
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
 
 const VARIANT_TIMEOUT_MS = 30_000;
+
+// developer.dribbble.com/v2/shots (Create a shot): "Status: 202 Accepted",
+// "Location: https://api.dribbble.com/v2/shots/471756".
+const DRIBBBLE_SHOT_LOCATION_PATTERN = /\/v2\/shots\/(\d+)\/?$/;
 
 const LINKEDIN_PAGE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://www.linkedin.com/oauth/v2/authorization",
@@ -126,48 +137,33 @@ async function linkedinPagePublish(
         ? input.config.organizationId
         : null;
   if (!organizationId) {
-    return { ok: false, message: "Stored LinkedIn Page has no organization." };
+    return refusePublish("Stored LinkedIn Page has no organization.");
   }
 
   const commentary = [input.title.trim(), input.body.trim()]
     .filter((part) => part.length > 0)
     .join("\n\n");
 
-  const shareContent: Record<string, unknown> = {
-    shareCommentary: { text: commentary },
-    shareMediaCategory: input.mediaUrl ? "ARTICLE" : "NONE",
-  };
-  if (input.mediaUrl) {
-    shareContent.media = [{ status: "READY", originalUrl: input.mediaUrl }];
+  let mediaBuffer: Buffer | undefined;
+  if (input.postType !== "text") {
+    if (!input.mediaUrl) return refusePublish("The post media is missing.");
+    const storedMedia = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
+    if (!storedMedia.ok) return storedMedia;
+    mediaBuffer = Buffer.from(await storedMedia.media.arrayBuffer());
   }
 
-  const postResult = await providerFetch("https://api.linkedin.com/v2/ugcPosts", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${input.accessToken}`,
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
-    body: JSON.stringify({
-      author: `urn:li:organization:${organizationId}`,
-      lifecycleState: "PUBLISHED",
-      specificContent: { "com.linkedin.ugc.ShareContent": shareContent },
-      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    }),
-    timeoutMs: VARIANT_TIMEOUT_MS,
+  const shareResult = await postToLinkedIn({
+    accessToken: input.accessToken,
+    memberUrn: `urn:li:organization:${organizationId}`,
+    text: commentary,
+    postType: input.postType,
+    mediaType: input.mediaMimeType,
+    buffer: mediaBuffer,
   });
-
-  if (!postResult.ok) return { ok: false, message: postResult.message };
-  if (postResult.status !== 201) {
-    return {
-      ok: false,
-      message: `LinkedIn Page post failed (${postResult.status}): ${postResult.bodyText.slice(0, 200)}`,
-    };
+  if (!shareResult.success) {
+    return { ok: false, message: shareResult.error, failure: shareResult.failure };
   }
-
-  const postId = readStringField(parseJsonBody(postResult.bodyText), "id");
-  if (!postId) return { ok: false, message: "LinkedIn returned no post id." };
-  return { ok: true, postId, postUrl: null };
+  return { ok: true, postId: shareResult.postId, postUrl: null };
 }
 
 async function linkedinPageRunTool(
@@ -238,11 +234,11 @@ async function dribbbleConnect(
 async function dribbblePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  if (input.mediaType !== "image" || !input.mediaUrl) {
-    return { ok: false, message: "Dribbble shots require an image." };
+  if (input.postType !== "image" || !input.mediaUrl) {
+    return refusePublish("Dribbble shots require an image.");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Dribbble shots require a title." };
+  if (!title) return refusePublish("Dribbble shots require a title.");
 
   const storedImage = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
   if (!storedImage.ok) return storedImage;
@@ -264,22 +260,40 @@ async function dribbblePublish(
     timeoutMs: VARIANT_TIMEOUT_MS,
   });
 
-  if (!shotResult.ok) return { ok: false, message: shotResult.message };
+  if (!shotResult.ok) {
+    return failProviderFetch({
+      platform: "dribbble",
+      stage: "publish",
+      fetchFailure: shotResult,
+    });
+  }
   if (shotResult.status === 403) {
-    return {
-      ok: false,
-      message:
-        "Dribbble refused the upload (403). The app needs Dribbble's approved upload scope.",
-    };
+    return failHttpAnswer({
+      platform: "dribbble",
+      stage: "publish",
+      action: "Dribbble upload (the app needs Dribbble's approved upload scope)",
+      httpStatus: shotResult.status,
+      bodyText: "",
+    });
   }
   if (shotResult.status !== 202 && shotResult.status !== 201) {
-    return {
-      ok: false,
-      message: `Dribbble upload failed (${shotResult.status}): ${shotResult.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "dribbble",
+      stage: "publish",
+      action: "Dribbble upload",
+      httpStatus: shotResult.status,
+      bodyText: shotResult.bodyText,
+    });
   }
 
-  return { ok: true, postId: "accepted", postUrl: null };
+  const shotId = DRIBBBLE_SHOT_LOCATION_PATTERN.exec(shotResult.headers.location ?? "")?.[1];
+  if (!shotId) {
+    return failUnreadableAnswer({
+      message: "Dribbble accepted the shot but returned no shot location.",
+      stage: "publish",
+    });
+  }
+  return { ok: true, postId: shotId, postUrl: null };
 }
 
 export const dribbbleBehavior: ProviderBehavior = {
@@ -352,24 +366,6 @@ async function gmbConnect(
   };
 }
 
-async function gmbRefresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(GMB_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function gmbPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
@@ -378,16 +374,14 @@ async function gmbPublish(
       ? input.options.locationName
       : null;
   if (!locationName || !/^locations\/[0-9]+$/.test(locationName)) {
-    return {
-      ok: false,
-      message:
-        'A location is required (options.locationName, shaped "locations/<id>"). Use the listLocations tool.',
-    };
+    return refusePublish(
+      'A location is required (options.locationName, shaped "locations/<id>"). Use the listLocations tool.',
+    );
   }
   const accountName =
     typeof input.config.accountName === "string" ? input.config.accountName : null;
   if (!accountName || !/^accounts\/[0-9]+$/.test(accountName)) {
-    return { ok: false, message: "Stored Google Business account is invalid." };
+    return refusePublish("Stored Google Business account is invalid.");
   }
 
   const summary = [input.title.trim(), input.body.trim()]
@@ -400,7 +394,7 @@ async function gmbPublish(
     topicType: "STANDARD",
     summary,
   };
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     postPayload.media = [{ mediaFormat: "PHOTO", sourceUrl: input.mediaUrl }];
   }
 
@@ -417,19 +411,30 @@ async function gmbPublish(
     },
   );
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "gmb", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Google Business post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "gmb",
+      stage: "publish",
+      action: "Google Business post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const created = parseJsonBody(result.bodyText);
   const postName = readStringField(created, "name");
+  if (!postName) {
+    return failUnreadableAnswer({
+      message: "Google Business returned no post name.",
+      stage: "publish",
+    });
+  }
   return {
     ok: true,
-    postId: postName ?? "created",
+    postId: postName,
     postUrl: readStringField(created, "searchUrl"),
   };
 }
@@ -469,7 +474,7 @@ async function gmbRunTool(input: ProviderToolInput): Promise<ProviderToolResult>
 export const gmbBehavior: ProviderBehavior = {
   connect: gmbConnect,
   publish: gmbPublish,
-  refresh: gmbRefresh,
+  refresh: (input) => refreshOAuth2Credential(GMB_OAUTH, input),
   runTool: gmbRunTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(GMB_OAUTH, input),
 };

@@ -10,6 +10,12 @@ import type {
 import { toJsonObject } from "@/lib/utils/jsonObject";
 
 import { parseJsonObject, providerFetch } from "./_shared/providerFetch";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const MISC_TIMEOUT_MS = 30_000;
 
@@ -82,7 +88,7 @@ async function farcasterPublish(
   const signerUuid =
     typeof input.config.signerUuid === "string" ? input.config.signerUuid : null;
   if (!signerUuid) {
-    return { ok: false, message: "Stored Farcaster account has no signer." };
+    return refusePublish("Stored Farcaster account has no signer.");
   }
 
   const text = [input.title.trim(), input.body.trim()]
@@ -104,20 +110,24 @@ async function farcasterPublish(
     timeoutMs: MISC_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
-  if (result.status === 429) {
-    return { ok: false, message: "Neynar rate limit reached (429)." };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "farcaster", stage: "publish", fetchFailure: result });
   }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Farcaster cast failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "farcaster",
+      stage: "publish",
+      action: "Farcaster cast",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const cast = toJsonObject(parseJsonObject(result.bodyText)?.cast);
   const castHash = cast && typeof cast.hash === "string" ? cast.hash : null;
-  if (!castHash) return { ok: false, message: "Neynar returned no cast hash." };
+  if (!castHash) {
+    return failUnreadableAnswer({ message: "Neynar returned no cast hash.", stage: "publish" });
+  }
 
   return { ok: true, postId: castHash, postUrl: null };
 }
@@ -204,16 +214,16 @@ async function listmonkPublish(
   const listId =
     typeof input.config.listId === "number" ? input.config.listId : null;
   if (!instanceUrl || !listId) {
-    return { ok: false, message: "Stored Listmonk account is incomplete." };
+    return refusePublish("Stored Listmonk account is incomplete.");
   }
   const subject = input.title.trim();
   if (!subject) {
-    return { ok: false, message: "A newsletter needs a subject (title)." };
+    return refusePublish("A newsletter needs a subject (title).");
   }
 
   const authorization = listmonkAuthHeader(input.accessToken);
   const htmlBody =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `<p><img src="${input.mediaUrl}" alt="" style="max-width:100%"/></p>${paragraphs(input.body)}`
       : paragraphs(input.body);
 
@@ -230,18 +240,30 @@ async function listmonkPublish(
     }),
     timeoutMs: MISC_TIMEOUT_MS,
   });
-  if (!createResult.ok) return { ok: false, message: createResult.message };
+  if (!createResult.ok) {
+    return failProviderFetch({
+      platform: "listmonk",
+      stage: "prepare",
+      fetchFailure: createResult,
+    });
+  }
   if (createResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Listmonk campaign create failed (${createResult.status}): ${createResult.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "listmonk",
+      stage: "prepare",
+      action: "Listmonk campaign create",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
   const campaign = toJsonObject(parseJsonObject(createResult.bodyText)?.data);
   const campaignId =
     campaign && typeof campaign.id === "number" ? campaign.id : null;
   if (!campaignId) {
-    return { ok: false, message: "Listmonk returned no campaign id." };
+    return failUnreadableAnswer({
+      message: "Listmonk returned no campaign id.",
+      stage: "prepare",
+    });
   }
 
   const startResult = await providerFetch(
@@ -253,12 +275,21 @@ async function listmonkPublish(
       timeoutMs: MISC_TIMEOUT_MS,
     },
   );
-  if (!startResult.ok) return { ok: false, message: startResult.message };
+  if (!startResult.ok) {
+    return failProviderFetch({
+      platform: "listmonk",
+      stage: "publish",
+      fetchFailure: startResult,
+    });
+  }
   if (startResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Campaign ${campaignId} was created but could not be started (${startResult.status}). Start it from the Listmonk dashboard.`,
-    };
+    return failHttpAnswer({
+      platform: "listmonk",
+      stage: "publish",
+      action: `Campaign ${campaignId} was created but starting it`,
+      httpStatus: startResult.status,
+      bodyText: startResult.bodyText,
+    });
   }
 
   return {

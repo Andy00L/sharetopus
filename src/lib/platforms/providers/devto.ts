@@ -12,6 +12,12 @@ import {
   providerFetch,
   readStringField,
 } from "./_shared/providerFetch";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const DEVTO_API_ORIGIN = "https://dev.to/api";
 const DEVTO_TIMEOUT_MS = 30_000;
@@ -75,7 +81,7 @@ async function publish(
 ): Promise<ProviderPublishResult> {
   const articleTitle = input.title.trim();
   if (!articleTitle) {
-    return { ok: false, message: "Dev.to articles require a title." };
+    return refusePublish("Dev.to articles require a title.");
   }
 
   const markdownBody = buildMarkdownBody(input);
@@ -88,7 +94,9 @@ async function publish(
   };
 
   const tags = readTagsOption(input.options);
-  if (tags.length > 0) article.tags = tags;
+  // developers.forem.com/api/v1 (createArticle): `tags` is a string, "A
+  // comma-separated list of tags (up to 4 tags)".
+  if (tags.length > 0) article.tags = tags.join(", ");
 
   const canonicalUrl = input.options.canonicalUrl;
   if (typeof canonicalUrl === "string" && canonicalUrl.trim().length > 0) {
@@ -106,16 +114,21 @@ async function publish(
     timeoutMs: DEVTO_TIMEOUT_MS,
   });
 
-  if (!createResult.ok) return { ok: false, message: createResult.message };
-
-  if (createResult.status === 429) {
-    return { ok: false, message: "Dev.to rate limit reached (429)." };
+  if (!createResult.ok) {
+    return failProviderFetch({
+      platform: "devto",
+      stage: "publish",
+      fetchFailure: createResult,
+    });
   }
   if (createResult.status !== 201 && createResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Dev.to article create failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "devto",
+      stage: "publish",
+      action: "Dev.to article create",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
 
   const created = parseJsonObject(createResult.bodyText);
@@ -123,7 +136,10 @@ async function publish(
     created && typeof created.id === "number" ? String(created.id) : null;
 
   if (!articleId) {
-    return { ok: false, message: "Dev.to returned no article id." };
+    return failUnreadableAnswer({
+      message: "Dev.to returned no article id.",
+      stage: "publish",
+    });
   }
 
   return {
@@ -136,7 +152,7 @@ async function publish(
 function buildMarkdownBody(input: ProviderPublishInput): string {
   const body = input.body.trim();
   const withMedia =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `![${input.title.trim() || "cover"}](${input.mediaUrl})\n\n${body}`
       : body;
   return withMedia.slice(0, DEVTO_MAX_BODY_CHARS);

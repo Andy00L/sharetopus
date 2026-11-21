@@ -4,6 +4,7 @@ import type {
   ProviderBehavior,
   ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
@@ -16,6 +17,12 @@ import {
   fetchStoredMedia,
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const WORDPRESS_TIMEOUT_MS = 30_000;
 const WORDPRESS_MEDIA_TIMEOUT_MS = 60_000;
@@ -123,21 +130,18 @@ async function publish(
 ): Promise<ProviderPublishResult> {
   const siteUrl = readSiteUrl(input.config);
   if (!siteUrl) {
-    return {
-      ok: false,
-      message: "Stored WordPress account is missing its site URL.",
-    };
+    return refusePublish("Stored WordPress account is missing its site URL.");
   }
 
   const postTitle = input.title.trim();
   if (!postTitle) {
-    return { ok: false, message: "WordPress posts require a title." };
+    return refusePublish("WordPress posts require a title.");
   }
 
   const authorization = buildBasicAuthHeader(input.accessToken);
 
   let featuredMediaId: number | null = null;
-  if (input.mediaType === "image" && input.mediaUrl) {
+  if (input.postType === "image" && input.mediaUrl) {
     const uploadResult = await uploadMedia(
       siteUrl,
       authorization,
@@ -145,7 +149,7 @@ async function publish(
       input.fileName,
       input.mediaMimeType,
     );
-    if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+    if (!uploadResult.ok) return uploadResult;
     featuredMediaId = uploadResult.mediaId;
   }
 
@@ -166,12 +170,21 @@ async function publish(
     timeoutMs: WORDPRESS_TIMEOUT_MS,
   });
 
-  if (!createResult.ok) return { ok: false, message: createResult.message };
+  if (!createResult.ok) {
+    return failProviderFetch({
+      platform: "wordpress",
+      stage: "publish",
+      fetchFailure: createResult,
+    });
+  }
   if (createResult.status !== 201 && createResult.status !== 200) {
-    return {
-      ok: false,
-      message: `WordPress post create failed (${createResult.status}): ${createResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "wordpress",
+      stage: "publish",
+      action: "WordPress post create",
+      httpStatus: createResult.status,
+      bodyText: createResult.bodyText,
+    });
   }
 
   const created = parseJsonObject(createResult.bodyText);
@@ -179,15 +192,16 @@ async function publish(
     created && typeof created.id === "number" ? String(created.id) : null;
 
   if (!postId) {
-    return { ok: false, message: "WordPress returned no post id." };
+    return failUnreadableAnswer({
+      message: "WordPress returned no post id.",
+      stage: "publish",
+    });
   }
 
   return { ok: true, postId, postUrl: readStringField(created, "link") };
 }
 
-type MediaUploadResult =
-  | { ok: true; mediaId: number }
-  | { ok: false; message: string };
+type MediaUploadResult = { ok: true; mediaId: number } | ProviderPublishFailure;
 
 /**
  * WordPress accepts a raw body with Content-Disposition rather than a
@@ -216,12 +230,21 @@ async function uploadMedia(
     timeoutMs: WORDPRESS_MEDIA_TIMEOUT_MS,
   });
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "wordpress",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 201 && uploadResult.status !== 200) {
-    return {
-      ok: false,
-      message: `WordPress media upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "wordpress",
+      stage: "prepare",
+      action: "WordPress media upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
   const uploaded = parseJsonObject(uploadResult.bodyText);
@@ -229,7 +252,10 @@ async function uploadMedia(
     uploaded && typeof uploaded.id === "number" ? uploaded.id : null;
 
   if (mediaId === null) {
-    return { ok: false, message: "WordPress media upload returned no id." };
+    return failUnreadableAnswer({
+      message: "WordPress media upload returned no id.",
+      stage: "prepare",
+    });
   }
 
   return { ok: true, mediaId };

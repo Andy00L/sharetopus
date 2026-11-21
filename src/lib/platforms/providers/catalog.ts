@@ -594,7 +594,6 @@ const VARIANT_CATALOG: Readonly<Record<string, ProviderMetadata>> = {
       supportedMediaTypes: ["text", "image", "video"],
       maxMediaPerPost: 1,
       mediaRequired: false,
-      hotlinksMedia: true,
     },
     tools: [
       {

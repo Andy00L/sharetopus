@@ -6,7 +6,7 @@ import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 
 import { resolveConfiguredProvider } from "./registry";
-import type { ProviderTool, ProviderToolResult } from "./types";
+import type { ProviderTool } from "./types";
 
 export type ToolDiscoveryResult =
   | {
@@ -129,26 +129,12 @@ export async function runProviderToolForAccount(params: {
     };
   }
 
-  let toolResult: ProviderToolResult;
-  try {
-    toolResult = await provider.runTool({
-      methodName: params.methodName,
-      accessToken: account.accessToken,
-      config: account.config,
-      parameters: params.parameters,
-    });
-  } catch (toolError) {
-    console.error(
-      `[runProviderToolForAccount] ${provider.id}.${params.methodName} threw:`,
-      toolError instanceof Error ? toolError.message : toolError,
-    );
-    return {
-      ok: false,
-      reason: "tool_failed",
-      message: "The provider tool failed unexpectedly.",
-    };
-  }
-
+  const toolResult = await provider.runTool({
+    methodName: params.methodName,
+    accessToken: account.accessToken,
+    config: account.config,
+    parameters: params.parameters,
+  });
   if (!toolResult.ok) {
     return { ok: false, reason: "tool_failed", message: toolResult.message };
   }

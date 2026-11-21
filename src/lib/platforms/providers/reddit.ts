@@ -18,9 +18,16 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
 
@@ -98,29 +105,6 @@ async function connect(
   };
 }
 
-async function refresh(refreshToken: string): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(REDDIT_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-
-  const me = await redditApiGet(tokens.accessToken, "/api/v1/me");
-  const username = me.ok ? readStringField(me.body, "name") : null;
-
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    // Reddit keeps the same refresh token unless it returns a new one.
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: username ?? "unknown",
-      displayName: username,
-      username,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
@@ -129,14 +113,14 @@ async function publish(
       ? input.options.subreddit.trim().replace(/^r\//, "")
       : "";
   if (!subreddit) {
-    return { ok: false, message: "A subreddit is required (options.subreddit)." };
+    return refusePublish("A subreddit is required (options.subreddit).");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Reddit posts require a title." };
+  if (!title) return refusePublish("Reddit posts require a title.");
 
   // Self post for text; link post pointing at the media URL otherwise
   // (Reddit's media upload API is not public, so link is the honest form).
-  const isTextPost = input.mediaType === "text" || !input.mediaUrl;
+  const isTextPost = input.postType === "text" || !input.mediaUrl;
   const form = new URLSearchParams({
     api_type: "json",
     sr: subreddit,
@@ -159,31 +143,36 @@ async function publish(
     timeoutMs: REDDIT_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
-  if (result.status === 429) {
-    return { ok: false, message: "Reddit rate limit reached (429)." };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "reddit", stage: "publish", fetchFailure: result });
   }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Reddit submit failed (${result.status}): ${result.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "reddit",
+      stage: "publish",
+      action: "Reddit submit",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const jsonEnvelope = toJsonObject(parseJsonObject(result.bodyText)?.json);
   const submitErrors: unknown[] = Array.isArray(jsonEnvelope?.errors)
     ? jsonEnvelope.errors
     : [];
-  if (submitErrors.length > 0) {
-    return {
-      ok: false,
-      message: `Reddit rejected the post: ${JSON.stringify(submitErrors[0]).slice(0, 200)}`,
-    };
+  const firstSubmitError = submitErrors[0];
+  if (firstSubmitError !== undefined) {
+    const firstErrorCode = Array.isArray(firstSubmitError) ? firstSubmitError[0] : null;
+    return failPublish({
+      message: `Reddit rejected the post: ${JSON.stringify(firstSubmitError).slice(0, 200)}`,
+      reason: firstErrorCode === "RATELIMIT" ? "rate_limited" : "invalid_input",
+      mayHavePublished: false,
+    });
   }
   const submitData = toJsonObject(jsonEnvelope?.data);
   const postName = submitData && typeof submitData.name === "string" ? submitData.name : null;
   if (!postName) {
-    return { ok: false, message: "Reddit returned no post id." };
+    return failUnreadableAnswer({ message: "Reddit returned no post id.", stage: "publish" });
   }
 
   return {
@@ -226,7 +215,7 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
 export const redditBehavior: ProviderBehavior = {
   connect,
   publish,
-  refresh,
+  refresh: (input) => refreshOAuth2Credential(REDDIT_OAUTH, input),
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(REDDIT_OAUTH, input),
 };

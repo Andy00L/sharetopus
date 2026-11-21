@@ -7,7 +7,7 @@ import type {
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
-import { toJsonObject } from "@/lib/utils/jsonObject";
+import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
 import {
   parseJsonBody,
@@ -16,13 +16,26 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import {
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
+import {
   buildOAuth2AuthorizeUrl,
   exchangeOAuth2Code,
-  refreshOAuth2Token,
+  refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
+import { truncateToGraphemesAndBytes } from "./_shared/textLimits";
 
 const CHAT_TIMEOUT_MS = 20_000;
+
+// docs.kick.com/apis/chat: "The content limit is 500 characters, counted as
+// user-perceived characters (grapheme clusters)", and it must "encode to no
+// more than 2048 bytes in UTF-8".
+const KICK_CHAT_LIMITS = { maxGraphemes: 500, maxUtf8Bytes: 2048 };
 
 const TWITCH_OAUTH: OAuth2Config = {
   authorizeUrl: "https://id.twitch.tv/oauth2/authorize",
@@ -73,32 +86,12 @@ async function twitchConnect(
   };
 }
 
-async function twitchRefresh(
-  refreshToken: string,
-): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(TWITCH_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function twitchPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
   const clientId = process.env.TWITCH_CLIENT_ID;
   if (!clientId) {
-    return { ok: false, message: "TWITCH_CLIENT_ID is not configured." };
+    return refusePublish("TWITCH_CLIENT_ID is not configured.");
   }
   const broadcasterId =
     typeof input.config.broadcasterId === "string"
@@ -131,31 +124,56 @@ async function twitchPublish(
     },
   );
 
-  if (!result.ok) return { ok: false, message: result.message };
-  if (result.status === 429) {
-    return { ok: false, message: "Twitch rate limit reached (429)." };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "twitch", stage: "publish", fetchFailure: result });
   }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Twitch chat send failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "twitch",
+      stage: "publish",
+      action: "Twitch chat send",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const parsed = parseJsonObject(result.bodyText);
   const dataRows: unknown[] = Array.isArray(parsed?.data) ? parsed.data : [];
-  const first = toJsonObject(dataRows[0]);
-  const messageId =
-    first && typeof first.message_id === "string" ? first.message_id : null;
-  if (!messageId) return { ok: false, message: "Twitch returned no message id." };
+  const sendAnswer = toJsonObject(dataRows[0]);
+  return readChatSendAnswer({
+    platformLabel: "Twitch",
+    sendAnswer,
+    dropReason: readStringField(sendAnswer?.drop_reason, "message"),
+  });
+}
 
+function readChatSendAnswer(input: {
+  platformLabel: string;
+  sendAnswer: JsonObject | null;
+  dropReason: string | null;
+}): ProviderPublishResult {
+  const isSent = input.sendAnswer?.is_sent;
+  if (isSent === false) {
+    return failPublish({
+      message: `${input.platformLabel} dropped the chat message (${input.dropReason ?? "no reason given"}).`,
+      reason: "policy_rejected",
+      mayHavePublished: false,
+    });
+  }
+  const messageId = readStringField(input.sendAnswer, "message_id");
+  if (isSent !== true || !messageId) {
+    return failUnreadableAnswer({
+      message: `${input.platformLabel} did not confirm the chat message.`,
+      stage: "publish",
+    });
+  }
   return { ok: true, postId: messageId, postUrl: null };
 }
 
 export const twitchBehavior: ProviderBehavior = {
   connect: twitchConnect,
   publish: twitchPublish,
-  refresh: twitchRefresh,
+  refresh: (input) => refreshOAuth2Credential(TWITCH_OAUTH, input),
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TWITCH_OAUTH, input),
 };
 
@@ -216,34 +234,20 @@ async function kickConnect(
   };
 }
 
-async function kickRefresh(
-  refreshToken: string,
-): Promise<ProviderConnectResult> {
-  const tokens = await refreshOAuth2Token(KICK_OAUTH, refreshToken);
-  if (!tokens.ok) return { ok: false, message: tokens.message };
-  return {
-    ok: true,
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken ?? refreshToken,
-    expiresIn: tokens.expiresIn,
-    identity: {
-      accountIdentifier: "unchanged",
-      displayName: null,
-      username: null,
-      avatarUrl: null,
-    },
-    config: {},
-  };
-}
-
 async function kickPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const message = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join(" ")
-    .concat(input.mediaUrl ? ` ${input.mediaUrl}` : "")
-    .slice(0, 500);
+  const broadcasterUserId = Number(input.config.broadcasterUserId);
+  if (!Number.isInteger(broadcasterUserId) || broadcasterUserId <= 0) {
+    return refusePublish("Stored Kick account has no broadcaster user id. Reconnect it.");
+  }
+  const message = truncateToGraphemesAndBytes(
+    [input.title.trim(), input.body.trim()]
+      .filter((part) => part.length > 0)
+      .join(" ")
+      .concat(input.mediaUrl ? ` ${input.mediaUrl}` : ""),
+    KICK_CHAT_LIMITS,
+  );
 
   const result = await providerFetch("https://api.kick.com/public/v1/chat", {
     method: "POST",
@@ -251,35 +255,37 @@ async function kickPublish(
       "Content-Type": "application/json",
       Authorization: `Bearer ${input.accessToken}`,
     },
-    body: JSON.stringify({ content: message, type: "user" }),
+    body: JSON.stringify({
+      content: message,
+      type: "user",
+      broadcaster_user_id: broadcasterUserId,
+    }),
     timeoutMs: CHAT_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
-  if (result.status === 429) {
-    return { ok: false, message: "Kick rate limit reached (429)." };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "kick", stage: "publish", fetchFailure: result });
   }
   if (result.status !== 200 && result.status !== 201) {
-    return {
-      ok: false,
-      message: `Kick chat send failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "kick",
+      stage: "publish",
+      action: "Kick chat send",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
-  const data = toJsonObject(parseJsonObject(result.bodyText)?.data);
-  const messageId =
-    data && typeof data.message_id === "string" ? data.message_id : null;
-
-  return {
-    ok: true,
-    postId: messageId ?? "sent",
-    postUrl: null,
-  };
+  return readChatSendAnswer({
+    platformLabel: "Kick",
+    sendAnswer: toJsonObject(parseJsonObject(result.bodyText)?.data),
+    dropReason: null,
+  });
 }
 
 export const kickBehavior: ProviderBehavior = {
   connect: kickConnect,
   publish: kickPublish,
-  refresh: kickRefresh,
+  refresh: (input) => refreshOAuth2Credential(KICK_OAUTH, input),
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(KICK_OAUTH, input),
 };

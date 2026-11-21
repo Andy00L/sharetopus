@@ -1,6 +1,11 @@
 import "server-only";
 
-import { FULL_PROVIDER_CATALOG, getProviderMetadata } from "./catalog";
+import {
+  FULL_PROVIDER_CATALOG,
+  getProviderMetadata,
+  REGISTRY_PLATFORM_IDS,
+  type RegistryPlatformId,
+} from "./catalog";
 import type { ProviderBehavior, ProviderDefinition, ProviderMetadata } from "./types";
 
 import { blueskyBehavior } from "./bluesky";
@@ -70,7 +75,73 @@ export function getProvider(providerId: string): ProviderDefinition | null {
     return null;
   }
 
-  return { ...metadata, ...behavior };
+  return { ...metadata, ...guardProviderBehavior(metadata.label, behavior) };
+}
+
+async function settleThrown<Settled>(input: {
+  operationLabel: string;
+  runOperation: () => Promise<Settled>;
+  buildFailure: (message: string) => Settled;
+}): Promise<Settled> {
+  try {
+    return await input.runOperation();
+  } catch (thrownError) {
+    const message = thrownError instanceof Error ? thrownError.message : String(thrownError);
+    console.error(`[settleThrown] ${input.operationLabel} threw: ${message}`);
+    return input.buildFailure(message);
+  }
+}
+
+function guardProviderBehavior(
+  providerLabel: string,
+  behavior: ProviderBehavior,
+): ProviderBehavior {
+  const { refresh, runTool } = behavior;
+  return {
+    ...behavior,
+    connect: (input) =>
+      settleThrown({
+        operationLabel: `${providerLabel} connect`,
+        runOperation: () => behavior.connect(input),
+        buildFailure: () => ({
+          ok: false,
+          message: `${providerLabel} could not be connected because of an unexpected error.`,
+        }),
+      }),
+    publish: (input) =>
+      settleThrown({
+        operationLabel: `${providerLabel} publish`,
+        runOperation: () => behavior.publish(input),
+        buildFailure: (message) => ({
+          ok: false,
+          message: `${providerLabel} publish failed unexpectedly: ${message}`,
+          failure: { reason: "unknown", mayHavePublished: true },
+        }),
+      }),
+    ...(refresh && {
+      refresh: (input) =>
+        settleThrown({
+          operationLabel: `${providerLabel} refresh`,
+          runOperation: () => refresh(input),
+          buildFailure: (message) => ({
+            ok: false,
+            message: `${providerLabel} token refresh failed unexpectedly: ${message}`,
+            reason: "transient",
+          }),
+        }),
+    }),
+    ...(runTool && {
+      runTool: (input) =>
+        settleThrown({
+          operationLabel: `${providerLabel} ${input.methodName}`,
+          runOperation: () => runTool(input),
+          buildFailure: () => ({
+            ok: false,
+            message: "The provider tool failed unexpectedly.",
+          }),
+        }),
+    }),
+  };
 }
 
 export type ResolveProviderResult =
@@ -104,6 +175,12 @@ export function resolveConfiguredProvider(
   }
 
   return { ok: true, provider };
+}
+
+export function listRefreshablePlatformIds(): RegistryPlatformId[] {
+  return REGISTRY_PLATFORM_IDS.filter(
+    (platformId) => PROVIDER_BEHAVIORS[platformId]?.refresh !== undefined,
+  );
 }
 
 export function listAvailableProviders(): ProviderMetadata[] {

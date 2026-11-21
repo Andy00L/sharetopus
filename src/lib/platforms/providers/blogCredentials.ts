@@ -4,6 +4,7 @@ import type {
   ProviderBehavior,
   ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
   ProviderToolInput,
@@ -16,17 +17,31 @@ import {
   parseJsonObject,
   providerFetch,
   readStringField,
+  type ProviderFetchFailure,
 } from "./_shared/providerFetch";
+import {
+  classifyHttpAnswer,
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 const BLOG_TIMEOUT_MS = 30_000;
 
 const HASHNODE_GQL = "https://gql.hashnode.com";
 
+type HashnodeGqlFailure =
+  | { ok: false; kind: "fetch"; message: string; fetchFailure: ProviderFetchFailure }
+  | { ok: false; kind: "graphql_errors"; message: string }
+  | { ok: false; kind: "unreadable"; message: string; httpStatus: number; bodyText: string };
+
 async function hashnodeGql(
   apiToken: string,
   query: string,
   variables: JsonObject,
-): Promise<{ ok: true; data: JsonObject } | { ok: false; message: string }> {
+): Promise<{ ok: true; data: JsonObject } | HashnodeGqlFailure> {
   const result = await providerFetch(HASHNODE_GQL, {
     method: "POST",
     headers: {
@@ -36,16 +51,65 @@ async function hashnodeGql(
     body: JSON.stringify({ query, variables }),
     timeoutMs: BLOG_TIMEOUT_MS,
   });
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return { ok: false, kind: "fetch", message: result.message, fetchFailure: result };
+  }
   const parsed = parseJsonObject(result.bodyText);
   const gqlErrors: unknown[] = Array.isArray(parsed?.errors) ? parsed.errors : [];
   if (gqlErrors.length > 0) {
     const firstError = toJsonObject(gqlErrors[0])?.message ?? "GraphQL error";
-    return { ok: false, message: `Hashnode: ${String(firstError).slice(0, 200)}` };
+    return {
+      ok: false,
+      kind: "graphql_errors",
+      message: `Hashnode: ${String(firstError).slice(0, 200)}`,
+    };
   }
   const data = toJsonObject(parsed?.data);
-  if (!data) return { ok: false, message: "Hashnode returned no data." };
+  if (!data) {
+    return {
+      ok: false,
+      kind: "unreadable",
+      message: `Hashnode returned no data (HTTP ${result.status}).`,
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    };
+  }
   return { ok: true, data };
+}
+
+function failHashnodePublish(gqlFailure: HashnodeGqlFailure): ProviderPublishFailure {
+  switch (gqlFailure.kind) {
+    case "fetch":
+      return failProviderFetch({
+        platform: "hashnode",
+        stage: "publish",
+        fetchFailure: gqlFailure.fetchFailure,
+      });
+    case "graphql_errors":
+      return failPublish({
+        message: gqlFailure.message,
+        reason: "unknown",
+        mayHavePublished: false,
+      });
+    case "unreadable":
+      return {
+        ok: false,
+        message: gqlFailure.message,
+        failure: classifyHttpAnswer({
+          platform: "hashnode",
+          stage: "publish",
+          httpStatus: gqlFailure.httpStatus,
+          bodyText: gqlFailure.bodyText,
+        }),
+      };
+    default: {
+      const unhandledFailure: never = gqlFailure;
+      return failUnreadableAnswer({
+        message: `Unhandled Hashnode failure: ${String(unhandledFailure)}`,
+        stage: "publish",
+      });
+    }
+  }
 }
 
 async function hashnodeConnect(
@@ -99,13 +163,13 @@ async function hashnodePublish(
         ? input.config.publicationId
         : null;
   if (!publicationId) {
-    return { ok: false, message: "Hashnode account has no publication." };
+    return refusePublish("Hashnode account has no publication.");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Hashnode posts require a title." };
+  if (!title) return refusePublish("Hashnode posts require a title.");
 
   const markdown =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `![${title}](${input.mediaUrl})\n\n${input.body}`
       : input.body;
 
@@ -116,11 +180,13 @@ async function hashnodePublish(
      }`,
     { input: { title, contentMarkdown: markdown, publicationId } },
   );
-  if (!published.ok) return { ok: false, message: published.message };
+  if (!published.ok) return failHashnodePublish(published);
 
   const post = toJsonObject(toJsonObject(published.data.publishPost)?.post);
   const postId = post && typeof post.id === "string" ? post.id : null;
-  if (!postId) return { ok: false, message: "Hashnode returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Hashnode returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -214,10 +280,10 @@ async function mediumPublish(
       ? input.config.userId
       : input.accountIdentifier;
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Medium posts require a title." };
+  if (!title) return refusePublish("Medium posts require a title.");
 
   const markdown =
-    input.mediaType === "image" && input.mediaUrl
+    input.postType === "image" && input.mediaUrl
       ? `![${title}](${input.mediaUrl})\n\n${input.body}`
       : input.body;
 
@@ -236,17 +302,24 @@ async function mediumPublish(
     timeoutMs: BLOG_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "medium", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 201 && result.status !== 200) {
-    return {
-      ok: false,
-      message: `Medium post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "medium",
+      stage: "publish",
+      action: "Medium post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const data = toJsonObject(parseJsonObject(result.bodyText)?.data);
   const postId = data && typeof data.id === "string" ? data.id : null;
-  if (!postId) return { ok: false, message: "Medium returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Medium returned no post id.", stage: "publish" });
+  }
 
   return {
     ok: true,
@@ -322,17 +395,14 @@ async function lemmyPublish(
       ? normalizeLemmyInstance(input.config.instanceUrl)
       : null;
   if (!instanceUrl) {
-    return { ok: false, message: "Stored Lemmy account has no instance URL." };
+    return refusePublish("Stored Lemmy account has no instance URL.");
   }
   const communityId = Number(input.options.communityId);
   if (!Number.isInteger(communityId) || communityId <= 0) {
-    return {
-      ok: false,
-      message: "A community is required (options.communityId).",
-    };
+    return refusePublish("A community is required (options.communityId).");
   }
   const title = input.title.trim();
-  if (!title) return { ok: false, message: "Lemmy posts require a title." };
+  if (!title) return refusePublish("Lemmy posts require a title.");
 
   const postPayload: JsonObject = {
     name: title,
@@ -351,17 +421,24 @@ async function lemmyPublish(
     timeoutMs: BLOG_TIMEOUT_MS,
   });
 
-  if (!result.ok) return { ok: false, message: result.message };
+  if (!result.ok) {
+    return failProviderFetch({ platform: "lemmy", stage: "publish", fetchFailure: result });
+  }
   if (result.status !== 200) {
-    return {
-      ok: false,
-      message: `Lemmy post failed (${result.status}): ${result.bodyText.slice(0, 200)}`,
-    };
+    return failHttpAnswer({
+      platform: "lemmy",
+      stage: "publish",
+      action: "Lemmy post",
+      httpStatus: result.status,
+      bodyText: result.bodyText,
+    });
   }
 
   const post = toJsonObject(toJsonObject(parseJsonObject(result.bodyText)?.post_view)?.post);
   const postId = post && typeof post.id === "number" ? String(post.id) : null;
-  if (!postId) return { ok: false, message: "Lemmy returned no post id." };
+  if (!postId) {
+    return failUnreadableAnswer({ message: "Lemmy returned no post id.", stage: "publish" });
+  }
 
   return { ok: true, postId, postUrl: `${instanceUrl}/post/${postId}` };
 }

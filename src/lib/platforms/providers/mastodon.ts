@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { Blob } from "node:buffer";
@@ -10,6 +11,7 @@ import type {
   ProviderBehavior,
   ProviderConnectInput,
   ProviderConnectResult,
+  ProviderPublishFailure,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
@@ -22,6 +24,13 @@ import {
   fetchStoredMedia,
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
+import {
+  failHttpAnswer,
+  failProviderFetch,
+  failPublish,
+  failUnreadableAnswer,
+  refusePublish,
+} from "./_shared/publishFailure";
 
 /**
  * The token does not expire, which is why this provider declares no refresh.
@@ -119,16 +128,13 @@ async function publish(
 ): Promise<ProviderPublishResult> {
   const instanceUrl = readInstanceUrl(input.config);
   if (!instanceUrl) {
-    return {
-      ok: false,
-      message: "Stored Mastodon account is missing its instance URL.",
-    };
+    return refusePublish("Stored Mastodon account is missing its instance URL.");
   }
 
   const statusText = buildStatusText(input);
 
   const mediaIds: string[] = [];
-  if (input.mediaUrl && input.mediaType !== "text") {
+  if (input.mediaUrl && input.postType !== "text") {
     const uploadResult = await uploadMedia(
       instanceUrl,
       input.accessToken,
@@ -136,7 +142,7 @@ async function publish(
       input.fileName,
       input.mediaMimeType,
     );
-    if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+    if (!uploadResult.ok) return uploadResult;
     mediaIds.push(uploadResult.mediaId);
   }
 
@@ -151,24 +157,36 @@ async function publish(
       // Mastodon dedupes identical requests carrying the same idempotency
       // key for roughly an hour, which turns a worker retry into a no-op
       // instead of a duplicate toot.
-      "Idempotency-Key": `${input.accountIdentifier}:${hashForIdempotency(statusText)}`,
+      "Idempotency-Key": buildIdempotencyKey(input, statusText),
     },
     body: JSON.stringify(statusPayload),
     timeoutMs: MASTODON_TIMEOUT_MS,
   });
 
-  if (!postResult.ok) return { ok: false, message: postResult.message };
+  if (!postResult.ok) {
+    return failProviderFetch({
+      platform: "mastodon",
+      stage: "publish",
+      fetchFailure: postResult,
+    });
+  }
   if (postResult.status !== 200) {
-    return {
-      ok: false,
-      message: `Mastodon post failed (${postResult.status}): ${postResult.bodyText.slice(0, 300)}`,
-    };
+    return failHttpAnswer({
+      platform: "mastodon",
+      stage: "publish",
+      action: "Mastodon post",
+      httpStatus: postResult.status,
+      bodyText: postResult.bodyText,
+    });
   }
 
   const created = parseJsonBody(postResult.bodyText);
   const statusId = readStringField(created, "id");
   if (!statusId) {
-    return { ok: false, message: "Mastodon did not return a status id." };
+    return failUnreadableAnswer({
+      message: "Mastodon did not return a status id.",
+      stage: "publish",
+    });
   }
 
   return {
@@ -187,17 +205,20 @@ function buildStatusText(input: ProviderPublishInput): string {
   return `${trimmedTitle}\n\n${trimmedBody}`;
 }
 
-function hashForIdempotency(statusText: string): string {
-  let accumulator = 0;
-  for (let index = 0; index < statusText.length; index++) {
-    accumulator = (accumulator * 31 + statusText.charCodeAt(index)) | 0;
+function buildIdempotencyKey(
+  input: Pick<ProviderPublishInput, "accountIdentifier" | "idempotencyKey" | "postType" | "fileName">,
+  statusText: string,
+): string {
+  if (input.idempotencyKey) {
+    return `${input.accountIdentifier}:post:${input.idempotencyKey}`;
   }
-  return Math.abs(accumulator).toString(36);
+  const contentHash = createHash("sha256")
+    .update(JSON.stringify([statusText, input.postType, input.fileName]))
+    .digest("hex");
+  return `${input.accountIdentifier}:content:${contentHash}`;
 }
 
-type MediaUploadResult =
-  | { ok: true; mediaId: string }
-  | { ok: false; message: string };
+type MediaUploadResult = { ok: true; mediaId: string } | ProviderPublishFailure;
 
 async function uploadMedia(
   instanceUrl: string,
@@ -223,18 +244,30 @@ async function uploadMedia(
     timeoutMs: MASTODON_MEDIA_TIMEOUT_MS,
   });
 
-  if (!uploadResult.ok) return { ok: false, message: uploadResult.message };
+  if (!uploadResult.ok) {
+    return failProviderFetch({
+      platform: "mastodon",
+      stage: "prepare",
+      fetchFailure: uploadResult,
+    });
+  }
   if (uploadResult.status !== 200 && uploadResult.status !== 202) {
-    return {
-      ok: false,
-      message: `Mastodon media upload failed (${uploadResult.status}).`,
-    };
+    return failHttpAnswer({
+      platform: "mastodon",
+      stage: "prepare",
+      action: "Mastodon media upload",
+      httpStatus: uploadResult.status,
+      bodyText: uploadResult.bodyText,
+    });
   }
 
   const uploaded = parseJsonBody(uploadResult.bodyText);
   const mediaId = readStringField(uploaded, "id");
   if (!mediaId) {
-    return { ok: false, message: "Mastodon media upload returned no id." };
+    return failUnreadableAnswer({
+      message: "Mastodon media upload returned no id.",
+      stage: "prepare",
+    });
   }
 
   // 202 means the file is still processing, and a status that attaches
@@ -252,7 +285,7 @@ async function waitForProcessedMedia(
   instanceUrl: string,
   accessToken: string,
   mediaId: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | ProviderPublishFailure> {
   const deadlineMs = Date.now() + MEDIA_PROCESSING_DEADLINE_MS;
   while (Date.now() < deadlineMs) {
     await sleep(MEDIA_PROCESSING_POLL_INTERVAL_MS);
@@ -264,19 +297,29 @@ async function waitForProcessedMedia(
         timeoutMs: MASTODON_TIMEOUT_MS,
       },
     );
-    if (!mediaStatus.ok) return { ok: false, message: mediaStatus.message };
+    if (!mediaStatus.ok) {
+      return failProviderFetch({
+        platform: "mastodon",
+        stage: "prepare",
+        fetchFailure: mediaStatus,
+      });
+    }
     if (mediaStatus.status === 200) return { ok: true };
     if (mediaStatus.status !== 206) {
-      return {
-        ok: false,
-        message: `Mastodon media processing failed (${mediaStatus.status}).`,
-      };
+      return failHttpAnswer({
+        platform: "mastodon",
+        stage: "prepare",
+        action: "Mastodon media processing",
+        httpStatus: mediaStatus.status,
+        bodyText: mediaStatus.bodyText,
+      });
     }
   }
-  return {
-    ok: false,
+  return failPublish({
     message: `Mastodon was still processing the media after ${MEDIA_PROCESSING_DEADLINE_MS / 1000} seconds.`,
-  };
+    reason: "transient",
+    mayHavePublished: false,
+  });
 }
 
 export const mastodonBehavior: ProviderBehavior = { connect, publish };

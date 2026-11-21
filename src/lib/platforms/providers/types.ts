@@ -1,4 +1,8 @@
 import type { MediaType } from "@/db/schema";
+import type {
+  PlatformFailure,
+  PlatformFailureReason,
+} from "@/lib/api/_shared/platformFailure";
 
 export type ProviderAuthKind =
   | "oauth2"
@@ -59,16 +63,23 @@ export type ProviderPublishInput = {
   accountIdentifier: string;
   title: string;
   body: string;
-  mediaType: MediaType;
+  postType: MediaType;
   mediaUrl: string | null;
   fileName: string;
   mediaMimeType: string;
   options: Record<string, unknown>;
+  idempotencyKey: string | null;
+};
+
+export type ProviderPublishFailure = {
+  ok: false;
+  message: string;
+  failure: PlatformFailure;
 };
 
 export type ProviderPublishResult =
   | { ok: true; postId: string; postUrl: string | null }
-  | { ok: false; message: string };
+  | ProviderPublishFailure;
 
 export type ProviderConnectResult =
   | {
@@ -81,6 +92,26 @@ export type ProviderConnectResult =
       config: Record<string, unknown>;
     }
   | { ok: false; message: string };
+
+export type TokenRefreshFailureReason = Extract<
+  PlatformFailureReason,
+  "auth_expired" | "transient"
+>;
+
+export type ProviderRefreshInput = {
+  accessToken: string | null;
+  refreshToken: string | null;
+  config: Record<string, unknown>;
+};
+
+export type ProviderRefreshResult =
+  | {
+      ok: true;
+      accessToken: string;
+      rotatedRefreshToken: string | null;
+      expiresIn: number | null;
+    }
+  | { ok: false; message: string; reason: TokenRefreshFailureReason };
 
 export type ProviderMetadata = {
   id: string;
@@ -99,7 +130,7 @@ export type ProviderBehavior = {
   /** Publishes one post. Errors as values; never throws across this boundary. */
   publish: (input: ProviderPublishInput) => Promise<ProviderPublishResult>;
 
-  refresh?: (refreshToken: string) => Promise<ProviderConnectResult>;
+  refresh?: (input: ProviderRefreshInput) => Promise<ProviderRefreshResult>;
   runTool?: (input: ProviderToolInput) => Promise<ProviderToolResult>;
   buildAuthorizeUrl?: (input: {
     state: string;
