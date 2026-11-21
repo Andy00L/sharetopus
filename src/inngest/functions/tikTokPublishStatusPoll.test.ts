@@ -22,7 +22,7 @@ type FinalizeResult =
       kind: "finalized";
       principalId: string;
       mediaStoragePath: string;
-      failedScheduledPost: { scheduledPostId: string; reason: string; message: string } | null;
+      failedPost: { kind: "scheduled"; scheduledPostId: string; reason: string; message: string } | null;
     }
   | { success: false; message: string };
 
@@ -36,7 +36,8 @@ const FINALIZED_FAILURE: FinalizeResult = {
   kind: "finalized",
   principalId: "principal-1",
   mediaStoragePath: "principal-1/video.mp4",
-  failedScheduledPost: {
+  failedPost: {
+    kind: "scheduled",
     scheduledPostId: "scheduled-1",
     reason: "policy_rejected",
     message: "spam_risk_text",
@@ -190,6 +191,7 @@ describe("tikTokPublishStatusPollWorker", () => {
           platform: "tiktok",
           reason: "policy_rejected",
           error_message: "spam_risk_text",
+          may_have_published: false,
         },
       },
     ]);
@@ -218,7 +220,7 @@ describe("tikTokPublishStatusPollWorker", () => {
 
 describe("processTikTokPublishWebhook", () => {
   test("post.publish.failed finalizes through the same steps with the classified reason", async () => {
-    pollState.finalize = { ...FINALIZED_FAILURE, failedScheduledPost: null };
+    pollState.finalize = { ...FINALIZED_FAILURE, failedPost: null };
     await webhookWorker.handler({
       event: {
         data: {

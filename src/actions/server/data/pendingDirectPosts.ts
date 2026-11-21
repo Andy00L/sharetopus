@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, or } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
@@ -258,41 +258,95 @@ export async function finalizePendingDirectPost(input: {
   return { success: true, updated };
 }
 
-export async function sweepStuckPendingDirectPosts(
-  cutoffIso: string,
-): Promise<
-  { success: true; sweptCount: number } | { success: false; message: string }
-> {
-  const now = new Date().toISOString();
+const SWEEP_BATCH_LIMIT = 500;
 
-  const { data: sweptRows, error } = await runQuery(
+export const SWEPT_DIRECT_POST_REASON =
+  "Publishing stopped without a result; the post may have published";
+
+export type SweptDirectPost = {
+  dispatch_id: string;
+  principal_id: string;
+  batch_id: string;
+  platform: Platform;
+  social_account_id: string;
+};
+
+function isStuckBefore(cutoffIso: string) {
+  return and(
+    eq(pending_direct_posts.status, "processing"),
+    lt(pending_direct_posts.created_at, cutoffIso),
+    or(
+      isNull(pending_direct_posts.publish_started_at),
+      lt(pending_direct_posts.publish_started_at, cutoffIso),
+    ),
+  );
+}
+
+export async function findStuckPendingDirectPosts(
+  cutoffIso: string,
+): Promise<{ success: true; dispatchIds: string[] } | { success: false; message: string }> {
+  const { data: stuckRows, error } = await runQuery(
+    db
+      .select({ event_id: pending_direct_posts.event_id })
+      .from(pending_direct_posts)
+      .where(isStuckBefore(cutoffIso))
+      .orderBy(asc(pending_direct_posts.created_at))
+      .limit(SWEEP_BATCH_LIMIT),
+  );
+  if (error) {
+    console.error("[findStuckPendingDirectPosts] Lookup failed:", error.message);
+    return { success: false, message: `Stuck lookup failed: ${error.message}` };
+  }
+  return { success: true, dispatchIds: stuckRows.map((stuckRow) => stuckRow.event_id) };
+}
+
+export async function sweepStuckPendingDirectPosts(input: {
+  dispatchIds: string[];
+  cutoffIso: string;
+  sweptAtIso: string;
+}): Promise<
+  { success: true; sweptDispatches: SweptDirectPost[] } | { success: false; message: string }
+> {
+  const { dispatchIds, cutoffIso, sweptAtIso } = input;
+  if (dispatchIds.length === 0) return { success: true, sweptDispatches: [] };
+
+  const { error: sweepError } = await runQuery(
     db
       .update(pending_direct_posts)
       .set({
         status: "failed" as const,
-        finished_at: now,
-        failure_reason: STALE_WORKER_SWEPT_REASON,
+        finished_at: sweptAtIso,
+        failure_reason: SWEPT_DIRECT_POST_REASON,
       })
-      .where(
-        and(
-          eq(pending_direct_posts.status, "processing"),
-          lt(pending_direct_posts.created_at, cutoffIso),
-          or(
-            isNull(pending_direct_posts.publish_started_at),
-            lt(pending_direct_posts.publish_started_at, cutoffIso),
-          ),
-        ),
-      )
-      .returning({ event_id: pending_direct_posts.event_id }),
+      .where(and(inArray(pending_direct_posts.event_id, dispatchIds), isStuckBefore(cutoffIso))),
   );
-
-  if (error) {
-    console.error(
-      "[sweepStuckPendingDirectPosts] Update failed:",
-      error.message,
-    );
-    return { success: false, message: `Sweep failed: ${error.message}` };
+  if (sweepError) {
+    console.error("[sweepStuckPendingDirectPosts] Update failed:", sweepError.message);
+    return { success: false, message: `Sweep failed: ${sweepError.message}` };
   }
 
-  return { success: true, sweptCount: sweptRows.length };
+  const { data: sweptDispatches, error: rereadError } = await runQuery(
+    db
+      .select({
+        dispatch_id: pending_direct_posts.event_id,
+        principal_id: pending_direct_posts.principal_id,
+        batch_id: pending_direct_posts.batch_id,
+        platform: pending_direct_posts.platform,
+        social_account_id: pending_direct_posts.social_account_id,
+      })
+      .from(pending_direct_posts)
+      .where(
+        and(
+          inArray(pending_direct_posts.event_id, dispatchIds),
+          eq(pending_direct_posts.status, "failed"),
+          eq(pending_direct_posts.failure_reason, SWEPT_DIRECT_POST_REASON),
+          eq(pending_direct_posts.finished_at, sweptAtIso),
+        ),
+      ),
+  );
+  if (rereadError) {
+    console.error("[sweepStuckPendingDirectPosts] Reread failed:", rereadError.message);
+    return { success: false, message: `Sweep reread failed: ${rereadError.message}` };
+  }
+  return { success: true, sweptDispatches };
 }

@@ -2,18 +2,32 @@ import "server-only";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
-import { content_history, pending_tiktok_pulls, scheduled_posts } from "@/db/schema";
+import {
+  content_history,
+  pending_direct_posts,
+  pending_tiktok_pulls,
+  scheduled_posts,
+} from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
 import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
+import type { DispatchWebhookFields } from "@/lib/api/rest/webhooks/postWebhookPayloads";
 
 export type TikTokPullOutcome =
   | { outcome: "completed"; tiktokPostId: string | null }
   | { outcome: "failed"; reason: PlatformFailureReason; message: string };
 
-export type FailedScheduledTikTokPost = {
-  scheduledPostId: string;
-  reason: PlatformFailureReason;
-  message: string;
+export type FailedTikTokPost =
+  | { kind: "scheduled"; scheduledPostId: string; reason: PlatformFailureReason; message: string }
+  | { kind: "post_now"; dispatch: DispatchWebhookFields; reason: PlatformFailureReason; message: string };
+
+type FailedTikTokPull = Extract<TikTokPullOutcome, { outcome: "failed" }>;
+
+type DirectPostStatus = (typeof pending_direct_posts.$inferSelect)["status"];
+
+type ClaimedPull = {
+  social_account_id: string;
+  media_storage_path: string;
+  content_history_id: string | null;
 };
 
 type FinalizeSuccess =
@@ -23,7 +37,7 @@ type FinalizeSuccess =
       kind: "finalized";
       principalId: string;
       mediaStoragePath: string;
-      failedScheduledPost: FailedScheduledTikTokPost | null;
+      failedPost: FailedTikTokPost | null;
     };
 
 export type FinalizeTikTokPullResult =
@@ -36,6 +50,10 @@ const SCHEDULED_STATUSES_A_TIKTOK_FAILURE_OVERRIDES: PostStatus[] = [
   "processing",
   "posted",
 ];
+
+const DISPATCH_STATUSES_A_TIKTOK_FAILURE_OVERRIDES: DirectPostStatus[] = ["processing", "completed"];
+
+const AMBIGUOUS_DISPATCH_MATCH_COUNT = 2;
 
 const STORED_MESSAGE_MAX_CHARS = 1000;
 
@@ -89,6 +107,7 @@ async function applyTikTokPullOutcome(
     )
     .returning({
       principal_id: pending_tiktok_pulls.principal_id,
+      social_account_id: pending_tiktok_pulls.social_account_id,
       media_storage_path: pending_tiktok_pulls.media_storage_path,
       content_history_id: pending_tiktok_pulls.content_history_id,
       scheduled_post_id: pending_tiktok_pulls.scheduled_post_id,
@@ -111,7 +130,7 @@ async function applyTikTokPullOutcome(
       kind: "finalized",
       principalId: claimedPull.principal_id,
       mediaStoragePath: claimedPull.media_storage_path,
-      failedScheduledPost: null,
+      failedPost: null,
     };
   }
 
@@ -120,18 +139,20 @@ async function applyTikTokPullOutcome(
     message: result.message,
     failedAt: finalizedAt,
   });
-  const failedScheduledPost = await markScheduledPostFailed(transaction, {
-    scheduledPostId: claimedPull.scheduled_post_id,
-    result,
-    failedAt: finalizedAt,
-  });
+  const failedPost = claimedPull.scheduled_post_id
+    ? await markScheduledPostFailed(transaction, {
+        scheduledPostId: claimedPull.scheduled_post_id,
+        result,
+        failedAt: finalizedAt,
+      })
+    : await markDirectDispatchFailed(transaction, { pull: claimedPull, result, failedAt: finalizedAt });
 
   return {
     success: true,
     kind: "finalized",
     principalId: claimedPull.principal_id,
     mediaStoragePath: claimedPull.media_storage_path,
-    failedScheduledPost,
+    failedPost,
   };
 }
 
@@ -218,13 +239,8 @@ async function markContentHistoryFailed(
 
 async function markScheduledPostFailed(
   transaction: Transaction,
-  input: {
-    scheduledPostId: string | null;
-    result: Extract<TikTokPullOutcome, { outcome: "failed" }>;
-    failedAt: string;
-  },
-): Promise<FailedScheduledTikTokPost | null> {
-  if (!input.scheduledPostId) return null;
+  input: { scheduledPostId: string; result: FailedTikTokPull; failedAt: string },
+): Promise<FailedTikTokPost | null> {
   const [failedPost] = await transaction
     .update(scheduled_posts)
     .set({
@@ -245,7 +261,75 @@ async function markScheduledPostFailed(
 
   if (!failedPost) return null;
   return {
+    kind: "scheduled",
     scheduledPostId: failedPost.id,
+    reason: input.result.reason,
+    message: input.result.message,
+  };
+}
+
+async function findDirectDispatchOfPull(
+  transaction: Transaction,
+  pull: ClaimedPull,
+): Promise<string | null> {
+  if (!pull.content_history_id) return null;
+  const [history] = await transaction
+    .select({ batch_id: content_history.batch_id })
+    .from(content_history)
+    .where(eq(content_history.id, pull.content_history_id))
+    .limit(1);
+  if (!history?.batch_id) return null;
+
+  const matchingDispatches = await transaction
+    .select({ event_id: pending_direct_posts.event_id })
+    .from(pending_direct_posts)
+    .where(
+      and(
+        eq(pending_direct_posts.batch_id, history.batch_id),
+        eq(pending_direct_posts.social_account_id, pull.social_account_id),
+        eq(pending_direct_posts.platform, "tiktok"),
+        eq(pending_direct_posts.media_storage_path, pull.media_storage_path),
+      ),
+    )
+    .limit(AMBIGUOUS_DISPATCH_MATCH_COUNT);
+  if (matchingDispatches.length >= AMBIGUOUS_DISPATCH_MATCH_COUNT) {
+    console.warn(
+      `[findDirectDispatchOfPull] Batch ${history.batch_id} holds several TikTok dispatches for account ${pull.social_account_id}; none is failed`,
+    );
+    return null;
+  }
+  return matchingDispatches[0]?.event_id ?? null;
+}
+
+async function markDirectDispatchFailed(
+  transaction: Transaction,
+  input: { pull: ClaimedPull; result: FailedTikTokPull; failedAt: string },
+): Promise<FailedTikTokPost | null> {
+  const dispatchId = await findDirectDispatchOfPull(transaction, input.pull);
+  if (!dispatchId) return null;
+  const [failedDispatch] = await transaction
+    .update(pending_direct_posts)
+    .set({
+      status: "failed",
+      failure_reason: input.result.message.slice(0, STORED_MESSAGE_MAX_CHARS),
+      finished_at: input.failedAt,
+    })
+    .where(
+      and(
+        eq(pending_direct_posts.event_id, dispatchId),
+        inArray(pending_direct_posts.status, DISPATCH_STATUSES_A_TIKTOK_FAILURE_OVERRIDES),
+      ),
+    )
+    .returning({
+      dispatch_id: pending_direct_posts.event_id,
+      batch_id: pending_direct_posts.batch_id,
+      platform: pending_direct_posts.platform,
+      social_account_id: pending_direct_posts.social_account_id,
+    });
+  if (!failedDispatch) return null;
+  return {
+    kind: "post_now",
+    dispatch: failedDispatch,
     reason: input.result.reason,
     message: input.result.message,
   };

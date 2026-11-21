@@ -33,6 +33,7 @@ type CallEnding = "answer" | "killed-before-history" | "killed-after-history";
 
 const MINTED_NOTHING: MintResult = { success: true, publicUrl: null, tiktokUrl: null };
 const STALE_WORKER_SWEPT_REASON = "stale_worker_swept";
+const SWEPT_DIRECT_POST_REASON = "Publishing stopped without a result; the post may have published";
 const CLAIM_TIME = "2026-11-19T10:00:01.000Z";
 const MAY_HAVE_PUBLISHED_MESSAGE =
   "An earlier publish attempt stopped before it reported a result; the post may have published";
@@ -148,6 +149,7 @@ mock.module("@/actions/server/data/fetchAccountForPublish", () => ({
 }));
 
 mock.module("@/actions/server/data/pendingDirectPosts", () => ({
+  SWEPT_DIRECT_POST_REASON,
   finalizePendingDirectPost: async (input: { outcome: DirectPostOutcome }) => {
     if (world.isFinalizeFailing) return { success: false, message: "Update failed: timeout" };
     const row = world.row;
@@ -302,7 +304,14 @@ describe("processDirectPost", () => {
     expect(world.platformCalls).toBe(1);
   });
 
-  test("a dispatch swept before the publish started is never published", async () => {
+  test("a dispatch swept before the publish started is never published, and the sweep's record stays", async () => {
+    world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: SWEPT_DIRECT_POST_REASON };
+    await runWorker(0);
+    expect(world.platformCalls).toBe(0);
+    expect(world.row?.failure_reason).toBe(SWEPT_DIRECT_POST_REASON);
+  });
+
+  test("a row an older sweep marked stale_worker_swept is still overwritten by its run", async () => {
     world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: STALE_WORKER_SWEPT_REASON };
     await runWorker(0);
     expect(world.platformCalls).toBe(0);
@@ -396,16 +405,16 @@ describe("processDirectPost publish claim", () => {
     expect(world.row?.publish_started_at).toBeNull();
   });
 
-  test("a dispatch swept after an attempt that may have published says so instead of 'not published'", async () => {
+  test("a dispatch swept after an attempt that may have published is never called again", async () => {
     world.row = {
       ...PROCESSING_ROW,
       status: "failed",
-      failure_reason: STALE_WORKER_SWEPT_REASON,
+      failure_reason: SWEPT_DIRECT_POST_REASON,
       publish_started_at: CLAIM_TIME,
     };
     await runWorker(1);
     expect(world.platformCalls).toBe(0);
-    expect(world.row?.failure_reason).toBe(MAY_HAVE_PUBLISHED_MESSAGE);
+    expect(world.row?.failure_reason).toBe(SWEPT_DIRECT_POST_REASON);
   });
 });
 
@@ -431,11 +440,12 @@ describe("processDirectPost onFailure", () => {
     expect(world.finalizedOutcomes).toEqual([{ status: "completed" }]);
   });
 
-  test("exhausted retries still record the outcome when the sweeper failed the dispatch first", async () => {
-    world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: STALE_WORKER_SWEPT_REASON };
+  test("exhausted retries leave a dispatch the sweep failed as the sweep recorded it", async () => {
+    world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: SWEPT_DIRECT_POST_REASON };
     world.historyRows = 1;
     await runOnFailure();
-    expect(world.finalizedOutcomes).toEqual([{ status: "completed" }]);
+    expect(world.finalizedOutcomes).toEqual([]);
+    expect(world.row?.failure_reason).toBe(SWEPT_DIRECT_POST_REASON);
   });
 
   test("exhausted retries treat the post as possibly live for media cleanup", async () => {
@@ -522,6 +532,49 @@ describe("processDirectPost webhooks", () => {
         },
       },
     ]);
+  });
+
+  test("an expired login fires post.failed and connection.expired once, even when the finalize reply was lost", async () => {
+    world.platformAnswers = [
+      { ok: false, reason: "auth_expired", message: "Token expired", mayHavePublished: false },
+    ];
+    await runWithRetries({ attempts: 4, stepIdsWhoseReplyIsLost: ["finalize-pending-direct-post"] });
+    expect(world.webhooks).toEqual([
+      {
+        principalId: EVENT_DATA.principal_id,
+        eventType: "post.failed",
+        payload: {
+          ...DISPATCH_FIELDS,
+          reason: "auth_expired",
+          error_message: "Token expired",
+          may_have_published: false,
+        },
+      },
+      {
+        principalId: EVENT_DATA.principal_id,
+        eventType: "connection.expired",
+        payload: {
+          social_account_id: EVENT_DATA.social_account_id,
+          platform: EVENT_DATA.platform,
+          reason: "auth_expired",
+        },
+      },
+    ]);
+  });
+
+  test("a run that ends after the sweep failed its dispatch fires no second post.failed", async () => {
+    world.row = {
+      ...PROCESSING_ROW,
+      status: "failed",
+      failure_reason: SWEPT_DIRECT_POST_REASON,
+      publish_started_at: CLAIM_TIME,
+    };
+    await runWithRetries({ attempts: 4 });
+    world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: SWEPT_DIRECT_POST_REASON };
+    world.historyRows = 1;
+    await runWithRetries({ attempts: 4 });
+    await runOnFailure();
+    expect(world.webhooks).toEqual([]);
   });
 
   test("a dispatch whose row is gone or already recorded fires nothing", async () => {

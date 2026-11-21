@@ -8,6 +8,11 @@ import {
 } from "@/inngest/events/postNow";
 import { dispatchWebhook, type WebhookPayload } from "@/lib/api/rest/webhooks/dispatch";
 import type { WebhookEventType } from "@/lib/api/rest/webhooks/eventTypes";
+import {
+  buildConnectionExpiredPayload,
+  buildDispatchFailedPayload,
+  pickDispatchWebhookFields,
+} from "@/lib/api/rest/webhooks/postWebhookPayloads";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
 import {
   buildInputRefusal,
@@ -22,6 +27,7 @@ import {
   findPublishedDirectPost,
   readDirectDispatch,
   releaseDirectPublishAttempt,
+  type DirectDispatch,
   type DirectPublishBlock,
 } from "./processDirectPostHelpers";
 import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
@@ -33,6 +39,7 @@ import {
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import {
   finalizePendingDirectPost,
+  SWEPT_DIRECT_POST_REASON,
   type DirectPostOutcome,
 } from "@/actions/server/data/pendingDirectPosts";
 
@@ -79,33 +86,32 @@ function toDirectPostOutcome(outcome: PlatformPostOutcome): DirectPostOutcome {
   return outcome.ok ? { status: "completed" } : { status: "failed", failureReason: outcome.message };
 }
 
+function holdsThisRunsOutcome(dispatch: DirectDispatch | null, outcome: DirectPostOutcome): boolean {
+  if (dispatch === null || dispatch.status !== outcome.status) return false;
+  return dispatch.failure_reason !== SWEPT_DIRECT_POST_REASON;
+}
+
 type OutcomeWebhook = {
-  eventType: Extract<WebhookEventType, "post.published" | "post.failed">;
+  eventType: Extract<WebhookEventType, "post.published" | "post.failed" | "connection.expired">;
   payload: WebhookPayload;
 };
 
-function buildOutcomeWebhook(data: PostNowEventData, outcome: PlatformPostOutcome): OutcomeWebhook {
-  const dispatchFields = {
-    dispatch_id: data.dispatch_id,
-    batch_id: data.batch_id,
-    platform: data.platform,
-    social_account_id: data.social_account_id,
-  };
-  if (outcome.ok) return { eventType: "post.published", payload: dispatchFields };
-  return {
+function buildOutcomeWebhooks(data: PostNowEventData, outcome: PlatformPostOutcome): OutcomeWebhook[] {
+  if (outcome.ok) return [{ eventType: "post.published", payload: pickDispatchWebhookFields(data) }];
+  const failedWebhook: OutcomeWebhook = {
     eventType: "post.failed",
-    payload: {
-      ...dispatchFields,
-      reason: outcome.reason,
-      error_message: outcome.message,
-      may_have_published: outcome.mayHavePublished,
-    },
+    payload: buildDispatchFailedPayload(data, outcome),
   };
+  if (outcome.reason !== "auth_expired") return [failedWebhook];
+  return [failedWebhook, { eventType: "connection.expired", payload: buildConnectionExpiredPayload(data) }];
 }
 
-function notifyDirectPostOutcome(data: PostNowEventData, outcome: PlatformPostOutcome): Promise<void> {
-  const webhook = buildOutcomeWebhook(data, outcome);
-  return dispatchWebhook(data.principal_id, webhook.eventType, webhook.payload);
+async function notifyDirectPostOutcome(data: PostNowEventData, outcome: PlatformPostOutcome): Promise<void> {
+  await Promise.all(
+    buildOutcomeWebhooks(data, outcome).map((webhook) =>
+      dispatchWebhook(data.principal_id, webhook.eventType, webhook.payload),
+    ),
+  );
 }
 
 // A step that wants to be retried throws inside itself: Inngest stores
@@ -192,7 +198,7 @@ export const processDirectPost = inngest.createFunction(
       if (finalized.updated) return { isRecorded: true };
       const current = await readDirectDispatch(dispatchId);
       if (!current.success) throw new Error(`finalize-reread-failure: ${current.message}`);
-      return { isRecorded: current.dispatch?.status === outcome.status };
+      return { isRecorded: holdsThisRunsOutcome(current.dispatch, outcome) };
     });
 
     if (recorded.isRecorded) {

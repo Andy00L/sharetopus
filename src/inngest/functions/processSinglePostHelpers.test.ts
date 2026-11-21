@@ -186,8 +186,12 @@ mock.module("@/actions/server/contentHistoryActions/storeFailedPost", () => ({
   },
 }));
 
+const sentWebhooks: { eventType: string; payload: Record<string, unknown> }[] = [];
+
 mock.module("@/lib/api/rest/webhooks/dispatch", () => ({
-  dispatchWebhook: () => undefined,
+  dispatchWebhook: async (_principalId: string, eventType: string, payload: Record<string, unknown>) => {
+    sentWebhooks.push({ eventType, payload });
+  },
 }));
 
 mock.module("@/db/client", () => ({
@@ -309,6 +313,7 @@ beforeEach(() => {
   historyState.publishedPostIds = new Set();
   historyState.isReadFailing = false;
   failedPostRecords.length = 0;
+  sentWebhooks.length = 0;
   accessRows.subscriptions = [];
   accessRows.users = [];
   accessRows.isReadFailing = false;
@@ -431,6 +436,23 @@ describe("finalizeProcessingPost settles a post no run will settle", () => {
     expect(postStore.get(POST_ID)?.status).toBe("failed");
     expect(postStore.get(POST_ID)?.error_message).toContain("may have published");
     expect(failedPostRecords.map((record) => record.batch_id)).toEqual(["batch-1"]);
+  });
+
+  test("a post recorded failed fires post.failed that says it may have published", async () => {
+    storePost({ status: "processing" });
+    await finalizeStuckPost(null);
+    expect(sentWebhooks).toEqual([
+      {
+        eventType: "post.failed",
+        payload: {
+          post_id: POST_ID,
+          platform: "linkedin",
+          reason: "transient",
+          error_message: "Publishing stopped without a result; the post may have published",
+          may_have_published: true,
+        },
+      },
+    ]);
   });
 
   test("a history read that fails changes nothing and reports the failure", async () => {

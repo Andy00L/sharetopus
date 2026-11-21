@@ -7,6 +7,8 @@ Outbound webhook subsystem for notifying external services when events occur in 
 ## Table of contents
 
 - [Event types](#event-types)
+- [Payloads](#payloads)
+- [When post events fire](#when-post-events-fire)
 - [Subscription lifecycle](#subscription-lifecycle)
 - [Delivery pipeline](#delivery-pipeline)
 - [Signing and verification](#signing-and-verification)
@@ -31,9 +33,46 @@ Outbound webhook subsystem for notifying external services when events occur in 
 | `post.published` | A post was published successfully |
 | `post.failed` | A post failed to publish (terminal) |
 | `connection.connected` | A social account was connected |
-| `connection.expired` | A social account token expired |
+| `connection.expired` | A post failed because its social account's login expired (`auth_expired`) |
 
 Subscribers select which events they want when creating a subscription. Only matching events are dispatched.
+
+---
+
+## Payloads
+
+Every delivery body is `{ event_type, event_id, delivery_id, created_at, data }` (`deliverWebhook.ts`). `data` holds the event's payload:
+
+| Event | `data` |
+|-------|--------|
+| `post.scheduled` | `{ post_id, batch_id }` |
+| `post.published` for a scheduled post | `{ post_id, platform }` |
+| `post.published` for a publish-now dispatch | `{ dispatch_id, batch_id, platform, social_account_id }` |
+| `post.failed` for a scheduled post | `{ post_id, platform, reason, error_message, may_have_published }` |
+| `post.failed` for a publish-now dispatch | `{ dispatch_id, batch_id, platform, social_account_id, reason, error_message, may_have_published }` |
+| `connection.connected` | `{ connection_id, social_account_id, platform, initiated_via, share_link_id }` |
+| `connection.expired` | `{ social_account_id, platform, reason: "auth_expired" }` |
+
+- `dispatch_id` is the id the publish-now answer returned for that post (`dispatch_id` in the REST 202, `event_ids` in the MCP `publish_posts` answer, `eventIds` in the x402 post-now answer), so a client can match the event to its request. `batch_id` is the batch the post was sent in.
+- `reason` is one of `auth_expired`, `rate_limited`, `transient`, `policy_rejected`, `invalid_input`, `unknown` (`PlatformFailureReason` in `src/lib/api/_shared/platformFailure.ts`).
+- `may_have_published` is `true` when the post may be live although it was recorded failed: the platform's answer was unclear, a publish attempt stopped before it reported a result, or a sweep failed a post that never reported a result. Check the account before posting again. It is `false` when the platform refused the post, a TikTok rejection included.
+- `src/lib/api/rest/webhooks/postWebhookPayloads.ts` builds the publish-now fields, the three failure fields and the `connection.expired` payload, so every producer names them the same way.
+
+---
+
+## When post events fire
+
+| Producer | Fires |
+|----------|-------|
+| Scheduled post run (`process-single-post`, its failure handler, and the 2 h safety net in `scheduled-posts-tick`) | `post.published` or `post.failed` once the post's row moves from `processing` to `posted` or `failed`; `connection.expired` with an `auth_expired` failure. The safety net records `failed` with `may_have_published: true`. |
+| Publish-now run (`process-direct-post` and its failure handler) | `post.published` or `post.failed` once the dispatch is recorded `completed` or `failed`; `connection.expired` with an `auth_expired` failure. |
+| Hourly publish-now sweep (`sweep-stuck-direct-posts`) | `post.failed` with `reason: "unknown"` and `may_have_published: true` for a dispatch still `processing` 1 h after it was created whose publish claim is null or also older than 1 h. |
+| TikTok status (`tiktok-publish-status-poll` and `process-tiktok-publish-webhook`) | `post.failed` with `may_have_published: false` when TikTok rejects a post after accepting its upload (`content/init`). The scheduled post moves from `processing` or `posted` to `failed`, the dispatch from `processing` or `completed`. A post already `failed` fires nothing. A TikTok success after a post was recorded `failed` changes nothing. |
+
+- An event fires only after the write that recorded the outcome matched the row, so two writers never both fire for one outcome. A dispatch the sweep failed stays failed: a run that ends later records nothing and fires nothing.
+- A TikTok rejection can follow the `post.published` that the accepted upload fired. Take the later `post.failed` as the final state.
+- A worker stopped while it sends an event can send the same outcome again under a new `event_id`. Deduplicate on `post_id` or `dispatch_id` with the event type.
+- A publish-now TikTok post reaches its dispatch through its `content_history` row (same batch, account, platform and media file). When two dispatches of one batch match, neither changes and no event fires.
 
 ---
 
@@ -254,12 +293,14 @@ Two tables in Supabase:
 
 | Location | Event dispatched |
 |----------|-----------------|
-| `src/inngest/functions/processSinglePostHelpers.ts` (`recordPostStatus`) | `post.published`, `post.failed` (after a scheduled post is recorded `posted` or `failed`), `connection.expired` (when that failure is `auth_expired`) |
-| `src/inngest/functions/tikTokPullFinalizeSteps.ts` | `post.failed` (TikTok rejected a scheduled post after content/init) |
+| `src/inngest/functions/processSinglePostHelpers.ts` (`writePostOutcome`, for `recordPostStatus` and `finalizeProcessingPost`) | `post.published`, `post.failed` (after a scheduled post is recorded `posted` or `failed`), `connection.expired` (when that failure is `auth_expired`) |
+| `src/inngest/functions/processDirectPost.ts` (`notifyDirectPostOutcome`) | `post.published`, `post.failed` (after a publish-now dispatch is recorded `completed` or `failed`, by the run or its failure handler), `connection.expired` (when that failure is `auth_expired`) |
+| `src/inngest/functions/sweepStuckDirectPosts.ts` | `post.failed` (one `dispatchWebhooks` call per principal for the dispatches the hourly sweep failed) |
+| `src/inngest/functions/tikTokPullFinalizeSteps.ts` | `post.failed` (TikTok rejected a scheduled post or a publish-now dispatch after content/init) |
 | `src/actions/server/scheduleActions/schedule/schedulePostBatch.ts` | `post.scheduled` (one `dispatchWebhooks` call for every inserted row) |
 | `src/lib/x402/oauth/callback/handleOAuthCallback.ts` | `connection.connected` (after the REST, MCP, share-link or x402 OAuth callback) |
 
-Only scheduled posts fire post events: a "post now" publish fires none, and a connection made from the web app fires no `connection.connected`.
+A connection made from the web app fires no `connection.connected`.
 
 ---
 
@@ -277,6 +318,7 @@ Only scheduled posts fire post events: a "post now" publish fires none, and a co
 |------|-------------|
 | `src/lib/api/rest/webhooks/dispatch.ts` | `dispatchWebhook()` fire-and-forget dispatcher, `sendWebhookDispatchEvent()` (one event to one subscription, also used by replay) |
 | `src/lib/api/rest/webhooks/eventTypes.ts` | `WEBHOOK_EVENT_TYPES` array (5 events) |
+| `src/lib/api/rest/webhooks/postWebhookPayloads.ts` | Publish-now fields, `post.failed` failure fields and the `connection.expired` payload |
 | `src/lib/api/rest/webhooks/signWebhookPayload.ts` | HMAC-SHA256 signing function |
 | `src/lib/api/rest/webhooks/secretGenerator.ts` | `generateWebhookSecret()` (`whsec_` prefix + 32 bytes hex) |
 | `src/lib/api/rest/webhooks/verifyWebhookConfig.ts` | Subscription URL validation |

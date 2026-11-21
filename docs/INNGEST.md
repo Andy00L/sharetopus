@@ -43,7 +43,7 @@ Runtime configuration is centralized in `src/lib/jobs/runtimeConfig.ts` with env
 | tiktok-publish-status-poll | Event `tiktok.publish.poll` | 5 per account | 3 | Poll TikTok until a publish completes or fails |
 | repoll-stalled-tiktok-pulls | Cron `40 * * * *` | default | 2 | Re-send the poll for pending TikTok pulls nobody polled for 10 min |
 | process-tiktok-publish-webhook | Event `tiktok.publish.webhook.received` | default | 3 | Handle TikTok publish webhook callbacks |
-| sweep-stuck-direct-posts | Cron `15 * * * *` | default | 2 | Fail `pending_direct_posts` rows still `processing` 60 min after creation |
+| sweep-stuck-direct-posts | Cron `15 * * * *` | default | 2 | Fail `pending_direct_posts` rows still `processing` 60 min after creation and fire `post.failed` |
 | sweep-orphan-storage-files | Cron `0 3 * * *` | default | 2 | Delete unreferenced storage files (>24h) |
 | sweep-stale-oauth-clients | Cron `0 4 * * *` | default | 2 | Remove unverified OAuth clients (>90 days, no activity) |
 | cleanup-cancelled-posts-after-grace | Cron `0 5 * * *` | default | 2 | Resume paused posts of owners with access, delete them 7 days after the pause for owners without |
@@ -176,15 +176,16 @@ Media URLs (`mintPublishMediaUrls` in `publishToPlatform.ts`): Pinterest, Instag
 **Throttle:** `RUNTIME.perAccountThrottlePerMinute` (5) per `social_account_id`
 **onFailure:** `finalizeExhaustedDirectPost`
 
-`dispatchPostNowEvents` (`src/inngest/dispatch/dispatchPostNowEvents.ts`) validates each payload against `PostNowEventDataSchema` and refuses only the invalid ones, inserts one `pending_direct_posts` lock per valid post, and sends the events with id `post.now-{dispatch_id}`. When `inngest.send` fails it releases the locks it just inserted, so the user can post again.
+`dispatchPostNowEvents` (`src/inngest/dispatch/dispatchPostNowEvents.ts`) validates each payload against `PostNowEventDataSchema` and refuses only the invalid ones, inserts one `pending_direct_posts` lock per valid post, and sends the events with id `post.now-{dispatch_id}`. When `inngest.send` fails it releases the locks it just inserted that no run has claimed yet (`publish_started_at` null), so the user can post again.
 
-The worker runs two or three steps:
+The worker runs up to four steps:
 
-1. `call-platform-direct-post` reads the lock row. No lock ends the post as failed. On a retry (`attempt > 0`) it checks `content_history` for a row with the same batch id, account, platform and description created after the lock (`findPublishedDirectPost`); a match counts as published. A lock no longer `processing` publishes nothing. Then it loads the account, mints the media URLs, and calls `publishToPlatform`, with the same retry rule as process-single-post.
-2. `finalize-pending-direct-post` marks the lock `completed` or `failed`; a failed write throws and is retried.
-3. `cleanup-media` deletes the media under the same rule as process-single-post.
+1. `call-platform-direct-post` reads the dispatch row (`readDirectDispatch`). No row ends the run with `invalid_input`. On a retry (`attempt > 0`) it checks `content_history` for a row with the same batch id, account, platform and description created after the dispatch (`findPublishedDirectPost`); a match counts as published. Then it loads the account, mints the media URLs and, right before the call, claims the attempt: `claimDirectPublishAttempt` sets `publish_started_at` where the row is `processing` and the column is null. When that matches no row, the reread decides: `completed` counts as published; a held claim returns `unknown` with `mayHavePublished: true` ("An earlier publish attempt stopped before it reported a result; the post may have published") and never calls the platform; `failed` with no claim returns "Not published: the post was already marked failed". After a claim, `publishToPlatform` runs. A `transient` or `rate_limited` failure with `mayHavePublished: false` clears the claim (`releaseDirectPublishAttempt`) and throws, so Inngest retries the step; every other failure is final.
+2. `finalize-pending-direct-post` marks the row `completed` or `failed` (`finalizePendingDirectPost`, a compare-and-set on `processing`, or on a row an older sweep marked `stale_worker_swept`); a failed write throws and is retried. When the write matches no row it rereads the row: a row that holds this run's status counts as recorded (an earlier attempt's write whose reply was lost), unless it holds the sweep's record.
+3. `notify-post-outcome` runs only when step 2 recorded the outcome. It fires `post.published` or `post.failed`, plus `connection.expired` when the failure is `auth_expired` (payloads in [WEBHOOKS.md](./WEBHOOKS.md#payloads)).
+4. `cleanup-media` deletes the media under the same rule as process-single-post.
 
-When every retry fails, `finalizeExhaustedDirectPost` reads the lock, checks the publish guard, finalizes the lock, and cleans up media that is safe to delete.
+When every retry fails, `finalizeExhaustedDirectPost` reads the row. A row gone or `completed` ends it. Otherwise it records `completed` when `content_history` has the post, else `failed` with "Retries exhausted: <last error>", plus the may-have-published sentence and `mayHavePublished: true` when the claim is held. When its write updated the row it fires the same webhooks as step 3, then cleans up media that is safe to delete.
 
 ## tiktok-publish-status-poll
 
@@ -213,7 +214,7 @@ flowchart TD
     W --> B
 ```
 
-Finalizing runs `finalizeTikTokPostByPublishId` in its own step. Only the first writer moves the pull out of `pending`, so the poll and the webhook can both try. The winner updates `content_history`; on a failure it also moves a linked scheduled post from `processing` or `posted` to `failed`. Then two more steps run: `-cleanup-media` deletes the media when nothing references it, and `-notify-post-failed` fires `post.failed` for a scheduled post the failure reached.
+Finalizing runs `finalizeTikTokPostByPublishId` in its own step, in one transaction. Only the first writer moves the pull out of `pending`, so the poll and the webhook can both try. The winner updates `content_history`; on a failure it also moves a linked scheduled post from `processing` or `posted` to `failed`, or, for a publish-now pull, its dispatch from `processing` or `completed` to `failed`. A publish-now pull has no dispatch id: `findDirectDispatchOfPull` reads the batch of the pull's `content_history` row and takes the one dispatch with that batch, account, platform `tiktok` and media path; when two match, neither changes. Then two more steps run: `-cleanup-media` deletes the media when nothing references it, and `-notify-post-failed` fires `post.failed` with `may_have_published: false` for the scheduled post or dispatch the failure reached. A TikTok success never moves a failed post or dispatch.
 
 **Polling config:**
 - Max attempts: `RUNTIME.tikTokPublishPollMaxAttempts` (60)
@@ -259,7 +260,13 @@ When the webhook finalizes a post before the poll worker reaches it, the poll wo
 **Retries:** 2
 **Cutoff:** 60 minutes (`STUCK_AGE_MS`)
 
-Marks `pending_direct_posts` rows with `status=processing` and `created_at < now - 60 minutes` as `failed` (`sweepStuckPendingDirectPosts`). This recovers rows whose worker died (OOM, Vercel timeout, Inngest abort) without finalizing the lock. The age counts from `created_at`, not from when a worker started, so a worker throttled for more than an hour can still find its row failed.
+Recovers `pending_direct_posts` rows whose worker died (OOM, Vercel timeout, Inngest abort) without recording them, in three steps:
+
+1. `find-stuck-dispatches` selects up to 500 rows with `status = 'processing'`, `created_at` older than 60 minutes, and `publish_started_at` null or also older than 60 minutes (`findStuckPendingDirectPosts`). A newer claim belongs to an attempt that may still be calling the platform (Vercel stops a function after 300 s), so the sweep leaves it. The step stores the ids, the cutoff and the sweep time.
+2. `mark-stuck-dispatches-failed` sets those rows that are still stuck to `failed` with `failure_reason` "Publishing stopped without a result; the post may have published" and `finished_at` set to the sweep time, then rereads the ids that hold this sweep's record (`sweepStuckPendingDirectPosts`). A retry after a write whose reply was lost returns the same rows, so no webhook is lost or repeated.
+3. `notify-swept-dispatches` fires `post.failed` for each swept row with `reason: "unknown"` and `may_have_published: true`, one `dispatchWebhooks` call per principal.
+
+The sweep's record is final: `finalizePendingDirectPost` overwrites only `processing` rows (and rows an older sweep marked `stale_worker_swept`), so a run that ends later records nothing and fires nothing, as with a swept scheduled post. The age counts from `created_at`, not from when a worker started, so a run throttled for more than an hour before its claim finds its row failed and never publishes.
 
 ## sweep-orphan-storage-files
 

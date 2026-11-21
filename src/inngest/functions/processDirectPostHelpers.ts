@@ -12,9 +12,15 @@ import type {
 } from "@/inngest/functions/publishToPlatform";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
-type DirectDispatch = Pick<
+export type DirectDispatch = Pick<
   typeof pending_direct_posts.$inferSelect,
-  "batch_id" | "social_account_id" | "platform" | "status" | "created_at" | "publish_started_at"
+  | "batch_id"
+  | "social_account_id"
+  | "platform"
+  | "status"
+  | "failure_reason"
+  | "created_at"
+  | "publish_started_at"
 >;
 
 type DirectDispatchRead =
@@ -29,6 +35,7 @@ export async function readDirectDispatch(dispatchId: string): Promise<DirectDisp
         social_account_id: pending_direct_posts.social_account_id,
         platform: pending_direct_posts.platform,
         status: pending_direct_posts.status,
+        failure_reason: pending_direct_posts.failure_reason,
         created_at: pending_direct_posts.created_at,
         publish_started_at: pending_direct_posts.publish_started_at,
       })

@@ -3,14 +3,25 @@ import type { GetStepTools } from "inngest";
 
 import {
   finalizeTikTokPostByPublishId,
+  type FailedTikTokPost,
   type FinalizeTikTokPullResult,
   type TikTokPullOutcome,
 } from "@/actions/server/data/finalizeTikTokPostByPublishId";
 import type { inngest } from "@/inngest/client";
-import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
+import { dispatchWebhook, type WebhookPayload } from "@/lib/api/rest/webhooks/dispatch";
+import {
+  buildDispatchFailedPayload,
+  buildPostFailedFields,
+} from "@/lib/api/rest/webhooks/postWebhookPayloads";
 import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
 
 type FinalizedTikTokPull = Extract<FinalizeTikTokPullResult, { success: true }>;
+
+function buildTikTokPostFailedPayload(failedPost: FailedTikTokPost): WebhookPayload {
+  const failure = { reason: failedPost.reason, message: failedPost.message, mayHavePublished: false };
+  if (failedPost.kind === "post_now") return buildDispatchFailedPayload(failedPost.dispatch, failure);
+  return { post_id: failedPost.scheduledPostId, platform: "tiktok", ...buildPostFailedFields(failure) };
+}
 
 export async function finalizeTikTokPullInSteps(input: {
   step: GetStepTools<typeof inngest>;
@@ -34,15 +45,10 @@ export async function finalizeTikTokPullInSteps(input: {
     cleanupMediaIfUnreferenced(finalized.mediaStoragePath, finalized.principalId),
   );
 
-  const failedScheduledPost = finalized.failedScheduledPost;
-  if (failedScheduledPost) {
+  const failedPost = finalized.failedPost;
+  if (failedPost) {
     await input.step.run(`${input.stepId}-notify-post-failed`, () =>
-      dispatchWebhook(finalized.principalId, "post.failed", {
-        post_id: failedScheduledPost.scheduledPostId,
-        platform: "tiktok",
-        reason: failedScheduledPost.reason,
-        error_message: failedScheduledPost.message,
-      }),
+      dispatchWebhook(finalized.principalId, "post.failed", buildTikTokPostFailedPayload(failedPost)),
     );
   }
   return finalized;
