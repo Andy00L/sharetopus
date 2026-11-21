@@ -5,10 +5,11 @@ import { share_links } from "@/db/schema";
 import { logX402Call } from "@/lib/x402/audit/logX402Call";
 import { auth } from "@clerk/nextjs/server";
 import { and, eq, isNull, type SQL } from "drizzle-orm";
+import { z } from "zod";
 
-interface RevokeShareLinkInput {
-  shareLinkId: string;
-}
+const RevokeShareLinkInputSchema = z.object({ shareLinkId: z.guid() });
+
+type RevokeShareLinkInput = z.input<typeof RevokeShareLinkInputSchema>;
 
 type RevokeShareLinkResult =
   | { success: true; outcome: "revoked" | "already_revoked" }
@@ -24,12 +25,14 @@ export async function revokeShareLink(
     return { success: false, reason: "failed", message: "Authentication required." };
   }
 
-  if (!input.shareLinkId) {
-    return { success: false, reason: "not_found", message: "Share link ID is required." };
+  const parsedInput = RevokeShareLinkInputSchema.safeParse(input);
+  if (!parsedInput.success) {
+    return { success: false, reason: "not_found", message: "Share link not found." };
   }
+  const { shareLinkId } = parsedInput.data;
 
   const isOwnedLink = and(
-    eq(share_links.id, input.shareLinkId),
+    eq(share_links.id, shareLinkId),
     eq(share_links.owner_principal_id, userId),
   );
   const { data: revokedRows, error: updateError } = await runQuery(
@@ -42,14 +45,14 @@ export async function revokeShareLink(
 
   if (updateError) {
     console.error(
-      `[revokeShareLink] Update failed for link ${input.shareLinkId}:`,
+      `[revokeShareLink] Update failed for link ${shareLinkId}:`,
       updateError.message,
     );
     return { success: false, reason: "failed", message: "Failed to revoke share link." };
   }
 
   if (revokedRows.length === 0) {
-    return findUnrevokableOutcome(isOwnedLink, input.shareLinkId);
+    return findUnrevokableOutcome(isOwnedLink, shareLinkId);
   }
 
   logX402Call({

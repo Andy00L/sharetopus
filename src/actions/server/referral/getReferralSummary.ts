@@ -2,7 +2,7 @@ import "server-only";
 
 import { auth } from "@clerk/nextjs/server";
 
-import { loadSettledReferralStanding } from "@/lib/referral/loadReferralStanding";
+import { loadReferralStanding } from "@/lib/referral/loadReferralStanding";
 import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
 import { ensureReferralCode } from "./generateReferralCode";
 
@@ -32,7 +32,7 @@ export async function getReferralSummary(
     return { success: false, message: codeResult.message };
   }
 
-  const standingResult = await loadSettledReferralStanding(userId);
+  const standingResult = await loadReferralStanding(userId);
   if (!standingResult.success) {
     return { success: false, message: standingResult.message };
   }

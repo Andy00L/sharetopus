@@ -2,7 +2,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 
-import { loadSettledReferralStanding } from "@/lib/referral/loadReferralStanding";
+import { loadReferralStanding } from "@/lib/referral/loadReferralStanding";
 import { MAX_REFERRAL_WEEKS } from "@/lib/referral/referralRules";
 
 export type ReferralProgressResult =
@@ -20,7 +20,7 @@ export async function getReferralProgress(): Promise<ReferralProgressResult> {
     return { success: false, message: "Not signed in" };
   }
 
-  const standingResult = await loadSettledReferralStanding(userId);
+  const standingResult = await loadReferralStanding(userId);
   if (!standingResult.success) return standingResult;
 
   const verifiedCount = standingResult.standing?.verifiedCount ?? 0;

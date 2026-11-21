@@ -2,7 +2,6 @@ import "server-only";
 
 import { z } from "zod";
 
-import { STORAGE_READ_TIMEOUT_MS } from "@/actions/server/data/storageRead";
 import type { MediaType } from "@/db/schema";
 import {
   buildHttpFailure,
@@ -12,12 +11,11 @@ import {
   type PlatformPostFailure,
 } from "@/lib/api/_shared/platformFailure";
 import {
+  LINKEDIN_MEDIA_UPLOAD_TIMEOUT_MS,
   PLATFORM_API_TIMEOUT_MS,
-  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
   PLATFORM_PUBLISH_TIMEOUT_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { viewBufferAsFetchBody } from "@/lib/api/_shared/viewBufferAsFetchBody";
-import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
 import type { JsonObject } from "@/lib/utils/jsonObject";
 
@@ -55,20 +53,6 @@ const SHARE_LABEL_BY_CATEGORY = {
 } satisfies Record<ShareMediaCategory, string>;
 
 export const UNKNOWN_LINKEDIN_POST_ID = "unknown-post-id";
-
-const PUBLISH_STEP_BUDGET_MS = RUNTIME.minStepBudgetS * 1000;
-const TOKEN_REFRESH_WAIT_MAX_MS = 50_000;
-const DATABASE_WORK_RESERVE_MS = 10_000;
-
-export const LINKEDIN_MEDIA_UPLOAD_TIMEOUT_MS = Math.min(
-  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
-  PUBLISH_STEP_BUDGET_MS -
-    TOKEN_REFRESH_WAIT_MAX_MS -
-    STORAGE_READ_TIMEOUT_MS -
-    DATABASE_WORK_RESERVE_MS -
-    PLATFORM_API_TIMEOUT_MS -
-    PLATFORM_PUBLISH_TIMEOUT_MS,
-);
 
 export type LinkedInPostResult =
   | { success: true; postId: string | undefined; data: JsonObject; message: string }

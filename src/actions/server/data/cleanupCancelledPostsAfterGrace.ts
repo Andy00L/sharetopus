@@ -1,10 +1,14 @@
 import "server-only";
 
-import { and, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lt, min } from "drizzle-orm";
 
-import { checkActiveSubscription } from "@/actions/checkActiveSubscription";
 import { db, runQuery } from "@/db/client";
-import { scheduled_posts } from "@/db/schema";
+import {
+  ACCESS_GRANTING_SUBSCRIPTION_STATUSES,
+  scheduled_posts,
+  stripe_subscriptions,
+  users,
+} from "@/db/schema";
 import { resumeCancelledPostsOnResubscribe } from "./resumeCancelledPostsOnResubscribe";
 
 export type CleanupResult =
@@ -15,6 +19,10 @@ export type CleanupResult =
       resumedPosts: number;
       deleted: number;
     }
+  | { success: false; message: string };
+
+type AccessLookup =
+  | { success: true; principalIdsWithAccess: Set<string> }
   | { success: false; message: string };
 
 const GRACE_DAYS = 7;
@@ -28,9 +36,11 @@ export async function cleanupCancelledPostsAfterGrace(
 
   const { data: principalRows, error: principalsError } = await runQuery(
     db
-      .selectDistinct({ principal_id: scheduled_posts.principal_id })
+      .select({ principal_id: scheduled_posts.principal_id })
       .from(scheduled_posts)
       .where(isCancelledBySubscription())
+      .groupBy(scheduled_posts.principal_id)
+      .orderBy(min(scheduled_posts.cancelled_by_sub_at))
       .limit(MAX_PRINCIPALS_PER_RUN),
   );
   if (principalsError) {
@@ -39,22 +49,19 @@ export async function cleanupCancelledPostsAfterGrace(
       message: `[cleanupCancelledPostsAfterGrace] Principal query failed: ${principalsError.message}`,
     };
   }
+  const principalIds = principalRows.map((row) => row.principal_id);
 
-  const lapsedPrincipalIds: string[] = [];
+  const access = await findPrincipalsWithAccess(principalIds, now);
+  if (!access.success) return access;
+
+  const lapsedPrincipalIds = principalIds.filter(
+    (principalId) => !access.principalIdsWithAccess.has(principalId),
+  );
   const failures: string[] = [];
   let principalsResumed = 0;
   let resumedPosts = 0;
 
-  for (const { principal_id: principalId } of principalRows) {
-    const access = await checkActiveSubscription(principalId);
-    if (access.status === "unavailable") {
-      failures.push(`access check failed for ${principalId}`);
-      continue;
-    }
-    if (!access.isActive) {
-      lapsedPrincipalIds.push(principalId);
-      continue;
-    }
+  for (const principalId of access.principalIdsWithAccess) {
     const resumeResult = await resumeCancelledPostsOnResubscribe(principalId);
     if (!resumeResult.success) {
       failures.push(resumeResult.message);
@@ -68,19 +75,19 @@ export async function cleanupCancelledPostsAfterGrace(
   if (!deletion.success) return deletion;
 
   console.log(
-    `[cleanupCancelledPostsAfterGrace] principals=${principalRows.length} resumedPrincipals=${principalsResumed} resumedPosts=${resumedPosts} deleted=${deletion.deleted} failures=${failures.length}`,
+    `[cleanupCancelledPostsAfterGrace] principals=${principalIds.length} resumedPrincipals=${principalsResumed} resumedPosts=${resumedPosts} deleted=${deletion.deleted} failures=${failures.length}`,
   );
 
   if (failures.length > 0) {
     return {
       success: false,
-      message: `[cleanupCancelledPostsAfterGrace] ${failures.length} principal(s) not reconciled, first: ${failures[0]}`,
+      message: `[cleanupCancelledPostsAfterGrace] ${failures.length} principal(s) not resumed, first: ${failures[0]}`,
     };
   }
 
   return {
     success: true,
-    principalsChecked: principalRows.length,
+    principalsChecked: principalIds.length,
     principalsResumed,
     resumedPosts,
     deleted: deletion.deleted,
@@ -92,6 +99,57 @@ function isCancelledBySubscription() {
     eq(scheduled_posts.status, "cancelled"),
     isNotNull(scheduled_posts.cancelled_by_sub_at),
   );
+}
+
+async function findPrincipalsWithAccess(
+  principalIds: string[],
+  now: Date,
+): Promise<AccessLookup> {
+  const principalIdsWithAccess = new Set<string>();
+  if (principalIds.length === 0) return { success: true, principalIdsWithAccess };
+
+  const { data: subscribedRows, error: subscriptionsError } = await runQuery(
+    db
+      .selectDistinct({ user_id: stripe_subscriptions.user_id })
+      .from(stripe_subscriptions)
+      .where(
+        and(
+          inArray(stripe_subscriptions.user_id, principalIds),
+          inArray(stripe_subscriptions.status, [...ACCESS_GRANTING_SUBSCRIPTION_STATUSES]),
+        ),
+      ),
+  );
+  if (subscriptionsError) {
+    return {
+      success: false,
+      message: `[findPrincipalsWithAccess] Subscription read failed: ${subscriptionsError.message}`,
+    };
+  }
+  for (const row of subscribedRows) principalIdsWithAccess.add(row.user_id);
+
+  const unsubscribedIds = principalIds.filter(
+    (principalId) => !principalIdsWithAccess.has(principalId),
+  );
+  if (unsubscribedIds.length === 0) return { success: true, principalIdsWithAccess };
+
+  const { data: referralRows, error: referralError } = await runQuery(
+    db
+      .select({ id: users.id, creator_access_until: users.creator_access_until })
+      .from(users)
+      .where(and(inArray(users.id, unsubscribedIds), isNotNull(users.creator_access_until))),
+  );
+  if (referralError) {
+    return {
+      success: false,
+      message: `[findPrincipalsWithAccess] Referral access read failed: ${referralError.message}`,
+    };
+  }
+  for (const row of referralRows) {
+    if (row.creator_access_until && new Date(row.creator_access_until) > now) {
+      principalIdsWithAccess.add(row.id);
+    }
+  }
+  return { success: true, principalIdsWithAccess };
 }
 
 async function deleteLapsedPostsPastGrace(

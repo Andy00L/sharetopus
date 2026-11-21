@@ -6,21 +6,15 @@ import { eq } from "drizzle-orm";
 import { redis } from "@/actions/api/upstash";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import {
+  TOKEN_REFRESH_LOCK_TTL_MS,
+  TOKEN_REFRESH_WAIT_DEADLINE_MS,
+} from "@/lib/api/_shared/platformFetchTimeouts";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
 /** A stored token counts as expired this long before it dies, so a publish
  * never starts with a token that expires mid-upload. Milliseconds. */
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
-
-/** Lifetime of a refresh lock, in milliseconds. Longer than the slowest
- * refresh call (30 s, VARIANT_TIMEOUT_MS in
- * src/lib/platforms/providers/oauthVariants.ts) plus the database write, so
- * a live refresh never outlasts its lock. */
-const LOCK_TTL_MS = 45_000;
-
-/** How long a run waits on another run's refresh, in milliseconds. Longer
- * than LOCK_TTL_MS, so a waiter outlasts the lock of a run that crashed. */
-const WAIT_DEADLINE_MS = LOCK_TTL_MS + 5_000;
 
 const POLL_INITIAL_INTERVAL_MS = 500;
 const POLL_MAX_INTERVAL_MS = 4_000;
@@ -99,7 +93,7 @@ export async function refreshWithAccountLock<Refreshed>(
 ): Promise<LockedRefreshOutcome<Refreshed>> {
   const withinMs = options.refreshIfExpiringWithinMs ?? TOKEN_EXPIRY_BUFFER_MS;
   const lockKey = `token_refresh_lock:${accountId}`;
-  const deadline = Date.now() + WAIT_DEADLINE_MS;
+  const deadline = Date.now() + TOKEN_REFRESH_WAIT_DEADLINE_MS;
   let pollIndex = 0;
 
   do {
@@ -181,7 +175,7 @@ async function refreshIfStillExpiring<Refreshed>(
 async function tryAcquireRefreshLock(lockKey: string): Promise<LockAttempt> {
   const ownerId = randomUUID();
   try {
-    const reply = await redis.set(lockKey, ownerId, { nx: true, px: LOCK_TTL_MS });
+    const reply = await redis.set(lockKey, ownerId, { nx: true, px: TOKEN_REFRESH_LOCK_TTL_MS });
     return reply === "OK" ? { kind: "acquired", ownerId } : { kind: "held" };
   } catch (error) {
     return {
@@ -195,7 +189,7 @@ async function releaseRefreshLock(lockKey: string, ownerId: string): Promise<voi
   try {
     await redis.eval(RELEASE_LOCK_SCRIPT, [lockKey], [ownerId]);
   } catch (error) {
-    // The lock expires on its own after LOCK_TTL_MS, and waiters return
+    // The lock expires on its own after TOKEN_REFRESH_LOCK_TTL_MS, and waiters return
     // the saved token without needing it.
     console.error(
       `[releaseRefreshLock] Release failed for ${lockKey}:`,

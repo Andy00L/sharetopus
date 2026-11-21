@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import {
   PLATFORM_API_TIMEOUT_MS,
-  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
+  YOUTUBE_MEDIA_UPLOAD_TIMEOUT_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import {
   buildHttpFailure,
@@ -141,7 +141,7 @@ export async function postToYouTube({
         "Content-Length": String(buffer.length),
       },
       body: viewBufferAsFetchBody(buffer),
-      signal: AbortSignal.timeout(PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS),
+      signal: AbortSignal.timeout(YOUTUBE_MEDIA_UPLOAD_TIMEOUT_MS),
     });
 
     const responseText = await uploadResponse.text();

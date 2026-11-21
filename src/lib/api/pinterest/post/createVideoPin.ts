@@ -11,8 +11,8 @@ import {
   type PlatformPostFailure,
 } from "@/lib/api/_shared/platformFailure";
 import {
+  PINTEREST_VIDEO_UPLOAD_AND_PROCESSING_TIMEOUT_MS,
   PLATFORM_API_TIMEOUT_MS,
-  PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS,
 } from "@/lib/api/_shared/platformFetchTimeouts";
 import { describeNetworkError } from "@/lib/net/describeNetworkError";
 import { parseJsonObject } from "@/lib/platforms/providers/_shared/providerFetch";
@@ -21,7 +21,6 @@ import { createPin } from "./postImage";
 import type { PinterestPostResult } from "./postToPinterest";
 
 const SIGNED_URL_EXPIRY_SECONDS = 600;
-const PROCESSING_DEADLINE_MS = 200_000;
 const PROCESSING_POLL_INITIAL_INTERVAL_MS = 2_000;
 const PROCESSING_POLL_MAX_INTERVAL_MS = 8_000;
 
@@ -82,18 +81,21 @@ export async function createVideoPin({
   const registration = await registerMediaUpload(accessToken);
   if (!registration.success) return registration;
 
+  const mediaDeadlineMs = Date.now() + PINTEREST_VIDEO_UPLOAD_AND_PROCESSING_TIMEOUT_MS;
   const upload = await uploadVideoFileStreaming({
     registration: registration.registration,
     mediaPath,
     mediaType,
     fileName,
+    deadlineMs: mediaDeadlineMs,
   });
   if (!upload.success) return upload;
 
-  const processing = await waitForVideoProcessing(
+  const processing = await waitForVideoProcessing({
     accessToken,
-    registration.registration.media_id,
-  );
+    mediaId: registration.registration.media_id,
+    deadlineMs: mediaDeadlineMs,
+  });
   if (!processing.success) return processing;
 
   return createPin({
@@ -158,18 +160,20 @@ async function registerMediaUpload(
  * Streams the stored file into Pinterest's upload URL as multipart/form-data.
  * The upload URL is an S3 POST endpoint whose policy requires Content-Length,
  * so the file size comes from the storage answer's header. One deadline
- * covers both the storage download and the upload, since they run as one stream.
+ * covers the storage download, the upload and the processing wait after it.
  */
 async function uploadVideoFileStreaming({
   registration,
   mediaPath,
   mediaType,
   fileName,
+  deadlineMs,
 }: {
   registration: MediaRegistration;
   mediaPath: string;
   mediaType: string;
   fileName: string;
+  deadlineMs: number;
 }): Promise<StepOutcome> {
   const { data: signedData, error: signedError } = await adminSupabase.storage
     .from(MEDIA_BUCKET)
@@ -182,7 +186,7 @@ async function uploadVideoFileStreaming({
     return buildStorageFailure("Failed to mint a storage URL for the video");
   }
 
-  const streamDeadline = AbortSignal.timeout(PLATFORM_MEDIA_UPLOAD_TIMEOUT_MS);
+  const streamDeadline = AbortSignal.timeout(Math.max(0, deadlineMs - Date.now()));
 
   let storageResponse: Response;
   try {
@@ -298,11 +302,15 @@ function waitFor(durationMs: number): Promise<void> {
 }
 
 /** Polls with a growing interval until Pinterest reports the video processed, failed, or the deadline passes. */
-async function waitForVideoProcessing(
-  accessToken: string,
-  mediaId: string,
-): Promise<StepOutcome> {
-  const deadlineMs = Date.now() + PROCESSING_DEADLINE_MS;
+async function waitForVideoProcessing({
+  accessToken,
+  mediaId,
+  deadlineMs,
+}: {
+  accessToken: string;
+  mediaId: string;
+  deadlineMs: number;
+}): Promise<StepOutcome> {
   let pollIndex = 0;
   let lastStatus = "registered";
 
@@ -330,7 +338,7 @@ async function waitForVideoProcessing(
   }
 
   console.error(
-    `[waitForVideoProcessing] Media ${mediaId} still ${lastStatus} after ${PROCESSING_DEADLINE_MS / 1000} s`,
+    `[waitForVideoProcessing] Media ${mediaId} still ${lastStatus} at the ${PINTEREST_VIDEO_UPLOAD_AND_PROCESSING_TIMEOUT_MS / 1000} s upload and processing deadline`,
   );
   return {
     success: false,

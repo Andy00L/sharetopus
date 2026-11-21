@@ -5,9 +5,10 @@ import { cookies } from "next/headers";
 import { after } from "next/server";
 import { db, runQuery } from "@/db/client";
 import { principals, users } from "@/db/schema";
-import { REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
+import { inngest } from "@/inngest/client";
+import { referralSignupEvent } from "@/inngest/events/referralSignup";
+import { REFERRAL_CODE_PATTERN, REFERRAL_COOKIE_NAME } from "@/lib/referral/referralRules";
 import stripe from "@/lib/stripe";
-import { recordReferralOnSignup } from "@/actions/server/referral/recordReferralOnSignup";
 
 export async function ensureUserExists() {
   const { userId } = await auth();
@@ -56,7 +57,7 @@ async function createUserWithStripeCustomer() {
     );
   } catch (stripeError) {
     console.error(
-      "[ensureUserExists] Erreur création client Stripe:",
+      "[ensureUserExists] Stripe customer creation failed:",
       stripeError
     );
     return;
@@ -70,7 +71,7 @@ async function createUserWithStripeCustomer() {
   );
 
   if (principalError) {
-    console.error("[ensureUserExists] Erreur upsert principal:", principalError);
+    console.error("[ensureUserExists] Principal upsert failed:", principalError);
     await rollBackStripeCustomer(stripeCustomerId);
     return;
   }
@@ -86,20 +87,36 @@ async function createUserWithStripeCustomer() {
   );
 
   if (error) {
-    console.error("[ensureUserExists] Erreur insertion Supabase:", error);
+    console.error("[ensureUserExists] User insert failed:", error);
     await rollBackStripeCustomer(stripeCustomerId);
     return;
   }
 
-  console.log(`[ensureUserExists] User ${user.id} synced to Supabase + Stripe`);
+  console.log(`[ensureUserExists] User ${user.id} synced to the database and Stripe`);
 
-  // The cookie is read now, while the request is live; the attribution runs
-  // after the response, and after() keeps the serverless function alive
-  // until it finishes (a floating promise can be frozen mid-write).
+  // Cookies are readable only during the request; after() keeps the function
+  // alive until the send finishes:
+  // https://nextjs.org/docs/app/api-reference/functions/after
   const referralCode = (await cookies()).get(REFERRAL_COOKIE_NAME)?.value;
-  if (referralCode) {
-    after(() =>
-      recordReferralOnSignup({ newUserId: user.id, newUserEmail: email, referralCode }),
+  if (referralCode && REFERRAL_CODE_PATTERN.test(referralCode)) {
+    after(() => sendReferralSignupEvent(user.id, referralCode));
+  }
+}
+
+async function sendReferralSignupEvent(newUserId: string, referralCode: string): Promise<void> {
+  try {
+    // Inngest drops a repeated event id for 24 hours:
+    // https://www.inngest.com/docs/guides/handling-idempotency
+    await inngest.send(
+      referralSignupEvent.create(
+        { new_user_id: newUserId, referral_code: referralCode },
+        { id: `referral-signup-${newUserId}` },
+      ),
+    );
+  } catch (sendError) {
+    console.error(
+      `[sendReferralSignupEvent] Referral for user ${newUserId} not sent:`,
+      sendError instanceof Error ? sendError.message : String(sendError),
     );
   }
 }
@@ -108,6 +125,6 @@ async function rollBackStripeCustomer(stripeCustomerId: string) {
   try {
     await stripe.customers.del(stripeCustomerId);
   } catch (deleteError) {
-    console.error("[rollBackStripeCustomer] Erreur rollback Stripe:", deleteError);
+    console.error("[rollBackStripeCustomer] Stripe customer rollback failed:", deleteError);
   }
 }

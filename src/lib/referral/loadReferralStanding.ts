@@ -4,8 +4,6 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { referral_reward_grants, referrals, users } from "@/db/schema";
-import { MAX_REFERRAL_WEEKS, REFERRALS_PER_FREE_WEEK } from "./referralRules";
-import { triggerReferralGrant } from "./triggerReferralGrant";
 
 export type ReferralStanding = {
   verifiedCount: number;
@@ -18,33 +16,7 @@ export type ReferralStandingResult =
   | { success: true; standing: ReferralStanding | null }
   | { success: false; message: string };
 
-export function hasUnclaimedReferralWeek(standing: ReferralStanding): boolean {
-  return (
-    standing.verifiedCount >= REFERRALS_PER_FREE_WEEK &&
-    standing.weeksEarned < MAX_REFERRAL_WEEKS
-  );
-}
-
-export async function loadSettledReferralStanding(
-  userId: string,
-): Promise<ReferralStandingResult> {
-  const standingResult = await loadReferralStanding(userId);
-  if (
-    !standingResult.success ||
-    !standingResult.standing ||
-    !hasUnclaimedReferralWeek(standingResult.standing)
-  ) {
-    return standingResult;
-  }
-
-  const grantResult = await triggerReferralGrant(userId);
-  if (!grantResult.success || grantResult.weeksGranted === 0) {
-    return standingResult;
-  }
-  return loadReferralStanding(userId);
-}
-
-async function loadReferralStanding(
+export async function loadReferralStanding(
   userId: string,
 ): Promise<ReferralStandingResult> {
   const { data: standingRows, error } = await runQuery(

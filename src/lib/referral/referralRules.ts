@@ -5,3 +5,5 @@ export const REFERRAL_COOKIE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 export const REFERRALS_PER_FREE_WEEK = 3;
 
 export const MAX_REFERRAL_WEEKS = 5;
+
+export const REFERRAL_CODE_PATTERN = /^[A-Z0-9]{1,16}$/;

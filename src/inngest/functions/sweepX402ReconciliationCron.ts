@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, like, lt, notExists } from "drizzle-orm";
 import { NonRetriableError } from "inngest";
 
 import { db, runQuery } from "@/db/client";
@@ -20,6 +20,8 @@ const MAX_ROWS_PER_RUN = 500;
 
 const SWEEP_REFUND_REASON = "refund confirmed on-chain by the reconciliation sweep";
 
+const ACTION_FAILED_MARKER_PATTERN = "action_failed:%";
+
 interface OpenItem {
   kind: string;
   chargeId: string | null;
@@ -31,6 +33,7 @@ interface OpenItem {
 interface SweepSummary {
   reconciliationRows: number;
   stalePendingCharges: number;
+  unrecordedActionFailures: number;
   resolved: number;
   recordedRefunds: number;
   open: OpenItem[];
@@ -50,7 +53,7 @@ export const sweepX402ReconciliationCron = inngest.createFunction(
     const summary = await step.run("sweep-x402-reconciliation", () => sweepReconciliation());
 
     console.log(
-      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
+      `[sweepX402ReconciliationCron] rows=${summary.reconciliationRows} stalePending=${summary.stalePendingCharges} unrecordedActionFailures=${summary.unrecordedActionFailures} resolved=${summary.resolved} recordedRefunds=${summary.recordedRefunds} open=${summary.open.length}`,
     );
 
     if (summary.open.length > 0) {
@@ -98,6 +101,36 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   );
   if (staleError) {
     throw new Error(`[sweepReconciliation] stale pending read failed: ${staleError.message}`);
+  }
+
+  const { data: unrecordedActionFailures, error: actionFailedError } = await runQuery(
+    db
+      .select({ id: x402_charges.id, network: x402_charges.network, tx_hash: x402_charges.tx_hash })
+      .from(x402_charges)
+      .where(
+        and(
+          eq(x402_charges.status, "settled"),
+          like(x402_charges.error_message, ACTION_FAILED_MARKER_PATTERN),
+          gte(x402_charges.created_at, lookbackIso),
+          lt(x402_charges.created_at, staleCutoffIso),
+          notExists(
+            db
+              .select({ charge_id: x402_refunds.charge_id })
+              .from(x402_refunds)
+              .where(eq(x402_refunds.charge_id, x402_charges.id)),
+          ),
+          notExists(
+            db
+              .select({ charge_id: x402_reconciliation.charge_id })
+              .from(x402_reconciliation)
+              .where(eq(x402_reconciliation.charge_id, x402_charges.id)),
+          ),
+        ),
+      )
+      .limit(MAX_ROWS_PER_RUN),
+  );
+  if (actionFailedError) {
+    throw new Error(`[sweepReconciliation] action_failed read failed: ${actionFailedError.message}`);
   }
 
   const chargeIds = [
@@ -148,6 +181,7 @@ async function sweepReconciliation(): Promise<SweepSummary> {
   const summary: SweepSummary = {
     reconciliationRows: reconciliationRows.length,
     stalePendingCharges: stalePendingCharges.length,
+    unrecordedActionFailures: unrecordedActionFailures.length,
     resolved: 0,
     recordedRefunds: 0,
     open: [],
@@ -222,6 +256,16 @@ async function sweepReconciliation(): Promise<SweepSummary> {
       txHash: staleCharge.tx_hash,
       network: staleCharge.network,
       note: `Pending for over ${STALE_PENDING_MINUTES} minutes with no reconciliation row; the request likely died mid-settle.`,
+    });
+  }
+
+  for (const failedCharge of unrecordedActionFailures) {
+    markOpen({
+      kind: "action_failed_unrecorded",
+      chargeId: failedCharge.id,
+      txHash: failedCharge.tx_hash,
+      network: failedCharge.network,
+      note: `Charge created over ${STALE_PENDING_MINUTES} minutes ago, its paid action failed, and it has no refund and no reconciliation row; the request likely died before the refund was recorded. Check the sender wallet's outgoing transfers to the payer before refunding by hand.`,
     });
   }
 

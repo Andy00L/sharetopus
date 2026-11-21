@@ -16,6 +16,7 @@ import { sweepStaleOauthClientsCron } from "@/inngest/functions/sweepStaleOauthC
 import { sweepStuckDirectPosts } from "@/inngest/functions/sweepStuckDirectPosts";
 import { sweepX402ReconciliationCron } from "@/inngest/functions/sweepX402ReconciliationCron";
 import { processTikTokPublishWebhook } from "@/inngest/functions/processTikTokPublishWebhook";
+import { recordReferralSignup } from "@/inngest/functions/recordReferralSignup";
 import { refreshExpiringTokensCron } from "@/inngest/functions/refreshExpiringTokensCron";
 import { repollStalledTikTokPullsCron } from "@/inngest/functions/repollStalledTikTokPullsCron";
 import { refreshSocialAccountToken } from "@/inngest/functions/refreshSocialAccountToken";
@@ -52,5 +53,6 @@ export const { GET, POST, PUT } = serve({
     refreshExpiringTokensCron,
     refreshSocialAccountToken,
     deliverWebhook,
+    recordReferralSignup,
   ],
 });
