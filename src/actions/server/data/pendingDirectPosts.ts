@@ -235,6 +235,15 @@ const SWEEP_BATCH_LIMIT = 500;
 export const SWEPT_DIRECT_POST_REASON =
   "Publishing stopped without a result; the post may have published";
 
+export const SWEPT_UNCLAIMED_DIRECT_POST_REASON =
+  "Publishing never started before the hourly sweep; the post was not published";
+
+const SWEPT_DIRECT_POST_REASONS = [SWEPT_DIRECT_POST_REASON, SWEPT_UNCLAIMED_DIRECT_POST_REASON];
+
+export function isSweptDirectPostReason(failureReason: string | null): boolean {
+  return failureReason !== null && SWEPT_DIRECT_POST_REASONS.includes(failureReason);
+}
+
 export type SweptDirectPost = {
   dispatch_id: string;
   principal_id: string;
@@ -283,7 +292,28 @@ export async function sweepStuckPendingDirectPosts(input: {
   const { dispatchIds, cutoffIso, sweptAtIso } = input;
   if (dispatchIds.length === 0) return { success: true, sweptDispatches: [] };
 
-  const { error: sweepError } = await runQuery(
+  const { error: unclaimedSweepError } = await runQuery(
+    db
+      .update(pending_direct_posts)
+      .set({
+        status: "failed" as const,
+        finished_at: sweptAtIso,
+        failure_reason: SWEPT_UNCLAIMED_DIRECT_POST_REASON,
+      })
+      .where(
+        and(
+          inArray(pending_direct_posts.event_id, dispatchIds),
+          isStuckBefore(cutoffIso),
+          isNull(pending_direct_posts.publish_started_at),
+        ),
+      ),
+  );
+  if (unclaimedSweepError) {
+    console.error("[sweepStuckPendingDirectPosts] Unclaimed update failed:", unclaimedSweepError.message);
+    return { success: false, message: `Sweep failed: ${unclaimedSweepError.message}` };
+  }
+
+  const { error: claimedSweepError } = await runQuery(
     db
       .update(pending_direct_posts)
       .set({
@@ -293,9 +323,9 @@ export async function sweepStuckPendingDirectPosts(input: {
       })
       .where(and(inArray(pending_direct_posts.event_id, dispatchIds), isStuckBefore(cutoffIso))),
   );
-  if (sweepError) {
-    console.error("[sweepStuckPendingDirectPosts] Update failed:", sweepError.message);
-    return { success: false, message: `Sweep failed: ${sweepError.message}` };
+  if (claimedSweepError) {
+    console.error("[sweepStuckPendingDirectPosts] Claimed update failed:", claimedSweepError.message);
+    return { success: false, message: `Sweep failed: ${claimedSweepError.message}` };
   }
 
   const { data: sweptDispatches, error: rereadError } = await runQuery(
@@ -313,7 +343,7 @@ export async function sweepStuckPendingDirectPosts(input: {
         and(
           inArray(pending_direct_posts.event_id, dispatchIds),
           eq(pending_direct_posts.status, "failed"),
-          eq(pending_direct_posts.failure_reason, SWEPT_DIRECT_POST_REASON),
+          inArray(pending_direct_posts.failure_reason, SWEPT_DIRECT_POST_REASONS),
           eq(pending_direct_posts.finished_at, sweptAtIso),
         ),
       ),

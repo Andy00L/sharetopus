@@ -39,7 +39,7 @@ import {
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import {
   finalizePendingDirectPost,
-  SWEPT_DIRECT_POST_REASON,
+  isSweptDirectPostReason,
   type DirectPostOutcome,
 } from "@/actions/server/data/pendingDirectPosts";
 
@@ -88,7 +88,7 @@ function toDirectPostOutcome(outcome: PlatformPostOutcome): DirectPostOutcome {
 
 function holdsThisRunsOutcome(dispatch: DirectDispatch | null, outcome: DirectPostOutcome): boolean {
   if (dispatch === null || dispatch.status !== outcome.status) return false;
-  return dispatch.failure_reason !== SWEPT_DIRECT_POST_REASON;
+  return !isSweptDirectPostReason(dispatch.failure_reason);
 }
 
 type OutcomeWebhook = {

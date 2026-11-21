@@ -3,6 +3,7 @@ import {
   findStuckPendingDirectPosts,
   sweepStuckPendingDirectPosts,
   SWEPT_DIRECT_POST_REASON,
+  SWEPT_UNCLAIMED_DIRECT_POST_REASON,
   type SweptDirectPost,
 } from "@/actions/server/data/pendingDirectPosts";
 import { dispatchWebhooks } from "@/lib/api/rest/webhooks/dispatch";
@@ -21,7 +22,7 @@ const SWEPT_CLAIMED_FAILURE: PostFailure = {
 
 const SWEPT_UNCLAIMED_FAILURE: PostFailure = {
   reason: "unknown",
-  message: "Publishing never started before the hourly sweep; the post was not published",
+  message: SWEPT_UNCLAIMED_DIRECT_POST_REASON,
   mayHavePublished: false,
 };
 

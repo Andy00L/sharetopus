@@ -34,6 +34,8 @@ type CallEnding = "answer" | "killed-before-history" | "killed-after-history";
 const MINTED_NOTHING: MintResult = { success: true, publicUrl: null, tiktokUrl: null };
 const STALE_WORKER_SWEPT_REASON = "stale_worker_swept";
 const SWEPT_DIRECT_POST_REASON = "Publishing stopped without a result; the post may have published";
+const SWEPT_UNCLAIMED_DIRECT_POST_REASON =
+  "Publishing never started before the hourly sweep; the post was not published";
 const CLAIM_TIME = "2026-11-19T10:00:01.000Z";
 const MAY_HAVE_PUBLISHED_MESSAGE =
   "An earlier publish attempt stopped before it reported a result; the post may have published";
@@ -149,7 +151,8 @@ mock.module("@/actions/server/data/fetchAccountForPublish", () => ({
 }));
 
 mock.module("@/actions/server/data/pendingDirectPosts", () => ({
-  SWEPT_DIRECT_POST_REASON,
+  isSweptDirectPostReason: (failureReason: string | null) =>
+    failureReason === SWEPT_DIRECT_POST_REASON || failureReason === SWEPT_UNCLAIMED_DIRECT_POST_REASON,
   finalizePendingDirectPost: async (input: { outcome: DirectPostOutcome }) => {
     if (world.isFinalizeFailing) return { success: false, message: "Update failed: timeout" };
     const row = world.row;
@@ -446,6 +449,13 @@ describe("processDirectPost onFailure", () => {
     await runOnFailure();
     expect(world.finalizedOutcomes).toEqual([]);
     expect(world.row?.failure_reason).toBe(SWEPT_DIRECT_POST_REASON);
+  });
+
+  test("exhausted retries leave a dispatch the sweep failed before any claim as the sweep recorded it", async () => {
+    world.row = { ...PROCESSING_ROW, status: "failed", failure_reason: SWEPT_UNCLAIMED_DIRECT_POST_REASON };
+    await runOnFailure();
+    expect(world.finalizedOutcomes).toEqual([]);
+    expect(world.row?.failure_reason).toBe(SWEPT_UNCLAIMED_DIRECT_POST_REASON);
   });
 
   test("exhausted retries treat the post as possibly live for media cleanup", async () => {

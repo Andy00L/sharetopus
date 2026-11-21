@@ -189,9 +189,9 @@ describe("sweepStuckDirectPosts", () => {
     ]);
   });
 
-  test("the stored record keeps the sweep's text whether or not a claim was taken", async () => {
+  test("the stored record says not published when no claim was taken, may have published when one was", async () => {
     await runSweep();
-    expect(readDispatch("dispatch-stuck")?.failure_reason).toBe(SWEPT_MESSAGE);
+    expect(readDispatch("dispatch-stuck")?.failure_reason).toBe(SWEPT_UNCLAIMED_MESSAGE);
     expect(readDispatch("dispatch-abandoned")?.failure_reason).toBe(SWEPT_MESSAGE);
   });
 
