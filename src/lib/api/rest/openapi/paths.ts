@@ -95,7 +95,7 @@ export const restPaths = {
       tags: ["Posts"],
       summary: "Create a post",
       description:
-        "Schedule a post for later (200 with the PostDTO) or publish it now by omitting scheduled_at (202 with the dispatch: the post was handed to the publisher, and once published it appears in content history). A retry with an idempotency_key that was already dispatched answers 202 with the first call's dispatch_id and batch_id.",
+        "Schedule a post for later (200 with the PostDTO) or publish it now by omitting scheduled_at (202 with the dispatch: the post was handed to the publisher, and once published it appears in content history). batch_id, when sent, is stored on the post in both cases and answered back; it labels posts and dedupes nothing (idempotency_key dedupes). A retry with an idempotency_key that was already dispatched answers 202 with the first call's dispatch_id and batch_id.",
       operationId: "createPost",
       requestBody: jsonBody(PostCreateInputSchema),
       responses: {

@@ -44,6 +44,7 @@ export function restInputToDirectPostData(
     pinterestBoardName: input.pinterest_board_name,
     link: input.platform === "pinterest" ? input.pinterest_link : undefined,
     idempotency_key: input.idempotency_key,
+    batch_id: input.batch_id,
     registryOptions: buildRegistryPostOptions(input),
   };
 }

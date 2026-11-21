@@ -180,6 +180,7 @@ mock.module("@/actions/server/directPostActions/directPostBatch", () => ({
       details: { total: 1, dispatched, duplicates: 1 - dispatched, rejected: [] },
     };
   },
+  readDirectPostBatchOutcomes: async () => ({ success: true, outcomes: [] }),
 }));
 mock.module("@/actions/server/scheduleActions/schedule/schedulePostBatch", () => ({
   preflightSchedulePost: async (post: { idempotency_key?: string }, principalId: string) =>

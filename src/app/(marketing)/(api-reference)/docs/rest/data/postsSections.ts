@@ -86,7 +86,7 @@ const POST_DISPATCH_FIELDS: ParamTableData = {
       type: "string",
       required: true,
       description:
-        "Batch of this dispatch. A retry with an idempotency_key that was already dispatched returns the first call's batch_id.",
+        "The batch_id you sent, or a generated one. A retry with an idempotency_key that was already dispatched returns the first call's batch_id.",
     },
     {
       name: "status",
@@ -171,7 +171,8 @@ const CREATE_BODY_FIELDS: ParamTableData = {
       name: "batch_id",
       type: "string",
       required: false,
-      description: "Request-level grouping id.",
+      description:
+        "Grouping label stored on the post, scheduled or published now, and answered back; generated when omitted. It dedupes nothing: use idempotency_key for retries.",
     },
     {
       name: "pinterest_board_id",

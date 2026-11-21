@@ -17,6 +17,7 @@ import {
   refundCharge,
   settleCharge,
   updateChargeRecord,
+  type ChargeMetadata,
   type ChargeRecordFields,
   type ChargeReplay,
 } from "@/lib/x402/charges/chargeLifecycle";
@@ -46,6 +47,7 @@ import { buildGenericSuccessResponse } from "@/lib/x402/responses/buildSuccessRe
 const RATE_LIMIT_WINDOW_SECONDS = 60;
 const KEY_IN_PROGRESS_RETRY_AFTER_SECONDS = 5;
 const KEY_CHECK_UNAVAILABLE_RETRY_AFTER_SECONDS = 60;
+const REPLAY_RETRY_AFTER_SECONDS = 5;
 
 export type ActionResolver<TBody> = (
   body: TBody,
@@ -74,6 +76,17 @@ export type X402Handler<TBody, TResult> = (params: {
   requestId: string;
 }) => Promise<X402HandlerResult<TResult>>;
 
+export type RecoveredReplayResult =
+  | { kind: "recovered"; data: Json }
+  | { kind: "not_found" }
+  | { kind: "lookup_failed"; message: string };
+
+export type ReplayResultRecovery = (params: {
+  principal: WalletPrincipal;
+  chargeId: string;
+  storedMetadata: ChargeMetadata;
+}) => Promise<RecoveredReplayResult>;
+
 export interface X402PaidEndpointOptions<TBody, TResult> {
   endpointPath: string;
 
@@ -91,6 +104,8 @@ export interface X402PaidEndpointOptions<TBody, TResult> {
   idempotencyKey?: (body: TBody) => string | undefined;
 
   handler: X402Handler<TBody, TResult>;
+
+  recoverReplayResult?: ReplayResultRecovery;
 
   rateLimitScope: string;
 
@@ -576,7 +591,7 @@ async function chargeAndRunAction<TBody, TResult extends Json>(params: {
   });
   if (!recordWrite.ok) {
     console.error(
-      `[chargeAndRunAction] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers 409 and /proof shows no post for it.`,
+      `[chargeAndRunAction] CHARGE RECORD INCOMPLETE: charge ${chargeId} succeeded but its result and post link were not saved after a retry (${recordWrite.message}); a replay of this payment answers only what the endpoint rebuilds from its own rows (409 when it rebuilds nothing) and /proof shows no post for it.`,
     );
   }
 
@@ -720,7 +735,7 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
         httpStatus: 409,
         errorKind: "payment_in_progress",
         message: "This payment is still being processed. Retry the same request in a few seconds.",
-        retryAfterSeconds: 5,
+        retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
       });
 
     case "closed":
@@ -755,6 +770,39 @@ async function respondToReplay<TBody, TResult extends Json>(params: {
           });
         }
         replayData = rerun.data;
+      }
+      if (replayData === null && params.options.recoverReplayResult) {
+        const recovery = await params.options.recoverReplayResult({
+          principal,
+          chargeId: replay.chargeId,
+          storedMetadata: replay.storedMetadata,
+        });
+        switch (recovery.kind) {
+          case "recovered":
+            replayData = recovery.data;
+            break;
+          case "not_found":
+            break;
+          case "lookup_failed":
+            console.error(
+              `[respondToReplay] Outcome lookup failed for replayed charge ${replay.chargeId}: ${recovery.message}`,
+            );
+            return context.fail({
+              principal,
+              action: actionKey,
+              chargeId: replay.chargeId,
+              resultStatus: "error",
+              httpStatus: 503,
+              errorKind: "replay_lookup_failed",
+              message:
+                "This payment was already used and its outcome could not be read right now. Retry the same request shortly; it is not charged again.",
+              retryAfterSeconds: REPLAY_RETRY_AFTER_SECONDS,
+            });
+          default: {
+            const unhandledRecovery: never = recovery;
+            console.error(`[respondToReplay] Unhandled recovery: ${JSON.stringify(unhandledRecovery)}`);
+          }
+        }
       }
       if (replayData === null) {
         return context.fail({

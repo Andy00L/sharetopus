@@ -38,8 +38,16 @@ export interface SettleChargeInput {
   recipientAddress: string;
 }
 
+export type ChargeMetadata = { [key: string]: Json | undefined };
+
 export type ChargeReplay =
-  | { state: "settled"; chargeId: string; txHash: string; storedResult: Json | null }
+  | {
+      state: "settled";
+      chargeId: string;
+      txHash: string;
+      storedResult: Json | null;
+      storedMetadata: ChargeMetadata;
+    }
   | { state: "in_progress"; chargeId: string }
   | { state: "closed"; chargeId: string | null };
 
@@ -195,25 +203,27 @@ async function loadChargeReplay(params: {
   }
   const hasActionFailed = charge.error_message !== null || charge.has_refund_reconciliation;
   if (charge.status === "settled" && charge.tx_hash && !hasActionFailed) {
+    const storedMetadata = readChargeMetadata(charge.metadata);
     return {
       state: "settled",
       chargeId: charge.id,
       txHash: charge.tx_hash,
-      storedResult: readStoredResult(charge.metadata),
+      storedResult: storedMetadata.result ?? null,
+      storedMetadata,
     };
   }
   return { state: "closed", chargeId: charge.id };
 }
 
-function readStoredResult(metadata: Json): Json | null {
+function readChargeMetadata(metadata: Json): ChargeMetadata {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) {
-    return null;
+    return {};
   }
-  return metadata.result ?? null;
+  return metadata;
 }
 
 export interface ChargeRecordFields {
-  metadata?: { [key: string]: Json | undefined };
+  metadata?: ChargeMetadata;
   scheduledPostId?: string;
   socialConnectionId?: string;
 }

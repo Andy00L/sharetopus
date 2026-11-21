@@ -124,7 +124,9 @@ mock.module("@/actions/server/scheduleActions/schedule/schedulePostBatch", () =>
 
 const { POST } = await import("./route");
 
-function createPostNow(): Promise<Response> {
+function createPostNow(
+  bodyFields: { idempotency_key?: string; batch_id?: string } = { idempotency_key: "key-1" },
+): Promise<Response> {
   return POST(
     new NextRequest("https://sharetopus.test/api/v1/posts", {
       method: "POST",
@@ -134,10 +136,15 @@ function createPostNow(): Promise<Response> {
         platform: "linkedin",
         post_type: "text",
         description: "Launch day.",
-        idempotency_key: "key-1",
+        ...bodyFields,
       }),
     }),
   );
+}
+
+async function readBatchId(response: Response): Promise<unknown> {
+  const body: unknown = await response.json();
+  return typeof body === "object" && body !== null && "batch_id" in body ? body.batch_id : null;
 }
 
 function readOnlyLock(): StoredLock {
@@ -183,5 +190,38 @@ describe("POST /api/v1/posts without scheduled_at", () => {
       batch_id: storedLock.batch_id,
     });
     expect(sentEventIds).toEqual([`post.now-${storedLock.event_id}`]);
+  });
+});
+
+describe("POST /api/v1/posts without scheduled_at and with batch_id", () => {
+  test("stores the dispatch under the client's batch_id and answers it in the 202", async () => {
+    const response = await createPostNow({ idempotency_key: "key-1", batch_id: "launch-week" });
+
+    expect(response.status).toBe(202);
+    expect(await readBatchId(response)).toBe("launch-week");
+    expect(readOnlyLock().batch_id).toBe("launch-week");
+  });
+
+  test("labels posts without deduping them: two keyless calls with one batch_id both dispatch", async () => {
+    const firstResponse = await createPostNow({ batch_id: "launch-week" });
+    const secondResponse = await createPostNow({ batch_id: "launch-week" });
+
+    expect([firstResponse.status, secondResponse.status]).toEqual([202, 202]);
+    expect([...lockStore.values()].map((storedLock) => storedLock.batch_id)).toEqual([
+      "launch-week",
+      "launch-week",
+    ]);
+    expect(sentEventIds).toHaveLength(2);
+  });
+
+  test("a retry with the same idempotency_key and another batch_id answers the first call's batch_id", async () => {
+    await createPostNow({ idempotency_key: "key-1", batch_id: "first-batch" });
+
+    const retryResponse = await createPostNow({ idempotency_key: "key-1", batch_id: "second-batch" });
+
+    expect(retryResponse.status).toBe(202);
+    expect(await readBatchId(retryResponse)).toBe("first-batch");
+    expect(readOnlyLock().batch_id).toBe("first-batch");
+    expect(sentEventIds).toHaveLength(1);
   });
 });

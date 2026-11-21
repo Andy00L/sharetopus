@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { getServerSignedViewUrls } from "@/actions/server/data/getServerSignedViewUrl";
 import {
@@ -8,7 +8,7 @@ import {
   loadOwnedAccountPlatforms,
 } from "@/actions/server/data/loadOwnedAccountPlatforms";
 import { db, runQuery } from "@/db/client";
-import { pending_direct_posts } from "@/db/schema";
+import { content_history, pending_direct_posts } from "@/db/schema";
 import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
 import type { PostNowEventData } from "@/inngest/events/postNow";
@@ -37,6 +37,7 @@ export type DirectPostData = {
   pinterestBoardId?: string;
   pinterestBoardName?: string;
   idempotency_key?: string;
+  batch_id?: string;
   registryOptions?: Record<string, unknown> | null;
 };
 
@@ -52,6 +53,15 @@ export type DirectPostBatchResult = {
   };
   eventIds: string[];
 } & ({ success: true } | { success: false; failure: PostBatchFailure });
+
+export type DirectPostOutcome =
+  | { eventId: string; status: "processing" }
+  | { eventId: string; status: "published"; contentId: string | null }
+  | { eventId: string; status: "failed"; failureReason: string | null };
+
+export type DirectPostBatchOutcomesResult =
+  | { success: true; outcomes: DirectPostOutcome[] }
+  | { success: false; message: string };
 
 export async function directPostBatch(
   posts: DirectPostData[],
@@ -272,7 +282,7 @@ export async function directPostBatch(
     return {
       success: true,
       message: `Dispatched ${dispatch.freshCount} post(s)${duplicates > 0 ? `, ${duplicates} already existed (idempotent retry)` : ""}.`,
-      batchId: dispatch.freshCount === 0 && firstDispatch ? firstDispatch.batchId : batchId,
+      batchId: firstDispatch?.batchId ?? batchId,
       details: {
         total: posts.length,
         dispatched: dispatch.freshCount,
@@ -364,6 +374,87 @@ export async function preflightDirectPost(
   return { ok: true };
 }
 
+export async function readDirectPostBatchOutcomes(params: {
+  batchId: string;
+  principalId: string;
+}): Promise<DirectPostBatchOutcomesResult> {
+  const [dispatchRead, historyRead] = await Promise.all([
+    runQuery(
+      db
+        .select({
+          event_id: pending_direct_posts.event_id,
+          status: pending_direct_posts.status,
+          failure_reason: pending_direct_posts.failure_reason,
+          social_account_id: pending_direct_posts.social_account_id,
+          platform: pending_direct_posts.platform,
+        })
+        .from(pending_direct_posts)
+        .where(
+          and(
+            eq(pending_direct_posts.batch_id, params.batchId),
+            eq(pending_direct_posts.principal_id, params.principalId),
+          ),
+        )
+        .orderBy(asc(pending_direct_posts.created_at), asc(pending_direct_posts.event_id))
+        .limit(MAX_BATCH_SIZE),
+    ),
+    runQuery(
+      db
+        .select({
+          social_account_id: content_history.social_account_id,
+          platform: content_history.platform,
+          content_id: content_history.content_id,
+        })
+        .from(content_history)
+        .where(
+          and(
+            eq(content_history.batch_id, params.batchId),
+            eq(content_history.principal_id, params.principalId),
+            isNull(content_history.scheduled_post_id),
+          ),
+        )
+        .limit(MAX_BATCH_SIZE),
+    ),
+  ]);
+  if (dispatchRead.error) {
+    return { success: false, message: `Dispatch read failed: ${dispatchRead.error.message}` };
+  }
+  if (historyRead.error) {
+    return { success: false, message: `Content history read failed: ${historyRead.error.message}` };
+  }
+
+  const contentIdByTarget = new Map<string, string>();
+  for (const historyRow of historyRead.data) {
+    const targetKey = `${historyRow.social_account_id}:${historyRow.platform}`;
+    if (!contentIdByTarget.has(targetKey)) contentIdByTarget.set(targetKey, historyRow.content_id);
+  }
+
+  const outcomes = dispatchRead.data.map((dispatchRow): DirectPostOutcome => {
+    switch (dispatchRow.status) {
+      case "processing":
+        return { eventId: dispatchRow.event_id, status: "processing" };
+      case "completed":
+        return {
+          eventId: dispatchRow.event_id,
+          status: "published",
+          contentId:
+            contentIdByTarget.get(`${dispatchRow.social_account_id}:${dispatchRow.platform}`) ?? null,
+        };
+      case "failed":
+        return {
+          eventId: dispatchRow.event_id,
+          status: "failed",
+          failureReason: dispatchRow.failure_reason,
+        };
+      default: {
+        const unhandledStatus: never = dispatchRow.status;
+        return { eventId: dispatchRow.event_id, status: unhandledStatus };
+      }
+    }
+  });
+  return { success: true, outcomes };
+}
+
 function validateDirectPostFields(
   post: DirectPostData,
   principalId: string,
@@ -407,7 +498,7 @@ function buildEventPayloads(
     const link = post.link ?? "";
     return {
       dispatch_id: randomUUID(),
-      batch_id: batchId,
+      batch_id: post.batch_id ?? batchId,
       principal_id: principalId,
       social_account_id: post.socialAccountId,
       platform: post.platform,
