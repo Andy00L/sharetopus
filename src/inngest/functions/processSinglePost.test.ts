@@ -47,6 +47,7 @@ type HelperState = {
   claimCalls: ClaimInput[];
   recorded: Outcome[];
   platformCalls: number;
+  stepLog: string[];
 };
 
 const helperState: HelperState = {
@@ -56,6 +57,7 @@ const helperState: HelperState = {
   claimCalls: [],
   recorded: [],
   platformCalls: 0,
+  stepLog: [],
 };
 
 mock.module("server-only", () => ({}));
@@ -112,11 +114,17 @@ function readCapturedFunction(candidate: unknown): CapturedFunction {
 const workerFunction = readCapturedFunction(processSinglePost);
 
 const step = {
-  run: async (_stepId: string, stepBody: () => Promise<unknown>) => stepBody(),
+  run: async (stepId: string, stepBody: () => Promise<unknown>) => {
+    helperState.stepLog.push(stepId);
+    return stepBody();
+  },
+  sleepUntil: async (stepId: string, wakeAt: string) => {
+    helperState.stepLog.push(`${stepId}:${wakeAt}`);
+  },
 };
 
-function runWorker() {
-  return workerFunction.handler({ event: { data: EVENT_DATA }, step });
+function runWorker(eventData: typeof EVENT_DATA = EVENT_DATA) {
+  return workerFunction.handler({ event: { data: eventData }, step });
 }
 
 function runOnFailure() {
@@ -133,6 +141,7 @@ beforeEach(() => {
   helperState.claimCalls = [];
   helperState.recorded = [];
   helperState.platformCalls = 0;
+  helperState.stepLog = [];
 });
 
 describe("processSinglePost", () => {
@@ -168,6 +177,18 @@ describe("processSinglePost", () => {
     await runWorker();
     expect(helperState.platformCalls).toBe(1);
     expect(helperState.recorded.map((outcome) => outcome.ok)).toEqual([true]);
+    expect(helperState.stepLog.filter((stepId) => stepId.startsWith("wait-until"))).toEqual([]);
+  });
+
+  test("a run that starts before the post's time sleeps until it, then claims the row", async () => {
+    const futureScheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await runWorker({ ...EVENT_DATA, scheduled_at: futureScheduledAt });
+    const sleepIndex = helperState.stepLog.indexOf(`wait-until-scheduled-time:${futureScheduledAt}`);
+    expect(sleepIndex).toBeGreaterThan(-1);
+    expect(sleepIndex).toBeLessThan(helperState.stepLog.indexOf("claim-post"));
+    expect(helperState.claimCalls).toEqual([
+      { scheduledPostId: POST.id, dispatchedScheduledAt: futureScheduledAt },
+    ]);
   });
 });
 

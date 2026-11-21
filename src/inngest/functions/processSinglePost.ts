@@ -17,6 +17,8 @@ import {
   recordPostStatus,
 } from "./processSinglePostHelpers";
 
+const EARLY_START_TOLERANCE_MS = 10_000;
+
 // A step that wants to be retried throws inside itself: Inngest stores
 // completed step results, so a throw placed after a step never re-runs it.
 // https://www.inngest.com/docs/learn/how-functions-are-executed
@@ -42,10 +44,13 @@ export const processSinglePost = inngest.createFunction(
       if (loadResult.kind === "lookup_failed") {
         throw new Error(`post-lookup-failure: ${loadResult.message}`);
       }
-      return loadResult;
+      return { ...loadResult, loadedAtMs: Date.now() };
     });
     if (loaded.kind === "terminal") {
       return { skipped: true, reason: loaded.message };
+    }
+    if (loaded.loadedAtMs < Date.parse(data.scheduled_at) - EARLY_START_TOLERANCE_MS) {
+      await step.sleepUntil("wait-until-scheduled-time", data.scheduled_at);
     }
     const post = loaded.post;
 
