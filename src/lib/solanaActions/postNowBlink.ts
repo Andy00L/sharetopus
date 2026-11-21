@@ -13,7 +13,10 @@ import type { WalletPrincipal } from "@/lib/x402/auth/types";
 import { refundCharge } from "@/lib/x402/charges/chargeLifecycle";
 import { markChargeSettled } from "@/lib/x402/charges/chargeTransitions";
 import { insertPendingX402Charge } from "@/lib/x402/charges/insertPendingX402Charge";
-import { recordX402Reconciliation } from "@/lib/x402/charges/recordReconciliation";
+import {
+  recordUnchargedPayment,
+  recordX402Reconciliation,
+} from "@/lib/x402/charges/recordReconciliation";
 import { getBaseUrl, getRecipientAddress, isX402Platform } from "@/lib/x402/config";
 import type { Platform } from "@/lib/x402/connect/types";
 import { NETWORKS } from "@/lib/x402/networks";
@@ -279,8 +282,7 @@ export async function confirmPostNowPayment(params: {
   // reconciliation instead of being refunded blindly.
   const walletResult = await resolveWalletForBlink(verification.payerAddress);
   if (!walletResult.ok) {
-    await recordX402Reconciliation({
-      kind: "settle_unrecorded",
+    await recordUnchargedPayment({
       txHash: verification.txSignature,
       payerAddress: verification.payerAddress,
       amountAtomic: verification.atomicReceived.toString(),
@@ -512,8 +514,7 @@ async function recordUnderpayment(
   console.error(
     `[recordUnderpayment] CHARGE RECONCILIATION NEEDED: tx ${underpayment.txSignature} from ${underpayment.payerAddress} paid ${underpayment.atomicReceived} atomic USDC, under the current post-now price; no charge recorded, refund by hand.`,
   );
-  await recordX402Reconciliation({
-    kind: "settle_unrecorded",
+  await recordUnchargedPayment({
     txHash: underpayment.txSignature,
     payerAddress: underpayment.payerAddress,
     amountAtomic: underpayment.atomicReceived.toString(),

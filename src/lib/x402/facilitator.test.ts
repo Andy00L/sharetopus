@@ -98,12 +98,17 @@ describe("refundPayment", () => {
 
   test("a send with an unknown outcome is reported as such, not as a failure, and nothing waits on-chain", async () => {
     confirmationCount = 0;
-    refundSendResult = { status: "outcome_unknown", message: "CDP refund send on Base did not answer within 15000 ms." };
+    refundSendResult = {
+      status: "outcome_unknown",
+      txHash: null,
+      message: "CDP refund send on Base did not answer within 15000 ms.",
+    };
 
     const refundResult = await refundOnBase();
 
     expect(refundResult).toEqual({
       status: "send_unknown",
+      refundTxHash: null,
       message: "CDP refund send on Base did not answer within 15000 ms.",
     });
     expect(confirmationCount).toBe(0);

@@ -158,13 +158,30 @@ describe("refundCharge after the paid action failed", () => {
   });
 
   test("a refund send that timed out leaves the charge settled and a reconciliation row with no tx hash", async () => {
-    refundResult = { status: "send_unknown", message: "CDP refund send on Base did not answer within 15000 ms." };
+    refundResult = {
+      status: "send_unknown",
+      refundTxHash: null,
+      message: "CDP refund send on Base did not answer within 15000 ms.",
+    };
 
     const outcome = await refundAfterFailedAction();
 
     expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
     expect(readUpdates()).toHaveLength(1);
     expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: null }]);
+  });
+
+  test("a refund signed but with an unknown delivery keeps its hash on the reconciliation row for the sweep to check", async () => {
+    refundResult = {
+      status: "send_unknown",
+      refundTxHash: "0xsignedrefund",
+      message: "All 3 sends failed in transport.",
+    };
+
+    const outcome = await refundAfterFailedAction();
+
+    expect(outcome).toEqual({ refundInitiated: false, refundTxHash: null });
+    expect(recordedReconciliations).toEqual([{ kind: "refund_failed", txHash: "0xsignedrefund" }]);
   });
 
   test("a confirmed refund records the failure first, then moves the charge from settled to refunded", async () => {

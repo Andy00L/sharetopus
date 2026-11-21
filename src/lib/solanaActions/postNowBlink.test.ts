@@ -14,17 +14,17 @@ const FRESH_PRICE_USDC = 0.5;
 
 process.env.X402_RECIPIENT_SOLANA = RECIPIENT_ADDRESS;
 
-type RecordedReconciliation = {
-  kind: string;
-  txHash?: string | null;
-  payerAddress?: string | null;
-  amountAtomic?: string | null;
-  network?: string | null;
+type UnchargedPayment = {
+  txHash: string;
+  payerAddress: string;
+  amountAtomic: string;
+  network: string;
 };
 
 let verificationResult: VerifyUsdcPaymentResult;
 let requiredAtomicAmounts: bigint[] = [];
-let recordedReconciliations: RecordedReconciliation[] = [];
+let recordedUnchargedPayments: UnchargedPayment[] = [];
+let chargeReconciliationCount = 0;
 let chargeInsertCount = 0;
 let postBatchCount = 0;
 
@@ -46,8 +46,11 @@ mock.module("@/lib/solanaActions/verifyUsdcPayment", () => ({
 }));
 
 mock.module("@/lib/x402/charges/recordReconciliation", () => ({
-  recordX402Reconciliation: async (entry: RecordedReconciliation) => {
-    recordedReconciliations.push(entry);
+  recordX402Reconciliation: async () => {
+    chargeReconciliationCount += 1;
+  },
+  recordUnchargedPayment: async (entry: UnchargedPayment) => {
+    recordedUnchargedPayments.push(entry);
   },
 }));
 
@@ -101,7 +104,8 @@ function buildUnderpayment(atomicReceived: bigint): VerifyUsdcPaymentResult {
 
 beforeEach(() => {
   requiredAtomicAmounts = [];
-  recordedReconciliations = [];
+  recordedUnchargedPayments = [];
+  chargeReconciliationCount = 0;
   chargeInsertCount = 0;
   postBatchCount = 0;
 });
@@ -123,15 +127,10 @@ describe("confirming a Blink payment", () => {
     expect(confirmation.ok).toBe(false);
     expect(confirmation).toMatchObject({ httpStatus: 402 });
     expect(confirmation.ok ? "" : confirmation.message).toContain("recorded for a manual refund");
-    expect(recordedReconciliations).toEqual([
-      {
-        kind: "settle_unrecorded",
-        txHash: TX_SIGNATURE,
-        payerAddress: PAYER_ADDRESS,
-        amountAtomic: "250000",
-        network: "solana",
-      },
+    expect(recordedUnchargedPayments).toEqual([
+      { txHash: TX_SIGNATURE, payerAddress: PAYER_ADDRESS, amountAtomic: "250000", network: "solana" },
     ]);
+    expect(chargeReconciliationCount).toBe(0);
     expect(chargeInsertCount).toBe(0);
     expect(postBatchCount).toBe(0);
   });
@@ -142,6 +141,6 @@ describe("confirming a Blink payment", () => {
     const confirmation = await confirmPayment();
 
     expect(confirmation).toMatchObject({ ok: false, httpStatus: 402 });
-    expect(recordedReconciliations).toEqual([]);
+    expect(recordedUnchargedPayments).toEqual([]);
   });
 });

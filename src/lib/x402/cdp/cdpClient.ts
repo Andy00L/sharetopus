@@ -68,7 +68,7 @@ export async function sendThroughCdp(params: {
     console.error(
       `[sendThroughCdp] ${params.operationName} has an unknown outcome and may still broadcast: ${message}`,
     );
-    return { status: "outcome_unknown", message };
+    return { status: "outcome_unknown", txHash: null, message };
   }
 }
 

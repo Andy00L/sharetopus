@@ -24,7 +24,14 @@ import "server-only";
  */
 
 import { ExactEvmScheme } from "@x402/evm/exact/facilitator";
-import { encodeFunctionData, isAddress, isHex, type TypedDataDomain } from "viem";
+import {
+  encodeFunctionData,
+  isAddress,
+  isHex,
+  type Address,
+  type Hex,
+  type TypedDataDomain,
+} from "viem";
 import { verifyTypedData } from "viem/actions";
 
 import { getArcSigner } from "@/lib/x402/arc/arcChain";
@@ -66,12 +73,24 @@ export function getArcFacilitator(): ExactEvmScheme {
  * Written out method by method rather than handing over a client: viem types
  * its contract helpers against a concrete Abi while the x402 interface
  * passes `readonly unknown[]`, and both broadcast methods must go through
- * broadcastCall.
+ * broadcastCall. A broadcast whose delivery is unknown returns its hash, so
+ * the scheme waits for that receipt and reports the hash with whatever it
+ * finds instead of an empty transaction.
  */
 function buildArcFacilitatorSigner(
   signer: OperatorSigner,
 ): ConstructorParameters<typeof ExactEvmScheme>[0] {
   const { account, publicClient } = signer;
+
+  const broadcastForScheme = async (
+    call: { to: Address; data: Hex; gas?: bigint },
+    operationName: string,
+  ): Promise<Hex> => {
+    const broadcast = await broadcastCall(signer, call, operationName);
+    // @x402/evm settleEIP3009 reads a throw as a failed settle with an empty transaction.
+    if (broadcast.status === "rejected") throw new Error(broadcast.message);
+    return broadcast.transactionHash;
+  };
 
   return {
     getAddresses: () => [account.address],
@@ -98,8 +117,7 @@ function buildArcFacilitatorSigner(
       }),
 
     writeContract: (args) =>
-      broadcastCall(
-        signer,
+      broadcastForScheme(
         {
           to: args.address,
           data: encodeFunctionData({
@@ -113,7 +131,7 @@ function buildArcFacilitatorSigner(
       ),
 
     sendTransaction: (args) =>
-      broadcastCall(signer, { to: args.to, data: args.data }, "sendTransaction"),
+      broadcastForScheme({ to: args.to, data: args.data }, "sendTransaction"),
 
     // The transfer is already broadcast when this runs, so failing to read
     // its receipt (timeout, RPC error) means "outcome unknown". It is

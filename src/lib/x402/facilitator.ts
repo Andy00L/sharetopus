@@ -283,13 +283,14 @@ export type RefundPaymentInput = RefundSendInput;
 /**
  * confirmed: the refund landed. unconfirmed: it was sent but did not confirm
  * in time; it may still land, so it is neither refunded nor failed yet.
- * send_unknown: the send did not answer, so no hash is known and the refund
- * may still go out. failed: nothing was sent, or the chain reverted it.
+ * send_unknown: the send did not answer, so the refund may still go out;
+ * refundTxHash is the signed transaction when the sender computed one.
+ * failed: nothing was sent, or the chain reverted it.
  */
 export type RefundPaymentResult =
   | { status: "confirmed"; refundTxHash: string; refundedAt: string }
   | { status: "unconfirmed"; refundTxHash: string; message: string }
-  | { status: "send_unknown"; message: string }
+  | { status: "send_unknown"; refundTxHash: string | null; message: string }
   | { status: "failed"; refundTxHash: string | null; message: string };
 
 /**
@@ -309,7 +310,7 @@ export async function refundPayment(
     return { status: "failed", refundTxHash: null, message: sendResult.message };
   }
   if (sendResult.status === "outcome_unknown") {
-    return { status: "send_unknown", message: sendResult.message };
+    return { status: "send_unknown", refundTxHash: sendResult.txHash, message: sendResult.message };
   }
 
   const confirmation = await confirmTransaction({

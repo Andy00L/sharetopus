@@ -321,8 +321,8 @@ export interface RefundChargeOutcome {
  * way. A charge that is no longer settled gets no refund, only that row.
  * Refunded only when the chain confirms it; any other outcome leaves the
  * charge settled with a reconciliation row. A null tx hash there means no
- * refund transaction is known: nothing was sent, or a send timed out and may
- * still have gone out.
+ * refund transaction is known: nothing was sent, or a CDP send timed out and
+ * may still have gone out.
  */
 export async function refundCharge(input: RefundChargeInput): Promise<RefundChargeOutcome> {
   const reconciliationBase = {
@@ -393,12 +393,15 @@ export async function refundCharge(input: RefundChargeInput): Promise<RefundChar
     }
 
     case "send_unknown": {
+      const watchAdvice = refundResult.refundTxHash
+        ? `the reconciliation sweep records refund tx ${refundResult.refundTxHash} if it lands`
+        : `check the sender wallet's outgoing transfers to ${input.payerAddress} before refunding by hand`;
       console.error(
-        `[refundCharge] REFUND SEND OUTCOME UNKNOWN for charge ${input.chargeId} (settle tx ${input.settleTxHash}): ${refundResult.message}. The refund may have gone out: check the sender wallet's outgoing transfers to ${input.payerAddress} before refunding by hand.`,
+        `[refundCharge] REFUND SEND OUTCOME UNKNOWN for charge ${input.chargeId} (settle tx ${input.settleTxHash}): ${refundResult.message}. The refund may have gone out: ${watchAdvice}.`,
       );
       await recordX402Reconciliation({
         kind: "refund_failed",
-        txHash: null,
+        txHash: refundResult.refundTxHash,
         ...reconciliationBase,
       });
       return { refundInitiated: false, refundTxHash: null };

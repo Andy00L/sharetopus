@@ -140,6 +140,28 @@ async function sweepReconciliation(): Promise<SweepSummary> {
         .filter((chargeId): chargeId is string => chargeId !== null),
     ),
   ];
+
+  const unchargedPaymentTxHashes = [
+    ...new Set(
+      reconciliationRows
+        .filter((row) => row.charge_id === null)
+        .map((row) => row.tx_hash)
+        .filter((txHash): txHash is string => txHash !== null),
+    ),
+  ];
+  const chargedPaymentTxHashes = new Set<string>();
+  if (unchargedPaymentTxHashes.length > 0) {
+    const { data: chargesHoldingPayments, error: chargesHoldingError } = await runQuery(
+      db
+        .select({ nonce: x402_charges.nonce })
+        .from(x402_charges)
+        .where(inArray(x402_charges.nonce, unchargedPaymentTxHashes)),
+    );
+    if (chargesHoldingError) {
+      throw new Error(`[sweepReconciliation] charge lookup by payment tx failed: ${chargesHoldingError.message}`);
+    }
+    for (const charge of chargesHoldingPayments) chargedPaymentTxHashes.add(charge.nonce);
+  }
   const chargesById = new Map<
     string,
     Pick<
@@ -206,6 +228,10 @@ async function sweepReconciliation(): Promise<SweepSummary> {
     };
 
     if (!charge) {
+      if (row.charge_id === null && row.tx_hash !== null && chargedPaymentTxHashes.has(row.tx_hash)) {
+        summary.resolved += 1;
+        continue;
+      }
       markOpen({ ...openItem, note: "No charge row to reconcile against; review by hand." });
       continue;
     }

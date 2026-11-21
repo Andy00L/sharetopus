@@ -9,7 +9,7 @@ import "server-only";
  * the dedicated Celo operations key (the same wallet that receives payments
  * as X402_RECIPIENT_CELO) and broadcast over the Celo RPC (Forno) through
  * chain/broadcastCall.ts, so a send whose reply is lost is resent as the
- * same bytes and never recorded as a refund that did not go out.
+ * same bytes, and a send that may have gone out keeps its hash.
  *
  * When X402_CELO_ATTRIBUTION_TAG is set, an ERC-8021 Schema 0 attribution
  * suffix is appended to the transfer calldata so refunds show up as tagged
@@ -27,13 +27,13 @@ import "server-only";
 import type { Hex } from "viem";
 import { celo } from "viem/chains";
 
-import {
-  broadcastCall,
-  buildOperatorSigner,
-  type OperatorSigner,
-} from "@/lib/x402/chain/broadcastCall";
+import { buildOperatorSigner, type OperatorSigner } from "@/lib/x402/chain/broadcastCall";
 import { loadOperatorAccount } from "@/lib/x402/chain/operatorKey";
-import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
+import {
+  sendOperatorRefund,
+  type RefundSendInput,
+  type RefundSendResult,
+} from "@/lib/x402/chain/refundSender";
 import { buildUsdcTransferCall } from "@/lib/x402/chain/usdcTransfer";
 import { getRpcUrl } from "@/lib/x402/config";
 import type { EvmNetworkConfig } from "@/lib/x402/networks";
@@ -71,21 +71,11 @@ export async function refundCelo(input: RefundSendInput): Promise<RefundSendResu
   });
   if (!transfer.ok) return { status: "not_sent", message: transfer.message };
 
-  try {
-    const refundTxHash = await broadcastCall(
-      signerResult.signer,
-      { to: transfer.usdcContract, data: appendAttributionSuffix(transfer.calldata) },
-      "refund",
-    );
-    console.log(
-      `[refundCelo] Refund sent: ${refundTxHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
-    );
-    return { status: "sent", txHash: refundTxHash };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error during the Celo refund.";
-    console.error(`[refundCelo] Failed: ${message}`);
-    return { status: "not_sent", message };
-  }
+  return sendOperatorRefund({
+    signer: signerResult.signer,
+    call: { to: transfer.usdcContract, data: appendAttributionSuffix(transfer.calldata) },
+    input,
+  });
 }
 
 /** The Celo refund signer, built once per process. Errors as values. */

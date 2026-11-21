@@ -17,8 +17,11 @@ import "server-only";
  */
 
 import { getArcSigner } from "@/lib/x402/arc/arcChain";
-import { broadcastCall } from "@/lib/x402/chain/broadcastCall";
-import type { RefundSendInput, RefundSendResult } from "@/lib/x402/chain/refundSender";
+import {
+  sendOperatorRefund,
+  type RefundSendInput,
+  type RefundSendResult,
+} from "@/lib/x402/chain/refundSender";
 import { buildUsdcTransferCall } from "@/lib/x402/chain/usdcTransfer";
 
 export async function refundArc(input: RefundSendInput): Promise<RefundSendResult> {
@@ -39,19 +42,9 @@ export async function refundArc(input: RefundSendInput): Promise<RefundSendResul
   });
   if (!transfer.ok) return { status: "not_sent", message: transfer.message };
 
-  try {
-    const refundTxHash = await broadcastCall(
-      signerResult.signer,
-      { to: transfer.usdcContract, data: transfer.calldata },
-      "refund",
-    );
-    console.log(
-      `[refundArc] Refund sent: ${refundTxHash}, amount: ${input.amountUsdc} USDC, reason: ${input.reason}`,
-    );
-    return { status: "sent", txHash: refundTxHash };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected error during the Arc refund.";
-    console.error(`[refundArc] Failed: ${message}`);
-    return { status: "not_sent", message };
-  }
+  return sendOperatorRefund({
+    signer: signerResult.signer,
+    call: { to: transfer.usdcContract, data: transfer.calldata },
+    input,
+  });
 }

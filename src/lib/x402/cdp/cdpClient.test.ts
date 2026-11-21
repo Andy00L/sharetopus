@@ -41,6 +41,7 @@ describe("sendThroughCdp", () => {
 
     expect(await pendingSend).toEqual({
       status: "outcome_unknown",
+      txHash: null,
       message: `${OPERATION_NAME} did not answer within 15000 ms.`,
     });
   });
@@ -50,7 +51,11 @@ describe("sendThroughCdp", () => {
       new NetworkError("network_timeout", "Request timed out. Please try again.", { code: "ECONNABORTED" }),
     );
 
-    expect(sendResult).toEqual({ status: "outcome_unknown", message: "Request timed out. Please try again." });
+    expect(sendResult).toEqual({
+      status: "outcome_unknown",
+      txHash: null,
+      message: "Request timed out. Please try again.",
+    });
   });
 
   test("a CDP server error has an unknown outcome", async () => {
