@@ -15,7 +15,7 @@ import { exchangeXCode } from "@/lib/api/x/data/exchangeXCode";
 import { getXProfile } from "@/lib/api/x/data/getXProfile";
 import { exchangeYouTubeCode } from "@/lib/api/youtube/data/exchangeYouTubeCode";
 import { getYouTubeProfile } from "@/lib/api/youtube/data/getYouTubeProfile";
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 
 /** One connected account normalized for the social_accounts upsert. */
 export interface NormalizedConnectedAccount {
@@ -65,7 +65,7 @@ export interface ConnectAccountsInput {
  *     the social_connections row
  */
 export async function connectPlatformAccounts(
-  platform: PostingPlatform,
+  platform: AdapterPlatform,
   input: ConnectAccountsInput,
 ): Promise<ConnectAccountsResult> {
   switch (platform) {
@@ -93,7 +93,7 @@ export async function connectPlatformAccounts(
  */
 export function buildSocialAccountValues(
   principalId: string,
-  platform: PostingPlatform,
+  platform: AdapterPlatform,
   account: NormalizedConnectedAccount,
 ) {
   return {

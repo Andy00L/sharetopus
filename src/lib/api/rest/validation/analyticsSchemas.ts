@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  POSTING_PLATFORMS,
+  ADAPTER_PLATFORMS,
   SCHEDULABLE_PLATFORMS,
 } from "@/lib/platforms/capabilities";
 import {
@@ -9,7 +9,7 @@ import {
   MetricDateCursorSchema,
 } from "@/lib/api/rest/pagination";
 
-const AnalyticsPlatformEnum = z.enum(POSTING_PLATFORMS);
+const AnalyticsPlatformEnum = z.enum(ADAPTER_PLATFORMS);
 
 /**
  * Query schema for GET /v1/analytics.

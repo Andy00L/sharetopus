@@ -2,6 +2,8 @@ import { describe, expect, mock, test } from "bun:test";
 
 import { toJsonObject } from "@/lib/utils/jsonObject";
 
+import { buildSignedStorageUrlFixture } from "./_shared/signedStorageUrlFixture";
+
 import type { ProviderFetchOptions, ProviderFetchResult } from "./_shared/providerFetch";
 import type { ProviderPublishInput } from "./types";
 
@@ -42,10 +44,30 @@ const ARTICLE_POST: ProviderPublishInput = {
 };
 
 describe("Dev.to article create", () => {
-  test("tags go out as one comma-separated string of at most four tags", async () => {
+  test("tags go out as an array of at most four lowercase tags", async () => {
     sentBodies.length = 0;
     await devtoBehavior.publish(ARTICLE_POST);
     const article = toJsonObject(toJsonObject(sentBodies.at(-1))?.article);
-    expect(article?.tags).toBe("bun, typescript, testing, web");
+    expect(article?.tags).toEqual(["bun", "typescript", "testing", "web"]);
+  });
+
+  test("an image post sets main_image and leaves the body untouched", async () => {
+    sentBodies.length = 0;
+    const coverUrl = buildSignedStorageUrlFixture("cover.png");
+    await devtoBehavior.publish({ ...ARTICLE_POST, postType: "image", mediaUrl: coverUrl });
+    const article = toJsonObject(toJsonObject(sentBodies.at(-1))?.article);
+    expect(article?.main_image).toBe(coverUrl);
+    expect(article?.body_markdown).toBe("Body");
+  });
+
+  test("a body over the catalog limit is refused, not cut", async () => {
+    sentBodies.length = 0;
+    const published = await devtoBehavior.publish({ ...ARTICLE_POST, body: "x".repeat(100_001) });
+    expect(published).toEqual({
+      ok: false,
+      message: "Dev.to articles are limited to 100000 characters; this one has 100001.",
+      failure: { reason: "invalid_input", mayHavePublished: false },
+    });
+    expect(sentBodies).toHaveLength(0);
   });
 });

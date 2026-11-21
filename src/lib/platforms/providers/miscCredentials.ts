@@ -1,8 +1,10 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -16,22 +18,29 @@ import {
   failUnreadableAnswer,
   refusePublish,
 } from "./_shared/publishFailure";
+import { joinTitleAndBody } from "./_shared/postText";
+import { truncateToGraphemesAndBytes } from "./_shared/textLimits";
+import { REGISTRY_PROVIDER_CATALOG } from "./catalog";
 
 const MISC_TIMEOUT_MS = 30_000;
 
 const NEYNAR_API = "https://api.neynar.com/v2/farcaster";
-/** Farcaster casts cap at 320 bytes; 320 chars is the practical bound. */
-const FARCASTER_MAX_CHARS = 320;
+// farcasterxyz/protocol docs/SPECIFICATION.md (CastAddBody): text "must
+// contain <= 1024 bytes", and CastType.CAST covers a text length of 0 to 320
+// while LONG_CAST covers 321 to 1024. Neynar's publish-cast body takes no
+// cast type, so a cast stays within 320 UTF-8 bytes.
+const FARCASTER_CAST_LIMITS = {
+  maxGraphemes: REGISTRY_PROVIDER_CATALOG.farcaster.rules.maxTextLength,
+  maxUtf8Bytes: 320,
+};
+
+// docs.neynar.com/reference/publish-cast: `idem` "is used to prevent duplicate
+// requests. Use the same idem key on retry attempts", 16 characters advised.
+const NEYNAR_IDEMPOTENCY_KEY_CHARS = 16;
 
 async function farcasterConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return {
-      ok: false,
-      message: "Farcaster connects with a Neynar API key and signer UUID.",
-    };
-  }
   const apiKey = (input.values.neynarApiKey ?? "").trim();
   const signerUuid = (input.values.signerUuid ?? "").trim();
   if (!apiKey || !signerUuid) {
@@ -91,12 +100,17 @@ async function farcasterPublish(
     return refusePublish("Stored Farcaster account has no signer.");
   }
 
-  const text = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n")
-    .slice(0, FARCASTER_MAX_CHARS);
+  const text = truncateToGraphemesAndBytes(joinTitleAndBody(input), FARCASTER_CAST_LIMITS);
+  const idempotencyKey = createHash("sha256")
+    .update(`${input.accountIdentifier}:${input.idempotencyKey}`)
+    .digest("hex")
+    .slice(0, NEYNAR_IDEMPOTENCY_KEY_CHARS);
 
-  const castPayload: Record<string, unknown> = { signer_uuid: signerUuid, text };
+  const castPayload: Record<string, unknown> = {
+    signer_uuid: signerUuid,
+    text,
+    idem: idempotencyKey,
+  };
   // Media rides as an embed URL; Farcaster clients render it inline.
   if (input.mediaUrl) castPayload.embeds = [{ url: input.mediaUrl }];
 
@@ -132,10 +146,11 @@ async function farcasterPublish(
   return { ok: true, postId: castHash, postUrl: null };
 }
 
-export const farcasterBehavior: ProviderBehavior = {
+export const farcasterBehavior = {
+  authKind: "credentials",
   connect: farcasterConnect,
   publish: farcasterPublish,
-};
+} satisfies ProviderBehavior;
 
 function normalizeListmonkUrl(rawUrl: string): string {
   return rawUrl.trim().replace(/\/+$/, "");
@@ -146,11 +161,8 @@ function listmonkAuthHeader(credential: string): string {
 }
 
 async function listmonkConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Listmonk connects with an API user and token." };
-  }
   const instanceUrl = normalizeListmonkUrl(input.values.instanceUrl ?? "");
   const apiUser = (input.values.apiUser ?? "").trim();
   const apiToken = (input.values.apiToken ?? "").trim();
@@ -224,8 +236,8 @@ async function listmonkPublish(
   const authorization = listmonkAuthHeader(input.accessToken);
   const htmlBody =
     input.postType === "image" && input.mediaUrl
-      ? `<p><img src="${input.mediaUrl}" alt="" style="max-width:100%"/></p>${paragraphs(input.body)}`
-      : paragraphs(input.body);
+      ? `<p><img src="${escapeHtml(input.mediaUrl)}" alt="" style="max-width:100%"/></p>${renderTextAsHtmlParagraphs(input.body)}`
+      : renderTextAsHtmlParagraphs(input.body);
 
   const createResult = await providerFetch(`${instanceUrl}/api/campaigns`, {
     method: "POST",
@@ -299,21 +311,25 @@ async function listmonkPublish(
   };
 }
 
-function paragraphs(text: string): string {
-  const escape = (line: string) =>
-    line
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function renderTextAsHtmlParagraphs(text: string): string {
   return text
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter((block) => block.length > 0)
-    .map((block) => `<p>${escape(block).replaceAll("\n", "<br/>")}</p>`)
+    .map((block) => `<p>${escapeHtml(block).replaceAll("\n", "<br/>")}</p>`)
     .join("");
 }
 
-export const listmonkBehavior: ProviderBehavior = {
+export const listmonkBehavior = {
+  authKind: "credentials",
   connect: listmonkConnect,
   publish: listmonkPublish,
-};
+} satisfies ProviderBehavior;

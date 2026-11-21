@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+
+import { buildSignedStorageUrlFixture } from "./_shared/signedStorageUrlFixture";
 import { Blob } from "node:buffer";
 
 import type { ProviderFetchResult } from "./_shared/providerFetch";
@@ -44,7 +46,7 @@ const SHOT_POST: ProviderPublishInput = {
   title: "Logo study",
   body: "",
   postType: "image",
-  mediaUrl: "https://storage.test/shot.png",
+  mediaUrl: buildSignedStorageUrlFixture("shot.png"),
   fileName: "shot.png",
   mediaMimeType: "image/png",
   options: {},

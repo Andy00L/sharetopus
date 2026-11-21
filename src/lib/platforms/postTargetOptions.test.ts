@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { findPostTargetIssues } from "./postTargetOptions";
+import {
+  buildRegistryPostOptions,
+  findPostTargetIssues,
+  RegistryPostOptionsSchema,
+} from "./postTargetOptions";
 
 describe("findPostTargetIssues pin link", () => {
   test("a pin link on a non-Pinterest post is refused by name", () => {
@@ -24,5 +28,16 @@ describe("findPostTargetIssues pin link", () => {
         pinterest_link: "https://example.com/article",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("subreddit option", () => {
+  test("a name with its r/ prefix is accepted and stored bare", () => {
+    const parsed = RegistryPostOptionsSchema.parse({ subreddit: "r/cooking" });
+    expect(buildRegistryPostOptions(parsed)).toEqual({ subreddit: "cooking" });
+  });
+
+  test("a name that is not a subreddit is refused at input", () => {
+    expect(RegistryPostOptionsSchema.safeParse({ subreddit: "cooking/../api" }).success).toBe(false);
   });
 });

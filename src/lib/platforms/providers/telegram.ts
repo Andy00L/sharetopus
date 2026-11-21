@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -18,6 +18,7 @@ import {
   type ProviderFetchFailure,
 } from "./_shared/providerFetch";
 import { BYTES_PER_MB, readStoredMediaBytes } from "./_shared/fetchStoredMedia";
+import { joinTitleAndBody } from "./_shared/postText";
 import {
   classifyHttpAnswer,
   failProviderFetch,
@@ -26,8 +27,10 @@ import {
 } from "./_shared/publishFailure";
 
 /**
- * The bot token IS the credential and never expires, which is why this
- * provider declares no refresh.
+ * core.telegram.org/bots/features (BotFather): the token "is required to
+ * authorize the bot and send requests to the Bot API", and a new one comes
+ * only from BotFather's /token command. The Bot API has no refresh method,
+ * so this provider declares none.
  *
  * sourceRef: core.telegram.org/bots/api (getMe, getChat, sendMessage,
  * sendPhoto, sendVideo).
@@ -108,12 +111,8 @@ async function callBotApi(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Telegram connects with a bot token." };
-  }
-
   const botToken = (input.values.botToken ?? "").trim();
   const chatId = (input.values.chatId ?? "").trim();
 
@@ -168,7 +167,7 @@ async function publish(
       ? input.config.chatId
       : input.accountIdentifier;
 
-  const messageText = buildMessageText(input);
+  const messageText = joinTitleAndBody(input);
 
   if (input.postType === "text" || !input.mediaUrl) {
     const sendResult = await callBotApi(input.accessToken, "sendMessage", {
@@ -253,15 +252,6 @@ function buildPublishResult(
   return { ok: true, postId: messageId, postUrl };
 }
 
-/** Telegram has no title field, so a title becomes the first line. */
-function buildMessageText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
-}
-
 async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   if (input.methodName !== "getChatInfo") {
     return {
@@ -298,8 +288,9 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   };
 }
 
-export const telegramBehavior: ProviderBehavior = {
+export const telegramBehavior = {
+  authKind: "credentials",
   connect,
   publish,
   runTool,
-};
+} satisfies ProviderBehavior;

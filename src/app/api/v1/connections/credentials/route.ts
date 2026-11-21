@@ -13,7 +13,6 @@ import {
   listAvailableProviders,
   resolveConfiguredProvider,
 } from "@/lib/platforms/providers/registry";
-import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJson";
 
 /**
  * Credentials-based connect surface.
@@ -43,7 +42,7 @@ export const GET = withRestEndpoint({
         provider: metadata.id,
         label: metadata.label,
         category: metadata.category,
-        fields: (metadata.credentialFields ?? []).map((field) => ({
+        fields: metadata.credentialFields.map((field) => ({
           key: field.key,
           label: field.label,
           kind: field.kind,
@@ -106,24 +105,9 @@ export const POST = withRestEndpoint({
       );
     }
 
-    // Required-field check against the catalog declaration, so the provider
-    // sees only complete input and the error names the missing field.
-    for (const field of provider.credentialFields ?? []) {
-      if (field.required && !(values[field.key] ?? "").trim()) {
-        return restErrorResponse(
-          "validation_error",
-          `Field "${field.key}" is required for ${provider.label}.`,
-          ctx.requestId,
-        );
-      }
-    }
-
     // Verify with the provider. This talks to the live API, so bad
     // credentials are caught here, not on the first scheduled post.
-    const connectResult = await provider.connect({
-      kind: "credentials",
-      values,
-    });
+    const connectResult = await provider.connect({ values });
     if (!connectResult.ok) {
       return {
         response: restErrorResponse(
@@ -151,7 +135,7 @@ export const POST = withRestEndpoint({
       access_token: connectResult.accessToken,
       refresh_token: connectResult.refreshToken,
       token_expires_at: tokenExpiresAt,
-      extra: providerConfigToJson(connectResult.config),
+      extra: connectResult.config,
       updated_at: new Date().toISOString(),
     } satisfies typeof social_accounts.$inferInsert;
 

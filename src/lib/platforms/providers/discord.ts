@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -18,6 +18,8 @@ import {
   failUnreadableAnswer,
   refusePublish,
 } from "./_shared/publishFailure";
+import { joinTitleAndBody } from "./_shared/postText";
+import { REGISTRY_PROVIDER_CATALOG } from "./catalog";
 
 /**
  * The webhook URL is both the credential and the target, so it is stored in
@@ -28,6 +30,8 @@ import {
  */
 
 const DISCORD_TIMEOUT_MS = 20_000;
+
+const DISCORD_MAX_CHARS = REGISTRY_PROVIDER_CATALOG.discord.rules.maxTextLength;
 
 const ALLOWED_DISCORD_HOSTS: readonly string[] = [
   "discord.com",
@@ -69,12 +73,8 @@ function validateWebhookUrl(rawWebhookUrl: string): WebhookUrlValidation {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Discord connects with a webhook URL." };
-  }
-
   const validation = validateWebhookUrl(input.values.webhookUrl ?? "");
   if (!validation.ok) return { ok: false, message: validation.message };
 
@@ -113,7 +113,6 @@ async function connect(
     ok: true,
     accessToken: validation.webhookUrl,
     refreshToken: null,
-    // Webhook tokens do not expire.
     expiresIn: null,
     identity: {
       accountIdentifier: webhookId,
@@ -134,7 +133,10 @@ async function publish(
   const validation = validateWebhookUrl(input.accessToken);
   if (!validation.ok) return refusePublish(validation.message);
 
-  const content = buildContent(input);
+  const content = joinTitleAndBody(input, { formatTitle: (title) => `**${title}**` }).slice(
+    0,
+    DISCORD_MAX_CHARS,
+  );
 
   const payload: Record<string, unknown> = { content };
 
@@ -144,7 +146,7 @@ async function publish(
   if (input.postType === "image" && input.mediaUrl) {
     payload.embeds = [{ image: { url: input.mediaUrl } }];
   } else if (input.postType === "video" && input.mediaUrl) {
-    payload.content = `${content}\n${input.mediaUrl}`.slice(0, 2000);
+    payload.content = `${content}\n${input.mediaUrl}`.slice(0, DISCORD_MAX_CHARS);
   }
 
   // wait=true makes Discord return the created message instead of 204, so
@@ -197,15 +199,8 @@ async function publish(
   };
 }
 
-function buildContent(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  const combined = !trimmedTitle
-    ? trimmedBody
-    : !trimmedBody
-      ? `**${trimmedTitle}**`
-      : `**${trimmedTitle}**\n\n${trimmedBody}`;
-  return combined.slice(0, 2000);
-}
-
-export const discordBehavior: ProviderBehavior = { connect, publish };
+export const discordBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

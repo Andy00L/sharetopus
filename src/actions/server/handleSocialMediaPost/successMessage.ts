@@ -1,6 +1,6 @@
 import {
   PLATFORM_LABELS,
-  POSTING_PLATFORMS,
+  ADAPTER_PLATFORMS,
 } from "@/lib/platforms/capabilities";
 import { PlatformCounts } from "./handleSocialMediaPost";
 
@@ -15,7 +15,7 @@ export function generateSuccessMessage(
 
   const action = isScheduled ? "scheduled" : "published";
 
-  const platformSummaries = POSTING_PLATFORMS.filter(
+  const platformSummaries = ADAPTER_PLATFORMS.filter(
     (platform) => counts[platform] > 0,
   ).map((platform) => `${counts[platform]} on ${PLATFORM_LABELS[platform]}`);
 

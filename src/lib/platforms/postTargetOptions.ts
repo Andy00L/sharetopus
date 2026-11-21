@@ -7,11 +7,16 @@ import {
 } from "@/lib/platforms/capabilities";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 
+import { normalizeSubredditName } from "./subredditName";
+
 export const REGISTRY_POST_OPTION_FIELDS = {
   subreddit: z
     .string()
     .min(2)
     .max(50)
+    .refine((subreddit) => normalizeSubredditName(subreddit) !== null, {
+      message: 'a subreddit name: 2 to 21 letters, digits or underscores, with or without "r/"',
+    })
     .optional()
     .describe("Reddit: subreddit to post to. Required when platform is reddit."),
   flair_id: z
@@ -63,11 +68,40 @@ export const REGISTRY_POST_OPTION_FIELDS = {
 export const RegistryPostOptionsSchema = z.object(REGISTRY_POST_OPTION_FIELDS);
 export type RegistryPostOptionInput = z.infer<typeof RegistryPostOptionsSchema>;
 
+type StoredPostOptions = NonNullable<SchedulePostData["postOptions"]>;
+
+export const RegistryPublishOptionsSchema = z.object({
+  subreddit: z.string().optional(),
+  flairId: z.string().optional(),
+  communityId: z.number().optional(),
+  publicationId: z.string().optional(),
+  blog: z.string().optional(),
+  locationName: z.string().optional(),
+  organizationId: z.string().optional(),
+  canonicalUrl: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+}) satisfies z.ZodType<
+  Pick<
+    StoredPostOptions,
+    | "subreddit"
+    | "flairId"
+    | "communityId"
+    | "publicationId"
+    | "blog"
+    | "locationName"
+    | "organizationId"
+    | "canonicalUrl"
+    | "tags"
+  >
+>;
+export type RegistryPublishOptions = z.infer<typeof RegistryPublishOptionsSchema>;
+
 export function buildRegistryPostOptions(
   input: RegistryPostOptionInput,
 ): SchedulePostData["postOptions"] {
-  const registryOptions: NonNullable<SchedulePostData["postOptions"]> = {};
-  if (input.subreddit) registryOptions.subreddit = input.subreddit;
+  const registryOptions: StoredPostOptions = {};
+  const subredditName = normalizeSubredditName(input.subreddit ?? "");
+  if (subredditName) registryOptions.subreddit = subredditName;
   if (input.flair_id) registryOptions.flairId = input.flair_id;
   if (input.community_id) registryOptions.communityId = input.community_id;
   if (input.publication_id) registryOptions.publicationId = input.publication_id;

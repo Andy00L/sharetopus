@@ -1,8 +1,9 @@
 import "server-only";
 
 import type {
+  OAuthCodeConnectInput,
+  PkceCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -29,13 +30,20 @@ import {
   type OAuth2Config,
 } from "./_shared/oauth2";
 import { truncateToGraphemesAndBytes } from "./_shared/textLimits";
+import { joinTitleAndBody } from "./_shared/postText";
+import { REGISTRY_PROVIDER_CATALOG } from "./catalog";
 
 const CHAT_TIMEOUT_MS = 20_000;
 
 // docs.kick.com/apis/chat: "The content limit is 500 characters, counted as
 // user-perceived characters (grapheme clusters)", and it must "encode to no
 // more than 2048 bytes in UTF-8".
-const KICK_CHAT_LIMITS = { maxGraphemes: 500, maxUtf8Bytes: 2048 };
+const KICK_CHAT_LIMITS = {
+  maxGraphemes: REGISTRY_PROVIDER_CATALOG.kick.rules.maxTextLength,
+  maxUtf8Bytes: 2048,
+};
+
+const TWITCH_MAX_CHARS = REGISTRY_PROVIDER_CATALOG.twitch.rules.maxTextLength;
 
 const TWITCH_OAUTH: OAuth2Config = {
   authorizeUrl: "https://id.twitch.tv/oauth2/authorize",
@@ -47,11 +55,8 @@ const TWITCH_OAUTH: OAuth2Config = {
 };
 
 async function twitchConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Twitch connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(TWITCH_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -98,13 +103,9 @@ async function twitchPublish(
       ? input.config.broadcasterId
       : input.accountIdentifier;
 
-  const message = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join(" ")
-    // Twitch chat caps at 500 chars; media has no chat form, so the URL
-    // rides along in the text.
+  const message = joinTitleAndBody(input, { separator: " " })
     .concat(input.mediaUrl ? ` ${input.mediaUrl}` : "")
-    .slice(0, 500);
+    .slice(0, TWITCH_MAX_CHARS);
 
   const result = await providerFetch(
     "https://api.twitch.tv/helix/chat/messages",
@@ -170,12 +171,13 @@ function readChatSendAnswer(input: {
   return { ok: true, postId: messageId, postUrl: null };
 }
 
-export const twitchBehavior: ProviderBehavior = {
+export const twitchBehavior = {
+  authKind: "oauth2",
   connect: twitchConnect,
   publish: twitchPublish,
   refresh: (input) => refreshOAuth2Credential(TWITCH_OAUTH, input),
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TWITCH_OAUTH, input),
-};
+} satisfies ProviderBehavior;
 
 const KICK_OAUTH: OAuth2Config = {
   authorizeUrl: "https://id.kick.com/oauth/authorize",
@@ -187,16 +189,8 @@ const KICK_OAUTH: OAuth2Config = {
 };
 
 async function kickConnect(
-  input: ProviderConnectInput,
+  input: PkceCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Kick connects through OAuth." };
-  }
-  // Kick mandates PKCE; the registry supplies the verifier because the
-  // catalog declares authKind oauth2_pkce.
-  if (!input.codeVerifier) {
-    return { ok: false, message: "Kick requires PKCE; missing code verifier." };
-  }
   const tokens = await exchangeOAuth2Code(KICK_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -242,10 +236,7 @@ async function kickPublish(
     return refusePublish("Stored Kick account has no broadcaster user id. Reconnect it.");
   }
   const message = truncateToGraphemesAndBytes(
-    [input.title.trim(), input.body.trim()]
-      .filter((part) => part.length > 0)
-      .join(" ")
-      .concat(input.mediaUrl ? ` ${input.mediaUrl}` : ""),
+    joinTitleAndBody(input, { separator: " " }).concat(input.mediaUrl ? ` ${input.mediaUrl}` : ""),
     KICK_CHAT_LIMITS,
   );
 
@@ -283,9 +274,10 @@ async function kickPublish(
   });
 }
 
-export const kickBehavior: ProviderBehavior = {
+export const kickBehavior = {
+  authKind: "oauth2_pkce",
   connect: kickConnect,
   publish: kickPublish,
   refresh: (input) => refreshOAuth2Credential(KICK_OAUTH, input),
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(KICK_OAUTH, input),
-};
+} satisfies ProviderBehavior;

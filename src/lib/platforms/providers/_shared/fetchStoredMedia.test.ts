@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
+import { buildSignedStorageUrlFixture } from "./signedStorageUrlFixture";
+
 mock.module("server-only", () => ({}));
 
 const realUndici = await import("undici");
@@ -31,7 +33,7 @@ describe("fetchStoredMedia", () => {
     const served = serveOnce(
       new Response("x".repeat(2048), { headers: { "content-length": "2048" } }),
     );
-    const result = await fetchStoredMedia("https://storage.test/media.png", 1024);
+    const result = await fetchStoredMedia(buildSignedStorageUrlFixture("media.png"), 1024);
     expect(result).toEqual({
       ok: false,
       message: "Media is 2KB; this platform accepts up to 1KB.",
@@ -42,20 +44,20 @@ describe("fetchStoredMedia", () => {
 
   test("refuses an undeclared body that turns out over the limit", async () => {
     serveOnce(new Response("x".repeat(2048)));
-    const result = await fetchStoredMedia("https://storage.test/media.png", 1024);
+    const result = await fetchStoredMedia(buildSignedStorageUrlFixture("media.png"), 1024);
     expect(result.ok).toBe(false);
   });
 
   test("returns the bytes as a Blob when within the limit", async () => {
     serveOnce(new Response("hello", { headers: { "content-length": "5" } }));
-    const result = await fetchStoredMedia("https://storage.test/media.png", 1024);
+    const result = await fetchStoredMedia(buildSignedStorageUrlFixture("media.png"), 1024);
     if (!result.ok) throw new Error(result.message);
     expect(await result.media.text()).toBe("hello");
   });
 
   test("reports a storage error status as a value", async () => {
     serveOnce(new Response("gone", { status: 404 }));
-    const result = await fetchStoredMedia("https://storage.test/media.png", 1024);
+    const result = await fetchStoredMedia(buildSignedStorageUrlFixture("media.png"), 1024);
     expect(result).toEqual({
       ok: false,
       message: "Could not read the post media (HTTP 404).",
@@ -69,7 +71,7 @@ describe("readStoredMediaBytes", () => {
     const served = serveOnce(
       new Response("x".repeat(2048), { headers: { "content-length": "2048" } }),
     );
-    expect(await readStoredMediaBytes("https://storage.test/media.png")).toEqual({
+    expect(await readStoredMediaBytes(buildSignedStorageUrlFixture("media.png"))).toEqual({
       ok: true,
       declaredBytes: 2048,
     });
@@ -78,7 +80,7 @@ describe("readStoredMediaBytes", () => {
 
   test("an undeclared size is null", async () => {
     serveOnce(new Response("hello"));
-    expect(await readStoredMediaBytes("https://storage.test/media.png")).toEqual({
+    expect(await readStoredMediaBytes(buildSignedStorageUrlFixture("media.png"))).toEqual({
       ok: true,
       declaredBytes: null,
     });

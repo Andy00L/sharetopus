@@ -17,10 +17,10 @@ import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts"
 import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
 import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import {
-  isPostingPlatform,
+  isAdapterPlatform,
   isSchedulablePlatform,
   platformHotlinksMedia,
-  type PostingPlatform,
+  type AdapterPlatform,
 } from "@/lib/platforms/capabilities";
 import {
   publishViaRegistry,
@@ -38,7 +38,7 @@ export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
 
 type MediaUrlKind = "public_url" | "tiktok_pull_url" | "none";
 
-const MEDIA_URL_KIND_BY_PLATFORM: Record<PostingPlatform, MediaUrlKind> = {
+const MEDIA_URL_KIND_BY_PLATFORM: Record<AdapterPlatform, MediaUrlKind> = {
   pinterest: "public_url",
   instagram: "public_url",
   facebook: "public_url",
@@ -69,7 +69,7 @@ export async function mintPublishMediaUrls(input: {
   if (input.storagePath === "") {
     return { success: true, publicUrl: null, tiktokUrl: null };
   }
-  const urlKind = isPostingPlatform(input.platform)
+  const urlKind = isAdapterPlatform(input.platform)
     ? MEDIA_URL_KIND_BY_PLATFORM[input.platform]
     : "public_url";
 

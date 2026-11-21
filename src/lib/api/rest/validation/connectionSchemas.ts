@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import type { Platform } from "@/db/schema";
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
+import { REGISTRY_CREDENTIALS_PLATFORM_IDS } from "@/lib/platforms/providers/catalog";
 import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
 
 /**
@@ -9,7 +9,7 @@ import { CreatedAtCursorSchema } from "@/lib/api/rest/pagination";
  * platform (shared registry in src/lib/platforms/capabilities.ts) has an
  * OAuth flow behind /api/oauth/callback/[platform].
  */
-const OAuthPlatformEnum = z.enum(POSTING_PLATFORMS);
+const OAuthPlatformEnum = z.enum(ADAPTER_PLATFORMS);
 
 /**
  * All platforms stored in social_accounts (superset of posting platforms).
@@ -74,28 +74,6 @@ export const PinterestBoardsQuerySchema = z.object({
 export type PinterestBoardsQuery = z.infer<typeof PinterestBoardsQuerySchema>;
 
 /**
- * Credentials providers servable through POST /v1/connections/credentials,
- * as DB platform values. The satisfies clause makes this list fail
- * compilation if a provider id ever drifts from the platform list, instead
- * of failing at insert time.
- */
-const CREDENTIAL_PLATFORM_IDS = [
-  "bluesky",
-  "mastodon",
-  "telegram",
-  "discord",
-  "slack",
-  "devto",
-  "wordpress",
-  "hashnode",
-  "medium",
-  "lemmy",
-  "farcaster",
-  "listmonk",
-  "nostr",
-] as const satisfies readonly Platform[];
-
-/**
  * Ceiling on submitted form entries. The largest declared field set today
  * is Listmonk's four; 20 leaves headroom while stopping a caller from
  * posting thousands of keys per request.
@@ -104,7 +82,7 @@ const MAX_CREDENTIAL_VALUE_ENTRIES = 20;
 
 /** Body schema for POST /v1/connections/credentials. */
 export const CredentialsConnectInputSchema = z.object({
-  provider: z.enum(CREDENTIAL_PLATFORM_IDS),
+  provider: z.enum(REGISTRY_CREDENTIALS_PLATFORM_IDS),
   /** Raw form values keyed by ProviderCredentialField.key. */
   values: z
     .record(z.string().max(64), z.string().max(2048))

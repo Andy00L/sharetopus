@@ -1,14 +1,22 @@
-import type { MediaType } from "@/db/schema";
+import type { Json, MediaType } from "@/db/schema";
 import type {
   PlatformFailure,
   PlatformFailureReason,
 } from "@/lib/api/_shared/platformFailure";
+import type { RegistryPublishOptions } from "@/lib/platforms/postTargetOptions";
+
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import type { RegistryPlatformId } from "./catalog";
 
 export type ProviderAuthKind =
   | "oauth2"
   /** Redirect dance plus RFC 7636 PKCE (provider mandates a code challenge). */
   | "oauth2_pkce"
   | "credentials";
+
+type OAuthAuthKind = Exclude<ProviderAuthKind, "credentials">;
+
+export type ProviderConfig = { [key: string]: Json | undefined };
 
 export type ProviderCredentialField = {
   key: string;
@@ -17,14 +25,11 @@ export type ProviderCredentialField = {
   required: boolean;
   placeholder: string;
   helpText: string;
-  mapsTo?: "access_token" | "refresh_token";
 };
 
 export type ProviderPostingRules = {
   maxTextLength: number;
   supportedMediaTypes: readonly MediaType[];
-  maxMediaPerPost: number;
-  mediaRequired: boolean;
   /**
    * True when publish EMBEDS the media URL in durable content instead of
    * re-hosting the bytes (markdown image, link post, chat message). The
@@ -59,15 +64,15 @@ export type ProviderAccountIdentity = {
 
 export type ProviderPublishInput = {
   accessToken: string;
-  config: Record<string, unknown>;
+  config: ProviderConfig;
   accountIdentifier: string;
   title: string;
   body: string;
   postType: MediaType;
-  mediaUrl: string | null;
+  mediaUrl: SignedStorageUrl | null;
   fileName: string;
   mediaMimeType: string;
-  options: Record<string, unknown>;
+  options: RegistryPublishOptions;
   idempotencyKey: string;
 };
 
@@ -89,7 +94,7 @@ export type ProviderConnectResult =
       /** Seconds until expiry, or null when the token does not expire. */
       expiresIn: number | null;
       identity: ProviderAccountIdentity;
-      config: Record<string, unknown>;
+      config: ProviderConfig;
     }
   | { ok: false; message: string };
 
@@ -101,7 +106,7 @@ export type TokenRefreshFailureReason = Extract<
 export type ProviderRefreshInput = {
   accessToken: string | null;
   refreshToken: string | null;
-  config: Record<string, unknown>;
+  config: ProviderConfig;
 };
 
 export type ProviderRefreshResult =
@@ -113,50 +118,72 @@ export type ProviderRefreshResult =
     }
   | { ok: false; message: string; reason: TokenRefreshFailureReason };
 
-export type ProviderMetadata = {
-  id: string;
+type ProviderMetadataBase = {
+  id: RegistryPlatformId;
   label: string;
   category: "social" | "chat" | "blog" | "video" | "business";
-  authKind: ProviderAuthKind;
   rules: ProviderPostingRules;
   requiredEnv: readonly string[];
-  credentialFields?: readonly ProviderCredentialField[];
   tools: readonly ProviderTool[];
 };
 
-export type ProviderBehavior = {
-  connect: (input: ProviderConnectInput) => Promise<ProviderConnectResult>;
+export type ProviderMetadata =
+  | (ProviderMetadataBase & {
+      authKind: "credentials";
+      credentialFields: readonly ProviderCredentialField[];
+    })
+  | (ProviderMetadataBase & { authKind: OAuthAuthKind });
 
+export type CredentialsConnectInput = { values: Readonly<Record<string, string>> };
+
+export type OAuthCodeConnectInput = { code: string; redirectUri: string };
+
+export type PkceCodeConnectInput = OAuthCodeConnectInput & { codeVerifier: string };
+
+export type AuthorizeUrlInput = {
+  state: string;
+  redirectUri: string;
+  codeChallenge: string | null;
+};
+
+export type AuthorizeUrlResult = { ok: true; url: string } | { ok: false; message: string };
+
+type ConnectOperation<ConnectInput> = (input: ConnectInput) => Promise<ProviderConnectResult>;
+
+export type ProviderOperations = {
   /** Publishes one post. Errors as values; never throws across this boundary. */
   publish: (input: ProviderPublishInput) => Promise<ProviderPublishResult>;
 
   refresh?: (input: ProviderRefreshInput) => Promise<ProviderRefreshResult>;
   runTool?: (input: ProviderToolInput) => Promise<ProviderToolResult>;
-  buildAuthorizeUrl?: (input: {
-    state: string;
-    redirectUri: string;
-    codeChallenge: string | null;
-  }) => { ok: true; url: string } | { ok: false; message: string };
 };
 
-export type ProviderDefinition = ProviderMetadata & ProviderBehavior;
+type AuthorizeUrlOperation = {
+  buildAuthorizeUrl: (input: AuthorizeUrlInput) => AuthorizeUrlResult;
+};
 
-export type ProviderConnectInput =
-  | {
-      kind: "credentials";
-      values: Record<string, string>;
-    }
-  | {
-      kind: "oauth_code";
-      code: string;
-      redirectUri: string;
-      codeVerifier: string | null;
-    };
+export type ProviderBehavior =
+  | (ProviderOperations & {
+      authKind: "credentials";
+      connect: ConnectOperation<CredentialsConnectInput>;
+    })
+  | (ProviderOperations &
+      AuthorizeUrlOperation & {
+        authKind: "oauth2";
+        connect: ConnectOperation<OAuthCodeConnectInput>;
+      })
+  | (ProviderOperations &
+      AuthorizeUrlOperation & {
+        authKind: "oauth2_pkce";
+        connect: ConnectOperation<PkceCodeConnectInput>;
+      });
+
+export type ProviderDefinition = ProviderMetadataBase & ProviderBehavior;
 
 export type ProviderToolInput = {
   methodName: string;
   accessToken: string;
-  config: Record<string, unknown>;
+  config: ProviderConfig;
   parameters: Record<string, unknown>;
 };
 

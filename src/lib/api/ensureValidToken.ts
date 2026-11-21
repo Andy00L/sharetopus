@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
@@ -6,9 +6,8 @@ import type { Platform } from "@/db/schema";
 import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
-  readStoredCredential,
   refreshWithAccountLock,
-  selectFreshAccessToken,
+  settleRefusedRefresh,
   type RefreshWindowOptions,
 } from "@/lib/api/refreshWithAccountLock";
 import type { TokenRefreshResult } from "@/lib/api/requestTokenRefresh";
@@ -246,54 +245,17 @@ async function refreshTokenForPlatform(
   }
 }
 
-/**
- * The platform refused the stored credential. The refresh lock keeps other
- * runs from refreshing this account meanwhile, but it is skipped when Redis
- * is unreachable, so the row is re-read first: if it now holds an unexpired
- * token another run saved, that token is used. Otherwise the account is
- * flagged is_available = false and the caller is told to reconnect.
- */
 async function handleRejectedRefresh(
   account: SocialAccount,
 ): Promise<EnsureValidTokenResult> {
-  const stored = await readStoredCredential(account.id);
-  const freshToken =
-    stored.ok && stored.credential.token_expires_at !== account.token_expires_at
-      ? selectFreshAccessToken(stored.credential)
-      : null;
-  if (freshToken) {
-    return { success: true, token: freshToken };
-  }
-
-  // Guarded on the expiry this refresh started from: a refresh that lands
-  // after the re-read writes a new expiry, so its row is never overwritten
-  // with a stale flag. The token itself cannot be compared in SQL, since it
-  // is stored encrypted with a fresh IV (schema.ts, encryptedText).
-  const { error: flagError } = await runQuery(
-    db
-      .update(social_accounts)
-      .set({ is_available: false, updated_at: new Date().toISOString() })
-      .where(
-        and(
-          eq(social_accounts.id, account.id),
-          account.token_expires_at === null
-            ? isNull(social_accounts.token_expires_at)
-            : eq(social_accounts.token_expires_at, account.token_expires_at),
-        ),
-      ),
-  );
-
-  if (flagError) {
-    console.error(
-      `[handleRejectedRefresh ${account.platform}] Could not flag account ${account.id} as unavailable: ${flagError.message}`,
-    );
-  } else {
-    console.warn(
-      `[handleRejectedRefresh ${account.platform}] Account ${account.id} flagged as needing re-authentication.`,
-    );
-  }
-
-  return buildReconnectResult(account.platform);
+  const settled = await settleRefusedRefresh({
+    accountId: account.id,
+    platform: account.platform,
+    refusedExpiresAt: account.token_expires_at,
+  });
+  return settled.kind === "refreshed_elsewhere"
+    ? { success: true, token: settled.accessToken }
+    : buildReconnectResult(account.platform);
 }
 
 /**

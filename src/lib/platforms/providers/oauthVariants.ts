@@ -5,8 +5,8 @@ import { Blob } from "node:buffer";
 import { FormData } from "undici";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -41,6 +41,8 @@ import {
   refreshOAuth2Credential,
   type OAuth2Config,
 } from "./_shared/oauth2";
+import { joinTitleAndBody } from "./_shared/postText";
+import { toUploadFileName } from "./_shared/uploadFileName";
 
 const VARIANT_TIMEOUT_MS = 30_000;
 
@@ -97,11 +99,8 @@ async function listAdministeredOrganizations(
 }
 
 async function linkedinPageConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "LinkedIn Page connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(LINKEDIN_PAGE_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -133,19 +132,14 @@ async function linkedinPageConnect(
 async function linkedinPagePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const organizationId =
-    typeof input.options.organizationId === "string" && input.options.organizationId
-      ? input.options.organizationId
-      : typeof input.config.organizationId === "string"
-        ? input.config.organizationId
-        : null;
+  const storedOrganizationId =
+    typeof input.config.organizationId === "string" ? input.config.organizationId : null;
+  const organizationId = input.options.organizationId || storedOrganizationId;
   if (!organizationId) {
     return refusePublish("Stored LinkedIn Page has no organization.");
   }
 
-  const commentary = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  const commentary = joinTitleAndBody(input);
 
   let mediaBuffer: Buffer | undefined;
   if (input.postType !== "text") {
@@ -180,13 +174,14 @@ async function linkedinPageRunTool(
   return { ok: true, data: { pages: organizations.organizations } };
 }
 
-export const linkedinPageBehavior: ProviderBehavior = {
+export const linkedinPageBehavior = {
+  authKind: "oauth2",
   connect: linkedinPageConnect,
   publish: linkedinPagePublish,
   runTool: linkedinPageRunTool,
   buildAuthorizeUrl: (input) =>
     buildOAuth2AuthorizeUrl(LINKEDIN_PAGE_OAUTH, input),
-};
+} satisfies ProviderBehavior;
 
 const DRIBBBLE_OAUTH: OAuth2Config = {
   authorizeUrl: "https://dribbble.com/oauth/authorize",
@@ -198,11 +193,8 @@ const DRIBBBLE_OAUTH: OAuth2Config = {
 };
 
 async function dribbbleConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Dribbble connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(DRIBBBLE_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -246,14 +238,13 @@ async function dribbblePublish(
   const storedImage = await fetchStoredMedia(input.mediaUrl, STORED_MEDIA_MAX_BYTES);
   if (!storedImage.ok) return storedImage;
 
-  const safeFileName = input.fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "shot.png";
   const shotForm = new FormData();
   shotForm.append("title", title);
   shotForm.append("description", input.body.trim());
   shotForm.append(
     "image",
     new Blob([storedImage.media], { type: input.mediaMimeType }),
-    safeFileName,
+    toUploadFileName(input.fileName, "shot.png"),
   );
 
   const shotResult = await providerFetch("https://api.dribbble.com/v2/shots", {
@@ -299,11 +290,12 @@ async function dribbblePublish(
   return { ok: true, postId: shotId, postUrl: null };
 }
 
-export const dribbbleBehavior: ProviderBehavior = {
+export const dribbbleBehavior = {
+  authKind: "oauth2",
   connect: dribbbleConnect,
   publish: dribbblePublish,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(DRIBBBLE_OAUTH, input),
-};
+} satisfies ProviderBehavior;
 
 const GMB_OAUTH: OAuth2Config = {
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -317,11 +309,8 @@ const GMB_OAUTH: OAuth2Config = {
 };
 
 async function gmbConnect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Google Business connects through OAuth." };
-  }
   const tokens = await exchangeOAuth2Code(GMB_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -372,10 +361,7 @@ async function gmbConnect(
 async function gmbPublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const locationName =
-    typeof input.options.locationName === "string"
-      ? input.options.locationName
-      : null;
+  const locationName = input.options.locationName ?? null;
   if (!locationName || !/^locations\/[0-9]+$/.test(locationName)) {
     return refusePublish(
       'A location is required (options.locationName, shaped "locations/<id>"). Use the listLocations tool.',
@@ -387,10 +373,7 @@ async function gmbPublish(
     return refusePublish("Stored Google Business account is invalid.");
   }
 
-  const summary = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n")
-    .slice(0, 1500);
+  const summary = joinTitleAndBody(input);
 
   const postPayload: Record<string, unknown> = {
     languageCode: "en",
@@ -474,10 +457,11 @@ async function gmbRunTool(input: ProviderToolInput): Promise<ProviderToolResult>
   return { ok: true, data: { locations: list } };
 }
 
-export const gmbBehavior: ProviderBehavior = {
+export const gmbBehavior = {
+  authKind: "oauth2",
   connect: gmbConnect,
   publish: gmbPublish,
   refresh: (input) => refreshOAuth2Credential(GMB_OAUTH, input),
   runTool: gmbRunTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(GMB_OAUTH, input),
-};
+} satisfies ProviderBehavior;

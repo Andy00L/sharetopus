@@ -3,8 +3,8 @@ import "server-only";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -31,6 +31,7 @@ import {
   exchangeOAuth2Code,
   type OAuth2Config,
 } from "./_shared/oauth2";
+import { joinTitleAndBody } from "./_shared/postText";
 
 /**
  * Two-step publish: create a media container, then publish it. The short
@@ -92,12 +93,8 @@ const THREADS_OAUTH: OAuth2Config = {
 };
 
 async function connect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Threads connects through OAuth." };
-  }
-
   const shortLived = await exchangeOAuth2Code(THREADS_OAUTH, input);
   if (!shortLived.ok) return { ok: false, message: shortLived.message };
 
@@ -156,9 +153,7 @@ async function publish(
       ? input.config.userId
       : input.accountIdentifier;
 
-  const text = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n");
+  const text = joinTitleAndBody(input);
 
   const containerParams = new URLSearchParams({
     access_token: input.accessToken,
@@ -366,9 +361,10 @@ async function refresh(input: ProviderRefreshInput): Promise<ProviderRefreshResu
   };
 }
 
-export const threadsBehavior: ProviderBehavior = {
+export const threadsBehavior = {
+  authKind: "oauth2",
   connect,
   publish,
   refresh,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(THREADS_OAUTH, input),
-};
+} satisfies ProviderBehavior;

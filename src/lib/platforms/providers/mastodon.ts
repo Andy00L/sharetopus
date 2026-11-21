@@ -7,8 +7,9 @@ import { Blob } from "node:buffer";
 import { FormData } from "undici";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -23,6 +24,8 @@ import {
   fetchStoredMedia,
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import { joinTitleAndBody } from "./_shared/postText";
 import {
   failHttpAnswer,
   failProviderFetch,
@@ -50,7 +53,7 @@ function normalizeInstanceUrl(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
 }
 
-function readInstanceUrl(config: Record<string, unknown>): string | null {
+function readInstanceUrl(config: ProviderConfig): string | null {
   const instanceUrl = config.instanceUrl;
   if (typeof instanceUrl !== "string" || instanceUrl.trim().length === 0) {
     return null;
@@ -59,12 +62,8 @@ function readInstanceUrl(config: Record<string, unknown>): string | null {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Mastodon connects with an access token." };
-  }
-
   const instanceUrl = normalizeInstanceUrl(input.values.instanceUrl ?? "");
   const accessToken = (input.values.accessToken ?? "").trim();
 
@@ -130,7 +129,7 @@ async function publish(
     return refusePublish("Stored Mastodon account is missing its instance URL.");
   }
 
-  const statusText = buildStatusText(input);
+  const statusText = joinTitleAndBody(input);
 
   const mediaIds: string[] = [];
   if (input.mediaUrl && input.postType !== "text") {
@@ -194,21 +193,12 @@ async function publish(
   };
 }
 
-/** Mastodon has no title field, so a title becomes the first line. */
-function buildStatusText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
-}
-
 type MediaUploadResult = { ok: true; mediaId: string } | ProviderPublishFailure;
 
 async function uploadMedia(
   instanceUrl: string,
   accessToken: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
@@ -307,4 +297,8 @@ async function waitForProcessedMedia(
   });
 }
 
-export const mastodonBehavior: ProviderBehavior = { connect, publish };
+export const mastodonBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

@@ -1,6 +1,9 @@
 import "server-only";
 
 import type {
+  AuthorizeUrlInput,
+  AuthorizeUrlResult,
+  OAuthCodeConnectInput,
   ProviderRefreshInput,
   ProviderRefreshResult,
   TokenRefreshFailureReason,
@@ -8,6 +11,8 @@ import type {
 import { parseJsonObject, providerFetch, readStringField } from "./providerFetch";
 
 const OAUTH_TIMEOUT_MS = 20_000;
+
+const TOKEN_ERROR_DESCRIPTION_MAX_CHARS = 200;
 
 export type OAuth2Config = {
   authorizeUrl: string;
@@ -20,14 +25,10 @@ export type OAuth2Config = {
   useBasicAuthForToken: boolean;
 };
 
-export type BuildAuthorizeUrlResult =
-  | { ok: true; url: string }
-  | { ok: false; message: string };
-
 export function buildOAuth2AuthorizeUrl(
   config: OAuth2Config,
-  input: { state: string; redirectUri: string; codeChallenge: string | null },
-): BuildAuthorizeUrlResult {
+  input: AuthorizeUrlInput,
+): AuthorizeUrlResult {
   const clientId = process.env[config.clientIdEnv];
   if (!clientId) {
     return {
@@ -68,7 +69,7 @@ export type OAuth2TokenResult =
 
 export async function exchangeOAuth2Code(
   config: OAuth2Config,
-  input: { code: string; redirectUri: string; codeVerifier: string | null },
+  input: OAuthCodeConnectInput & { codeVerifier?: string },
 ): Promise<OAuth2TokenResult> {
   return requestToken(config, {
     grant_type: "authorization_code",
@@ -102,6 +103,20 @@ export async function refreshOAuth2Credential(
 export function classifyTokenHttpStatus(httpStatus: number): TokenRefreshFailureReason {
   const isRefusedGrant = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429;
   return isRefusedGrant ? "auth_expired" : "transient";
+}
+
+// RFC 6749 section 5.2: a token error is a JSON object with a required
+// "error" code and optional "error_description" and "error_uri". Only the
+// code and the description are echoed; nothing else of the body is.
+function describeTokenError(httpStatus: number, bodyText: string): string {
+  const tokenError = parseJsonObject(bodyText);
+  const errorDetails = [
+    readStringField(tokenError, "error"),
+    readStringField(tokenError, "error_description")?.slice(0, TOKEN_ERROR_DESCRIPTION_MAX_CHARS),
+  ].filter((errorDetail) => typeof errorDetail === "string" && errorDetail.length > 0);
+  return errorDetails.length > 0
+    ? `Token exchange failed (${httpStatus}): ${errorDetails.join(": ")}`
+    : `Token exchange failed (${httpStatus}).`;
 }
 
 async function requestToken(
@@ -155,12 +170,9 @@ async function requestToken(
     };
   }
   if (tokenResult.status !== 200) {
-    // The body carries the provider's error slug (invalid_grant,
-    // redirect_uri_mismatch), which is the actionable part. The client
-    // secret is never in the response, so echoing a slice is safe.
     return {
       ok: false,
-      message: `Token exchange failed (${tokenResult.status}): ${tokenResult.bodyText.slice(0, 200)}`,
+      message: describeTokenError(tokenResult.status, tokenResult.bodyText),
       reason: classifyTokenHttpStatus(tokenResult.status),
     };
   }

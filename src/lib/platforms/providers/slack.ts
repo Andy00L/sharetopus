@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -25,6 +25,7 @@ import {
   refusePublish,
 } from "./_shared/publishFailure";
 import { splitTextIntoChunks } from "./_shared/textLimits";
+import { joinTitleAndBody } from "./_shared/postText";
 
 /**
  * Bot tokens do not expire, hence no refresh.
@@ -81,8 +82,11 @@ type SlackApiFailure =
   | { ok: false; kind: "unreadable"; message: string; httpStatus: number; bodyText: string };
 
 /**
- * Calls one Web API method. Slack answers HTTP 200 even for errors and
- * signals failure with {ok:false, error}, so the envelope is what matters.
+ * docs.slack.dev/apis/web-api: every answer is a JSON object whose boolean
+ * `ok` tells success and whose `error` holds the failure code. Rate limits
+ * answer HTTP 429 with a Retry-After header instead
+ * (docs.slack.dev/apis/web-api/rate-limits), read here as an unreadable
+ * envelope and classified by its status.
  */
 async function callSlackApi(
   botToken: string,
@@ -134,12 +138,8 @@ async function callSlackApi(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Slack connects with a bot token." };
-  }
-
   const botToken = (input.values.botToken ?? "").trim();
   const channelId = (input.values.channelId ?? "").trim();
 
@@ -185,7 +185,7 @@ async function publish(
     return refusePublish("Stored Slack account is missing its channel.");
   }
 
-  const messageText = buildMessageText(input);
+  const messageText = joinTitleAndBody(input, { formatTitle: (title) => `*${title}*` });
 
   const payload: Record<string, unknown> = {
     channel: channelId,
@@ -277,15 +277,6 @@ function failChatPost(callFailure: SlackApiFailure): ProviderPublishFailure {
   }
 }
 
-/** Slack has no title field, so a title becomes a bold first line. */
-function buildMessageText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return `*${trimmedTitle}*`;
-  return `*${trimmedTitle}*\n\n${trimmedBody}`;
-}
-
 async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   if (input.methodName !== "listChannels") {
     return { ok: false, message: `Unknown Slack tool "${input.methodName}".` };
@@ -314,4 +305,9 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   return { ok: true, data: { channels } };
 }
 
-export const slackBehavior: ProviderBehavior = { connect, publish, runTool };
+export const slackBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+  runTool,
+} satisfies ProviderBehavior;

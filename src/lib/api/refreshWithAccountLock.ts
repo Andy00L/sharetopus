@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { redis } from "@/actions/api/upstash";
 import { db, runQuery } from "@/db/client";
@@ -39,6 +39,12 @@ export type LockedRefreshOutcome<Refreshed> =
   | { kind: "unavailable"; message: string };
 
 export type RefreshWindowOptions = { refreshIfExpiringWithinMs?: number };
+
+export type RefusedRefreshOutcome =
+  /** Another run saved a fresh token after this refresh began; use it. */
+  | { kind: "refreshed_elsewhere"; accessToken: string }
+  /** The account is flagged is_available = false; the user must reconnect. */
+  | { kind: "needs_reconnect" };
 
 type LockAttempt =
   | { kind: "acquired"; ownerId: string }
@@ -133,7 +139,7 @@ export async function refreshWithAccountLock<Refreshed>(
 
 /**
  * Reads the account's stored credential. Used under the refresh lock, and
- * by ensureValidToken when a refused refresh may have raced another run.
+ * by settleRefusedRefresh when a refused refresh may have raced another run.
  */
 export async function readStoredCredential(
   accountId: string,
@@ -158,6 +164,58 @@ export async function readStoredCredential(
   const row = rows[0];
   if (!row) return { ok: false, message: "The account no longer exists." };
   return { ok: true, credential: row };
+}
+
+/**
+ * The platform refused the stored credential. The refresh lock keeps other
+ * runs from refreshing this account meanwhile, but it is skipped when Redis
+ * is unreachable, so the row is re-read first: if it now holds an unexpired
+ * token another run saved, that token is used. Otherwise the account is
+ * flagged is_available = false so connection lists report it as needing a
+ * reconnect.
+ *
+ * Called by: ensureValidToken (the 7 adapter platforms) and
+ * publishViaRegistry (registry providers).
+ */
+export async function settleRefusedRefresh(input: {
+  accountId: string;
+  platform: string;
+  refusedExpiresAt: string | null;
+}): Promise<RefusedRefreshOutcome> {
+  const stored = await readStoredCredential(input.accountId);
+  const freshToken =
+    stored.ok && stored.credential.token_expires_at !== input.refusedExpiresAt
+      ? selectFreshAccessToken(stored.credential)
+      : null;
+  if (freshToken) return { kind: "refreshed_elsewhere", accessToken: freshToken };
+
+  // Guarded on the expiry the refused refresh started from: a refresh that
+  // lands after the re-read writes a new expiry, so its row is never
+  // overwritten with a stale flag. The token itself cannot be compared in
+  // SQL, since it is stored encrypted with a fresh IV (schema.ts, encryptedText).
+  const { error: flagError } = await runQuery(
+    db
+      .update(social_accounts)
+      .set({ is_available: false, updated_at: new Date().toISOString() })
+      .where(
+        and(
+          eq(social_accounts.id, input.accountId),
+          input.refusedExpiresAt === null
+            ? isNull(social_accounts.token_expires_at)
+            : eq(social_accounts.token_expires_at, input.refusedExpiresAt),
+        ),
+      ),
+  );
+  if (flagError) {
+    console.error(
+      `[settleRefusedRefresh ${input.platform}] Could not flag account ${input.accountId} as unavailable: ${flagError.message}`,
+    );
+  } else {
+    console.warn(
+      `[settleRefusedRefresh ${input.platform}] Account ${input.accountId} flagged as needing re-authentication.`,
+    );
+  }
+  return { kind: "needs_reconnect" };
 }
 
 async function refreshIfStillExpiring<Refreshed>(

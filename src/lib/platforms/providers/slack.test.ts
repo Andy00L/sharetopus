@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
+import { buildSignedStorageUrlFixture } from "./_shared/signedStorageUrlFixture";
+
 import type { ProviderFetchOptions, ProviderFetchResult } from "./_shared/providerFetch";
 import { toJsonObject } from "@/lib/utils/jsonObject";
 
@@ -9,6 +11,13 @@ mock.module("server-only", () => ({}));
 
 const realProviderFetch = await import("./_shared/providerFetch");
 const sentPayloads: unknown[] = [];
+const POSTED_ANSWER: ProviderFetchResult = {
+  ok: true,
+  status: 200,
+  bodyText: '{"ok":true,"ts":"1700.1"}',
+  headers: {},
+};
+let slackAnswer = POSTED_ANSWER;
 mock.module("./_shared/providerFetch", () => ({
   ...realProviderFetch,
   providerFetch: async (
@@ -16,7 +25,7 @@ mock.module("./_shared/providerFetch", () => ({
     options: ProviderFetchOptions,
   ): Promise<ProviderFetchResult> => {
     sentPayloads.push(typeof options.body === "string" ? JSON.parse(options.body) : null);
-    return { ok: true, status: 200, bodyText: '{"ok":true,"ts":"1700.1"}', headers: {} };
+    return slackAnswer;
   },
 }));
 
@@ -29,7 +38,7 @@ const IMAGE_POST: ProviderPublishInput = {
   title: "",
   body: "",
   postType: "image",
-  mediaUrl: "https://storage.test/photo.png",
+  mediaUrl: buildSignedStorageUrlFixture("photo.png"),
   fileName: "photo.png",
   mediaMimeType: "image/png",
   options: {},
@@ -64,5 +73,17 @@ describe("Slack image posts", () => {
     const blocks = await publishAndReadBlocks(IMAGE_POST);
     expect(readSectionTexts(blocks)).toEqual([]);
     expect(blocks.length).toBe(1);
+  });
+});
+
+describe("Slack rate limits", () => {
+  test("an HTTP 429 without an envelope is rate_limited and published nothing", async () => {
+    slackAnswer = { ok: true, status: 429, bodyText: "", headers: { "retry-after": "30" } };
+    const published = await slackBehavior.publish({ ...IMAGE_POST, postType: "text", mediaUrl: null });
+    slackAnswer = POSTED_ANSWER;
+    expect(published.ok ? null : published.failure).toEqual({
+      reason: "rate_limited",
+      mayHavePublished: false,
+    });
   });
 });

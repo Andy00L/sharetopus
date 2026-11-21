@@ -8,6 +8,10 @@ import type {
   ProviderPublishInput,
   ProviderRefreshResult,
 } from "./types";
+import {
+  buildSignedStorageUrlFixture,
+  FIXTURE_STORAGE_BASE_URL,
+} from "./_shared/signedStorageUrlFixture";
 
 mock.module("server-only", () => ({}));
 
@@ -168,7 +172,6 @@ describe("refreshRegistryAccountToken", () => {
     refreshAnswer = { ok: false, message: "invalid_grant", reason: "auth_expired" };
     const tokenResult = await refreshRegistryAccountToken(EXPIRED_ACCOUNT);
     expect(tokenResult.success ? null : tokenResult.reason).toBe("auth_expired");
-    expect(writeCount).toBe(0);
   });
 });
 
@@ -214,5 +217,58 @@ describe("publishViaRegistry post origin", () => {
     });
     expect(publishedInputs[0]?.idempotencyKey).toBe("scheduled-3");
     expect(readStoredScheduledPostId()).toBe("scheduled-3");
+  });
+});
+
+describe("publishViaRegistry input checks", () => {
+  const SCHEDULED_IMAGE_POST = {
+    account: EXPIRED_ACCOUNT,
+    principalId: "principal-1",
+    title: null,
+    body: "hello",
+    fileName: "photo.png",
+    mediaMimeType: "image/png",
+    options: {},
+    batchId: "batch-1",
+    createdVia: "api",
+    postType: "image",
+    origin: { kind: "scheduled", scheduledPostId: "scheduled-9" },
+  } as const satisfies Partial<Parameters<typeof publishViaRegistry>[0]>;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = FIXTURE_STORAGE_BASE_URL;
+    publishedInputs.length = 0;
+  });
+
+  test("a media URL outside our storage is refused before the provider runs", async () => {
+    const outcome = await publishViaRegistry({
+      ...SCHEDULED_IMAGE_POST,
+      mediaUrl: "https://attacker.example/storage/v1/object/sign/media/photo.png?token=x",
+    });
+    expect(outcome).toEqual({
+      success: false,
+      count: 0,
+      message: "The post media URL is not a signed URL from our storage.",
+      failure: { reason: "invalid_input", mayHavePublished: false },
+    });
+    expect(publishedInputs).toHaveLength(0);
+  });
+
+  test("a signed storage URL reaches the provider", async () => {
+    const signedUrl = buildSignedStorageUrlFixture("photo.png");
+    await publishViaRegistry({ ...SCHEDULED_IMAGE_POST, mediaUrl: signedUrl });
+    expect(publishedInputs[0]?.mediaUrl).toBe(signedUrl);
+  });
+
+  test("options of the wrong type are refused with their keys", async () => {
+    const outcome = await publishViaRegistry({
+      ...SCHEDULED_IMAGE_POST,
+      mediaUrl: null,
+      options: { communityId: "12", tags: "news" },
+    });
+    expect(outcome.success ? null : outcome.message).toBe(
+      "Malformed post_options: communityId, tags",
+    );
+    expect(publishedInputs).toHaveLength(0);
   });
 });

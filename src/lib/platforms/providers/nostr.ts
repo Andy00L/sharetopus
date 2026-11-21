@@ -10,13 +10,15 @@ import {
 } from "@/lib/net/pinnedFetch";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
 } from "./types";
 import { failPublish, refusePublish } from "./_shared/publishFailure";
+import { joinTitleAndBody } from "./_shared/postText";
+import { parseJsonBody } from "./_shared/providerFetch";
 
 const HEX_KEY_PATTERN = /^[0-9a-f]{64}$/;
 const RELAY_TIMEOUT_MS = 10_000;
@@ -40,11 +42,8 @@ function isValidRelayUrl(relayUrl: string): boolean {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Nostr connects with a private key." };
-  }
   const privateKeyHex = (input.values.privateKey ?? "").trim().toLowerCase();
   if (!HEX_KEY_PATTERN.test(privateKeyHex)) {
     return {
@@ -99,10 +98,7 @@ async function publish(
     return refusePublish("Stored Nostr key is invalid. Reconnect.");
   }
 
-  const content = [input.title.trim(), input.body.trim()]
-    .filter((part) => part.length > 0)
-    .join("\n\n")
-    .concat(input.mediaUrl ? `\n${input.mediaUrl}` : "");
+  const content = joinTitleAndBody(input).concat(input.mediaUrl ? `\n${input.mediaUrl}` : "");
 
   const privateKeyBytes = Buffer.from(input.accessToken, "hex");
   const publicKeyHex = Buffer.from(
@@ -179,10 +175,7 @@ async function publishToRelay(
     const settle = (outcome: RelayOutcome) => {
       if (settled) return;
       settled = true;
-      try {
-        relaySocket.close();
-      } catch {
-      }
+      relaySocket.close();
       resolve(outcome);
     };
 
@@ -208,18 +201,11 @@ async function publishToRelay(
       isEventSent = true;
     });
     relaySocket.addEventListener("message", (messageEvent) => {
-      try {
-        const frame = JSON.parse(String(messageEvent.data));
-        if (
-          Array.isArray(frame) &&
-          frame[0] === "OK" &&
-          frame[1] === signedEvent.id
-        ) {
-          clearTimeout(timeoutHandle);
-          const relayReason = typeof frame[3] === "string" ? frame[3] : "rejected";
-          settle({ kind: frame[2] === true ? "accepted" : "refused", reason: relayReason });
-        }
-      } catch {
+      const frame = parseJsonBody(String(messageEvent.data));
+      if (Array.isArray(frame) && frame[0] === "OK" && frame[1] === signedEvent.id) {
+        clearTimeout(timeoutHandle);
+        const relayReason = typeof frame[3] === "string" ? frame[3] : "rejected";
+        settle({ kind: frame[2] === true ? "accepted" : "refused", reason: relayReason });
       }
     });
     relaySocket.addEventListener("error", () => {
@@ -233,4 +219,8 @@ async function publishToRelay(
   });
 }
 
-export const nostrBehavior: ProviderBehavior = { connect, publish };
+export const nostrBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

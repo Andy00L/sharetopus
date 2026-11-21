@@ -8,8 +8,8 @@ import { cookies } from "next/headers";
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import { resolveConfiguredProvider } from "@/lib/platforms/providers/registry";
-import { providerConfigToJson } from "@/lib/platforms/providers/_shared/configJson";
-import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/registryOAuthPlatforms";
+import { isRegistryOAuthPlatform } from "@/lib/platforms/providers/catalog";
+import type { ProviderConnectResult } from "@/lib/platforms/providers/types";
 
 /**
  * OAuth callback for registry providers. Pairs with
@@ -88,21 +88,21 @@ export async function GET(
     return clearOAuthCookies(redirectToConnections("error", "not_configured"));
   }
   const provider = providerResult.provider;
-
-  const codeVerifier =
-    provider.authKind === "oauth2_pkce"
-      ? (cookieStore.get(verifierCookieName)?.value ?? null)
-      : null;
-  if (provider.authKind === "oauth2_pkce" && !codeVerifier) {
-    return clearOAuthCookies(redirectToConnections("error", "missing_verifier"));
+  if (provider.authKind === "credentials") {
+    return clearOAuthCookies(redirectToConnections("error", "unknown_provider"));
   }
 
-  const connectResult = await provider.connect({
-    kind: "oauth_code",
-    code: codeParam,
-    redirectUri: `${requestUrl.origin}/api/social/registry/${providerId}/callback`,
-    codeVerifier,
-  });
+  const redirectUri = `${requestUrl.origin}/api/social/registry/${providerId}/callback`;
+  let connectResult: ProviderConnectResult;
+  if (provider.authKind === "oauth2_pkce") {
+    const codeVerifier = cookieStore.get(verifierCookieName)?.value;
+    if (!codeVerifier) {
+      return clearOAuthCookies(redirectToConnections("error", "missing_verifier"));
+    }
+    connectResult = await provider.connect({ code: codeParam, redirectUri, codeVerifier });
+  } else {
+    connectResult = await provider.connect({ code: codeParam, redirectUri });
+  }
 
   if (!connectResult.ok) {
     console.error(
@@ -127,7 +127,7 @@ export async function GET(
     access_token: connectResult.accessToken,
     refresh_token: connectResult.refreshToken,
     token_expires_at: tokenExpiresAt,
-    extra: providerConfigToJson(connectResult.config),
+    extra: connectResult.config,
     updated_at: new Date().toISOString(),
   } satisfies typeof social_accounts.$inferInsert;
 

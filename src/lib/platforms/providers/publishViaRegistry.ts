@@ -10,14 +10,22 @@ import type { PlatformFailure } from "@/lib/api/_shared/platformFailure";
 import {
   isTokenExpiring,
   refreshWithAccountLock,
+  settleRefusedRefresh,
   type RefreshWindowOptions,
   type StoredCredential,
 } from "@/lib/api/refreshWithAccountLock";
+import { RegistryPublishOptionsSchema } from "@/lib/platforms/postTargetOptions";
 import type { SocialAccount } from "@/lib/types/dbTypes";
-import { toJsonObject, type JsonObject } from "@/lib/utils/jsonObject";
 
+import { readAccountConfig } from "./_shared/accountConfig";
+import { refusePublish } from "./_shared/publishFailure";
+import { isSignedStorageUrl } from "./_shared/signedStorageUrl";
 import { resolveConfiguredProvider } from "./registry";
-import type { ProviderDefinition, TokenRefreshFailureReason } from "./types";
+import type {
+  ProviderConfig,
+  ProviderDefinition,
+  TokenRefreshFailureReason,
+} from "./types";
 
 const ROTATED_TOKEN_WRITE_ATTEMPTS = 2;
 
@@ -80,6 +88,16 @@ export async function publishViaRegistry(
   }
   const provider = providerResult.provider;
 
+  const { mediaUrl } = args;
+  if (mediaUrl !== null && !isSignedStorageUrl(mediaUrl, process.env.NEXT_PUBLIC_SUPABASE_URL ?? "")) {
+    return toRefusedOutcome("The post media URL is not a signed URL from our storage.");
+  }
+  const parsedOptions = RegistryPublishOptionsSchema.safeParse(args.options ?? {});
+  if (!parsedOptions.success) {
+    const invalidKeys = parsedOptions.error.issues.map((issue) => issue.path.join("."));
+    return toRefusedOutcome(`Malformed post_options: ${invalidKeys.join(", ")}`);
+  }
+
   const tokenResult = await ensureFreshRegistryToken(provider, account);
   if (!tokenResult.success) {
     return {
@@ -90,7 +108,7 @@ export async function publishViaRegistry(
     };
   }
 
-  const config = narrowAccountConfig(account.extra);
+  const config = readAccountConfig(account.extra);
 
   const publishResult = await provider.publish({
     accessToken: tokenResult.accessToken,
@@ -99,10 +117,10 @@ export async function publishViaRegistry(
     title: args.title ?? "",
     body: args.body ?? "",
     postType: args.postType,
-    mediaUrl: args.mediaUrl,
+    mediaUrl,
     fileName: args.fileName,
     mediaMimeType: args.mediaMimeType,
-    options: narrowAccountConfig(args.options),
+    options: parsedOptions.data,
     idempotencyKey: postOrigin.idempotencyKey,
   });
 
@@ -148,9 +166,11 @@ export async function publishViaRegistry(
   return { success: true, count: 1, reconnectWarning: tokenResult.reconnectWarning };
 }
 
+type RegistryTokenFailure = { success: false; message: string; reason: TokenRefreshFailureReason };
+
 export type FreshTokenResult =
   | { success: true; accessToken: string; reconnectWarning: string | null }
-  | { success: false; message: string; reason: TokenRefreshFailureReason };
+  | RegistryTokenFailure;
 
 export async function refreshRegistryAccountToken(
   account: SocialAccount,
@@ -182,10 +202,15 @@ async function ensureFreshRegistryToken(
 
   const refreshCredential = provider.refresh;
   if (!refreshCredential) {
-    return buildSessionExpiredResult(provider.label);
+    return settleRegistryRefusal({
+      accountId: account.id,
+      platform: account.platform,
+      refusedExpiresAt: account.token_expires_at,
+      refusal: buildSessionExpiredResult(provider.label),
+    });
   }
 
-  const config = narrowAccountConfig(account.extra);
+  const config = readAccountConfig(account.extra);
   const outcome = await refreshWithAccountLock(
     account.id,
     (stored) =>
@@ -218,7 +243,7 @@ async function refreshAndStoreRegistryToken(input: {
   refreshCredential: NonNullable<ProviderDefinition["refresh"]>;
   accountId: string;
   platform: string;
-  config: JsonObject;
+  config: ProviderConfig;
   stored: StoredCredential;
 }): Promise<FreshTokenResult> {
   const { providerLabel, stored } = input;
@@ -230,11 +255,18 @@ async function refreshAndStoreRegistryToken(input: {
     config: input.config,
   });
   if (!refreshed.ok) {
-    return {
+    const refusal: RegistryTokenFailure = {
       success: false,
       message: `Unable to refresh your ${providerLabel} connection: ${refreshed.message}`,
       reason: refreshed.reason,
     };
+    if (refreshed.reason === "transient") return refusal;
+    return settleRegistryRefusal({
+      accountId: input.accountId,
+      platform: input.platform,
+      refusedExpiresAt: stored.token_expires_at,
+      refusal,
+    });
   }
 
   const hasRotatedRefreshToken =
@@ -253,6 +285,7 @@ async function refreshAndStoreRegistryToken(input: {
             refreshed.expiresIn === null
               ? null
               : new Date(Date.now() + refreshed.expiresIn * 1000).toISOString(),
+          is_available: true,
           updated_at: new Date().toISOString(),
         })
         .where(eq(social_accounts.id, input.accountId)),
@@ -282,7 +315,19 @@ async function refreshAndStoreRegistryToken(input: {
   };
 }
 
-function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
+async function settleRegistryRefusal(input: {
+  accountId: string;
+  platform: string;
+  refusedExpiresAt: string | null;
+  refusal: RegistryTokenFailure;
+}): Promise<FreshTokenResult> {
+  const settled = await settleRefusedRefresh(input);
+  return settled.kind === "refreshed_elsewhere"
+    ? { success: true, accessToken: settled.accessToken, reconnectWarning: null }
+    : input.refusal;
+}
+
+function buildSessionExpiredResult(providerLabel: string): RegistryTokenFailure {
   return {
     success: false,
     message: `Your ${providerLabel} session has expired and cannot be renewed automatically. Please reconnect the account.`,
@@ -290,6 +335,7 @@ function buildSessionExpiredResult(providerLabel: string): FreshTokenResult {
   };
 }
 
-function narrowAccountConfig(rawValue: unknown): JsonObject {
-  return toJsonObject(rawValue) ?? {};
+function toRefusedOutcome(message: string): RegistryPublishOutcome {
+  const { failure } = refusePublish(message);
+  return { success: false, count: 0, message, failure };
 }

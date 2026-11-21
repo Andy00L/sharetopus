@@ -4,9 +4,11 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
+import { isAdapterPlatform, PLATFORM_LABELS } from "@/lib/platforms/capabilities";
 
+import { readAccountConfig } from "./_shared/accountConfig";
 import { resolveConfiguredProvider } from "./registry";
-import type { ProviderTool } from "./types";
+import type { ProviderConfig, ProviderTool } from "./types";
 
 export type ToolDiscoveryResult =
   | {
@@ -34,16 +36,17 @@ export async function listProviderToolsForAccount(params: {
     };
   }
 
+  if (isAdapterPlatform(account.platform)) {
+    return {
+      ok: true,
+      providerId: account.platform,
+      providerLabel: PLATFORM_LABELS[account.platform],
+      tools: [],
+    };
+  }
+
   const providerResult = resolveConfiguredProvider(account.platform);
   if (!providerResult.ok) {
-    if (providerResult.reason === "unknown_provider") {
-      return {
-        ok: true,
-        providerId: account.platform,
-        providerLabel: account.platform,
-        tools: [],
-      };
-    }
     return {
       ok: false,
       reason: "provider_unavailable",
@@ -85,6 +88,14 @@ export async function runProviderToolForAccount(params: {
       ok: false,
       reason: "account_not_found",
       message: "Connection not found.",
+    };
+  }
+
+  if (isAdapterPlatform(account.platform)) {
+    return {
+      ok: false,
+      reason: "unknown_tool",
+      message: `${PLATFORM_LABELS[account.platform]} has no tool named "${params.methodName}".`,
     };
   }
 
@@ -147,7 +158,7 @@ type OwnedAccount =
       ok: true;
       platform: string;
       accessToken: string | null;
-      config: Record<string, unknown>;
+      config: ProviderConfig;
     }
   | { ok: false };
 
@@ -183,16 +194,10 @@ async function loadOwnedAccount(params: {
   const accountRow = accountRows[0];
   if (!accountRow) return { ok: false };
 
-  const rawExtra = accountRow.extra;
-  const config: Record<string, unknown> =
-    rawExtra !== null && typeof rawExtra === "object" && !Array.isArray(rawExtra)
-      ? rawExtra
-      : {};
-
   return {
     ok: true,
     platform: accountRow.platform,
     accessToken: accountRow.access_token,
-    config,
+    config: readAccountConfig(accountRow.extra),
   };
 }

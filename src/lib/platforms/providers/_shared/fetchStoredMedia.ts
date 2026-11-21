@@ -10,6 +10,7 @@ import { describeNetworkError } from "@/lib/net/describeNetworkError";
 
 import type { ProviderPublishFailure } from "../types";
 import { failPublish, refusePublish } from "./publishFailure";
+import type { SignedStorageUrl } from "./signedStorageUrl";
 
 export const BYTES_PER_MB = 1024 * 1024;
 
@@ -22,7 +23,7 @@ export type StoredMediaResult = { ok: true; media: Blob } | ProviderPublishFailu
  * takes as a body.
  */
 export async function fetchStoredMedia(
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   maxBytes: number,
 ): Promise<StoredMediaResult> {
   try {
@@ -53,7 +54,7 @@ export async function fetchStoredMedia(
 }
 
 export async function readStoredMediaBytes(
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
 ): Promise<{ ok: true; declaredBytes: number | null } | ProviderPublishFailure> {
   try {
     const mediaResponse = await undiciFetch(mediaUrl, {

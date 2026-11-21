@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -113,11 +113,8 @@ function failHashnodePublish(gqlFailure: HashnodeGqlFailure): ProviderPublishFai
 }
 
 async function hashnodeConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Hashnode connects with an API token." };
-  }
   const apiToken = (input.values.apiToken ?? "").trim();
   if (!apiToken) return { ok: false, message: "API token is required." };
 
@@ -156,12 +153,9 @@ async function hashnodeConnect(
 async function hashnodePublish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const publicationId =
-    typeof input.options.publicationId === "string" && input.options.publicationId
-      ? input.options.publicationId
-      : typeof input.config.publicationId === "string"
-        ? input.config.publicationId
-        : null;
+  const storedPublicationId =
+    typeof input.config.publicationId === "string" ? input.config.publicationId : null;
+  const publicationId = input.options.publicationId || storedPublicationId;
   if (!publicationId) {
     return refusePublish("Hashnode account has no publication.");
   }
@@ -221,20 +215,18 @@ async function hashnodeRunTool(
   return { ok: true, data: { publications: list } };
 }
 
-export const hashnodeBehavior: ProviderBehavior = {
+export const hashnodeBehavior = {
+  authKind: "credentials",
   connect: hashnodeConnect,
   publish: hashnodePublish,
   runTool: hashnodeRunTool,
-};
+} satisfies ProviderBehavior;
 
 const MEDIUM_API = "https://api.medium.com/v1";
 
 async function mediumConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Medium connects with an integration token." };
-  }
   const integrationToken = (input.values.integrationToken ?? "").trim();
   if (!integrationToken) {
     return { ok: false, message: "Integration token is required." };
@@ -328,21 +320,19 @@ async function mediumPublish(
   };
 }
 
-export const mediumBehavior: ProviderBehavior = {
+export const mediumBehavior = {
+  authKind: "credentials",
   connect: mediumConnect,
   publish: mediumPublish,
-};
+} satisfies ProviderBehavior;
 
 function normalizeLemmyInstance(rawInstanceUrl: string): string {
   return rawInstanceUrl.trim().replace(/\/+$/, "");
 }
 
 async function lemmyConnect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Lemmy connects with username and password." };
-  }
   const instanceUrl = normalizeLemmyInstance(input.values.instanceUrl ?? "");
   const username = (input.values.username ?? "").trim();
   const password = input.values.password ?? "";
@@ -397,8 +387,8 @@ async function lemmyPublish(
   if (!instanceUrl) {
     return refusePublish("Stored Lemmy account has no instance URL.");
   }
-  const communityId = Number(input.options.communityId);
-  if (!Number.isInteger(communityId) || communityId <= 0) {
+  const communityId = input.options.communityId;
+  if (communityId === undefined || !Number.isInteger(communityId) || communityId <= 0) {
     return refusePublish("A community is required (options.communityId).");
   }
   const title = input.title.trim();
@@ -483,8 +473,9 @@ async function lemmyRunTool(
   return { ok: true, data: { communities } };
 }
 
-export const lemmyBehavior: ProviderBehavior = {
+export const lemmyBehavior = {
+  authKind: "credentials",
   connect: lemmyConnect,
   publish: lemmyPublish,
   runTool: lemmyRunTool,
-};
+} satisfies ProviderBehavior;

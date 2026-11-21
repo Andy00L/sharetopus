@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -10,6 +10,7 @@ import type {
   ProviderToolResult,
 } from "./types";
 import { isJsonObject, toJsonObject } from "@/lib/utils/jsonObject";
+import { normalizeSubredditName } from "@/lib/platforms/subredditName";
 
 import {
   parseJsonBody,
@@ -73,12 +74,8 @@ async function redditApiGet(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Reddit connects through OAuth." };
-  }
-
   const tokens = await exchangeOAuth2Code(REDDIT_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -108,12 +105,9 @@ async function connect(
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const subreddit =
-    typeof input.options.subreddit === "string"
-      ? input.options.subreddit.trim().replace(/^r\//, "")
-      : "";
+  const subreddit = normalizeSubredditName(input.options.subreddit ?? "");
   if (!subreddit) {
-    return refusePublish("A subreddit is required (options.subreddit).");
+    return refusePublish("A valid subreddit name is required (options.subreddit).");
   }
   const title = input.title.trim();
   if (!title) return refusePublish("Reddit posts require a title.");
@@ -128,9 +122,7 @@ async function publish(
     kind: isTextPost ? "self" : "link",
     ...(isTextPost ? { text: input.body } : { url: input.mediaUrl ?? "" }),
   });
-  const flairId =
-    typeof input.options.flairId === "string" ? input.options.flairId : null;
-  if (flairId) form.set("flair_id", flairId);
+  if (input.options.flairId) form.set("flair_id", input.options.flairId);
 
   const result = await providerFetch("https://oauth.reddit.com/api/submit", {
     method: "POST",
@@ -189,14 +181,9 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   }
   const subreddit =
     typeof input.parameters.subreddit === "string"
-      ? input.parameters.subreddit.trim().replace(/^r\//, "")
-      : "";
-  if (!subreddit) return { ok: false, message: "subreddit is required." };
-  // The subreddit lands in a URL path; restrict to Reddit's own name rules
-  // so it cannot smuggle path segments.
-  if (!/^[A-Za-z0-9_]{2,21}$/.test(subreddit)) {
-    return { ok: false, message: "That is not a valid subreddit name." };
-  }
+      ? normalizeSubredditName(input.parameters.subreddit)
+      : null;
+  if (!subreddit) return { ok: false, message: "A valid subreddit name is required." };
 
   const flairs = await redditApiGet(
     input.accessToken,
@@ -212,10 +199,11 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   return { ok: true, data: { flairs: list } };
 }
 
-export const redditBehavior: ProviderBehavior = {
+export const redditBehavior = {
+  authKind: "oauth2",
   connect,
   publish,
   refresh: (input) => refreshOAuth2Credential(REDDIT_OAUTH, input),
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(REDDIT_OAUTH, input),
-};
+} satisfies ProviderBehavior;

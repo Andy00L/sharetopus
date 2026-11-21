@@ -1,5 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
+import { buildSignedStorageUrlFixture } from "./_shared/signedStorageUrlFixture";
+
 import type { ProviderFetchResult } from "./_shared/providerFetch";
 import type { ProviderPublishInput } from "./types";
 
@@ -36,7 +38,7 @@ const PHOTO_POST: ProviderPublishInput = {
   title: "",
   body: "New photo",
   postType: "image",
-  mediaUrl: "https://storage.test/photo.png",
+  mediaUrl: buildSignedStorageUrlFixture("photo.png"),
   fileName: "photo.png",
   mediaMimeType: "image/png",
   options: {},
@@ -62,7 +64,7 @@ describe("Telegram media sent by link", () => {
     const published = await telegramBehavior.publish({
       ...PHOTO_POST,
       postType: "video",
-      mediaUrl: "https://storage.test/clip.mp4",
+      mediaUrl: buildSignedStorageUrlFixture("clip.mp4"),
     });
     expect(published.ok).toBe(true);
     expect(requestedMethods).toEqual(["sendVideo"]);

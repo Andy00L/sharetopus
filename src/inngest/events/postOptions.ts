@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import type { PlatformOptions, PrivacyLevel } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 
@@ -138,7 +138,7 @@ export function buildDefaultPlatformOptions(input: {
 }
 
 export function encodeFormPostOptions(input: {
-  platform: PostingPlatform;
+  platform: AdapterPlatform;
   link: string;
   platformOptions: PlatformOptions;
   pinterestBoard: { boardId: string; boardName: string } | null;

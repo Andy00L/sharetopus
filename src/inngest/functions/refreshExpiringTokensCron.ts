@@ -8,12 +8,12 @@ import {
   buildTokenRefreshEvents,
   TOKEN_REFRESH_HORIZON_MS,
 } from "@/inngest/events/socialAccountTokenRefresh";
-import { POSTING_PLATFORMS } from "@/lib/platforms/capabilities";
+import { ADAPTER_PLATFORMS } from "@/lib/platforms/capabilities";
 import { listRefreshablePlatformIds } from "@/lib/platforms/providers/registry";
 
 import { inngest } from "../client";
 
-const REFRESHABLE_PLATFORMS = [...POSTING_PLATFORMS, ...listRefreshablePlatformIds()];
+const REFRESHABLE_PLATFORMS = [...ADAPTER_PLATFORMS, ...listRefreshablePlatformIds()];
 
 const MAX_ACCOUNTS_PER_RUN = 1000;
 

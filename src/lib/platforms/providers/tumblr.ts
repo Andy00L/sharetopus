@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  OAuthCodeConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -76,12 +76,8 @@ async function fetchUserInfo(
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: OAuthCodeConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "oauth_code") {
-    return { ok: false, message: "Tumblr connects through OAuth." };
-  }
-
   const tokens = await exchangeOAuth2Code(TUMBLR_OAUTH, input);
   if (!tokens.ok) return { ok: false, message: tokens.message };
 
@@ -108,12 +104,9 @@ async function connect(
 async function publish(
   input: ProviderPublishInput,
 ): Promise<ProviderPublishResult> {
-  const blogIdentifier =
-    typeof input.options.blog === "string" && input.options.blog.trim()
-      ? input.options.blog.trim()
-      : typeof input.config.blogIdentifier === "string"
-        ? input.config.blogIdentifier
-        : null;
+  const storedBlogIdentifier =
+    typeof input.config.blogIdentifier === "string" ? input.config.blogIdentifier : null;
+  const blogIdentifier = input.options.blog?.trim() || storedBlogIdentifier;
   if (!blogIdentifier) {
     return refusePublish("Stored Tumblr account has no blog.");
   }
@@ -192,10 +185,11 @@ async function runTool(input: ProviderToolInput): Promise<ProviderToolResult> {
   return { ok: true, data: { blogs: userInfo.blogs } };
 }
 
-export const tumblrBehavior: ProviderBehavior = {
+export const tumblrBehavior = {
+  authKind: "oauth2",
   connect,
   publish,
   refresh: (input) => refreshOAuth2Credential(TUMBLR_OAUTH, input),
   runTool,
   buildAuthorizeUrl: (input) => buildOAuth2AuthorizeUrl(TUMBLR_OAUTH, input),
-};
+} satisfies ProviderBehavior;

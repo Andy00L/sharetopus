@@ -1,8 +1,8 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
   ProviderConnectResult,
   ProviderPublishInput,
   ProviderPublishResult,
@@ -18,19 +18,16 @@ import {
   failUnreadableAnswer,
   refusePublish,
 } from "./_shared/publishFailure";
+import { REGISTRY_PROVIDER_CATALOG } from "./catalog";
 
 const DEVTO_API_ORIGIN = "https://dev.to/api";
 const DEVTO_TIMEOUT_MS = 30_000;
 
-const DEVTO_MAX_BODY_CHARS = 100_000;
+const DEVTO_MAX_BODY_CHARS = REGISTRY_PROVIDER_CATALOG.devto.rules.maxTextLength;
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Dev.to connects with an API key." };
-  }
-
   const apiKey = (input.values.apiKey ?? "").trim();
   if (!apiKey) {
     return { ok: false, message: "API key is required." };
@@ -64,7 +61,9 @@ async function connect(
     ok: true,
     accessToken: apiKey,
     refreshToken: null,
-    // Forem API keys do not expire.
+    // forem/forem db/schema.rb api_secrets has no expiry column and
+    // Api::V1::ApiController#authenticate_with_api_key checks none: a key
+    // lasts until its owner revokes it.
     expiresIn: null,
     identity: {
       accountIdentifier: userId,
@@ -84,7 +83,12 @@ async function publish(
     return refusePublish("Dev.to articles require a title.");
   }
 
-  const markdownBody = buildMarkdownBody(input);
+  const markdownBody = input.body.trim();
+  if (markdownBody.length > DEVTO_MAX_BODY_CHARS) {
+    return refusePublish(
+      `Dev.to articles are limited to ${DEVTO_MAX_BODY_CHARS} characters; this one has ${markdownBody.length}.`,
+    );
+  }
 
   // published:true publishes immediately.
   const article: Record<string, unknown> = {
@@ -93,15 +97,15 @@ async function publish(
     published: true,
   };
 
-  const tags = readTagsOption(input.options);
-  // developers.forem.com/api/v1 (createArticle): `tags` is a string, "A
-  // comma-separated list of tags (up to 4 tags)".
-  if (tags.length > 0) article.tags = tags.join(", ");
+  // forem/forem app/controllers/concerns/api/articles_controller.rb
+  // article_params permits `main_image` and `{ tags: [] }`: a tags string is
+  // dropped, so tags go out as an array.
+  const tags = normalizeTags(input.options.tags ?? []);
+  if (tags.length > 0) article.tags = tags;
+  if (input.postType === "image" && input.mediaUrl) article.main_image = input.mediaUrl;
 
-  const canonicalUrl = input.options.canonicalUrl;
-  if (typeof canonicalUrl === "string" && canonicalUrl.trim().length > 0) {
-    article.canonical_url = canonicalUrl.trim();
-  }
+  const canonicalUrl = input.options.canonicalUrl?.trim();
+  if (canonicalUrl) article.canonical_url = canonicalUrl;
 
   const createResult = await providerFetch(`${DEVTO_API_ORIGIN}/articles`, {
     method: "POST",
@@ -149,28 +153,19 @@ async function publish(
   };
 }
 
-function buildMarkdownBody(input: ProviderPublishInput): string {
-  const body = input.body.trim();
-  const withMedia =
-    input.postType === "image" && input.mediaUrl
-      ? `![${input.title.trim() || "cover"}](${input.mediaUrl})\n\n${body}`
-      : body;
-  return withMedia.slice(0, DEVTO_MAX_BODY_CHARS);
-}
-
 /**
- * Reads the tags option. Forem accepts at most four tags and rejects the
- * whole article if a fifth is present, so the list is capped here rather
- * than failing the publish.
+ * Forem accepts at most four tags and rejects the whole article if a fifth
+ * is present, so the list is capped here rather than failing the publish.
  */
-function readTagsOption(options: Record<string, unknown>): string[] {
-  const rawTags = options.tags;
-  if (!Array.isArray(rawTags)) return [];
-  return rawTags
-    .filter((tag): tag is string => typeof tag === "string")
+function normalizeTags(tags: readonly string[]): string[] {
+  return tags
     .map((tag) => tag.trim().toLowerCase())
     .filter((tag) => tag.length > 0)
     .slice(0, 4);
 }
 
-export const devtoBehavior: ProviderBehavior = { connect, publish };
+export const devtoBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

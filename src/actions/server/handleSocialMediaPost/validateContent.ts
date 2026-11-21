@@ -2,7 +2,7 @@ import type { MediaType } from "@/db/schema";
 import {
   PLATFORM_LABELS,
   platformSupportsMediaType,
-  type PostingPlatform,
+  type AdapterPlatform,
 } from "@/lib/platforms/capabilities";
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
@@ -10,7 +10,7 @@ import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 export function validateAccountContent(
   accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
-  platform: PostingPlatform,
+  platform: AdapterPlatform,
   boards: BoardInfo[] | undefined,
   postType: MediaType,
 ): AccountError[] {

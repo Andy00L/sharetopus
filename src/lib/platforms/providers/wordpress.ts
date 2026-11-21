@@ -1,8 +1,9 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -17,6 +18,8 @@ import {
   fetchStoredMedia,
   STORED_MEDIA_MAX_BYTES,
 } from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
+import { toUploadFileName } from "./_shared/uploadFileName";
 import {
   failHttpAnswer,
   failProviderFetch,
@@ -31,7 +34,7 @@ function normalizeSiteUrl(rawSiteUrl: string): string {
   return rawSiteUrl.trim().replace(/\/+$/, "");
 }
 
-function readSiteUrl(config: Record<string, unknown>): string | null {
+function readSiteUrl(config: ProviderConfig): string | null {
   const siteUrl = config.siteUrl;
   if (typeof siteUrl !== "string" || siteUrl.trim().length === 0) return null;
   return normalizeSiteUrl(siteUrl);
@@ -46,21 +49,11 @@ function buildBasicAuthHeader(credential: string): string {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return {
-      ok: false,
-      message: "WordPress connects with an application password.",
-    };
-  }
-
   const siteUrl = normalizeSiteUrl(input.values.siteUrl ?? "");
   const username = (input.values.username ?? "").trim();
-  const applicationPassword = (input.values.applicationPassword ?? "").replace(
-    /\s+/g,
-    "",
-  );
+  const applicationPassword = input.values.applicationPassword ?? "";
 
   if (!siteUrl || !username || !applicationPassword) {
     return {
@@ -210,21 +203,20 @@ type MediaUploadResult = { ok: true; mediaId: number } | ProviderPublishFailure;
 async function uploadMedia(
   siteUrl: string,
   authorization: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   fileName: string,
   mimeType: string,
 ): Promise<MediaUploadResult> {
   const storedMedia = await fetchStoredMedia(mediaUrl, STORED_MEDIA_MAX_BYTES);
   if (!storedMedia.ok) return storedMedia;
 
-  const safeFileName = fileName.replace(/[^A-Za-z0-9._-]/g, "_") || "upload";
 
   const uploadResult = await providerFetch(`${siteUrl}/wp-json/wp/v2/media`, {
     method: "POST",
     headers: {
       Authorization: authorization,
       "Content-Type": mimeType,
-      "Content-Disposition": `attachment; filename="${safeFileName}"`,
+      "Content-Disposition": `attachment; filename="${toUploadFileName(fileName, "upload")}"`,
     },
     body: storedMedia.media,
     timeoutMs: WORDPRESS_MEDIA_TIMEOUT_MS,
@@ -261,4 +253,8 @@ async function uploadMedia(
   return { ok: true, mediaId };
 }
 
-export const wordpressBehavior: ProviderBehavior = { connect, publish };
+export const wordpressBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+} satisfies ProviderBehavior;

@@ -8,14 +8,14 @@ import {
 } from "@/lib/api/oauth/connectPlatformAccounts";
 import { escapeHtml, toJsString } from "@/lib/api/oauth/escapeHtml";
 import { popupCallbackNames } from "@/lib/api/oauth/web/popupCallbackNames";
-import type { PostingPlatform } from "@/lib/platforms/capabilities";
+import type { AdapterPlatform } from "@/lib/platforms/capabilities";
 import { auth } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 export interface WebOAuthCallbackConfig {
-  platform: PostingPlatform;
+  platform: AdapterPlatform;
   /** Must match the initiate route's cookie names. */
   stateCookieName: string;
   verifierCookieName?: string;

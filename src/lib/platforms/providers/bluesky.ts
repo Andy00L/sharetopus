@@ -1,8 +1,9 @@
 import "server-only";
 
 import type {
+  CredentialsConnectInput,
   ProviderBehavior,
-  ProviderConnectInput,
+  ProviderConfig,
   ProviderConnectResult,
   ProviderPublishFailure,
   ProviderPublishInput,
@@ -17,7 +18,9 @@ import {
   readStringField,
 } from "./_shared/providerFetch";
 import { fetchStoredMedia } from "./_shared/fetchStoredMedia";
+import type { SignedStorageUrl } from "./_shared/signedStorageUrl";
 import { classifyTokenHttpStatus } from "./_shared/oauth2";
+import { joinTitleAndBody } from "./_shared/postText";
 import {
   failHttpAnswer,
   failProviderFetch,
@@ -35,7 +38,7 @@ const BLUESKY_TIMEOUT_MS = 20_000;
 // "May be up to 2 MB, formerly limited to 1 MB", "maxSize": 2000000.
 const BLUESKY_MAX_IMAGE_BYTES = 2_000_000;
 
-function resolveServiceUrl(config: Record<string, unknown>): string {
+function resolveServiceUrl(config: ProviderConfig): string {
   const configured = config.service;
   if (typeof configured === "string" && configured.trim().length > 0) {
     return configured.trim().replace(/\/+$/, "");
@@ -44,12 +47,8 @@ function resolveServiceUrl(config: Record<string, unknown>): string {
 }
 
 async function connect(
-  input: ProviderConnectInput,
+  input: CredentialsConnectInput,
 ): Promise<ProviderConnectResult> {
-  if (input.kind !== "credentials") {
-    return { ok: false, message: "Bluesky connects with an app password." };
-  }
-
   const service = resolveServiceUrl(input.values);
   const identifier = (input.values.identifier ?? "").trim();
   const appPassword = input.values.appPassword ?? "";
@@ -166,7 +165,7 @@ async function publish(
     return refusePublish("Stored Bluesky account is missing its DID.");
   }
 
-  const postText = buildPostText(input);
+  const postText = joinTitleAndBody(input);
 
   // Image posts need the bytes uploaded as a blob first; the returned blob
   // ref is embedded in the record. Text posts skip this entirely.
@@ -238,17 +237,8 @@ async function publish(
   return { ok: true, postId: uri, postUrl: buildPostUrl(input.config, uri) };
 }
 
-/** Bluesky has no title field, so a title becomes the first line. */
-function buildPostText(input: ProviderPublishInput): string {
-  const trimmedTitle = input.title.trim();
-  const trimmedBody = input.body.trim();
-  if (!trimmedTitle) return trimmedBody;
-  if (!trimmedBody) return trimmedTitle;
-  return `${trimmedTitle}\n\n${trimmedBody}`;
-}
-
 function buildPostUrl(
-  config: Record<string, unknown>,
+  config: ProviderConfig,
   recordUri: string,
 ): string | null {
   const handle = typeof config.handle === "string" ? config.handle : null;
@@ -262,7 +252,7 @@ type BlobUploadResult = { ok: true; blob: unknown } | ProviderPublishFailure;
 async function uploadImageBlob(
   service: string,
   accessToken: string,
-  mediaUrl: string,
+  mediaUrl: SignedStorageUrl,
   mimeType: string,
 ): Promise<BlobUploadResult> {
   const storedImage = await fetchStoredMedia(mediaUrl, BLUESKY_MAX_IMAGE_BYTES);
@@ -309,4 +299,9 @@ async function uploadImageBlob(
   return { ok: true, blob };
 }
 
-export const blueskyBehavior: ProviderBehavior = { connect, publish, refresh };
+export const blueskyBehavior = {
+  authKind: "credentials",
+  connect,
+  publish,
+  refresh,
+} satisfies ProviderBehavior;

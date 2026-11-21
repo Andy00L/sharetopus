@@ -1,5 +1,7 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 
+import { buildSignedStorageUrlFixture } from "./_shared/signedStorageUrlFixture";
+
 import type { ProviderFetchResult } from "./_shared/providerFetch";
 import type { ProviderPublishInput } from "./types";
 
@@ -42,7 +44,7 @@ const VIDEO_POST: ProviderPublishInput = {
   title: "",
   body: "Launch day",
   postType: "video",
-  mediaUrl: "https://storage.test/clip.mp4",
+  mediaUrl: buildSignedStorageUrlFixture("clip.mp4"),
   fileName: "clip.mp4",
   mediaMimeType: "video/mp4",
   options: {},

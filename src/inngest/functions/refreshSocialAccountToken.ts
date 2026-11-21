@@ -10,7 +10,7 @@ import {
 } from "@/inngest/events/socialAccountTokenRefresh";
 import { ensureValidToken } from "@/lib/api/ensureValidToken";
 import { isTokenExpiring } from "@/lib/api/refreshWithAccountLock";
-import { isPostingPlatform } from "@/lib/platforms/capabilities";
+import { isAdapterPlatform } from "@/lib/platforms/capabilities";
 import { refreshRegistryAccountToken } from "@/lib/platforms/providers/publishViaRegistry";
 import type { TokenRefreshFailureReason } from "@/lib/platforms/providers/types";
 import type { SocialAccount } from "@/lib/types/dbTypes";
@@ -88,7 +88,7 @@ async function refreshAccountToken(socialAccountId: string): Promise<TokenRefres
 
 async function refreshWithinHorizon(account: SocialAccount): Promise<HorizonRefreshResult> {
   const windowOptions = { refreshIfExpiringWithinMs: TOKEN_REFRESH_HORIZON_MS };
-  if (isPostingPlatform(account.platform)) {
+  if (isAdapterPlatform(account.platform)) {
     const tokenResult = await ensureValidToken(account, windowOptions);
     return tokenResult.success
       ? { ok: true, reconnectWarning: null }

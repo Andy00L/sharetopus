@@ -1,12 +1,20 @@
 import "server-only";
 
 import {
-  FULL_PROVIDER_CATALOG,
   getProviderMetadata,
+  listProviderMetadata,
   REGISTRY_PLATFORM_IDS,
+  type RegistryCatalogEntry,
   type RegistryPlatformId,
 } from "./catalog";
-import type { ProviderBehavior, ProviderDefinition, ProviderMetadata } from "./types";
+import { findCredentialValueIssue } from "./credentialFields";
+import type {
+  ProviderBehavior,
+  ProviderConnectResult,
+  ProviderDefinition,
+  ProviderMetadata,
+  ProviderOperations,
+} from "./types";
 
 import { blueskyBehavior } from "./bluesky";
 import { devtoBehavior } from "./devto";
@@ -32,7 +40,14 @@ import {
   linkedinPageBehavior,
 } from "./oauthVariants";
 
-const PROVIDER_BEHAVIORS: Readonly<Record<string, ProviderBehavior>> = {
+type ProviderBehaviorCatalog = {
+  readonly [PlatformId in RegistryPlatformId]: Extract<
+    ProviderBehavior,
+    { authKind: RegistryCatalogEntry<PlatformId>["authKind"] }
+  >;
+};
+
+const PROVIDER_BEHAVIORS: ProviderBehaviorCatalog = {
   bluesky: blueskyBehavior,
   mastodon: mastodonBehavior,
   telegram: telegramBehavior,
@@ -56,7 +71,7 @@ const PROVIDER_BEHAVIORS: Readonly<Record<string, ProviderBehavior>> = {
   gmb: gmbBehavior,
 };
 
-export function isProviderConfigured(metadata: ProviderMetadata): boolean {
+export function isProviderConfigured(metadata: Pick<ProviderMetadata, "requiredEnv">): boolean {
   return metadata.requiredEnv.every((envVarName) => {
     const value = process.env[envVarName];
     return typeof value === "string" && value.trim().length > 0;
@@ -66,16 +81,10 @@ export function isProviderConfigured(metadata: ProviderMetadata): boolean {
 export function getProvider(providerId: string): ProviderDefinition | null {
   const metadata = getProviderMetadata(providerId);
   if (!metadata) return null;
-
-  const behavior = PROVIDER_BEHAVIORS[providerId];
-  if (!behavior) {
-    console.error(
-      `[getProvider] Provider "${providerId}" is in the catalog but has no behavior registered.`,
-    );
-    return null;
-  }
-
-  return { ...metadata, ...guardProviderBehavior(metadata.label, behavior) };
+  return {
+    ...metadata,
+    ...guardProviderBehavior(metadata, PROVIDER_BEHAVIORS[metadata.id]),
+  };
 }
 
 async function settleThrown<Settled>(input: {
@@ -93,25 +102,59 @@ async function settleThrown<Settled>(input: {
 }
 
 function guardProviderBehavior(
-  providerLabel: string,
+  metadata: ProviderMetadata,
   behavior: ProviderBehavior,
 ): ProviderBehavior {
-  const { refresh, runTool } = behavior;
-  return {
-    ...behavior,
-    connect: (input) =>
-      settleThrown({
-        operationLabel: `${providerLabel} connect`,
-        runOperation: () => behavior.connect(input),
-        buildFailure: () => ({
-          ok: false,
-          message: `${providerLabel} could not be connected because of an unexpected error.`,
-        }),
+  const providerLabel = metadata.label;
+  const guardedOperations = guardProviderOperations(providerLabel, behavior);
+  const guardConnect = (runConnect: () => Promise<ProviderConnectResult>) =>
+    settleThrown<ProviderConnectResult>({
+      operationLabel: `${providerLabel} connect`,
+      runOperation: runConnect,
+      buildFailure: () => ({
+        ok: false,
+        message: `${providerLabel} could not be connected because of an unexpected error.`,
       }),
+    });
+
+  switch (behavior.authKind) {
+    case "credentials": {
+      const credentialFields =
+        metadata.authKind === "credentials" ? metadata.credentialFields : [];
+      const connect: typeof behavior.connect = async (input) => {
+        const credentialIssue = findCredentialValueIssue({
+          providerLabel,
+          fields: credentialFields,
+          values: input.values,
+        });
+        if (credentialIssue) return { ok: false, message: credentialIssue };
+        return guardConnect(() => behavior.connect(input));
+      };
+      return { ...behavior, ...guardedOperations, connect };
+    }
+    case "oauth2": {
+      const connect: typeof behavior.connect = (input) =>
+        guardConnect(() => behavior.connect(input));
+      return { ...behavior, ...guardedOperations, connect };
+    }
+    case "oauth2_pkce": {
+      const connect: typeof behavior.connect = (input) =>
+        guardConnect(() => behavior.connect(input));
+      return { ...behavior, ...guardedOperations, connect };
+    }
+  }
+}
+
+function guardProviderOperations(
+  providerLabel: string,
+  operations: ProviderOperations,
+): ProviderOperations {
+  const { refresh, runTool } = operations;
+  return {
     publish: (input) =>
       settleThrown({
         operationLabel: `${providerLabel} publish`,
-        runOperation: () => behavior.publish(input),
+        runOperation: () => operations.publish(input),
         buildFailure: (message) => ({
           ok: false,
           message: `${providerLabel} publish failed unexpectedly: ${message}`,
@@ -179,12 +222,10 @@ export function resolveConfiguredProvider(
 
 export function listRefreshablePlatformIds(): RegistryPlatformId[] {
   return REGISTRY_PLATFORM_IDS.filter(
-    (platformId) => PROVIDER_BEHAVIORS[platformId]?.refresh !== undefined,
+    (platformId) => PROVIDER_BEHAVIORS[platformId].refresh !== undefined,
   );
 }
 
 export function listAvailableProviders(): ProviderMetadata[] {
-  return Object.values(FULL_PROVIDER_CATALOG)
-    .filter((metadata) => PROVIDER_BEHAVIORS[metadata.id] !== undefined)
-    .filter((metadata) => isProviderConfigured(metadata));
+  return listProviderMetadata().filter((metadata) => isProviderConfigured(metadata));
 }

@@ -7,8 +7,8 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { HANDLE_SOCIAL_MEDIA_POST_RATE_LIMIT } from "@/actions/server/rateLimit/rateLimitRules";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import {
-  isPostingPlatform,
-  type PostingPlatform,
+  isAdapterPlatform,
+  type AdapterPlatform,
 } from "@/lib/platforms/capabilities";
 import type { MediaType } from "@/db/schema";
 import { encodeFormPostOptions } from "@/inngest/events/postOptions";
@@ -38,7 +38,7 @@ export type ContentInfo = {
   isCustomized: boolean;
 };
 
-export type PlatformCounts = Record<PostingPlatform, number> & {
+export type PlatformCounts = Record<AdapterPlatform, number> & {
   total: number;
 };
 
@@ -72,7 +72,7 @@ function buildZeroCounts(): PlatformCounts {
   };
 }
 
-const PLATFORM_KEEPS_TITLE: Record<PostingPlatform, boolean> = {
+const PLATFORM_KEEPS_TITLE: Record<AdapterPlatform, boolean> = {
   pinterest: true,
   linkedin: false,
   tiktok: false,
@@ -163,10 +163,10 @@ export async function handleSocialMediaPost(config: {
     };
   }
 
-  const accountsByPlatform = new Map<PostingPlatform, ClientSocialAccount[]>();
+  const accountsByPlatform = new Map<AdapterPlatform, ClientSocialAccount[]>();
   const unsupportedErrors: AccountError[] = [];
   for (const account of accounts) {
-    if (!isPostingPlatform(account.platform)) {
+    if (!isAdapterPlatform(account.platform)) {
       unsupportedErrors.push({
         accountId: account.id,
         platform: account.platform,
@@ -303,7 +303,7 @@ function findSelectedBoard(
 }
 
 function buildAccountsLookup(
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>,
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>,
 ): Map<string, ClientSocialAccount> {
   const lookup = new Map<string, ClientSocialAccount>();
   for (const platformAccounts of accountsByPlatform.values()) {
@@ -315,7 +315,7 @@ function buildAccountsLookup(
 }
 
 function countAcceptedByPlatform(
-  posts: { socialAccountId: string; platform: PostingPlatform }[],
+  posts: { socialAccountId: string; platform: AdapterPlatform }[],
   rejectedAccountIds: Set<string>,
 ): PlatformCounts {
   const counts = buildZeroCounts();
@@ -347,7 +347,7 @@ function mapRejectionsToAccountErrors(
 }
 
 async function scheduleAllPosts(args: {
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -365,7 +365,7 @@ async function scheduleAllPosts(args: {
   ).toISOString();
 
   const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
-  const posts: (SchedulePostData & { platform: PostingPlatform })[] = [];
+  const posts: (SchedulePostData & { platform: AdapterPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
     for (const account of platformAccounts) {
@@ -443,7 +443,7 @@ async function scheduleAllPosts(args: {
 }
 
 async function directPostFromForm(args: {
-  accountsByPlatform: Map<PostingPlatform, ClientSocialAccount[]>;
+  accountsByPlatform: Map<AdapterPlatform, ClientSocialAccount[]>;
   mediaPath: string;
   coverTimestamp: number;
   boards?: BoardInfo[];
@@ -455,7 +455,7 @@ async function directPostFromForm(args: {
   requestId: string;
 }): Promise<PostResult> {
   const accountsLookup = buildAccountsLookup(args.accountsByPlatform);
-  const posts: (DirectPostData & { platform: PostingPlatform })[] = [];
+  const posts: (DirectPostData & { platform: AdapterPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
     for (const account of platformAccounts) {
