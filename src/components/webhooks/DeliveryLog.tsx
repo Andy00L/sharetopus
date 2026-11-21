@@ -1,48 +1,34 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import type { WebhookDeliveryDTO } from "@/lib/api/rest/openapi/responseSchemas";
+import { use } from "react";
 
-type Delivery = {
-  id: string;
-  event_type: string;
-  status_code: number | null;
-  attempt: number;
-  latency_ms: number | null;
-  delivered_at: string | null;
-  failed_at: string | null;
-  error_message: string | null;
-  created_at: string;
-};
+const RECENT_DELIVERIES_LIMIT = 20;
 
-/** Last 20 deliveries of a webhook subscription, with status dots. */
-export function DeliveryLog({
-  subscriptionId,
-}: {
-  subscriptionId: string;
-}) {
-  const [deliveries, setDeliveries] = useState<Delivery[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    async function fetchDeliveries() {
-      try {
-        const response = await fetch(
-          `/api/v1/webhooks/${subscriptionId}/deliveries?limit=20`,
-          { credentials: "include" },
-        );
-        if (!response.ok) return;
-        const result = await response.json();
-        setDeliveries(result.data ?? []);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchDeliveries();
-  }, [subscriptionId]);
-
-  if (isLoading) {
-    return <p className="text-xs text-muted-foreground">Loading deliveries...</p>;
+export async function fetchRecentDeliveriesOrEmpty(
+  subscriptionId: string,
+): Promise<WebhookDeliveryDTO[]> {
+  try {
+    const response = await fetch(
+      `/api/v1/webhooks/${subscriptionId}/deliveries?limit=${RECENT_DELIVERIES_LIMIT}`,
+      { credentials: "include" },
+    );
+    if (!response.ok) return [];
+    const result = await response.json();
+    return result.data ?? [];
+  } catch (error) {
+    console.error("[fetchRecentDeliveriesOrEmpty] Delivery log request failed:", error);
+    return [];
   }
+}
+
+/** Last 20 deliveries of a webhook subscription, with status dots. Suspends until the deliveries load. */
+export function DeliveryLog({
+  deliveriesPromise,
+}: {
+  deliveriesPromise: Promise<WebhookDeliveryDTO[]>;
+}) {
+  const deliveries = use(deliveriesPromise);
 
   if (deliveries.length === 0) {
     return <p className="text-xs text-muted-foreground">No deliveries yet.</p>;

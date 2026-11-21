@@ -1,5 +1,3 @@
-"use client";
-
 import { Plus, Minus } from "lucide-react";
 import {
   Accordion,

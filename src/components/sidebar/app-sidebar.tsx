@@ -1,5 +1,3 @@
-"use client";
-
 import avatar from "../../../public/trans_logo (1).webp";
 import {
   Sidebar,

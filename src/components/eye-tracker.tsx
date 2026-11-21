@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback } from "react";
 
-function isMountedElement(
-  element: HTMLDivElement | null,
-): element is HTMLDivElement {
-  return element !== null;
+function queryEyeParts(container: HTMLDivElement, selector: string): HTMLDivElement[] {
+  return [...container.querySelectorAll<HTMLDivElement>(selector)];
 }
 
 /** Two cartoon eyes that follow the pointer, look at the CTA on hover, blink, and dilate near the CTA. */
@@ -16,24 +14,18 @@ export function EyeTracker({
   cardId: string;
   ctaId: string;
 }) {
-  // Stable refs filled by the callback refs below, so the effect depends on nothing that changes between renders.
-  const eyeElementsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const pupilElementsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const dilateElementsRef = useRef<(HTMLDivElement | null)[]>([]);
-  const lidElementsRef = useRef<(HTMLDivElement | null)[]>([]);
-
-  // Animation loop driven by pointer, scroll, visibility and timers, none of which React owns.
-  useEffect(() => {
+  const animateEyesWhileMounted = useCallback((eyesContainer: HTMLDivElement | null) => {
+    if (!eyesContainer) return;
     const prefersReducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
     if (prefersReducedMotion) return;
     const isCoarse = window.matchMedia("(pointer: coarse)").matches;
 
-    const eyes = eyeElementsRef.current.filter(isMountedElement);
-    const pupils = pupilElementsRef.current.filter(isMountedElement);
-    const dilates = dilateElementsRef.current.filter(isMountedElement);
-    const lids = lidElementsRef.current.filter(isMountedElement);
+    const eyes = queryEyeParts(eyesContainer, ".subprompt-eye");
+    const pupils = queryEyeParts(eyesContainer, ".subprompt-pupil");
+    const dilates = queryEyeParts(eyesContainer, ".subprompt-pupil-inner");
+    const lids = queryEyeParts(eyesContainer, ".subprompt-lid");
     const card = document.getElementById(cardId);
     const cta = document.getElementById(ctaId);
     if (!card || !cta || eyes.length !== 2) return;
@@ -89,7 +81,8 @@ export function EyeTracker({
     let nextSaccadeAt = performance.now() + 1800 + Math.random() * 2200;
     let rafId = 0;
     let isRunning = false;
-    const blinkTimers: ReturnType<typeof setTimeout>[] = [];
+    let nextBlinkTimer: ReturnType<typeof setTimeout> | undefined;
+    let secondBlinkTimer: ReturnType<typeof setTimeout> | undefined;
 
     const onCtaEnter = () => (isHoveringCta = true);
     const onCtaLeave = () => (isHoveringCta = false);
@@ -106,7 +99,9 @@ export function EyeTracker({
     if (!isCoarse)
       window.addEventListener("pointermove", onPointerMove, { passive: true });
 
-    const onScrollResize = () => updateRects();
+    const onScrollResize = () => {
+      if (isRunning) updateRects();
+    };
     window.addEventListener("scroll", onScrollResize, { passive: true });
     window.addEventListener("resize", onScrollResize, { passive: true });
 
@@ -233,7 +228,7 @@ export function EyeTracker({
 
     const scheduleBlink = () => {
       const wait = 3000 + Math.random() * 3200;
-      const blinkTimer = setTimeout(() => {
+      nextBlinkTimer = setTimeout(() => {
         if (isRunning) {
           const isWink = Math.random() < 1 / 12;
           const isDoubleBlink = !isWink && Math.random() < 0.25;
@@ -242,17 +237,15 @@ export function EyeTracker({
             blinkOnce(0);
             blinkOnce(1);
             if (isDoubleBlink) {
-              const secondBlinkTimer = setTimeout(() => {
+              secondBlinkTimer = setTimeout(() => {
                 blinkOnce(0);
                 blinkOnce(1);
               }, 220);
-              blinkTimers.push(secondBlinkTimer);
             }
           }
         }
         scheduleBlink();
       }, wait);
-      blinkTimers.push(blinkTimer);
     };
     scheduleBlink();
 
@@ -265,39 +258,19 @@ export function EyeTracker({
       cta.removeEventListener("pointerenter", onCtaEnter);
       cta.removeEventListener("pointerleave", onCtaLeave);
       document.removeEventListener("visibilitychange", onVisibility);
-      blinkTimers.forEach(clearTimeout);
+      clearTimeout(nextBlinkTimer);
+      clearTimeout(secondBlinkTimer);
     };
   }, [cardId, ctaId]);
 
   return (
-    <div className="subprompt-eyes" aria-hidden="true">
+    <div ref={animateEyesWhileMounted} className="subprompt-eyes" aria-hidden="true">
       {[0, 1].map((eyeIndex) => (
-        <div
-          key={eyeIndex}
-          className="subprompt-eye"
-          ref={(element) => {
-            eyeElementsRef.current[eyeIndex] = element;
-          }}
-        >
-          <div
-            className="subprompt-pupil"
-            ref={(element) => {
-              pupilElementsRef.current[eyeIndex] = element;
-            }}
-          >
-            <div
-              className="subprompt-pupil-inner"
-              ref={(element) => {
-                dilateElementsRef.current[eyeIndex] = element;
-              }}
-            />
+        <div key={eyeIndex} className="subprompt-eye">
+          <div className="subprompt-pupil">
+            <div className="subprompt-pupil-inner" />
           </div>
-          <div
-            className="subprompt-lid"
-            ref={(element) => {
-              lidElementsRef.current[eyeIndex] = element;
-            }}
-          />
+          <div className="subprompt-lid" />
         </div>
       ))}
     </div>

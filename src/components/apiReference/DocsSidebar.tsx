@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 
@@ -8,7 +8,8 @@ import type { SidebarItem } from "@/lib/docs/apiReferenceTypes";
 export function DocsSidebar({ items }: { items: SidebarItem[] }) {
   const [activeId, setActiveId] = useState<string>(items[0]?.id ?? "");
 
-  useEffect(() => {
+  const highlightVisibleSection = useCallback((sidebarNav: HTMLElement | null) => {
+    if (!sidebarNav) return;
     const sections = items
       .map((item) => document.getElementById(item.id))
       .filter((element): element is HTMLElement => element !== null);
@@ -39,7 +40,11 @@ export function DocsSidebar({ items }: { items: SidebarItem[] }) {
   }, [items]);
 
   return (
-    <nav aria-label="API sections" className="sticky top-24 space-y-0.5">
+    <nav
+      ref={highlightVisibleSection}
+      aria-label="API sections"
+      className="sticky top-24 space-y-0.5"
+    >
       {items.map((item) => (
         <a
           key={item.id}

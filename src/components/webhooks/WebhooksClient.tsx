@@ -1,32 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { WebhookList } from "./WebhookList";
 import { WebhookForm } from "./WebhookForm";
 import { Button } from "@/components/ui/button";
-
-type WebhookSubscription = {
-  id: string;
-  url: string;
-  events: string[];
-  active: boolean;
-  failure_count: number;
-  last_delivery_at: string | null;
-  last_disabled_at: string | null;
-  created_at: string;
-  updated_at: string;
-  secret?: string;
-};
+import type { WebhookSubscriptionDTO } from "@/lib/api/rest/openapi/responseSchemas";
 
 /** Webhook management UI, backed by the same-origin /api/v1/webhooks routes. */
-export function WebhooksClient() {
-  const [subscriptions, setSubscriptions] = useState<WebhookSubscription[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export function WebhooksClient({
+  initialSubscriptions = [],
+}: {
+  initialSubscriptions?: WebhookSubscriptionDTO[];
+}) {
+  const [subscriptions, setSubscriptions] = useState(initialSubscriptions);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newlyCreatedSecret, setNewlyCreatedSecret] = useState<string | null>(null);
 
-  const fetchSubscriptions = useCallback(async () => {
+  const fetchSubscriptions = async () => {
     try {
       const response = await fetch("/api/v1/webhooks", { credentials: "include" });
       if (!response.ok) return;
@@ -34,14 +25,8 @@ export function WebhooksClient() {
       setSubscriptions(result.data ?? []);
     } catch {
       toast.error("Failed to load webhooks");
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
-
-  useEffect(() => {
-    fetchSubscriptions();
-  }, [fetchSubscriptions]);
+  };
 
   const handleCreate = async (url: string, events: string[]) => {
     try {
@@ -118,10 +103,6 @@ export function WebhooksClient() {
       toast.error("Test request failed");
     }
   };
-
-  if (isLoading) {
-    return <div className="text-muted-foreground">Loading...</div>;
-  }
 
   return (
     <div className="space-y-6">

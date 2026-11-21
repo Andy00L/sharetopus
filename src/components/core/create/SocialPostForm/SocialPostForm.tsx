@@ -8,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ClientSocialAccount, TikTokOptions } from "@/lib/types/dbTypes";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
-import { useEffect, useState } from "react";
+import { useObjectUrl } from "@/hooks/use-object-url";
+import { useState } from "react";
 import { toast } from "sonner";
 import { handleSocialMediaPost } from "../../../../actions/server/handleSocialMediaPost/handleSocialMediaPost";
 import { CAPTION_LIMITS } from "../constants/captionLimits";
@@ -90,7 +91,7 @@ export default function SocialPostForm({
     Record<string, boolean>
   >({});
   const [openTab, setOpenTab] = useState<string | undefined>(undefined);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewUrl = useObjectUrl(selectedFile);
   // Length of the selected video in seconds, for TikTok's duration cap.
   const [videoDurationSec, setVideoDurationSec] = useState<number | null>(
     null,
@@ -140,19 +141,6 @@ export default function SocialPostForm({
     photoTitle: textInputs.title,
   });
 
-  // Legitimate useEffect: object URL lifecycle for preview
-  useEffect(() => {
-    if (!selectedFile) {
-      setPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-    return () => {
-      URL.revokeObjectURL(url);
-    };
-  }, [selectedFile]);
-
   // Event handlers
   function handleAccountToggle(accountId: string) {
     const wasSelected = selectedAccounts[accountId];
@@ -175,6 +163,9 @@ export default function SocialPostForm({
       );
       if (account.platform === "pinterest") {
         pinterestHook.loadBoardsForAccount(account);
+      }
+      if (account.platform === "tiktok") {
+        tikTokCreatorHook.loadCreatorInfoForAccount(account.id);
       }
     } else {
       // Toggled OFF

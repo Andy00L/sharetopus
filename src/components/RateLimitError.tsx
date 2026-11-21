@@ -4,7 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, Clock, Loader } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useState } from "react";
 
 interface RateLimitErrorProps {
   readonly redirectPath?: string;
@@ -13,6 +13,8 @@ interface RateLimitErrorProps {
 
 /** Wait shown when resetIn is missing, zero, or not a number. */
 const DEFAULT_WAIT_SECONDS = 60;
+const COUNTDOWN_TICK_MS = 1000;
+const RETRY_LOADING_RESET_MS = 3000;
 
 function parseWaitSeconds(resetIn: string | number | undefined): number {
   const parsedSeconds = Number.parseInt(String(resetIn ?? ""), 10);
@@ -31,16 +33,16 @@ export default function RateLimitError({
     parseWaitSeconds(resetIn)
   );
 
-  const handleRetry = () => {
+  const handleRetry = useCallback(() => {
     setIsLoading(true);
     if (redirectPath) {
       router.push(redirectPath);
     } else {
       router.refresh();
     }
-    // Optional: Add a timeout to reset loading if navigation takes too long
-    setTimeout(() => setIsLoading(false), 3000);
-  };
+    setTimeout(() => setIsLoading(false), RETRY_LOADING_RESET_MS);
+  }, [router, redirectPath]);
+
   const formatTimeRemaining = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
@@ -49,24 +51,21 @@ export default function RateLimitError({
       .padStart(2, "0")}`;
   };
 
-  // Lets the countdown effect call the latest handleRetry without
-  // restarting every time the component renders.
-  const retryWhenCountdownEnds = useEffectEvent(handleRetry);
+  const tickCountdownWhileShown = useCallback(
+    (countdownDisplay: HTMLSpanElement | null) => {
+      if (!countdownDisplay || countdown <= 0) return;
 
-  // Synchronizes with the browser clock: one tick per second until zero,
-  // then the automatic retry.
-  useEffect(() => {
-    if (countdown <= 0) return;
+      const tickTimer = setTimeout(() => {
+        setCountdown(countdown - 1);
+        if (countdown === 1) {
+          handleRetry();
+        }
+      }, COUNTDOWN_TICK_MS);
 
-    const tickTimer = setTimeout(() => {
-      setCountdown(countdown - 1);
-      if (countdown === 1) {
-        retryWhenCountdownEnds();
-      }
-    }, 1000);
-
-    return () => clearTimeout(tickTimer);
-  }, [countdown]);
+      return () => clearTimeout(tickTimer);
+    },
+    [countdown, handleRetry]
+  );
 
   return (
     <div className="flex flex-col w-full items-center justify-center py-12 px-4">
@@ -82,9 +81,11 @@ export default function RateLimitError({
         <div className="bg-muted/30 rounded-lg p-6 text-center">
           <Clock className="h-12 w-12 mx-auto mb-4 text-primary/60" />
           <h2 className="text-xl font-semibold mb-2">Please Wait</h2>
-          {/* Add countdown display */}
           <div className="mb-4 bg-background/60 py-2 px-4 rounded-md inline-block">
-            <span className="text-xl font-mono font-semibold">
+            <span
+              ref={tickCountdownWhileShown}
+              className="text-xl font-mono font-semibold"
+            >
               {formatTimeRemaining(countdown)}
             </span>
           </div>

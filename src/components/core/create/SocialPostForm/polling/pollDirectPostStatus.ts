@@ -1,7 +1,7 @@
 "use client";
 
 import { toast } from "sonner";
-import { z } from "zod";
+import * as z from "zod/mini";
 import type {
   PostStatusJob,
   PostStatusResponse,
@@ -13,9 +13,10 @@ const FAST_PHASE_ATTEMPTS = 60;
 const FAST_PHASE_INTERVAL_MS = 1000;
 const SLOW_PHASE_ATTEMPTS = 60;
 const SLOW_PHASE_INTERVAL_MS = 2000;
+const STATUS_REQUEST_TIMEOUT_MS = 10_000;
 
 /** Runtime mirror of PostStatusResponse; the annotation keeps it in step with the shared type. */
-const PostStatusResponseSchema: z.ZodType<PostStatusResponse> = z.discriminatedUnion("success", [
+const PostStatusResponseSchema: z.ZodMiniType<PostStatusResponse> = z.discriminatedUnion("success", [
   z.object({
     success: z.literal(true),
     jobs: z.array(
@@ -23,7 +24,7 @@ const PostStatusResponseSchema: z.ZodType<PostStatusResponse> = z.discriminatedU
         event_id: z.string(),
         status: z.enum(["pending", "success", "failed"]),
         platform: z.string(),
-        error_message: z.string().nullable(),
+        error_message: z.nullable(z.string()),
       }),
     ),
     allTerminal: z.boolean(),
@@ -92,13 +93,13 @@ export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
 
   for (let attempt = 0; attempt < totalAttempts; attempt++) {
     try {
-      const res = await fetch(
+      const response = await fetch(
         `/api/posts/status?event_ids=${encodeURIComponent(query)}`,
-        { cache: "no-store" },
+        { cache: "no-store", signal: AbortSignal.timeout(STATUS_REQUEST_TIMEOUT_MS) },
       );
 
-      if (res.ok) {
-        const responseBody: unknown = await res.json();
+      if (response.ok) {
+        const responseBody: unknown = await response.json();
         const parsedResponse = PostStatusResponseSchema.safeParse(responseBody);
         const body = parsedResponse.success ? parsedResponse.data : null;
         if (body?.success) {
@@ -111,10 +112,10 @@ export async function pollDirectPostStatus(eventIds: string[]): Promise<void> {
           }
         }
       }
-    } catch (err) {
+    } catch (fetchError) {
       console.warn(
         "[pollDirectPostStatus] Transient fetch error, continuing:",
-        err instanceof Error ? err.message : err,
+        fetchError instanceof Error ? fetchError.message : fetchError,
       );
     }
 
