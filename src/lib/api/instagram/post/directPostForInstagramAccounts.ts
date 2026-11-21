@@ -14,9 +14,7 @@ const INSTAGRAM_ALT_TEXT_MAX_CHARS = 1_000;
 
 interface InstagramDirectPostConfig {
   account: SocialAccount;
-  mediaPath: string;
   coverTimestamp: number;
-  mediaType: string;
   accountContent: {
     accountId: string;
     title: string;
@@ -27,7 +25,6 @@ interface InstagramDirectPostConfig {
   /** Public signed URL Instagram pulls the media from. */
   mediaUrl: string;
   postType: "image" | "video";
-  fileName: string;
   batchId: string;
   scheduledPostId?: string;
   createdVia: CreatedVia;

@@ -70,7 +70,7 @@ export const POST = x402PaidEndpoint<DeleteBody, DeleteResult>({
     preflightScheduledPostChange({
       postIds: body.post_ids,
       principalId: principal.principalId,
-      eligibleStatuses: null,
+      action: "delete",
     }),
 
   handler: async ({ body, principal, requestId }) => {

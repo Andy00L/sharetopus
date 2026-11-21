@@ -34,7 +34,7 @@ export type DirectPostSuccess = {
   count: 1;
   message: string;
   failure?: undefined;
-  warnings?: DirectPostWarning[];
+  warnings: DirectPostWarning[];
 };
 
 export type DirectPostScheduleResult = DirectPostSuccess | DirectPostRefusal;

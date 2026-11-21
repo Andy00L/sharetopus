@@ -21,15 +21,12 @@ interface AccountContent {
 interface DirectPostConfig {
   account: SocialAccount;
   mediaPath: string;
-  coverTimestamp?: number;
   mediaType?: string;
   platformOptions: PlatformOptions;
   accountContent: AccountContent;
   userId: string | null;
-  fileName?: string;
   batchId: string;
   postType: MediaType;
-  isCronJob?: boolean;
   scheduledPostId?: string;
   createdVia: CreatedVia;
 }

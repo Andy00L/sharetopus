@@ -16,10 +16,12 @@ import type { Json } from "@/db/schema";
  * nonces, request ids, error messages, and post content never do.
  *
  * Outcome resolution follows how each route records its work:
- *   - post-now stores metadata.batch_id on the charge; the post.now consumer
- *     writes content_history on success and failed_posts on failure, both
- *     keyed by that batch_id (src/inngest/functions/processDirectPostHelpers.ts,
- *     src/actions/server/contentHistoryActions/storeFailedPost.ts).
+ *   - post-now stores metadata.batch_id on the charge. The post.now worker
+ *     (src/inngest/functions/processDirectPost.ts) publishes with that
+ *     batch_id, and the adapters write content_history keyed by it
+ *     (src/lib/api/_shared/directPostForAccountsGeneric.ts,
+ *     src/lib/platforms/providers/publishViaRegistry.ts). A failed post-now
+ *     is recorded in pending_direct_posts, not in failed_posts.
  *   - schedule wires x402_charges.scheduled_post_id; scheduled_posts.status
  *     carries the outcome.
  *   - every other action (connect, upload_url, list_*) buys no post.

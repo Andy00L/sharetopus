@@ -50,7 +50,7 @@ type HelperState = {
   recorded: Outcome[];
   platformCalls: number;
   publishResult: PublishResult;
-  cleanupDecisions: { platform: string; isPublished: boolean }[];
+  cleanupDecisions: { platform: string; mightBeLive: boolean }[];
   shouldDeleteMedia: boolean;
   stepLog: string[];
 };
@@ -105,7 +105,7 @@ mock.module("./publishToPlatform", () => ({
     helperState.platformCalls += 1;
     return helperState.publishResult;
   },
-  shouldDeleteMediaAfterPublish: (input: { platform: string; isPublished: boolean }) => {
+  shouldDeleteMediaAfterPublish: (input: { platform: string; mightBeLive: boolean }) => {
     helperState.cleanupDecisions.push(input);
     return helperState.shouldDeleteMedia;
   },
@@ -226,12 +226,37 @@ describe("processSinglePost", () => {
     helperState.load = { kind: "ready", post: postWithMedia };
     helperState.shouldDeleteMedia = false;
     await runWorker();
-    expect(helperState.cleanupDecisions).toEqual([{ platform: "tiktok", isPublished: true }]);
+    expect(helperState.cleanupDecisions).toEqual([{ platform: "tiktok", mightBeLive: true }]);
     expect(helperState.stepLog).not.toContain("cleanup-storage");
 
     helperState.shouldDeleteMedia = true;
     await runWorker();
     expect(helperState.stepLog).toContain("cleanup-storage");
+  });
+
+  test("a failure that may have published counts as possibly live for media cleanup, a refusal does not", async () => {
+    helperState.load = {
+      kind: "ready",
+      post: { ...POST, platform: "reddit", media_storage_path: "principal-1/clip.mp4" },
+    };
+    helperState.publishResult = {
+      ok: false,
+      reason: "transient",
+      message: "publish request failed (502)",
+      mayHavePublished: true,
+    };
+    await runWorker();
+    helperState.publishResult = {
+      ok: false,
+      reason: "policy_rejected",
+      message: "Rejected",
+      mayHavePublished: false,
+    };
+    await runWorker();
+    expect(helperState.cleanupDecisions).toEqual([
+      { platform: "reddit", mightBeLive: true },
+      { platform: "reddit", mightBeLive: false },
+    ]);
   });
 
   test("a first publish calls the platform once and records the outcome", async () => {

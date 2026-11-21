@@ -52,4 +52,19 @@ describe("validatePostFields", () => {
       validatePostFields(buildPost({ postType: "video", mediaStoragePath: "someone-else/a.mp4" }), PRINCIPAL_ID),
     ).toBe("Media path is not owned by the calling principal.");
   });
+
+  test("a path that starts in the caller's folder but climbs out of it is refused", () => {
+    for (const escapingPath of [
+      `${PRINCIPAL_ID}/../someone-else/a.mp4`,
+      `${PRINCIPAL_ID}/%2e%2e/someone-else/a.mp4`,
+      `${PRINCIPAL_ID}//a.mp4`,
+    ]) {
+      expect(
+        validatePostFields(buildPost({ postType: "video", mediaStoragePath: escapingPath }), PRINCIPAL_ID),
+      ).toBe("Media path is not owned by the calling principal.");
+    }
+    expect(
+      validatePostFields(buildPost({ postType: "video", mediaStoragePath: `${PRINCIPAL_ID}/clips/a.mp4` }), PRINCIPAL_ID),
+    ).toBeNull();
+  });
 });

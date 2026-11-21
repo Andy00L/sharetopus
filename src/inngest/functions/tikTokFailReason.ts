@@ -1,9 +1,9 @@
-import type { PlatformErrorReason } from "./platformErrors";
+import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 
 // fail_reason values of /v2/post/publish/status/fetch/ and the
 // post.publish.failed webhook:
 // https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status
-const TIKTOK_FAIL_REASON_CLASSES = new Map<string, PlatformErrorReason>([
+const TIKTOK_FAIL_REASON_CLASSES = new Map<string, PlatformFailureReason>([
   ["file_format_check_failed", "invalid_input"],
   ["duration_check_failed", "invalid_input"],
   ["frame_rate_check_failed", "invalid_input"],
@@ -20,7 +20,7 @@ const TIKTOK_FAIL_REASON_CLASSES = new Map<string, PlatformErrorReason>([
 
 export function classifyTikTokFailReason(
   failReason: string | null | undefined,
-): PlatformErrorReason {
+): PlatformFailureReason {
   if (!failReason) return "unknown";
   return TIKTOK_FAIL_REASON_CLASSES.get(failReason) ?? "unknown";
 }

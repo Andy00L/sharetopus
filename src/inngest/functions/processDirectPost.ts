@@ -52,7 +52,12 @@ export const processDirectPost = inngest.createFunction(
         if (!lockRead.success) throw new Error(`lock-lookup-failure: ${lockRead.message}`);
         const lock = lockRead.lock;
         if (!lock) {
-          return { success: false, message: "Dispatch lock no longer exists", contentId: null };
+          return {
+            success: false,
+            message: "Dispatch lock no longer exists",
+            contentId: null,
+            mayHavePublished: false,
+          };
         }
 
         if (attempt > 0) {
@@ -62,7 +67,12 @@ export const processDirectPost = inngest.createFunction(
           });
           if (!published.success) throw new Error(`publish-guard-failure: ${published.message}`);
           if (published.isPublished) {
-            return { success: true, message: "Published by an earlier attempt", contentId: data.batch_id };
+            return {
+              success: true,
+              message: "Published by an earlier attempt",
+              contentId: data.batch_id,
+              mayHavePublished: false,
+            };
           }
         }
 
@@ -71,6 +81,7 @@ export const processDirectPost = inngest.createFunction(
             success: false,
             message: `Not published: the post was already marked ${lock.status}`,
             contentId: null,
+            mayHavePublished: false,
           };
         }
 
@@ -79,7 +90,7 @@ export const processDirectPost = inngest.createFunction(
           if (fetched.reason === "lookup_failed") {
             throw new Error(`account-lookup-failure: ${fetched.message}`);
           }
-          return { success: false, message: fetched.message, contentId: null };
+          return { success: false, message: fetched.message, contentId: null, mayHavePublished: false };
         }
 
         const minted = await mintPublishMediaUrls({
@@ -96,8 +107,13 @@ export const processDirectPost = inngest.createFunction(
           throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}`);
         }
         return publishResult.ok
-          ? { success: true, message: null, contentId: data.batch_id }
-          : { success: false, message: publishResult.message, contentId: null };
+          ? { success: true, message: null, contentId: data.batch_id, mayHavePublished: false }
+          : {
+              success: false,
+              message: publishResult.message,
+              contentId: null,
+              mayHavePublished: publishResult.mayHavePublished,
+            };
       },
     );
 
@@ -112,7 +128,13 @@ export const processDirectPost = inngest.createFunction(
       return finalized;
     });
 
-    if (data.media_path && shouldDeleteMediaAfterPublish({ platform: data.platform, isPublished: result.success })) {
+    if (
+      data.media_path &&
+      shouldDeleteMediaAfterPublish({
+        platform: data.platform,
+        mightBeLive: result.success || result.mayHavePublished,
+      })
+    ) {
       await step.run("cleanup-media", () =>
         cleanupMediaIfUnreferenced(data.media_path, data.principal_id)
       );
@@ -164,7 +186,7 @@ async function finalizeExhaustedDirectPost(
   });
   const isFinalized = finalized.success && finalized.updated;
 
-  if (data.media_path && shouldDeleteMediaAfterPublish({ platform: data.platform, isPublished })) {
+  if (data.media_path && shouldDeleteMediaAfterPublish({ platform: data.platform, mightBeLive: true })) {
     await cleanupMediaIfUnreferenced(data.media_path, data.principal_id);
   }
 

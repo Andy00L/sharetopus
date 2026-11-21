@@ -1,5 +1,6 @@
 import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import type { MediaType } from "@/db/schema";
+import { isOwnedMediaPath } from "@/lib/storage/mediaPath";
 
 const PLATFORMS_READING_LINK: ReadonlySet<string> = new Set(["pinterest", "linkedin"]);
 
@@ -23,7 +24,7 @@ export function validatePostFields(
   if (post.postType !== "text" && !post.mediaStoragePath) {
     return `Media file is required for ${post.postType} posts.`;
   }
-  if (post.mediaStoragePath && !post.mediaStoragePath.startsWith(`${principalId}/`)) {
+  if (post.mediaStoragePath && !isOwnedMediaPath(post.mediaStoragePath, principalId)) {
     return "Media path is not owned by the calling principal.";
   }
   if (post.platform === "pinterest" && !post.pinterestBoardId) {

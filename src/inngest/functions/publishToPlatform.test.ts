@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import type { DirectPostScheduleResult } from "@/lib/api/_shared/directPostForAccountsGeneric";
 import type { RegistryPublishResult } from "@/lib/platforms/providers/publishViaRegistry";
@@ -209,6 +209,32 @@ describe("publishToPlatform", () => {
     expect(isSafeToRetryPost(rejected)).toBe(false);
   });
 
+  test("a published post with warnings stays a success and logs one line per warning kind", async () => {
+    adapterState.adapterResult = {
+      success: true,
+      count: 1,
+      message: "posted",
+      warnings: [
+        { kind: "content_history_not_recorded", message: "pooler connection lost" },
+        { kind: "tiktok_poll_not_sent", message: "event send failed" },
+      ],
+    };
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const result = await publishToPlatform(
+        buildRequest({ platform: "tiktok", scheduledPostId: "post-9" }),
+      );
+      expect(result).toEqual({ ok: true });
+      const loggedLines = errorSpy.mock.calls.map((call) => String(call[0]));
+      expect(loggedLines).toHaveLength(2);
+      expect(loggedLines[0]).toContain("kind=content_history_not_recorded");
+      expect(loggedLines[0]).toContain("scheduled_post_id=post-9");
+      expect(loggedLines[1]).toContain("kind=tiktok_poll_not_sent");
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   test("registry failures keep the text classifier, so only a rate limit is retried", async () => {
     adapterState.registryResult = { success: false, count: 0, message: "Too many requests" };
     const rateLimited = await publishToPlatform(buildRequest({ platform: "bluesky", postType: "text" }));
@@ -255,11 +281,11 @@ describe("mintPublishMediaUrls", () => {
 });
 
 describe("shouldDeleteMediaAfterPublish", () => {
-  test("keeps media TikTok still has to pull or a hotlinking platform serves, deletes it otherwise", () => {
-    expect(shouldDeleteMediaAfterPublish({ platform: "tiktok", isPublished: true })).toBe(false);
-    expect(shouldDeleteMediaAfterPublish({ platform: "reddit", isPublished: true })).toBe(false);
-    expect(shouldDeleteMediaAfterPublish({ platform: "instagram", isPublished: true })).toBe(true);
-    expect(shouldDeleteMediaAfterPublish({ platform: "tiktok", isPublished: false })).toBe(true);
-    expect(shouldDeleteMediaAfterPublish({ platform: "reddit", isPublished: false })).toBe(true);
+  test("keeps media a post that might be live still reads through TikTok's pull or a hotlink, deletes it otherwise", () => {
+    expect(shouldDeleteMediaAfterPublish({ platform: "tiktok", mightBeLive: true })).toBe(false);
+    expect(shouldDeleteMediaAfterPublish({ platform: "reddit", mightBeLive: true })).toBe(false);
+    expect(shouldDeleteMediaAfterPublish({ platform: "instagram", mightBeLive: true })).toBe(true);
+    expect(shouldDeleteMediaAfterPublish({ platform: "tiktok", mightBeLive: false })).toBe(true);
+    expect(shouldDeleteMediaAfterPublish({ platform: "reddit", mightBeLive: false })).toBe(true);
   });
 });

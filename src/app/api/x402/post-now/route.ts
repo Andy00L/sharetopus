@@ -62,7 +62,7 @@ function toDirectPostData(body: PostNowBody): DirectPostData {
     coverTimestamp: body.cover_timestamp,
     pinterestBoardId: body.pinterest_board_id,
     pinterestBoardName: body.pinterest_board_name,
-    pinterestLink: body.pinterest_link,
+    link: body.platform === "pinterest" ? body.pinterest_link : undefined,
     idempotency_key: body.idempotency_key,
   };
 }

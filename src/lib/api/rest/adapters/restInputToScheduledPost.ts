@@ -44,8 +44,8 @@ export function restInputToDirectPostData(
     mediaStoragePath: input.media_storage_path ?? "",
     pinterestBoardId: input.pinterest_board_id,
     pinterestBoardName: input.pinterest_board_name,
-    pinterestLink: input.pinterest_link,
+    link: input.platform === "pinterest" ? input.pinterest_link : undefined,
     idempotency_key: input.idempotency_key,
-    postOptions: buildRegistryPostOptions(input),
+    registryOptions: buildRegistryPostOptions(input),
   };
 }

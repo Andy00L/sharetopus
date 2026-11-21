@@ -6,10 +6,25 @@ import {
   releasePendingDirectPosts,
   type PendingDirectPostLock,
 } from "@/actions/server/data/pendingDirectPosts";
-import { buildPostNowEvent, type PostNowEventData } from "@/inngest/events/postNow";
+import {
+  buildPostNowEvent,
+  PostNowEventDataSchema,
+  type PostNowEventData,
+} from "@/inngest/events/postNow";
+
+export type RefusedPostNowEvent = {
+  dispatchId: string;
+  socialAccountId: string;
+  message: string;
+};
 
 export type DispatchPostNowEventsResult =
-  | { success: true; eventIds: string[]; freshCount: number }
+  | {
+      success: true;
+      eventIds: string[];
+      freshCount: number;
+      refused: RefusedPostNowEvent[];
+    }
   | { success: false; message: string; phase: "lock_insert" | "inngest_send" };
 
 function toDispatchLock(postData: PostNowEventData): PendingDirectPostLock {
@@ -22,6 +37,29 @@ function toDispatchLock(postData: PostNowEventData): PendingDirectPostLock {
     media_storage_path: postData.media_path,
     idempotency_key: postData.idempotency_key ?? null,
   };
+}
+
+function partitionBySchema(posts: PostNowEventData[]): {
+  validPosts: PostNowEventData[];
+  refused: RefusedPostNowEvent[];
+} {
+  const validPosts: PostNowEventData[] = [];
+  const refused: RefusedPostNowEvent[] = [];
+  for (const postData of posts) {
+    const parsed = PostNowEventDataSchema.safeParse(postData);
+    if (parsed.success) {
+      validPosts.push(postData);
+      continue;
+    }
+    refused.push({
+      dispatchId: postData.dispatch_id,
+      socialAccountId: postData.social_account_id,
+      message: `Invalid post.now event: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "event"}: ${issue.message}`)
+        .join("; ")}`,
+    });
+  }
+  return { validPosts, refused };
 }
 
 export async function dispatchPostNowEvents(
@@ -46,7 +84,17 @@ export async function dispatchPostNowEvents(
     };
   }
 
-  const lockResult = await lockPendingDirectPosts(posts, toDispatchLock);
+  const { validPosts, refused } = partitionBySchema(posts);
+  for (const refusedEvent of refused) {
+    console.error(
+      `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Refused account ${refusedEvent.socialAccountId}: ${refusedEvent.message}`,
+    );
+  }
+  if (validPosts.length === 0) {
+    return { success: true, eventIds: [], freshCount: 0, refused };
+  }
+
+  const lockResult = await lockPendingDirectPosts(validPosts, toDispatchLock);
   if (!lockResult.success) {
     console.error(
       `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Lock insert failed:`,
@@ -84,7 +132,7 @@ export async function dispatchPostNowEvents(
     }
   }
 
-  const skippedCount = posts.length - postsToSend.length;
+  const skippedCount = validPosts.length - postsToSend.length;
   console.log(
     `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${postsToSend.length} post.now event(s)` +
       (skippedCount > 0 ? ` (${skippedCount} already dispatched)` : ""),
@@ -96,5 +144,6 @@ export async function dispatchPostNowEvents(
       entry.kind === "locked" ? entry.item.dispatch_id : entry.existingEventId,
     ),
     freshCount: postsToSend.length,
+    refused,
   };
 }

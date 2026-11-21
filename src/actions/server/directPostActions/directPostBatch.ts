@@ -37,9 +37,8 @@ export type DirectPostData = {
   link?: string;
   pinterestBoardId?: string;
   pinterestBoardName?: string;
-  pinterestLink?: string;
   idempotency_key?: string;
-  postOptions?: Record<string, unknown> | null;
+  registryOptions?: Record<string, unknown> | null;
 };
 
 export type DirectPostBatchResult = {
@@ -247,7 +246,29 @@ export async function directPostBatch(
       };
     }
 
-    const duplicates = events.length - dispatch.freshCount;
+    for (const refusedEvent of dispatch.refused) {
+      rejected.push({
+        socialAccountId: refusedEvent.socialAccountId,
+        code: "invalid_input",
+        reason: refusedEvent.message,
+      });
+    }
+    const duplicates = events.length - dispatch.refused.length - dispatch.freshCount;
+    if (dispatch.freshCount + duplicates === 0) {
+      return {
+        success: false,
+        failure: "rejected",
+        message: "All posts failed validation.",
+        batchId,
+        details: {
+          total: posts.length,
+          dispatched: 0,
+          duplicates: 0,
+          rejected,
+        },
+        eventIds: [],
+      };
+    }
 
     return {
       success: true,
@@ -348,9 +369,6 @@ function validateDirectPostFields(
   post: DirectPostData,
   principalId: string,
 ): string | null {
-  if (post.platform !== "pinterest" && post.pinterestLink) {
-    return "pinterestLink is only valid when platform='pinterest'.";
-  }
   return validatePostFields(
     {
       socialAccountId: post.socialAccountId,
@@ -358,7 +376,7 @@ function validateDirectPostFields(
       postType: post.postType,
       mediaStoragePath: post.mediaStoragePath,
       description: post.description,
-      link: post.link ?? post.pinterestLink,
+      link: post.link,
       pinterestBoardId: post.pinterestBoardId,
     },
     principalId,
@@ -387,7 +405,7 @@ function buildEventPayloads(
   requestId?: string | null,
 ): PostNowEventData[] {
   return posts.map((post, index) => {
-    const link = post.link ?? post.pinterestLink ?? "";
+    const link = post.link ?? "";
     return {
       dispatch_id: randomUUID(),
       batch_id: batchId,
@@ -417,7 +435,7 @@ function buildEventPayloads(
         post.idempotency_key ??
         (useAgentBatchIdForIdempotency ? `${batchId}:${index}` : undefined),
       request_id: requestId ?? null,
-      post_options: post.postOptions ?? null,
+      post_options: post.registryOptions ?? null,
     };
   });
 }

@@ -17,6 +17,7 @@ export type DirectPostResult = {
   success: boolean;
   message: string | null;
   contentId: string | null;
+  mayHavePublished: boolean;
 };
 
 export async function findPublishedDirectPost(input: {

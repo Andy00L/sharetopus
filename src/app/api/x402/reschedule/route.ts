@@ -76,7 +76,7 @@ export const POST = x402PaidEndpoint<RescheduleBody, RescheduleResult>({
     preflightScheduledPostChange({
       postIds: [body.post_id],
       principalId: principal.principalId,
-      eligibleStatuses: ["scheduled", "cancelled"],
+      action: "reschedule",
     }),
 
   handler: async ({ body, principal, requestId }) => {

@@ -22,6 +22,7 @@ type WorkerState = {
   platformResult: PublishResult;
   platformCalls: number;
   finalizedOutcomes: DirectPostOutcome[];
+  cleanupDecisions: { platform: string; mightBeLive: boolean }[];
 };
 
 const EVENT_DATA: PostNowEventData = {
@@ -56,6 +57,7 @@ const workerState: WorkerState = {
   platformResult: { ok: true },
   platformCalls: 0,
   finalizedOutcomes: [],
+  cleanupDecisions: [],
 };
 
 mock.module("server-only", () => ({}));
@@ -93,7 +95,10 @@ mock.module("./publishToPlatform", () => ({
     workerState.platformCalls += 1;
     return workerState.platformResult;
   },
-  shouldDeleteMediaAfterPublish: () => true,
+  shouldDeleteMediaAfterPublish: (input: { platform: string; mightBeLive: boolean }) => {
+    workerState.cleanupDecisions.push(input);
+    return true;
+  },
 }));
 
 mock.module("./processSinglePostHelpers", () => ({
@@ -122,8 +127,14 @@ const step = {
   run: async (_stepId: string, stepBody: () => Promise<unknown>) => stepBody(),
 };
 
-function runWorker(attempt: number) {
-  return workerFunction.handler({ event: { data: EVENT_DATA }, step, attempt });
+const EVENT_DATA_WITH_MEDIA: PostNowEventData = {
+  ...EVENT_DATA,
+  post_type: "image",
+  media_path: "principal-1/photo.jpg",
+};
+
+function runWorker(attempt: number, eventData: PostNowEventData = EVENT_DATA) {
+  return workerFunction.handler({ event: { data: eventData }, step, attempt });
 }
 
 function runOnFailure(eventData: unknown = EVENT_DATA) {
@@ -140,6 +151,7 @@ beforeEach(() => {
   workerState.platformResult = { ok: true };
   workerState.platformCalls = 0;
   workerState.finalizedOutcomes = [];
+  workerState.cleanupDecisions = [];
 });
 
 describe("processDirectPost", () => {
@@ -190,6 +202,27 @@ describe("processDirectPost", () => {
       { status: "failed", failureReason: "publish request failed (502)" },
     ]);
   });
+
+  test("media cleanup treats a failure that may have published as possibly live", async () => {
+    workerState.platformResult = {
+      ok: false,
+      reason: "unknown",
+      message: "publish request failed (502)",
+      mayHavePublished: true,
+    };
+    await runWorker(0, EVENT_DATA_WITH_MEDIA);
+    workerState.platformResult = {
+      ok: false,
+      reason: "policy_rejected",
+      message: "Rejected",
+      mayHavePublished: false,
+    };
+    await runWorker(0, EVENT_DATA_WITH_MEDIA);
+    expect(workerState.cleanupDecisions).toEqual([
+      { platform: "linkedin", mightBeLive: true },
+      { platform: "linkedin", mightBeLive: false },
+    ]);
+  });
 });
 
 describe("processDirectPost onFailure", () => {
@@ -211,6 +244,11 @@ describe("processDirectPost onFailure", () => {
     workerState.isInHistory = true;
     await runOnFailure();
     expect(workerState.finalizedOutcomes).toEqual([{ status: "completed" }]);
+  });
+
+  test("exhausted retries treat the post as possibly live for media cleanup", async () => {
+    await runOnFailure(EVENT_DATA_WITH_MEDIA);
+    expect(workerState.cleanupDecisions).toEqual([{ platform: "linkedin", mightBeLive: true }]);
   });
 
   test("a failure event without readable post.now data finalizes nothing", async () => {

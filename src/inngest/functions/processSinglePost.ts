@@ -158,7 +158,10 @@ export const processSinglePost = inngest.createFunction(
 
     if (
       post.media_storage_path &&
-      shouldDeleteMediaAfterPublish({ platform: post.platform, isPublished: result.ok })
+      shouldDeleteMediaAfterPublish({
+        platform: post.platform,
+        mightBeLive: result.ok || result.mayHavePublished,
+      })
     ) {
       await step.run("cleanup-storage", () =>
         cleanupMediaIfUnreferenced(post.media_storage_path, post.principal_id),

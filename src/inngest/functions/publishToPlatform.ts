@@ -2,7 +2,10 @@ import "server-only";
 
 import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import type { CreatedVia, MediaType, Platform } from "@/db/schema";
-import type { DirectPostScheduleResult } from "@/lib/api/_shared/directPostForAccountsGeneric";
+import type {
+  DirectPostScheduleResult,
+  DirectPostWarning,
+} from "@/lib/api/_shared/directPostForAccountsGeneric";
 import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
 import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
 import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
@@ -102,9 +105,9 @@ export async function mintPublishMediaUrls(input: {
 // https://developers.tiktok.com/doc/content-posting-api-reference-direct-post
 export function shouldDeleteMediaAfterPublish(input: {
   platform: string;
-  isPublished: boolean;
+  mightBeLive: boolean;
 }): boolean {
-  if (!input.isPublished) return true;
+  if (!input.mightBeLive) return true;
   return input.platform !== "tiktok" && !platformHotlinksMedia(input.platform);
 }
 
@@ -128,8 +131,24 @@ export type PublishRequest = {
 
 export type PublishResult = { ok: true } | PublishFailure;
 
-function fromAdapterResult(adapterResult: DirectPostScheduleResult): PublishResult {
-  if (adapterResult.success) return { ok: true };
+function logPublishWarnings(request: PublishRequest, warnings: DirectPostWarning[]): void {
+  for (const warning of warnings) {
+    console.error(
+      `[publishToPlatform] Published with warning kind=${warning.kind} ` +
+        `platform=${request.platform} account=${request.account.id} batch_id=${request.batchId} ` +
+        `scheduled_post_id=${request.scheduledPostId ?? "none"}: ${warning.message}`,
+    );
+  }
+}
+
+function fromAdapterResult(
+  request: PublishRequest,
+  adapterResult: DirectPostScheduleResult,
+): PublishResult {
+  if (adapterResult.success) {
+    logPublishWarnings(request, adapterResult.warnings);
+    return { ok: true };
+  }
   return {
     ok: false,
     reason: adapterResult.failure.reason,
@@ -181,6 +200,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
           return buildInputRefusal("No board configured for Pinterest post");
         }
         return fromAdapterResult(
+          request,
           await directPostForPinterestAccounts({
             ...sharedConfig,
             coverTimestamp,
@@ -200,6 +220,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
       }
       case "linkedin":
         return fromAdapterResult(
+          request,
           await directPostForLinkedInAccounts({
             ...sharedConfig,
             mediaType: mimeType,
@@ -209,6 +230,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
         );
       case "tiktok":
         return fromAdapterResult(
+          request,
           await directPostForTikTokAccounts({
             ...sharedConfig,
             coverTimestamp,
@@ -224,19 +246,19 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
           return buildInputRefusal("Instagram does not support text posts");
         }
         return fromAdapterResult(
+          request,
           await directPostForInstagramAccounts({
             ...sharedConfig,
             postType,
             coverTimestamp,
-            mediaType: mimeType,
             accountContent,
             mediaUrl: media.urls.publicUrl ?? "",
-            fileName,
           }),
         );
       }
       case "youtube":
         return fromAdapterResult(
+          request,
           await directPostForYouTubeAccounts({
             ...sharedConfig,
             mediaType: mimeType,
@@ -246,6 +268,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
         );
       case "x":
         return fromAdapterResult(
+          request,
           await directPostForXAccounts({
             ...sharedConfig,
             mediaType: mimeType,
@@ -254,6 +277,7 @@ export async function publishToPlatform(request: PublishRequest): Promise<Publis
         );
       case "facebook":
         return fromAdapterResult(
+          request,
           await directPostForFacebookAccounts({
             ...sharedConfig,
             accountContent,

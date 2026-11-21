@@ -176,9 +176,9 @@ export function registerPublishPosts(server: McpServer): void {
               mediaStoragePath: post.media_storage_path,
               coverTimestamp: post.cover_timestamp,
               pinterestBoardId: post.pinterest_board_id,
-              pinterestLink: post.pinterest_link,
+              link: platform === "pinterest" ? post.pinterest_link : undefined,
               idempotency_key: idempotencyKeyFor(postIndex),
-              postOptions: buildRegistryPostOptions(post),
+              registryOptions: buildRegistryPostOptions(post),
             });
           }
         });

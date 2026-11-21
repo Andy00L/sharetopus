@@ -367,7 +367,6 @@ export async function confirmPostNowPayment(params: {
     coverTimestamp: undefined,
     pinterestBoardId: undefined,
     pinterestBoardName: undefined,
-    pinterestLink: undefined,
     // One post per payment even if the client retries confirm.
     idempotency_key: `blink:${verification.txSignature}`,
   };

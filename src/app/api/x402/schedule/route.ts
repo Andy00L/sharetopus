@@ -28,8 +28,8 @@ export const maxDuration = 60;
 // A post the platform rejects later, at publish time, is not refunded.
 
 /**
- * Options the scheduler reads (processSinglePostHelpers PostOptions). Unknown
- * keys are stripped, not rejected. No privacyLevel: TikTok posts from x402 are public.
+ * Options decodeStoredPostOptions reads (src/inngest/events/postOptions.ts).
+ * Unknown keys are stripped, not rejected. No privacyLevel: TikTok posts from x402 are public.
  */
 const PostOptionsSchema = z.object({
   link: z.string().url().max(2048).optional(),

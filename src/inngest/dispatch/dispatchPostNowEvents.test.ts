@@ -167,7 +167,12 @@ describe("dispatchPostNowEvents", () => {
 
     sendBehavior.shouldFail = false;
     const retriedDispatch = await dispatchPostNowEvents([buildPostNowData("dispatch-b", "key-1")]);
-    expect(retriedDispatch).toEqual({ success: true, eventIds: ["dispatch-b"], freshCount: 1 });
+    expect(retriedDispatch).toEqual({
+      success: true,
+      eventIds: ["dispatch-b"],
+      freshCount: 1,
+      refused: [],
+    });
     expect(sentEventIds).toEqual([["post.now-dispatch-b"]]);
   });
 
@@ -181,6 +186,7 @@ describe("dispatchPostNowEvents", () => {
       success: true,
       eventIds: ["dispatch-a", "dispatch-c"],
       freshCount: 1,
+      refused: [],
     });
     expect(sentEventIds).toEqual([["post.now-dispatch-a"], ["post.now-dispatch-c"]]);
   });
@@ -197,11 +203,29 @@ describe("dispatchPostNowEvents", () => {
     expect(sentEventIds).toEqual([["post.now-dispatch-a"]]);
   });
 
-  test("an event the shared schema rejects is never sent and frees its lock", async () => {
-    const malformedPost = { ...buildPostNowData("dispatch-a", "key-1"), dispatch_id: "" };
-    const failedDispatch = await dispatchPostNowEvents([malformedPost]);
-    expect(failedDispatch).toMatchObject({ success: false, phase: "inngest_send" });
-    expect(sentEventIds).toEqual([]);
-    expect([...lockStore.keys()]).toEqual([]);
+  test("an event the shared schema rejects is refused by name, takes no lock, and the rest are sent", async () => {
+    const malformedPost = {
+      ...buildPostNowData("dispatch-a", "key-1"),
+      social_account_id: "account-bad",
+      dispatch_id: "",
+    };
+    const dispatch = await dispatchPostNowEvents([
+      malformedPost,
+      buildPostNowData("dispatch-b", "key-2"),
+    ]);
+    expect(dispatch).toEqual({
+      success: true,
+      eventIds: ["dispatch-b"],
+      freshCount: 1,
+      refused: [
+        {
+          dispatchId: "",
+          socialAccountId: "account-bad",
+          message: expect.stringContaining("dispatch_id"),
+        },
+      ],
+    });
+    expect(sentEventIds).toEqual([["post.now-dispatch-b"]]);
+    expect([...lockStore.keys()]).toEqual(["dispatch-b"]);
   });
 });

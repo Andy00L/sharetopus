@@ -4,15 +4,15 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, runQuery } from "@/db/client";
 import { content_history, pending_tiktok_pulls, scheduled_posts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
-import type { PlatformErrorReason } from "@/inngest/functions/platformErrors";
+import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 
 export type TikTokPullOutcome =
   | { outcome: "completed"; tiktokPostId: string | null }
-  | { outcome: "failed"; reason: PlatformErrorReason; message: string };
+  | { outcome: "failed"; reason: PlatformFailureReason; message: string };
 
 export type FailedScheduledTikTokPost = {
   scheduledPostId: string;
-  reason: PlatformErrorReason;
+  reason: PlatformFailureReason;
   message: string;
 };
 

@@ -14,6 +14,8 @@ export const POST_CHANGE_ELIGIBLE_STATUSES = {
   delete: null,
 } as const satisfies Record<string, readonly PostStatus[] | null>;
 
+export type PostChangeAction = keyof typeof POST_CHANGE_ELIGIBLE_STATUSES;
+
 export type PostChangeRuleResult<Post> =
   | { ok: true; eligiblePosts: Post[] }
   | { ok: false; violation: "not_found" }
@@ -45,8 +47,9 @@ export function checkPostChangeRules<
 export async function preflightScheduledPostChange(params: {
   postIds: string[];
   principalId: string;
-  eligibleStatuses: readonly PostStatus[] | null;
+  action: PostChangeAction;
 }): Promise<PreflightResult> {
+  const eligibleStatuses = POST_CHANGE_ELIGIBLE_STATUSES[params.action];
   const { data: posts, error } = await runQuery(
     db
       .select({
@@ -65,7 +68,7 @@ export async function preflightScheduledPostChange(params: {
   const rules = checkPostChangeRules({
     posts,
     principalId: params.principalId,
-    eligibleStatuses: params.eligibleStatuses,
+    eligibleStatuses,
   });
   if (rules.ok) return { ok: true };
   switch (rules.violation) {
@@ -83,7 +86,7 @@ export async function preflightScheduledPostChange(params: {
         ok: false,
         httpStatus: 409,
         errorKind: "no_eligible_posts",
-        message: `None of these posts is in an eligible state (${(params.eligibleStatuses ?? []).join(", ")}).`,
+        message: `None of these posts is in an eligible state (${(eligibleStatuses ?? []).join(", ")}).`,
       };
     default: {
       const unhandledViolation: never = rules;

@@ -69,7 +69,7 @@ export const POST = x402PaidEndpoint<CancelBody, CancelResult>({
     preflightScheduledPostChange({
       postIds: body.post_ids,
       principalId: principal.principalId,
-      eligibleStatuses: ["scheduled"],
+      action: "cancel",
     }),
 
   handler: async ({ body, principal, requestId }) => {

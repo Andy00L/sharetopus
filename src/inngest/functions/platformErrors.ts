@@ -1,8 +1,6 @@
 import type { Platform } from "@/db/schema";
 import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 
-export type PlatformErrorReason = PlatformFailureReason;
-
 export type PublishFailure = {
   ok: false;
   reason: PlatformFailureReason;
