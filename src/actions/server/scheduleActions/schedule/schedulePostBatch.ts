@@ -233,6 +233,7 @@ export async function schedulePostBatch(
         .returning({
           ...POST_DUE_TARGET_COLUMNS,
           idempotency_key: scheduled_posts.idempotency_key,
+          batch_id: scheduled_posts.batch_id,
         }),
     );
 
@@ -317,7 +318,7 @@ export async function schedulePostBatch(
     void dispatchWebhooks(
       principalId,
       "post.scheduled",
-      inserted.map((insertedRow) => ({ post_id: insertedRow.id, batch_id: batchId })),
+      inserted.map((insertedRow) => ({ post_id: insertedRow.id, batch_id: insertedRow.batch_id ?? batchId })),
     );
 
     const duplicateNote =
