@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { drizzle } from "drizzle-orm/postgres-js";
 
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
+import type { PostNowEventData } from "@/inngest/events/postNow";
 
 type StoredLock = {
   event_id: string;
@@ -120,8 +120,9 @@ mock.module("@/db/client", () => ({
 
 mock.module("@/inngest/client", () => ({
   inngest: {
-    send: async (payloads: { id: string }[]) => {
+    send: async (payloads: { id: string; validate: () => Promise<void> }[]) => {
       if (sendBehavior.shouldFail) throw new Error("inngest unreachable");
+      for (const payload of payloads) await payload.validate();
       sentEventIds.push(payloads.map((payload) => payload.id));
       return { ids: payloads.map((payload) => payload.id) };
     },
@@ -130,32 +131,24 @@ mock.module("@/inngest/client", () => ({
 
 const { dispatchPostNowEvents } = await import("./dispatchPostNowEvents");
 
-function buildPostNowEvent(dispatchId: string, idempotencyKey: string) {
-  const data: PostNowEventData = {
+function buildPostNowData(dispatchId: string, idempotencyKey: string): PostNowEventData {
+  return {
+    dispatch_id: dispatchId,
     batch_id: "batch-1",
     principal_id: PRINCIPAL_ID,
     social_account_id: "account-1",
     platform: "x",
     post_type: "text",
-    account_content: {
-      accountId: "account-1",
-      title: "",
-      description: "hello",
-      link: "",
-      isCustomized: true,
-    },
+    account_content: { title: "", description: "hello", link: "" },
     platform_options: {},
     board: null,
-    cover_timestamp: 0,
-    file_name: "",
-    media_type: "",
+    cover_timestamp: null,
     media_path: "",
-    media_url: null,
-    tiktok_media_url: null,
-    dispatch_id: dispatchId,
+    created_via: "mcp",
     idempotency_key: idempotencyKey,
+    request_id: null,
+    post_options: null,
   };
-  return { name: "post.now" as const, data };
 }
 
 beforeEach(() => {
@@ -168,21 +161,21 @@ beforeEach(() => {
 describe("dispatchPostNowEvents", () => {
   test("a failed send removes its locks, so a keyed retry sends the event", async () => {
     sendBehavior.shouldFail = true;
-    const failedDispatch = await dispatchPostNowEvents([buildPostNowEvent("dispatch-a", "key-1")]);
+    const failedDispatch = await dispatchPostNowEvents([buildPostNowData("dispatch-a", "key-1")]);
     expect(failedDispatch).toMatchObject({ success: false, phase: "inngest_send" });
     expect([...lockStore.keys()]).toEqual([]);
 
     sendBehavior.shouldFail = false;
-    const retriedDispatch = await dispatchPostNowEvents([buildPostNowEvent("dispatch-b", "key-1")]);
+    const retriedDispatch = await dispatchPostNowEvents([buildPostNowData("dispatch-b", "key-1")]);
     expect(retriedDispatch).toEqual({ success: true, eventIds: ["dispatch-b"], freshCount: 1 });
     expect(sentEventIds).toEqual([["post.now-dispatch-b"]]);
   });
 
   test("a repeated key reports the existing lock's id and sends nothing", async () => {
-    await dispatchPostNowEvents([buildPostNowEvent("dispatch-a", "key-1")]);
+    await dispatchPostNowEvents([buildPostNowData("dispatch-a", "key-1")]);
     const repeatedDispatch = await dispatchPostNowEvents([
-      buildPostNowEvent("dispatch-b", "key-1"),
-      buildPostNowEvent("dispatch-c", "key-2"),
+      buildPostNowData("dispatch-b", "key-1"),
+      buildPostNowData("dispatch-c", "key-2"),
     ]);
     expect(repeatedDispatch).toEqual({
       success: true,
@@ -193,14 +186,22 @@ describe("dispatchPostNowEvents", () => {
   });
 
   test("a failed lookup of existing locks is an error and frees the locks this call wrote", async () => {
-    await dispatchPostNowEvents([buildPostNowEvent("dispatch-a", "key-1")]);
+    await dispatchPostNowEvents([buildPostNowData("dispatch-a", "key-1")]);
     failingStatements.add("select");
     const failedDispatch = await dispatchPostNowEvents([
-      buildPostNowEvent("dispatch-b", "key-1"),
-      buildPostNowEvent("dispatch-c", "key-2"),
+      buildPostNowData("dispatch-b", "key-1"),
+      buildPostNowData("dispatch-c", "key-2"),
     ]);
     expect(failedDispatch).toMatchObject({ success: false, phase: "lock_insert" });
     expect([...lockStore.keys()]).toEqual(["dispatch-a"]);
     expect(sentEventIds).toEqual([["post.now-dispatch-a"]]);
+  });
+
+  test("an event the shared schema rejects is never sent and frees its lock", async () => {
+    const malformedPost = { ...buildPostNowData("dispatch-a", "key-1"), dispatch_id: "" };
+    const failedDispatch = await dispatchPostNowEvents([malformedPost]);
+    expect(failedDispatch).toMatchObject({ success: false, phase: "inngest_send" });
+    expect(sentEventIds).toEqual([]);
+    expect([...lockStore.keys()]).toEqual([]);
   });
 });

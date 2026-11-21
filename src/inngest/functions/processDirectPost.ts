@@ -1,16 +1,20 @@
+import type { FailureEventPayload } from "inngest";
+
 import { inngest } from "@/inngest/client";
-import type { Platform } from "@/db/schema";
-import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
+import { postNowEvent, PostNowEventDataSchema } from "@/inngest/events/postNow";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
-import { classifyDirectPostFailure, isSafeToRetryPost } from "./platformErrors";
+import { isSafeToRetryPost } from "./platformErrors";
 import {
-  callDirectPostFromEvent,
+  buildDirectPublishRequest,
   findPublishedDirectPost,
-  postNowEvent,
   type DirectPostResult,
-  type PostNowEventData,
 } from "./processDirectPostHelpers";
 import { cleanupMediaIfUnreferenced } from "./processSinglePostHelpers";
+import {
+  mintPublishMediaUrls,
+  publishToPlatform,
+  shouldDeleteMediaAfterPublish,
+} from "./publishToPlatform";
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import {
   finalizePendingDirectPost,
@@ -32,15 +36,11 @@ export const processDirectPost = inngest.createFunction(
       key: "event.data.social_account_id",
     },
     triggers: [postNowEvent],
-    onFailure: async ({ event, error }) => finalizeExhaustedDirectPost(event.data.event.data, error),
+    onFailure: async ({ event, error }) => finalizeExhaustedDirectPost(event, error),
   },
   async ({ event, step, attempt }) => {
     const data = event.data;
     const dispatchId = data.dispatch_id;
-    if (!dispatchId) {
-      console.error("[processDirectPost] Event has no dispatch_id; nothing guards a publish");
-      return { ok: false, reason: "missing_dispatch_id", message: null, contentId: null };
-    }
 
     // Inngest stores every step result and the account row carries the
     // OAuth tokens, so the account is loaded inside the step that uses it:
@@ -82,14 +82,22 @@ export const processDirectPost = inngest.createFunction(
           return { success: false, message: fetched.message, contentId: null };
         }
 
-        const platformResult = await callDirectPostFromEvent(data, fetched.account);
-        const failureReason = platformResult.success
-          ? null
-          : classifyDirectPostFailure(data.platform, platformResult.message ?? undefined);
-        if (failureReason && isSafeToRetryPost(failureReason)) {
-          throw new Error(`retryable: ${failureReason}: ${platformResult.message}`);
+        const minted = await mintPublishMediaUrls({
+          platform: data.platform,
+          storagePath: data.media_path,
+          principalId: data.principal_id,
+        });
+        if (!minted.success) throw new Error(`signed-url-failure: ${minted.message}`);
+
+        const publishResult = await publishToPlatform(
+          buildDirectPublishRequest({ data, account: fetched.account, urls: minted }),
+        );
+        if (!publishResult.ok && isSafeToRetryPost(publishResult)) {
+          throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}`);
         }
-        return platformResult;
+        return publishResult.ok
+          ? { success: true, message: null, contentId: data.batch_id }
+          : { success: false, message: publishResult.message, contentId: null };
       },
     );
 
@@ -104,7 +112,7 @@ export const processDirectPost = inngest.createFunction(
       return finalized;
     });
 
-    if (data.media_path && shouldDeleteMediaAfter({ platform: data.platform, isPublished: result.success })) {
+    if (data.media_path && shouldDeleteMediaAfterPublish({ platform: data.platform, isPublished: result.success })) {
       await step.run("cleanup-media", () =>
         cleanupMediaIfUnreferenced(data.media_path, data.principal_id)
       );
@@ -119,17 +127,19 @@ export const processDirectPost = inngest.createFunction(
   }
 );
 
-function shouldDeleteMediaAfter(input: { platform: Platform; isPublished: boolean }): boolean {
-  if (!input.isPublished) return true;
-  return input.platform !== "tiktok" && !platformHotlinksMedia(input.platform);
-}
-
 async function finalizeExhaustedDirectPost(
-  data: PostNowEventData,
+  failureEvent: FailureEventPayload,
   error: Error,
 ): Promise<{ finalized: boolean; reason?: string }> {
+  const parsedEvent = PostNowEventDataSchema.safeParse(failureEvent.data.event.data);
+  if (!parsedEvent.success) {
+    console.error(
+      "[finalizeExhaustedDirectPost] Failure event carried no readable post.now data; cannot finalize.",
+    );
+    return { finalized: false, reason: "unreadable_event" };
+  }
+  const data = parsedEvent.data;
   const dispatchId = data.dispatch_id;
-  if (!dispatchId) return { finalized: false, reason: "missing_dispatch_id" };
 
   const lockRead = await readDirectPostLock(dispatchId);
   if (!lockRead.success) {
@@ -154,7 +164,7 @@ async function finalizeExhaustedDirectPost(
   });
   const isFinalized = finalized.success && finalized.updated;
 
-  if (data.media_path && shouldDeleteMediaAfter({ platform: data.platform, isPublished })) {
+  if (data.media_path && shouldDeleteMediaAfterPublish({ platform: data.platform, isPublished })) {
     await cleanupMediaIfUnreferenced(data.media_path, data.principal_id);
   }
 

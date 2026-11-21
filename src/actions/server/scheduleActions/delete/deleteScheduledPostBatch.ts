@@ -8,6 +8,10 @@ import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { deleteUnreferencedMediaFiles } from "../../data/storageFiles/deleteSupabaseFile";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import {
+  checkPostChangeRules,
+  POST_CHANGE_ELIGIBLE_STATUSES,
+} from "../preflightScheduledPostChange";
 
 export type DeleteScheduledPostBatchResult = {
   message: string;
@@ -60,6 +64,7 @@ export async function deleteScheduledPostBatch(
         .select({
           id: scheduled_posts.id,
           principal_id: scheduled_posts.principal_id,
+          status: scheduled_posts.status,
           media_storage_path: scheduled_posts.media_storage_path,
         })
         .from(scheduled_posts)
@@ -77,29 +82,33 @@ export async function deleteScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return {
-        success: false,
-        failure: "not_found",
-        message: "No posts found with the provided IDs.",
-      };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.delete,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+        case "not_eligible":
+          return { success: false, failure: "not_found", message: "No posts found with the provided IDs." };
+        case "not_owned":
+          console.warn(
+            `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to delete ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
 
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
-      console.warn(
-        `[deleteScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to delete ${unauthorizedPosts.length} post(s) they don't own`,
-      );
-      return {
-        success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    const postIdsToDelete = posts.map((post) => post.id);
+    const postIdsToDelete = rules.eligiblePosts.map((post) => post.id);
     const { error: deleteError } = await runQuery(
       db
         .delete(scheduled_posts)

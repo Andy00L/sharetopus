@@ -6,59 +6,37 @@ import {
   releasePendingDirectPosts,
   type PendingDirectPostLock,
 } from "@/actions/server/data/pendingDirectPosts";
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
+import { buildPostNowEvent, type PostNowEventData } from "@/inngest/events/postNow";
 
 export type DispatchPostNowEventsResult =
   | { success: true; eventIds: string[]; freshCount: number }
   | { success: false; message: string; phase: "lock_insert" | "inngest_send" };
 
-type PostNowEvent = { name: "post.now"; data: PostNowEventData };
-
-type DispatchablePostNowEvent = PostNowEvent & { data: { dispatch_id: string } };
-
-function hasDispatchId(
-  postEvent: PostNowEvent,
-): postEvent is DispatchablePostNowEvent {
-  return (
-    typeof postEvent.data.dispatch_id === "string" &&
-    postEvent.data.dispatch_id.length > 0
-  );
-}
-
-function toDispatchLock(postEvent: DispatchablePostNowEvent): PendingDirectPostLock {
+function toDispatchLock(postData: PostNowEventData): PendingDirectPostLock {
   return {
-    event_id: postEvent.data.dispatch_id,
-    batch_id: postEvent.data.batch_id,
-    principal_id: postEvent.data.principal_id,
-    social_account_id: postEvent.data.social_account_id,
-    platform: postEvent.data.platform,
-    media_storage_path: postEvent.data.media_path,
-    idempotency_key: postEvent.data.idempotency_key ?? null,
+    event_id: postData.dispatch_id,
+    batch_id: postData.batch_id,
+    principal_id: postData.principal_id,
+    social_account_id: postData.social_account_id,
+    platform: postData.platform,
+    media_storage_path: postData.media_path,
+    idempotency_key: postData.idempotency_key ?? null,
   };
 }
 
 export async function dispatchPostNowEvents(
-  events: PostNowEvent[]
+  posts: PostNowEventData[]
 ): Promise<DispatchPostNowEventsResult> {
-  const requestId = events[0]?.data.request_id ?? null;
+  const requestId = posts[0]?.request_id ?? null;
 
-  if (events.length === 0) {
+  if (posts.length === 0) {
     return { success: false, message: "No events provided", phase: "lock_insert" };
   }
 
-  const dispatchableEvents = events.filter(hasDispatchId);
-  if (dispatchableEvents.length !== events.length) {
-    return {
-      success: false,
-      message: "Event missing dispatch_id (caller must set per event)",
-      phase: "lock_insert",
-    };
-  }
-
   const keyedPrincipalIds = new Set(
-    dispatchableEvents
-      .filter((postEvent) => postEvent.data.idempotency_key)
-      .map((postEvent) => postEvent.data.principal_id),
+    posts
+      .filter((postData) => postData.idempotency_key)
+      .map((postData) => postData.principal_id),
   );
   if (keyedPrincipalIds.size > 1) {
     return {
@@ -68,7 +46,7 @@ export async function dispatchPostNowEvents(
     };
   }
 
-  const lockResult = await lockPendingDirectPosts(dispatchableEvents, toDispatchLock);
+  const lockResult = await lockPendingDirectPosts(posts, toDispatchLock);
   if (!lockResult.success) {
     console.error(
       `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Lock insert failed:`,
@@ -81,24 +59,17 @@ export async function dispatchPostNowEvents(
     };
   }
 
-  const eventsToSend = lockResult.entries.flatMap((entry) =>
+  const postsToSend = lockResult.entries.flatMap((entry) =>
     entry.kind === "locked" ? [entry.item] : [],
   );
 
-  if (eventsToSend.length > 0) {
+  if (postsToSend.length > 0) {
     try {
-      await inngest.send(
-        eventsToSend.map((postEvent) => ({
-          ...postEvent,
-          // Inngest drops a repeated event id for 24 hours:
-          // https://www.inngest.com/docs/guides/handling-idempotency
-          id: `post.now-${postEvent.data.dispatch_id}`,
-        })),
-      );
+      await inngest.send(postsToSend.map(buildPostNowEvent));
     } catch (sendError) {
       const message = sendError instanceof Error ? sendError.message : String(sendError);
       const released = await releasePendingDirectPosts(
-        eventsToSend.map((postEvent) => postEvent.data.dispatch_id),
+        postsToSend.map((postData) => postData.dispatch_id),
       );
       console.error(
         `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Inngest send failed:`,
@@ -113,17 +84,17 @@ export async function dispatchPostNowEvents(
     }
   }
 
-  const skippedCount = dispatchableEvents.length - eventsToSend.length;
+  const skippedCount = posts.length - postsToSend.length;
   console.log(
-    `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${eventsToSend.length} post.now event(s)` +
+    `[dispatchPostNowEvents] [req=${requestId ?? "?"}] Dispatched ${postsToSend.length} post.now event(s)` +
       (skippedCount > 0 ? ` (${skippedCount} already dispatched)` : ""),
   );
 
   return {
     success: true,
     eventIds: lockResult.entries.map((entry) =>
-      entry.kind === "locked" ? entry.item.data.dispatch_id : entry.existingEventId,
+      entry.kind === "locked" ? entry.item.dispatch_id : entry.existingEventId,
     ),
-    freshCount: eventsToSend.length,
+    freshCount: postsToSend.length,
   };
 }

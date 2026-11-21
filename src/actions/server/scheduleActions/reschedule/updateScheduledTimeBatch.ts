@@ -11,6 +11,10 @@ import {
 } from "@/inngest/dispatch/sendPostDueEvents";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import {
+  checkPostChangeRules,
+  POST_CHANGE_ELIGIBLE_STATUSES,
+} from "../preflightScheduledPostChange";
 
 const RATE_LIMIT = 30;
 const RATE_WINDOW_SECONDS = 60;
@@ -105,31 +109,34 @@ export async function updateScheduledTimeBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return { success: false, failure: "not_found", message: "No posts found." };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.reschedule,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, failure: "not_found", message: "No posts found." };
+        case "not_owned":
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return {
+            success: false,
+            failure: "not_eligible",
+            message: "Only scheduled or cancelled posts can be rescheduled.",
+          };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
-
-    const unauthorized = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorized.length > 0) {
-      return {
-        success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorized.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    const reschedulable = posts.filter(
-      (post) => post.status === "scheduled" || post.status === "cancelled",
-    );
-    if (reschedulable.length === 0) {
-      return {
-        success: false,
-        failure: "not_eligible",
-        message: "Only scheduled or cancelled posts can be rescheduled.",
-      };
-    }
+    const reschedulable = rules.eligiblePosts;
 
     const cancelledIds = new Set(
       reschedulable

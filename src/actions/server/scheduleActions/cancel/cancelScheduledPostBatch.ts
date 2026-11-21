@@ -7,6 +7,10 @@ import { scheduled_posts } from "@/db/schema";
 import type { CreatedVia } from "@/db/schema";
 import type { PostChangeFailure } from "@/lib/types/postBatch";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import {
+  checkPostChangeRules,
+  POST_CHANGE_ELIGIBLE_STATUSES,
+} from "../preflightScheduledPostChange";
 
 export type CancelScheduledPostBatchResult = {
   message: string;
@@ -70,38 +74,33 @@ export async function cancelScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return {
-        success: false,
-        failure: "not_found",
-        message: "No posts found with the provided IDs.",
-      };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.cancel,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, failure: "not_found", message: "No posts found with the provided IDs." };
+        case "not_owned":
+          console.warn(
+            `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to cancel ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            failure: "not_found",
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return { success: false, failure: "not_eligible", message: "Only scheduled posts can be cancelled." };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
-
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
-      console.warn(
-        `[cancelScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to cancel ${unauthorizedPosts.length} post(s) they don't own`,
-      );
-      return {
-        success: false,
-        failure: "not_found",
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    const cancellablePosts = posts.filter(
-      (post) => post.status === "scheduled",
-    );
-    if (cancellablePosts.length === 0) {
-      return {
-        success: false,
-        failure: "not_eligible",
-        message: "Only scheduled posts can be cancelled.",
-      };
-    }
+    const cancellablePosts = rules.eligiblePosts;
 
     const cancellableIds = cancellablePosts.map((post) => post.id);
     const { data: cancelledRows, error: updateError } = await runQuery(

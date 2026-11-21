@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 type Outcome =
-  | { ok: true; contentId: string; mediaUrl: string | null }
-  | { ok: false; reason: string; message: string };
+  | { ok: true; contentId: string }
+  | { ok: false; reason: string; message: string; mayHavePublished: boolean };
+
+type PublishResult = { ok: true } | Extract<Outcome, { ok: false }>;
 
 type PostRow = {
   id: string;
@@ -47,6 +49,9 @@ type HelperState = {
   claimCalls: ClaimInput[];
   recorded: Outcome[];
   platformCalls: number;
+  publishResult: PublishResult;
+  cleanupDecisions: { platform: string; isPublished: boolean }[];
+  shouldDeleteMedia: boolean;
   stepLog: string[];
 };
 
@@ -57,6 +62,9 @@ const helperState: HelperState = {
   claimCalls: [],
   recorded: [],
   platformCalls: 0,
+  publishResult: { ok: true },
+  cleanupDecisions: [],
+  shouldDeleteMedia: true,
   stepLog: [],
 };
 
@@ -83,16 +91,24 @@ mock.module("./processSinglePostHelpers", () => ({
   },
   findPublishedContentHistory: async () => ({ success: true, isPublished: helperState.isPublished }),
   checkPlatformCompatibility: () => ({ compatible: true, reason: "" }),
-  buildPlatformSignedUrls: async () => ({ success: true, mediaUrl: null, tiktokMediaUrl: null }),
-  callPlatformDirectPost: async (): Promise<Outcome> => {
-    helperState.platformCalls += 1;
-    return { ok: true, contentId: POST.id, mediaUrl: null };
-  },
+  buildScheduledPublishRequest: () => ({ ok: true, request: {} }),
   recordPostStatus: async (input: { result: Outcome }) => {
     helperState.recorded.push(input.result);
     return { success: true, updated: true };
   },
   cleanupMediaIfUnreferenced: async () => ({ success: true, deleted: false }),
+}));
+
+mock.module("./publishToPlatform", () => ({
+  mintPublishMediaUrls: async () => ({ success: true, publicUrl: null, tiktokUrl: null }),
+  publishToPlatform: async (): Promise<PublishResult> => {
+    helperState.platformCalls += 1;
+    return helperState.publishResult;
+  },
+  shouldDeleteMediaAfterPublish: (input: { platform: string; isPublished: boolean }) => {
+    helperState.cleanupDecisions.push(input);
+    return helperState.shouldDeleteMedia;
+  },
 }));
 
 const { processSinglePost } = await import("./processSinglePost");
@@ -141,6 +157,9 @@ beforeEach(() => {
   helperState.claimCalls = [];
   helperState.recorded = [];
   helperState.platformCalls = 0;
+  helperState.publishResult = { ok: true };
+  helperState.cleanupDecisions = [];
+  helperState.shouldDeleteMedia = true;
   helperState.stepLog = [];
 });
 
@@ -152,7 +171,12 @@ describe("processSinglePost", () => {
       { scheduledPostId: POST.id, dispatchedScheduledAt: EVENT_DATA.scheduled_at },
     ]);
     expect(helperState.recorded).toEqual([
-      { ok: false, reason: "invalid_input", message: "Social account not found or deleted" },
+      {
+        ok: false,
+        reason: "invalid_input",
+        message: "Social account not found or deleted",
+        mayHavePublished: false,
+      },
     ]);
   });
 
@@ -170,7 +194,44 @@ describe("processSinglePost", () => {
     helperState.isPublished = true;
     await runWorker();
     expect(helperState.platformCalls).toBe(0);
-    expect(helperState.recorded).toEqual([{ ok: true, contentId: POST.id, mediaUrl: null }]);
+    expect(helperState.recorded).toEqual([{ ok: true, contentId: POST.id }]);
+  });
+
+  test("a transient refusal that published nothing throws so Inngest retries it", async () => {
+    helperState.publishResult = {
+      ok: false,
+      reason: "transient",
+      message: "token refresh failed",
+      mayHavePublished: false,
+    };
+    await expect(runWorker()).rejects.toThrow("retryable: transient");
+    expect(helperState.recorded).toEqual([]);
+  });
+
+  test("a failure that may have published is recorded, never retried", async () => {
+    const mayHavePublished: PublishResult = {
+      ok: false,
+      reason: "transient",
+      message: "publish request failed (502)",
+      mayHavePublished: true,
+    };
+    helperState.publishResult = mayHavePublished;
+    await runWorker();
+    expect(helperState.platformCalls).toBe(1);
+    expect(helperState.recorded).toEqual([mayHavePublished]);
+  });
+
+  test("media cleanup follows the shared decision for the published outcome", async () => {
+    const postWithMedia = { ...POST, platform: "tiktok", media_storage_path: "principal-1/clip.mp4" };
+    helperState.load = { kind: "ready", post: postWithMedia };
+    helperState.shouldDeleteMedia = false;
+    await runWorker();
+    expect(helperState.cleanupDecisions).toEqual([{ platform: "tiktok", isPublished: true }]);
+    expect(helperState.stepLog).not.toContain("cleanup-storage");
+
+    helperState.shouldDeleteMedia = true;
+    await runWorker();
+    expect(helperState.stepLog).toContain("cleanup-storage");
   });
 
   test("a first publish calls the platform once and records the outcome", async () => {
@@ -199,7 +260,7 @@ describe("processSinglePost onFailure", () => {
       { scheduledPostId: POST.id, dispatchedScheduledAt: EVENT_DATA.scheduled_at },
     ]);
     expect(helperState.recorded).toEqual([
-      { ok: false, reason: "transient", message: "Retries exhausted: boom" },
+      { ok: false, reason: "transient", message: "Retries exhausted: boom", mayHavePublished: true },
     ]);
   });
 
@@ -208,7 +269,7 @@ describe("processSinglePost onFailure", () => {
     helperState.isPublished = true;
     await runOnFailure();
     expect(helperState.claimCalls).toEqual([]);
-    expect(helperState.recorded).toEqual([{ ok: true, contentId: POST.id, mediaUrl: null }]);
+    expect(helperState.recorded).toEqual([{ ok: true, contentId: POST.id }]);
   });
 
   test("leaves a row rescheduled since dispatch untouched", async () => {

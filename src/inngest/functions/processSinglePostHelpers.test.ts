@@ -99,6 +99,14 @@ mock.module("server-only", () => ({}));
 
 mock.module("@/actions/api/adminSupabase", () => ({ adminSupabase: {} }));
 
+const storageState: {
+  deleteResult: { success: true; removed: boolean; message: string } | { success: false; message: string };
+} = { deleteResult: { success: true, removed: true, message: "File deleted successfully." } };
+
+mock.module("@/actions/server/data/storageFiles/deleteSupabaseFile", () => ({
+  deleteSupabaseFile: async () => storageState.deleteResult,
+}));
+
 mock.module("@/db/client", () => ({
   db: drizzle.mock(),
   runQuery: async (query: unknown) => {
@@ -110,7 +118,9 @@ mock.module("@/db/client", () => ({
   },
 }));
 
-const { claimPostForProcessing } = await import("./processSinglePostHelpers");
+const { claimPostForProcessing, cleanupMediaIfUnreferenced } = await import(
+  "./processSinglePostHelpers"
+);
 
 function storePost(changes: Partial<StoredPost>): void {
   postStore.set(POST_ID, { id: POST_ID, status: "scheduled", scheduled_at: FIRST_TIME, ...changes });
@@ -159,5 +169,21 @@ describe("a post.due run re-checks the row before it claims it", () => {
     expect(await claimForEventTime(FIRST_TIME)).toBe(true);
     expect(await claimForEventTime("2026-11-20T10:00:00.000Z")).toBe(false);
     expect(postStore.get(POST_ID)?.status).toBe("processing");
+  });
+});
+
+describe("cleanupMediaIfUnreferenced", () => {
+  test("reports a file kept for another post as not deleted", async () => {
+    storageState.deleteResult = {
+      success: true,
+      removed: false,
+      message: "Cannot delete: This file is still used by a post or a publish in progress.",
+    };
+    const kept = await cleanupMediaIfUnreferenced("principal-1/clip.mp4", "principal-1");
+    expect(kept.deleted).toBe(false);
+
+    storageState.deleteResult = { success: true, removed: true, message: "File deleted successfully." };
+    const removed = await cleanupMediaIfUnreferenced("principal-1/clip.mp4", "principal-1");
+    expect(removed.deleted).toBe(true);
   });
 });

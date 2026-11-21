@@ -11,6 +11,10 @@ import {
 } from "@/inngest/dispatch/sendPostDueEvents";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
 import {
+  checkPostChangeRules,
+  POST_CHANGE_ELIGIBLE_STATUSES,
+} from "../preflightScheduledPostChange";
+import {
   buildResumeSchedule,
   countBumpedRows,
 } from "./_shared/bumpPastScheduleToFuture";
@@ -71,32 +75,32 @@ export async function resumeScheduledPostBatch(
         message: "Could not load your posts. Please try again.",
       };
     }
-    if (posts.length === 0) {
-      return { success: false, message: "No posts found." };
+    const rules = checkPostChangeRules({
+      posts,
+      principalId,
+      eligibleStatuses: POST_CHANGE_ELIGIBLE_STATUSES.resume,
+    });
+    if (!rules.ok) {
+      switch (rules.violation) {
+        case "not_found":
+          return { success: false, message: "No posts found." };
+        case "not_owned":
+          console.warn(
+            `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to resume ${rules.foreignPostIds.length} post(s) they don't own`,
+          );
+          return {
+            success: false,
+            message: `No post found for id(s): ${rules.foreignPostIds.join(", ")}.`,
+          };
+        case "not_eligible":
+          return { success: false, message: "No posts are in a resumable (cancelled) state." };
+        default: {
+          const unhandledViolation: never = rules;
+          return unhandledViolation;
+        }
+      }
     }
-
-    const unauthorizedPosts = posts.filter(
-      (post) => post.principal_id !== principalId,
-    );
-    if (unauthorizedPosts.length > 0) {
-      console.warn(
-        `[resumeScheduledPostBatch] [req=${requestId ?? "?"}] Ownership violation: ${principalId} tried to resume ${unauthorizedPosts.length} post(s) they don't own`,
-      );
-      return {
-        success: false,
-        message: `No post found for id(s): ${unauthorizedPosts.map((post) => post.id).join(", ")}.`,
-      };
-    }
-
-    const resumableIds = posts
-      .filter((post) => post.status === "cancelled")
-      .map((post) => post.id);
-    if (resumableIds.length === 0) {
-      return {
-        success: false,
-        message: "No posts are in a resumable (cancelled) state.",
-      };
-    }
+    const resumableIds = rules.eligiblePosts.map((post) => post.id);
 
     const resumeSchedule = buildResumeSchedule(new Date());
     const { data: resumedRows, error: updateError } = await runQuery(

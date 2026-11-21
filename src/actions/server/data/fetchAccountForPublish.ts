@@ -6,8 +6,18 @@ import { db, runQuery } from "@/db/client";
 import { social_accounts } from "@/db/schema";
 import type { SocialAccount } from "@/lib/types/dbTypes";
 
+export const WITHHELD_ACCOUNT_JSON =
+  "[social account withheld: it carries OAuth tokens]" as const;
+
+// Inngest stores every step result as JSON, so toJSON decides what a step
+// that returns this account would store:
+// https://www.inngest.com/docs/reference/functions/step-run
+export type PublishAccount = SocialAccount & {
+  toJSON(): typeof WITHHELD_ACCOUNT_JSON;
+};
+
 export type FetchAccountForPublishResult =
-  | { success: true; account: SocialAccount }
+  | { success: true; account: PublishAccount }
   | {
       success: false;
       reason: "not_found" | "lookup_failed";
@@ -50,5 +60,8 @@ export async function fetchAccountForPublish(
       message: "Social account not found or deleted",
     };
   }
-  return { success: true, account };
+  return {
+    success: true,
+    account: { ...account, toJSON: () => WITHHELD_ACCOUNT_JSON },
+  };
 }

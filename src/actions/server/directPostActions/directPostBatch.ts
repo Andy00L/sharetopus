@@ -7,20 +7,19 @@ import {
   describeAccountMismatch,
   loadOwnedAccountPlatforms,
 } from "@/actions/server/data/loadOwnedAccountPlatforms";
-import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { pending_direct_posts } from "@/db/schema";
 import type { CreatedVia, MediaType, Platform } from "@/db/schema";
 import { dispatchPostNowEvents } from "@/inngest/dispatch/dispatchPostNowEvents";
-import type { PostNowEventData } from "@/inngest/functions/processDirectPostHelpers";
-import { buildProxiedTikTokMediaUrl } from "@/lib/api/tiktok/buildProxiedTikTokMediaUrl";
+import type { PostNowEventData } from "@/inngest/events/postNow";
+import { buildDefaultPlatformOptions } from "@/inngest/events/postOptions";
 import type { PlatformOptions } from "@/lib/types/dbTypes";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
-import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { randomUUID } from "node:crypto";
 import { checkRateLimit } from "../rateLimit/checkRateLimit";
+import { validatePostFields } from "../scheduleActions/validatePostFields";
 
 const MAX_BATCH_SIZE = 30;
 const RATE_LIMIT = 20;
@@ -35,6 +34,7 @@ export type DirectPostData = {
   mediaStoragePath: string;
   coverTimestamp?: number;
   platformOptions?: PlatformOptions;
+  link?: string;
   pinterestBoardId?: string;
   pinterestBoardName?: string;
   pinterestLink?: string;
@@ -120,7 +120,7 @@ export async function directPostBatch(
     const validPosts: DirectPostData[] = [];
 
     for (const post of posts) {
-      const validationError = validatePostFields(post, principalId);
+      const validationError = validateDirectPostFields(post, principalId);
       if (validationError) {
         rejected.push({
           socialAccountId: post.socialAccountId ?? "unknown",
@@ -197,10 +197,10 @@ export async function directPostBatch(
       };
     }
 
-    const urlResult = await buildMediaUrlsCached(ownedPosts, principalId);
-    if (!urlResult.success) {
+    const mediaCheck = await confirmMediaFilesExist(ownedPosts);
+    if (!mediaCheck.success) {
       console.error(
-        `[directPostBatch] [req=${requestId ?? "?"}] ${urlResult.message}`,
+        `[directPostBatch] [req=${requestId ?? "?"}] ${mediaCheck.message}`,
       );
       return {
         success: false,
@@ -220,8 +220,6 @@ export async function directPostBatch(
     const events = buildEventPayloads(
       ownedPosts,
       batchId,
-      urlResult.signedByPath,
-      urlResult.tiktokByPath,
       principalId,
       source,
       useAgentBatchId,
@@ -283,7 +281,7 @@ export async function preflightDirectPost(
   post: DirectPostData,
   principalId: string,
 ): Promise<PreflightResult> {
-  const validationError = validatePostFields(post, principalId);
+  const validationError = validateDirectPostFields(post, principalId);
   if (validationError) {
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
   }
@@ -346,162 +344,74 @@ export async function preflightDirectPost(
   return { ok: true };
 }
 
-function validatePostFields(
+function validateDirectPostFields(
   post: DirectPostData,
   principalId: string,
 ): string | null {
-  if (!post.socialAccountId || !post.platform || !post.postType) {
-    return "Missing required fields (socialAccountId, platform, postType).";
+  if (post.platform !== "pinterest" && post.pinterestLink) {
+    return "pinterestLink is only valid when platform='pinterest'.";
   }
-  if (post.postType !== "text" && !post.mediaStoragePath) {
-    return `Media file is required for ${post.postType} posts.`;
-  }
-
-  if (
-    post.mediaStoragePath &&
-    !post.mediaStoragePath.startsWith(`${principalId}/`)
-  ) {
-    return "Media path is not owned by the calling principal.";
-  }
-  if (post.platform === "pinterest" && !post.pinterestBoardId) {
-    return "Pinterest posts require pinterestBoardId.";
-  }
-  if (
-    post.platform !== "pinterest" &&
-    (post.pinterestBoardId || post.pinterestLink)
-  ) {
-    return "Pinterest-specific fields are only valid when platform='pinterest'.";
-  }
-
-  if (post.description) {
-    const limit = resolvePlatformTextLimit(post.platform);
-    if (post.description.length > limit) {
-      return `Caption exceeds ${post.platform} limit of ${limit} chars (got ${post.description.length}).`;
-    }
-  }
-
-  return null;
+  return validatePostFields(
+    {
+      socialAccountId: post.socialAccountId,
+      platform: post.platform,
+      postType: post.postType,
+      mediaStoragePath: post.mediaStoragePath,
+      description: post.description,
+      link: post.link ?? post.pinterestLink,
+      pinterestBoardId: post.pinterestBoardId,
+    },
+    principalId,
+  );
 }
 
-async function buildMediaUrlsCached(
+async function confirmMediaFilesExist(
   posts: DirectPostData[],
-  principalId: string,
-): Promise<
-  | {
-      success: true;
-      signedByPath: Map<string, string>;
-      tiktokByPath: Map<string, string>;
-    }
-  | { success: false; message: string }
-> {
-  const signedPaths = new Set<string>();
-  const tiktokPaths = new Set<string>();
-
-  for (const post of posts) {
-    if (!post.mediaStoragePath) continue;
-    if (post.platform === "tiktok") tiktokPaths.add(post.mediaStoragePath);
-    else signedPaths.add(post.mediaStoragePath);
-  }
-
-  const tiktokByPath = new Map<string, string>();
-
-  const signedUrls = await getServerSignedViewUrls([...signedPaths]);
+): Promise<{ success: true } | { success: false; message: string }> {
+  const mediaPaths = posts
+    .map((post) => post.mediaStoragePath)
+    .filter((mediaPath) => mediaPath !== "");
+  const signedUrls = await getServerSignedViewUrls(mediaPaths);
   if (!signedUrls.success) {
-    return {
-      success: false,
-      message: `Failed to mint signed URLs: ${signedUrls.message}`,
-    };
+    return { success: false, message: `Media file check failed: ${signedUrls.message}` };
   }
-  const signedByPath = signedUrls.urlByPath;
-
-  for (const path of tiktokPaths) {
-    const result = buildProxiedTikTokMediaUrl({
-      mediaPath: path,
-      principalId,
-    });
-    if (!result.success) {
-      return {
-        success: false,
-        message: `Failed to build TikTok URL for ${path}: ${result.message}`,
-      };
-    }
-    tiktokByPath.set(path, result.url);
-  }
-
-  return { success: true, signedByPath, tiktokByPath };
+  return { success: true };
 }
 
 function buildEventPayloads(
   posts: DirectPostData[],
   batchId: string,
-  signedByPath: Map<string, string>,
-  tiktokByPath: Map<string, string>,
   principalId: string,
   source: CreatedVia,
   useAgentBatchIdForIdempotency: boolean,
   requestId?: string | null,
-): { name: "post.now"; data: PostNowEventData }[] {
+): PostNowEventData[] {
   return posts.map((post, index) => {
-    const fileName = post.mediaStoragePath
-      ? (post.mediaStoragePath.split("/").pop() ?? "")
-      : "";
-    const mediaType = deriveMediaMimeType(fileName, post.postType);
-
-    const platformOptions: PlatformOptions = post.platformOptions ?? {
-      tiktok: {
-        disableComment: false,
-        disableDuet: false,
-        disableStitch: false,
-      },
-      pinterest: {
-        privacyLevel: "PUBLIC",
-        board: post.pinterestBoardId ?? "",
-        link: post.pinterestLink ?? "",
-      },
-      linkedin: { visibility: "PUBLIC" },
-    };
-
-    const board: PostNowEventData["board"] =
-      post.platform === "pinterest"
-        ? {
-            boardID: post.pinterestBoardId ?? "",
-            boardName: post.pinterestBoardName ?? "Board",
-            accountId: post.socialAccountId,
-            isSelected: true,
-          }
-        : null;
-
-    const mediaUrl =
-      post.platform !== "tiktok" && post.mediaStoragePath
-        ? (signedByPath.get(post.mediaStoragePath) ?? null)
-        : null;
-    const tiktokMediaUrl =
-      post.platform === "tiktok" && post.mediaStoragePath
-        ? (tiktokByPath.get(post.mediaStoragePath) ?? null)
-        : null;
-
-    const data: PostNowEventData = {
+    const link = post.link ?? post.pinterestLink ?? "";
+    return {
+      dispatch_id: randomUUID(),
       batch_id: batchId,
       principal_id: principalId,
       social_account_id: post.socialAccountId,
       platform: post.platform,
       post_type: post.postType,
       account_content: {
-        accountId: post.socialAccountId,
         title: post.title ?? "",
         description: post.description ?? "",
-        link: post.pinterestLink ?? "",
-        isCustomized: true,
+        link,
       },
-      platform_options: platformOptions,
-      board,
-      cover_timestamp: post.coverTimestamp ?? 1000,
-      file_name: fileName,
-      media_type: mediaType,
+      platform_options:
+        post.platformOptions ??
+        buildDefaultPlatformOptions({ pinterestBoardId: post.pinterestBoardId, link }),
+      board:
+        post.platform === "pinterest"
+          ? {
+              boardID: post.pinterestBoardId ?? "",
+              boardName: post.pinterestBoardName ?? null,
+            }
+          : null,
+      cover_timestamp: post.coverTimestamp ?? null,
       media_path: post.mediaStoragePath,
-      media_url: mediaUrl,
-      tiktok_media_url: tiktokMediaUrl,
-      dispatch_id: randomUUID(),
       created_via: source,
       idempotency_key:
         post.idempotency_key ??
@@ -509,7 +419,5 @@ function buildEventPayloads(
       request_id: requestId ?? null,
       post_options: post.postOptions ?? null,
     };
-
-    return { name: "post.now" as const, data };
   });
 }

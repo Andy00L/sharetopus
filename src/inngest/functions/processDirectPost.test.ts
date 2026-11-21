@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { DirectPostOutcome } from "@/actions/server/data/pendingDirectPosts";
-import type { PostNowEventData } from "./processDirectPostHelpers";
+import type { PostNowEventData } from "@/inngest/events/postNow";
 
 type LockState = {
   batch_id: string;
@@ -11,37 +11,34 @@ type LockState = {
   created_at: string;
 };
 
+type PublishResult =
+  | { ok: true }
+  | { ok: false; reason: string; message: string; mayHavePublished: boolean };
+
 type WorkerState = {
   lock: LockState | null;
   isInHistory: boolean;
   isFinalizeFailing: boolean;
-  platformResult: { success: boolean; message: string | null; contentId: string | null };
+  platformResult: PublishResult;
   platformCalls: number;
   finalizedOutcomes: DirectPostOutcome[];
 };
 
 const EVENT_DATA: PostNowEventData = {
+  dispatch_id: "dispatch-1",
   batch_id: "batch-1",
   principal_id: "principal-1",
   social_account_id: "account-1",
   platform: "linkedin",
   post_type: "text",
-  account_content: {
-    accountId: "account-1",
-    title: "",
-    description: "hello",
-    link: "",
-    isCustomized: true,
-  },
+  account_content: { title: "", description: "hello", link: "" },
   platform_options: {},
   board: null,
-  cover_timestamp: 0,
-  file_name: "",
-  media_type: "",
+  cover_timestamp: null,
   media_path: "",
-  media_url: null,
-  tiktok_media_url: null,
-  dispatch_id: "dispatch-1",
+  created_via: "web",
+  request_id: null,
+  post_options: null,
 };
 
 const PROCESSING_LOCK: LockState = {
@@ -56,7 +53,7 @@ const workerState: WorkerState = {
   lock: PROCESSING_LOCK,
   isInHistory: false,
   isFinalizeFailing: false,
-  platformResult: { success: true, message: null, contentId: EVENT_DATA.batch_id },
+  platformResult: { ok: true },
   platformCalls: 0,
   finalizedOutcomes: [],
 };
@@ -70,10 +67,6 @@ mock.module("@/inngest/client", () => ({
       handler: (input: unknown) => Promise<unknown>,
     ) => ({ config, handler }),
   },
-}));
-
-mock.module("@/lib/platforms/capabilities", () => ({
-  platformHotlinksMedia: () => false,
 }));
 
 mock.module("@/actions/server/data/fetchAccountForPublish", () => ({
@@ -90,12 +83,17 @@ mock.module("@/actions/server/data/pendingDirectPosts", () => ({
 }));
 
 mock.module("./processDirectPostHelpers", () => ({
-  postNowEvent: { event: "post.now" },
   findPublishedDirectPost: async () => ({ success: true, isPublished: workerState.isInHistory }),
-  callDirectPostFromEvent: async () => {
+  buildDirectPublishRequest: () => ({}),
+}));
+
+mock.module("./publishToPlatform", () => ({
+  mintPublishMediaUrls: async () => ({ success: true, publicUrl: null, tiktokUrl: null }),
+  publishToPlatform: async () => {
     workerState.platformCalls += 1;
     return workerState.platformResult;
   },
+  shouldDeleteMediaAfterPublish: () => true,
 }));
 
 mock.module("./processSinglePostHelpers", () => ({
@@ -128,9 +126,9 @@ function runWorker(attempt: number) {
   return workerFunction.handler({ event: { data: EVENT_DATA }, step, attempt });
 }
 
-function runOnFailure() {
+function runOnFailure(eventData: unknown = EVENT_DATA) {
   return workerFunction.config.onFailure({
-    event: { data: { event: { data: EVENT_DATA } } },
+    event: { data: { event: { data: eventData } } },
     error: new Error("boom"),
   });
 }
@@ -139,7 +137,7 @@ beforeEach(() => {
   workerState.lock = PROCESSING_LOCK;
   workerState.isInHistory = false;
   workerState.isFinalizeFailing = false;
-  workerState.platformResult = { success: true, message: null, contentId: EVENT_DATA.batch_id };
+  workerState.platformResult = { ok: true };
   workerState.platformCalls = 0;
   workerState.finalizedOutcomes = [];
 });
@@ -170,9 +168,27 @@ describe("processDirectPost", () => {
   });
 
   test("a rate-limited publish throws so Inngest retries it", async () => {
-    workerState.platformResult = { success: false, message: "Too many requests (429)", contentId: null };
+    workerState.platformResult = {
+      ok: false,
+      reason: "rate_limited",
+      message: "Too many requests (429)",
+      mayHavePublished: false,
+    };
     await expect(runWorker(0)).rejects.toThrow("retryable: rate_limited");
     expect(workerState.finalizedOutcomes).toEqual([]);
+  });
+
+  test("a failure that may have published is recorded failed, never retried", async () => {
+    workerState.platformResult = {
+      ok: false,
+      reason: "unknown",
+      message: "publish request failed (502)",
+      mayHavePublished: true,
+    };
+    await runWorker(0);
+    expect(workerState.finalizedOutcomes).toEqual([
+      { status: "failed", failureReason: "publish request failed (502)" },
+    ]);
   });
 });
 
@@ -195,5 +211,11 @@ describe("processDirectPost onFailure", () => {
     workerState.isInHistory = true;
     await runOnFailure();
     expect(workerState.finalizedOutcomes).toEqual([{ status: "completed" }]);
+  });
+
+  test("a failure event without readable post.now data finalizes nothing", async () => {
+    const result = await runOnFailure({ dispatch_id: "dispatch-1" });
+    expect(result).toEqual({ finalized: false, reason: "unreadable_event" });
+    expect(workerState.finalizedOutcomes).toEqual([]);
   });
 });

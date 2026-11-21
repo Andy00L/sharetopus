@@ -1,18 +1,34 @@
+import type { MediaType } from "@/db/schema";
+import {
+  PLATFORM_LABELS,
+  platformSupportsMediaType,
+  type PostingPlatform,
+} from "@/lib/platforms/capabilities";
 import { ClientSocialAccount } from "@/lib/types/dbTypes";
 import { AccountError, BoardInfo, ContentInfo } from "./handleSocialMediaPost";
 
 export function validateAccountContent(
   accounts: ClientSocialAccount[],
   accountContent: ContentInfo[],
-  platform: string,
-  boards?: BoardInfo[],
-  postType?: string,
+  platform: PostingPlatform,
+  boards: BoardInfo[] | undefined,
+  postType: MediaType,
 ): AccountError[] {
   const errors: AccountError[] = [];
 
   accounts.forEach((account) => {
     const content = accountContent.find((contentEntry) => contentEntry.accountId === account.id);
     const displayName = account.display_name ?? account.username ?? account.id;
+
+    if (!platformSupportsMediaType(platform, postType)) {
+      errors.push({
+        accountId: account.id,
+        platform,
+        displayName,
+        error: `${PLATFORM_LABELS[platform]} does not support ${postType} posts`,
+      });
+      return;
+    }
 
     if (!content) {
       errors.push({

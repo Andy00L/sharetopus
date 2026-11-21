@@ -1,42 +1,26 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { z } from "zod";
 
 import { storeFailedPost } from "@/actions/server/contentHistoryActions/storeFailedPost";
-import { getServerSignedViewUrl } from "@/actions/server/data/getServerSignedViewUrl";
 import { deleteSupabaseFile } from "@/actions/server/data/storageFiles/deleteSupabaseFile";
 import { db, runQuery } from "@/db/client";
 import { content_history, scheduled_posts, social_accounts } from "@/db/schema";
 import type { PostStatus } from "@/db/schema";
-import { directPostForFacebookAccounts } from "@/lib/api/facebook/post/directPostForFacebookAccounts";
-import { directPostForInstagramAccounts } from "@/lib/api/instagram/post/directPostForInstagramAccounts";
-import { directPostForLinkedInAccounts } from "@/lib/api/linkedin/post/directPostForLinkedInAccounts";
-import { directPostForPinterestAccounts } from "@/lib/api/pinterest/post/directPostForPinterestAccounts";
-import { buildTikTokMediaUrl } from "@/lib/api/tiktok/buildTikTokMediaUrl";
-import { directPostForTikTokAccounts } from "@/lib/api/tiktok/post/directPostForTikTokAccounts";
-import { directPostForXAccounts } from "@/lib/api/x/post/directPostForXAccounts";
-import { directPostForYouTubeAccounts } from "@/lib/api/youtube/post/directPostForYouTubeAccounts";
 import {
   PLATFORM_LABELS,
   isPostingPlatform,
-  isSchedulablePlatform,
-  platformHotlinksMedia,
   platformSupportsMediaType,
 } from "@/lib/platforms/capabilities";
-import { publishViaRegistry } from "@/lib/platforms/providers/publishViaRegistry";
-import { RUNTIME } from "@/lib/jobs/runtimeConfig";
 import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
-import type {
-  PlatformOptions,
-  PrivacyLevel,
-  SocialAccount,
-} from "@/lib/types/dbTypes";
+import { decodeStoredPostOptions } from "@/inngest/events/postOptions";
+import type { SocialAccount } from "@/lib/types/dbTypes";
 import { toJsonObject } from "@/lib/utils/jsonObject";
 import "server-only";
 import {
-  classifyDirectPostFailure,
-  type PlatformErrorReason,
+  buildInputRefusal,
   type PlatformPostOutcome,
+  type PublishFailure,
 } from "./platformErrors";
+import type { PublishMediaUrls, PublishRequest } from "./publishToPlatform";
 
 type ScheduledPost = typeof scheduled_posts.$inferSelect;
 
@@ -124,6 +108,10 @@ export async function claimPostForProcessing(input: {
   return { success: true, claimed: data.length > 0 };
 }
 
+export function resolvePostBatchId(post: Pick<ScheduledPost, "id" | "batch_id">): string {
+  return post.batch_id ?? post.id;
+}
+
 export type PublishedCheckResult =
   | { success: true; isPublished: boolean }
   | { success: false; message: string };
@@ -137,7 +125,7 @@ export async function findPublishedContentHistory(
       .from(content_history)
       .where(
         and(
-          eq(content_history.batch_id, post.batch_id ?? post.id),
+          eq(content_history.batch_id, resolvePostBatchId(post)),
           eq(content_history.scheduled_post_id, post.id),
         ),
       )
@@ -147,94 +135,6 @@ export async function findPublishedContentHistory(
     return { success: false, message: `content history lookup failed: ${error.message}` };
   }
   return { success: true, isPublished: data.length > 0 };
-}
-
-export type SignedUrlsResult =
-  | {
-      success: true;
-      message: string;
-      mediaUrl: string | null;
-      tiktokMediaUrl: string | null;
-    }
-  | { success: false; message: string };
-
-export const HOTLINK_SIGNED_URL_TTL_S = 30 * 24 * 60 * 60;
-
-export async function buildPlatformSignedUrls(
-  post: ScheduledPost,
-  platform: string,
-): Promise<SignedUrlsResult> {
-  if (!post.media_storage_path || post.media_storage_path === "") {
-    return {
-      success: true,
-      message: "no media",
-      mediaUrl: null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  if (!isPostingPlatform(platform)) {
-    const registrySigned = await getServerSignedViewUrl(
-      post.media_storage_path,
-      platformHotlinksMedia(platform)
-        ? HOTLINK_SIGNED_URL_TTL_S
-        : RUNTIME.signedUrlTtlS,
-    );
-    if (!registrySigned.success) {
-      return {
-        success: false,
-        message: registrySigned.message ?? "Failed to mint signed URL",
-      };
-    }
-    return {
-      success: true,
-      message: "registry signed url minted",
-      mediaUrl: registrySigned.url ?? null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  if (platform === "youtube" || platform === "x") {
-    return {
-      success: true,
-      message: "buffer-upload platform, no url minted",
-      mediaUrl: null,
-      tiktokMediaUrl: null,
-    };
-  }
-
-  if (platform === "tiktok") {
-    const tiktokUrlResult = await buildTikTokMediaUrl({
-      mediaPath: post.media_storage_path,
-      principalId: post.principal_id,
-    });
-    if (!tiktokUrlResult.success) {
-      return { success: false, message: tiktokUrlResult.message };
-    }
-    return {
-      success: true,
-      message: `tiktok ${tiktokUrlResult.mode} url minted`,
-      mediaUrl: null,
-      tiktokMediaUrl: tiktokUrlResult.url,
-    };
-  }
-
-  const signed = await getServerSignedViewUrl(
-    post.media_storage_path,
-    RUNTIME.signedUrlTtlS,
-  );
-  if (!signed.success) {
-    return {
-      success: false,
-      message: signed.message ?? "Failed to mint signed URL",
-    };
-  }
-  return {
-    success: true,
-    message: "signed url minted",
-    mediaUrl: signed.url ?? null,
-    tiktokMediaUrl: null,
-  };
 }
 
 export type CompatibilityResult = {
@@ -267,279 +167,42 @@ export function checkPlatformCompatibility(
   };
 }
 
-export type CallPlatformResult = PlatformPostOutcome;
+export type ScheduledPublishRequestResult =
+  | { ok: true; request: PublishRequest }
+  | PublishFailure;
 
-const PRIVACY_LEVELS = {
-  PUBLIC_TO_EVERYONE: "PUBLIC_TO_EVERYONE",
-  MUTUAL_FOLLOW_FRIENDS: "MUTUAL_FOLLOW_FRIENDS",
-  FOLLOWER_OF_CREATOR: "FOLLOWER_OF_CREATOR",
-  SELF_ONLY: "SELF_ONLY",
-  PUBLIC: "PUBLIC",
-  PROTECTED: "PROTECTED",
-} as const satisfies { [Level in PrivacyLevel]: Level };
-
-const PostOptionsSchema = z.object({
-  link: z.string().nullish(),
-  board: z.string().nullish(),
-  boardName: z.string().nullish(),
-  privacyLevel: z.enum(PRIVACY_LEVELS).nullish(),
-  visibility: z.string().nullish(),
-  disableComment: z.boolean().nullish(),
-  disableDuet: z.boolean().nullish(),
-  disableStitch: z.boolean().nullish(),
-  brandContentToggle: z.boolean().nullish(),
-  yourBrand: z.boolean().nullish(),
-  brandedContent: z.boolean().nullish(),
-  isAigc: z.boolean().nullish(),
-  privacyStatus: z.enum(["public", "unlisted", "private"]).nullish(),
-});
-
-export async function callPlatformDirectPost(args: {
+export function buildScheduledPublishRequest(input: {
   post: ScheduledPost;
   account: SocialAccount;
-  mediaUrl: string | null;
-  tiktokMediaUrl: string | null;
-  fileName: string;
-  mediaType: string;
-}): Promise<CallPlatformResult> {
-  const { post, account, mediaUrl, tiktokMediaUrl, fileName, mediaType } = args;
-
-  const createdVia = post.created_via ?? "web";
-
-  const platform = post.platform;
-  if (!isSchedulablePlatform(platform)) {
-    return {
-      ok: false,
-      reason: "invalid_input",
-      message: `Unsupported platform: ${platform}`,
-    };
+  urls: PublishMediaUrls;
+}): ScheduledPublishRequestResult {
+  const { post, account, urls } = input;
+  const decodedOptions = decodeStoredPostOptions(post.post_options);
+  if (!decodedOptions.ok) {
+    return buildInputRefusal(`Malformed post_options: ${decodedOptions.invalidKeys.join(", ")}`);
   }
+  const { platformOptions, pinterestBoard, link } = decodedOptions.decoded;
 
-  const parsedOptions = PostOptionsSchema.safeParse(post.post_options ?? {});
-  if (!parsedOptions.success) {
-    const invalidKeys = parsedOptions.error.issues
-      .map((issue) => issue.path.join("."))
-      .join(", ");
-    return {
-      ok: false,
-      reason: "invalid_input",
-      message: `Malformed post_options: ${invalidKeys}`,
-    };
-  }
-  const options = parsedOptions.data;
-  const accountContent = {
-    accountId: account.id,
-    title: post.post_title ?? "",
-    description: post.post_description ?? "",
-    link: options.link ?? "",
-    isCustomized: true,
-  };
-
-  const platformOptions: PlatformOptions = {
-    pinterest: {
-      privacyLevel: options.privacyLevel ?? "PUBLIC",
-      board: options.board ?? "",
-      link: options.link ?? "",
-    },
-    linkedin: {
-      visibility: options.visibility ?? "PUBLIC",
-    },
-    tiktok: {
-      privacyLevel: options.privacyLevel ?? undefined,
-      disableComment: options.disableComment ?? false,
-      disableDuet: options.disableDuet ?? false,
-      disableStitch: options.disableStitch ?? false,
-      brandContentToggle: options.brandContentToggle ?? undefined,
-      yourBrand: options.yourBrand ?? undefined,
-      brandedContent: options.brandedContent ?? undefined,
-      isAigc: options.isAigc ?? undefined,
-    },
-    youtube: {
-      privacyStatus: options.privacyStatus ?? "public",
+  return {
+    ok: true,
+    request: {
+      account,
+      principalId: post.principal_id,
+      platform: post.platform,
+      postType: post.media_type,
+      title: post.post_title ?? "",
+      description: post.post_description ?? "",
+      link,
+      platformOptions,
+      pinterestBoard,
+      registryOptions: post.post_options,
+      coverTimestampMs: post.cover_image_timestamp,
+      media: { storagePath: post.media_storage_path, urls },
+      batchId: resolvePostBatchId(post),
+      scheduledPostId: post.id,
+      createdVia: post.created_via,
     },
   };
-
-  const batchId = post.batch_id ?? post.id;
-
-  try {
-    let result: { success: boolean; count: number; message?: string };
-
-    switch (platform) {
-      case "pinterest": {
-        if (!options.board) {
-          return {
-            ok: false,
-            reason: "invalid_input",
-            message: "No board configured in post_options",
-          };
-        }
-        result = await directPostForPinterestAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          boards: {
-            boardID: options.board,
-            boardName: options.boardName ?? "Board",
-            accountId: account.id,
-            isSelected: true,
-          },
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          fileName,
-          batchId,
-          mediaType,
-          postType: post.media_type,
-          mediaUrl: mediaUrl ?? "",
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "linkedin": {
-        result = await directPostForLinkedInAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? undefined,
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          fileName,
-          batchId,
-          postType: post.media_type,
-          isCronJob: true,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "tiktok": {
-        result = await directPostForTikTokAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          tiktokMediaUrl: tiktokMediaUrl ?? "",
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          postType: post.media_type,
-          fileName,
-          batchId,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "instagram": {
-        if (post.media_type === "text") {
-          return {
-            ok: false,
-            reason: "invalid_input",
-            message: "Instagram does not support text posts",
-          };
-        }
-        result = await directPostForInstagramAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          coverTimestamp: post.cover_image_timestamp ?? 1000,
-          mediaType,
-          accountContent,
-          userId: post.principal_id,
-          mediaUrl: mediaUrl ?? "",
-          postType: post.media_type,
-          fileName,
-          batchId,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "youtube": {
-        result = await directPostForYouTubeAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          mediaType,
-          platformOptions,
-          accountContent,
-          userId: post.principal_id,
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "x": {
-        result = await directPostForXAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          mediaType,
-          accountContent,
-          userId: post.principal_id,
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      case "facebook": {
-        result = await directPostForFacebookAccounts({
-          account,
-          mediaPath: post.media_storage_path,
-          accountContent,
-          userId: post.principal_id,
-          mediaUrl: mediaUrl ?? "",
-          batchId,
-          postType: post.media_type,
-          scheduledPostId: post.id,
-          createdVia,
-        });
-        break;
-      }
-      default: {
-        result = await publishViaRegistry({
-          account,
-          principalId: post.principal_id,
-          title: post.post_title,
-          body: post.post_description,
-          mediaType: post.media_type,
-          mediaUrl,
-          fileName,
-          mediaMimeType: mediaType,
-          options: post.post_options,
-          batchId: post.batch_id ?? post.id,
-          scheduledPostId: post.id,
-          createdVia: post.created_via ?? "web",
-        });
-        break;
-      }
-    }
-
-    if (result.success && result.count > 0) {
-      return {
-        ok: true,
-        contentId: post.id,
-        mediaUrl: mediaUrl ?? null,
-      };
-    }
-
-    const reason = classifyDirectPostFailure(platform, result.message);
-    return {
-      ok: false,
-      reason,
-      message: result.message ?? "Failed without message",
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const reason: PlatformErrorReason = classifyDirectPostFailure(
-      platform,
-      message,
-    );
-    return { ok: false, reason, message };
-  }
 }
 
 export type RecordStatusResult =
@@ -623,7 +286,7 @@ export async function recordPostStatus(args: {
     media_type: post.media_type,
     media_storage_path: post.media_storage_path ?? "",
     coverTimestamp: post.cover_image_timestamp ?? undefined,
-    batch_id: post.batch_id ?? post.id,
+    batch_id: resolvePostBatchId(post),
     idempotency_key: post.idempotency_key,
     x402_charge_id: post.x402_charge_id,
     extra_data: {
@@ -631,7 +294,7 @@ export async function recordPostStatus(args: {
       message: result.message,
       timestamp: nowIso,
     },
-    created_via: post.created_via ?? "web",
+    created_via: post.created_via,
   });
   if (!storeResult.success) {
     console.error(
@@ -667,25 +330,17 @@ export async function cleanupMediaIfUnreferenced(
   mediaPath: string,
   principalId: string,
 ): Promise<CleanupResult> {
-  if (!mediaPath || mediaPath === "") {
+  if (mediaPath === "") {
     return { success: true, message: "no media to clean", deleted: false };
   }
-  try {
-    const result = await deleteSupabaseFile(principalId, mediaPath, false);
-    return {
-      success: true,
-      message: result.success
-        ? `cleanup done for ${mediaPath}`
-        : `cleanup skipped: ${result.message}`,
-      deleted: result.success,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[processSinglePost] cleanup error: ${message}`);
-    return {
-      success: true,
-      message: `cleanup error (non-blocking): ${message}`,
-      deleted: false,
-    };
+  const result = await deleteSupabaseFile(principalId, mediaPath, false);
+  if (!result.success) {
+    console.warn(`[cleanupMediaIfUnreferenced] ${mediaPath} not cleaned up: ${result.message}`);
+    return { success: true, message: `cleanup skipped: ${result.message}`, deleted: false };
   }
+  return {
+    success: true,
+    message: result.removed ? `deleted ${mediaPath}` : `kept ${mediaPath}: ${result.message}`,
+    deleted: result.removed,
+  };
 }

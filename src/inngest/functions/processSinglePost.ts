@@ -1,14 +1,16 @@
+import type { FailureEventPayload } from "inngest";
+
 import { fetchAccountForPublish } from "@/actions/server/data/fetchAccountForPublish";
 import { inngest } from "@/inngest/client";
 import { postDueEvent, PostDueEventDataSchema } from "@/inngest/events/postDue";
 import { RUNTIME, toInngestRetryCount } from "@/lib/jobs/runtimeConfig";
-import { platformHotlinksMedia } from "@/lib/platforms/capabilities";
-import { deriveMediaMimeType } from "@/lib/utils/deriveMediaMimeType";
-import { toJsonObject } from "@/lib/utils/jsonObject";
-import { isSafeToRetryPost, type PlatformPostOutcome } from "./platformErrors";
 import {
-  buildPlatformSignedUrls,
-  callPlatformDirectPost,
+  buildInputRefusal,
+  isSafeToRetryPost,
+  type PlatformPostOutcome,
+} from "./platformErrors";
+import {
+  buildScheduledPublishRequest,
   checkPlatformCompatibility,
   claimPostForProcessing,
   cleanupMediaIfUnreferenced,
@@ -16,6 +18,11 @@ import {
   loadPostForProcessing,
   recordPostStatus,
 } from "./processSinglePostHelpers";
+import {
+  mintPublishMediaUrls,
+  publishToPlatform,
+  shouldDeleteMediaAfterPublish,
+} from "./publishToPlatform";
 
 const EARLY_START_TOLERANCE_MS = 10_000;
 
@@ -81,11 +88,10 @@ export const processSinglePost = inngest.createFunction(
       if (!(await claimRow("claim-account-missing"))) {
         return { skipped: true, reason: "claimed-by-another-worker" };
       }
-      await recordOutcome("record-account-missing", {
-        ok: false,
-        reason: "invalid_input",
-        message: "Social account not found or deleted",
-      });
+      await recordOutcome(
+        "record-account-missing",
+        buildInputRefusal("Social account not found or deleted"),
+      );
       return { ok: false, reason: "invalid_input" };
     }
 
@@ -94,11 +100,7 @@ export const processSinglePost = inngest.createFunction(
       if (!(await claimRow("claim-incompatible"))) {
         return { skipped: true, reason: "claimed-by-another-worker" };
       }
-      await recordOutcome("record-incompatible", {
-        ok: false,
-        reason: "invalid_input",
-        message: compat.reason,
-      });
+      await recordOutcome("record-incompatible", buildInputRefusal(compat.reason));
       return { ok: false, reason: "invalid_input" };
     }
 
@@ -106,31 +108,13 @@ export const processSinglePost = inngest.createFunction(
       return { skipped: true, reason: "claimed-by-another-worker" };
     }
 
-    const urls = await step.run("build-signed-urls", async () => {
-      const minted = await buildPlatformSignedUrls(post, data.platform);
-      if (!minted.success) {
-        throw new Error(`signed-url-failure: ${minted.message}`);
-      }
-      return minted;
-    });
-
-    const fileName = post.media_storage_path
-      ? (post.media_storage_path.split("/").pop() ?? "")
-      : "";
-
-    const mediaType = deriveMediaMimeType(fileName, post.media_type);
-
     const result = await step.run("call-platform-direct-post", async () => {
       const published = await findPublishedContentHistory(post);
       if (!published.success) {
         throw new Error(`publish-guard-failure: ${published.message}`);
       }
       if (published.isPublished) {
-        const alreadyPublished: PlatformPostOutcome = {
-          ok: true,
-          contentId: post.id,
-          mediaUrl: urls.mediaUrl,
-        };
+        const alreadyPublished: PlatformPostOutcome = { ok: true, contentId: post.id };
         return alreadyPublished;
       }
 
@@ -141,32 +125,41 @@ export const processSinglePost = inngest.createFunction(
         if (accountForPublish.reason === "lookup_failed") {
           throw new Error(`account-reload-failure: ${accountForPublish.message}`);
         }
-        const accountGone: PlatformPostOutcome = {
-          ok: false,
-          reason: "invalid_input",
-          message: accountForPublish.message,
-        };
-        return accountGone;
+        return buildInputRefusal(accountForPublish.message);
       }
 
-      const outcome = await callPlatformDirectPost({
+      const minted = await mintPublishMediaUrls({
+        platform: post.platform,
+        storagePath: post.media_storage_path,
+        principalId: post.principal_id,
+      });
+      if (!minted.success) {
+        throw new Error(`signed-url-failure: ${minted.message}`);
+      }
+
+      const built = buildScheduledPublishRequest({
         post,
         account: accountForPublish.account,
-        mediaUrl: urls.mediaUrl,
-        tiktokMediaUrl: urls.tiktokMediaUrl,
-        fileName,
-        mediaType,
+        urls: minted,
       });
+      if (!built.ok) return built;
 
-      if (!outcome.ok && isSafeToRetryPost(outcome.reason)) {
-        throw new Error(`retryable: ${outcome.reason}: ${outcome.message}`);
+      const publishResult = await publishToPlatform(built.request);
+      if (!publishResult.ok && isSafeToRetryPost(publishResult)) {
+        throw new Error(`retryable: ${publishResult.reason}: ${publishResult.message}`);
       }
+      const outcome: PlatformPostOutcome = publishResult.ok
+        ? { ok: true, contentId: post.id }
+        : publishResult;
       return outcome;
     });
 
     await recordOutcome("record-status", result);
 
-    if (post.media_storage_path && !platformHotlinksMedia(data.platform)) {
+    if (
+      post.media_storage_path &&
+      shouldDeleteMediaAfterPublish({ platform: post.platform, isPublished: result.ok })
+    ) {
       await step.run("cleanup-storage", () =>
         cleanupMediaIfUnreferenced(post.media_storage_path, post.principal_id),
       );
@@ -181,12 +174,10 @@ export const processSinglePost = inngest.createFunction(
 );
 
 async function finalizeExhaustedPost(
-  failureEvent: { data: { event: { data?: unknown } } },
+  failureEvent: FailureEventPayload,
   error: Error,
 ): Promise<{ finalized: boolean; reason?: string }> {
-  const parsedEvent = PostDueEventDataSchema.safeParse(
-    toJsonObject(failureEvent.data.event.data),
-  );
+  const parsedEvent = PostDueEventDataSchema.safeParse(failureEvent.data.event.data);
   if (!parsedEvent.success) {
     console.error(
       "[finalizeExhaustedPost] Failure event carried no scheduled_post_id; cannot finalize.",
@@ -219,11 +210,12 @@ async function finalizeExhaustedPost(
   const published = await findPublishedContentHistory(loaded.post);
   const finalOutcome: PlatformPostOutcome =
     published.success && published.isPublished
-      ? { ok: true, contentId: loaded.post.id, mediaUrl: null }
+      ? { ok: true, contentId: loaded.post.id }
       : {
           ok: false,
           reason: "transient",
           message: `Retries exhausted: ${error.message}`,
+          mayHavePublished: true,
         };
 
   const recorded = await recordPostStatus({ post: loaded.post, result: finalOutcome });

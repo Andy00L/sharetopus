@@ -1,23 +1,40 @@
-export type PlatformPostOutcome =
-  | { ok: true; contentId: string; mediaUrl: string | null }
-  | { ok: false; reason: PlatformErrorReason; message: string };
+import type { Platform } from "@/db/schema";
+import type { PlatformFailureReason } from "@/lib/api/_shared/platformFailure";
 
-export type PlatformErrorReason =
-  | "auth_expired"
-  | "rate_limited"
-  | "transient"
-  | "policy_rejected"
-  | "invalid_input"
-  | "unknown";
+export type PlatformErrorReason = PlatformFailureReason;
 
-export function isSafeToRetryPost(reason: PlatformErrorReason): boolean {
-  return reason === "rate_limited";
+export type PublishFailure = {
+  ok: false;
+  reason: PlatformFailureReason;
+  message: string;
+  mayHavePublished: boolean;
+};
+
+export type PlatformPostOutcome = { ok: true; contentId: string } | PublishFailure;
+
+export function isSafeToRetryPost(
+  failure: Pick<PublishFailure, "reason" | "mayHavePublished">,
+): boolean {
+  if (failure.mayHavePublished) return false;
+  return failure.reason === "rate_limited" || failure.reason === "transient";
 }
 
-export function classifyDirectPostFailure(
-  platform: import("@/db/schema").Platform,
-  message: string | undefined
-): PlatformErrorReason {
+export function buildInputRefusal(message: string): PublishFailure {
+  return { ok: false, reason: "invalid_input", message, mayHavePublished: false };
+}
+
+export function buildTextClassifiedFailure(
+  platform: Platform,
+  message: string,
+): PublishFailure {
+  const reason = classifyDirectPostFailure(platform, message);
+  return { ok: false, reason, message, mayHavePublished: reason !== "rate_limited" };
+}
+
+function classifyDirectPostFailure(
+  platform: Platform,
+  message: string | undefined,
+): PlatformFailureReason {
   const normalizedMessage = (message ?? "").toLowerCase();
 
   if (platform === "pinterest") {

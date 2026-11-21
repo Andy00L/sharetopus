@@ -7,10 +7,10 @@ import { checkRateLimit } from "@/actions/server/rateLimit/checkRateLimit";
 import { schedulePostBatch } from "@/actions/server/scheduleActions/schedule/schedulePostBatch";
 import {
   isPostingPlatform,
-  platformSupportsMediaType,
   type PostingPlatform,
 } from "@/lib/platforms/capabilities";
 import type { MediaType } from "@/db/schema";
+import { encodeFormPostOptions } from "@/inngest/events/postOptions";
 import { generateRequestId } from "@/lib/utils/generateRequestId";
 import { ClientSocialAccount, PlatformOptions } from "@/lib/types/dbTypes";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
@@ -71,61 +71,14 @@ function buildZeroCounts(): PlatformCounts {
   };
 }
 
-type ScheduleOptionsBuilderArgs = {
-  account: ClientSocialAccount;
-  content: ContentInfo;
-  platformOptions: PlatformOptions;
-  selectedBoard: BoardInfo | undefined;
-};
-
-type PlatformFormAdapter = {
-  keepsTitle: boolean;
-  buildScheduleOptions: (
-    args: ScheduleOptionsBuilderArgs,
-  ) => SchedulePostData["postOptions"];
-};
-
-const PLATFORM_FORM_ADAPTERS: Record<PostingPlatform, PlatformFormAdapter> = {
-  pinterest: {
-    keepsTitle: true,
-    buildScheduleOptions: ({ content, platformOptions, selectedBoard }) => ({
-      privacyLevel: platformOptions.pinterest?.privacyLevel ?? "PUBLIC",
-      board: selectedBoard?.boardID ?? "",
-      boardName: selectedBoard?.boardName ?? "",
-      link: content.link,
-    }),
-  },
-  linkedin: {
-    keepsTitle: false,
-    buildScheduleOptions: ({ account, content, platformOptions }) => ({
-      memberUrn: `urn:li:person:${account.account_identifier}`,
-      link: content.link || undefined,
-      visibility: platformOptions.linkedin?.visibility ?? "PUBLIC",
-    }),
-  },
-  tiktok: {
-    keepsTitle: false,
-    buildScheduleOptions: ({ platformOptions }) =>
-      platformOptions.tiktok ?? null,
-  },
-  instagram: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
-  youtube: {
-    keepsTitle: true,
-    buildScheduleOptions: ({ platformOptions }) => ({
-      privacyStatus: platformOptions.youtube?.privacyStatus ?? "public",
-    }),
-  },
-  x: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
-  facebook: {
-    keepsTitle: false,
-    buildScheduleOptions: () => null,
-  },
+const PLATFORM_KEEPS_TITLE: Record<PostingPlatform, boolean> = {
+  pinterest: true,
+  linkedin: false,
+  tiktok: false,
+  instagram: false,
+  youtube: true,
+  x: false,
+  facebook: false,
 };
 
 export async function handleSocialMediaPost(config: {
@@ -415,9 +368,6 @@ async function scheduleAllPosts(args: {
   const posts: (SchedulePostData & { platform: PostingPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
-    if (!platformSupportsMediaType(platform, args.postType)) continue;
-    const adapter = PLATFORM_FORM_ADAPTERS[platform];
-
     for (const account of platformAccounts) {
       const content = findContentForAccount(args.accountContent, account.id);
       if (!content) continue;
@@ -427,17 +377,19 @@ async function scheduleAllPosts(args: {
         socialAccountId: account.id,
         platform,
         scheduledAt: scheduledAtIso,
-        title: adapter.keepsTitle ? content.title : "",
+        title: PLATFORM_KEEPS_TITLE[platform] ? content.title : "",
         description: content.description,
         postType: args.postType,
         mediaStoragePath: args.mediaPath,
         coverTimestamp: args.coverTimestamp,
         batch_id: args.batchId,
-        postOptions: adapter.buildScheduleOptions({
-          account,
-          content,
+        postOptions: encodeFormPostOptions({
+          platform,
+          link: content.link,
           platformOptions: args.platformOptions,
-          selectedBoard,
+          pinterestBoard: selectedBoard
+            ? { boardId: selectedBoard.boardID, boardName: selectedBoard.boardName }
+            : null,
         }),
       });
     }
@@ -448,7 +400,7 @@ async function scheduleAllPosts(args: {
       success: false,
       counts: buildZeroCounts(),
       message:
-        "No posts to schedule after filtering. Check post type vs platform compatibility.",
+        "No posts to schedule.",
       errors: [],
     };
   }
@@ -506,8 +458,6 @@ async function directPostFromForm(args: {
   const posts: (DirectPostData & { platform: PostingPlatform })[] = [];
 
   for (const [platform, platformAccounts] of args.accountsByPlatform) {
-    if (!platformSupportsMediaType(platform, args.postType)) continue;
-
     for (const account of platformAccounts) {
       const content = findContentForAccount(args.accountContent, account.id);
       if (!content) continue;
@@ -522,11 +472,11 @@ async function directPostFromForm(args: {
         mediaStoragePath: args.mediaPath,
         coverTimestamp: args.coverTimestamp,
         platformOptions: args.platformOptions,
+        link: content.link || undefined,
         ...(platform === "pinterest"
           ? {
               pinterestBoardId: selectedBoard?.boardID,
               pinterestBoardName: selectedBoard?.boardName,
-              pinterestLink: content.link || undefined,
             }
           : {}),
       });

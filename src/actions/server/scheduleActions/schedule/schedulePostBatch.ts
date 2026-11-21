@@ -6,7 +6,6 @@ import {
   describeAccountMismatch,
   loadOwnedAccountPlatforms,
 } from "@/actions/server/data/loadOwnedAccountPlatforms";
-import { resolvePlatformTextLimit } from "@/components/core/create/constants/captionLimits";
 import { db, runQuery } from "@/db/client";
 import { platform_quotas, scheduled_posts } from "@/db/schema";
 import type { CreatedVia, PostStatus } from "@/db/schema";
@@ -14,12 +13,13 @@ import {
   POST_DUE_TARGET_COLUMNS,
   sendPostDueEvents,
 } from "@/inngest/dispatch/sendPostDueEvents";
-import { dispatchWebhook } from "@/lib/api/rest/webhooks/dispatch";
+import { dispatchWebhooks } from "@/lib/api/rest/webhooks/dispatch";
 import type { PostBatchFailure, PostRejection } from "@/lib/types/postBatch";
 import type { PreflightResult } from "@/lib/types/preflight";
 import type { SchedulePostData } from "@/lib/types/SchedulePostData";
 import { generateBatchId } from "@/lib/utils/generateBatchId";
 import { checkRateLimit } from "../../rateLimit/checkRateLimit";
+import { validatePostFields } from "../validatePostFields";
 import { countPostsByPlatform, findDailyQuotaViolation } from "./dailyQuota";
 
 const MAX_BATCH_SIZE = 50;
@@ -39,6 +39,7 @@ export type SchedulePostBatchResult = {
     total: number;
     inserted: number;
     duplicates: number;
+    unresolvedDuplicateIds: number;
     rejected: PostRejection[];
   };
   scheduleIds: string[];
@@ -60,6 +61,7 @@ export async function schedulePostBatch(
     total: 0,
     inserted: 0,
     duplicates: 0,
+    unresolvedDuplicateIds: 0,
     rejected: [],
   };
 
@@ -109,7 +111,7 @@ export async function schedulePostBatch(
     const validPosts: SchedulePostData[] = [];
 
     for (const post of posts) {
-      const validationError = validatePostFields(post, principalId);
+      const validationError = validateSchedulePostFields(post, principalId);
       if (validationError) {
         rejectedPosts.push({
           socialAccountId: post.socialAccountId ?? "unknown",
@@ -131,6 +133,7 @@ export async function schedulePostBatch(
           total: posts.length,
           inserted: 0,
           duplicates: 0,
+          unresolvedDuplicateIds: 0,
           rejected: rejectedPosts,
         },
         scheduleIds: [],
@@ -155,6 +158,7 @@ export async function schedulePostBatch(
           total: posts.length,
           inserted: 0,
           duplicates: 0,
+          unresolvedDuplicateIds: 0,
           rejected: rejectedPosts,
         },
         scheduleIds: [],
@@ -187,6 +191,7 @@ export async function schedulePostBatch(
           total: posts.length,
           inserted: 0,
           duplicates: 0,
+          unresolvedDuplicateIds: 0,
           rejected: rejectedPosts,
         },
         scheduleIds: [],
@@ -208,6 +213,7 @@ export async function schedulePostBatch(
           total: posts.length,
           inserted: 0,
           duplicates: 0,
+          unresolvedDuplicateIds: 0,
           rejected: rejectedPosts,
         },
         scheduleIds: [],
@@ -246,6 +252,7 @@ export async function schedulePostBatch(
           total: posts.length,
           inserted: 0,
           duplicates: 0,
+          unresolvedDuplicateIds: 0,
           rejected: rejectedPosts,
         },
         scheduleIds: [],
@@ -266,7 +273,7 @@ export async function schedulePostBatch(
       }
     }
 
-    let duplicates = 0;
+    let unresolvedDuplicateIds = 0;
     if (skippedKeys.length > 0) {
       const { data: existingRows, error: fetchError } = await runQuery(
         db
@@ -284,19 +291,20 @@ export async function schedulePostBatch(
       );
 
       if (fetchError) {
+        unresolvedDuplicateIds = skippedKeys.length;
         console.error(
-          `[schedulePostBatch] [req=${requestId ?? "?"}] Failed to fetch duplicate IDs:`,
+          `[schedulePostBatch] [req=${requestId ?? "?"}] ${skippedKeys.length} duplicate(s) saved earlier, but their ids could not be read:`,
           fetchError.message,
         );
       } else {
         for (const row of existingRows) {
           if (row.idempotency_key) {
             keyToScheduleId.set(row.idempotency_key, row.id);
-            duplicates++;
           }
         }
       }
     }
+    const duplicates = skippedKeys.length;
 
     const scheduleIds: string[] = [];
     for (const row of rows) {
@@ -308,21 +316,28 @@ export async function schedulePostBatch(
 
     await sendPostDueEvents(inserted);
 
-    for (const insertedRow of inserted) {
-      dispatchWebhook(principalId, "post.scheduled", {
-        post_id: insertedRow.id,
-        batch_id: batchId,
-      });
-    }
+    void dispatchWebhooks(
+      principalId,
+      "post.scheduled",
+      inserted.map((insertedRow) => ({ post_id: insertedRow.id, batch_id: batchId })),
+    );
+
+    const duplicateNote =
+      duplicates === 0
+        ? ""
+        : unresolvedDuplicateIds > 0
+          ? `, ${duplicates} already existed (idempotent retry; their ids could not be read, retry to get them)`
+          : `, ${duplicates} already existed (idempotent retry)`;
 
     return {
       success: true,
-      message: `Scheduled ${inserted.length} post(s)${duplicates > 0 ? `, ${duplicates} already existed (idempotent retry)` : ""}.`,
+      message: `Scheduled ${inserted.length} post(s)${duplicateNote}.`,
       batchId,
       details: {
         total: posts.length,
         inserted: inserted.length,
         duplicates,
+        unresolvedDuplicateIds,
         rejected: rejectedPosts,
       },
       scheduleIds,
@@ -347,21 +362,9 @@ export async function preflightSchedulePost(
   post: SchedulePostData,
   principalId: string,
 ): Promise<PreflightResult> {
-  const validationError = validatePostFields(post, principalId);
+  const validationError = validateSchedulePostFields(post, principalId);
   if (validationError) {
     return { ok: false, httpStatus: 400, errorKind: "validation_error", message: validationError };
-  }
-
-  if (post.description) {
-    const captionLimit = resolvePlatformTextLimit(post.platform);
-    if (post.description.length > captionLimit) {
-      return {
-        ok: false,
-        httpStatus: 400,
-        errorKind: "validation_error",
-        message: `Caption exceeds ${post.platform} limit of ${captionLimit} chars (got ${post.description.length}).`,
-      };
-    }
   }
 
   const ownershipResult = await loadOwnedAccountPlatforms([post.socialAccountId], principalId);
@@ -429,44 +432,23 @@ export async function preflightSchedulePost(
   return { ok: true };
 }
 
-function validatePostFields(
+function validateSchedulePostFields(
   post: SchedulePostData,
   principalId: string,
 ): string | null {
-  if (
-    !post.socialAccountId ||
-    !post.platform ||
-    !post.scheduledAt ||
-    !post.postType
-  ) {
-    return "Missing required fields (socialAccountId, platform, scheduledAt, postType).";
-  }
-
-  if (post.postType !== "text" && !post.mediaStoragePath) {
-    return `Media file is required for ${post.postType} posts.`;
-  }
-
-  if (
-    post.mediaStoragePath &&
-    !post.mediaStoragePath.startsWith(`${principalId}/`)
-  ) {
-    return "Media path is not owned by the calling principal.";
-  }
-
-  const hasPinterestBoard = Boolean(post.postOptions?.board);
-  const hasPinterestLink = Boolean(post.postOptions?.link);
-
-  if (post.platform === "pinterest" && !hasPinterestBoard) {
-    return "Pinterest posts require a board ID in postOptions.board.";
-  }
-  if (
-    post.platform !== "pinterest" &&
-    (hasPinterestBoard || hasPinterestLink)
-  ) {
-    return "Pinterest-specific options (board, link) only valid when platform='pinterest'.";
-  }
-
-  return null;
+  if (!post.scheduledAt) return "Missing required field scheduledAt.";
+  return validatePostFields(
+    {
+      socialAccountId: post.socialAccountId,
+      platform: post.platform,
+      postType: post.postType,
+      mediaStoragePath: post.mediaStoragePath,
+      description: post.description,
+      link: post.postOptions?.link,
+      pinterestBoardId: post.postOptions?.board,
+    },
+    principalId,
+  );
 }
 
 async function checkPlatformDailyQuotas(
